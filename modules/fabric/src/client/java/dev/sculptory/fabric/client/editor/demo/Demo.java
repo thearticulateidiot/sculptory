@@ -1,12 +1,14 @@
 package dev.sculptory.fabric.client.editor.demo;
 
 import dev.sculptory.core.BlockDescriptor;
+import dev.sculptory.core.NamespacedId;
 import dev.sculptory.fabric.SculptoryMod;
 import dev.sculptory.fabric.client.builder.BuilderClient;
 import dev.sculptory.fabric.client.builder.RingScreen;
 import dev.sculptory.fabric.client.editor.EditorClient;
 import dev.sculptory.fabric.client.editor.EditorContext;
 import dev.sculptory.fabric.client.editor.ExitReason;
+import dev.sculptory.fabric.client.editor.blocks.BlockPicker;
 import dev.sculptory.fabric.client.editor.check.CheckDriver;
 import dev.sculptory.fabric.client.editor.hud.EditorUi;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
@@ -18,9 +20,12 @@ import dev.sculptory.fabric.client.editor.tool.ToolRegistry;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.ui.Node;
 import dev.sculptory.fabric.client.editor.ui.Rect;
+import dev.sculptory.fabric.client.editor.ui.UiContext;
 import dev.sculptory.fabric.client.editor.ui.widget.Button;
+import dev.sculptory.fabric.client.editor.ui.widget.ListView;
 import dev.sculptory.fabric.client.editor.ui.widget.Menu;
 import dev.sculptory.fabric.client.editor.ui.widget.MenuItem;
+import dev.sculptory.fabric.client.editor.ui.widget.TextInput;
 import dev.sculptory.fabric.client.editor.ui.window.SizedLayouts;
 import dev.sculptory.fabric.client.editor.ui.window.Window;
 import dev.sculptory.fabric.client.editor.world.ScreenProjector;
@@ -28,8 +33,10 @@ import dev.sculptory.protocol.v2.BuilderPower;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Callable;
+import java.util.function.Predicate;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
@@ -52,6 +59,8 @@ public final class Demo {
     static final long CAMERA_MS = 1_400;
     private static final double EYE_HEIGHT = 1.62;
     private static final int LEFT = GLFW.GLFW_MOUSE_BUTTON_LEFT;
+    /** What ends a chosen block's button in the block-set picker (a click takes it out). */
+    private static final String CHOSEN_MARK = "×";
 
     private final MinecraftClient client;
     private final EditorClient editor;
@@ -528,6 +537,139 @@ public final class Demo {
             CheckDriver.collect(popups.get(popups.size() - 1).content(), type, found);
             return found;
         });
+    }
+
+    /** The first node of a type in the top bar that passes {@code test}. */
+    public <T extends Node> T topBar(Class<T> type, Predicate<T> test, String what) {
+        return onClient(() -> {
+            driver.relayout();
+            List<T> found = new ArrayList<>();
+            CheckDriver.collect(ui().topBarRow(), type, found);
+            return found.stream().filter(test).findFirst()
+                    .orElseThrow(() -> new CheckDriver.Failed("no " + what + " in the top bar"));
+        });
+    }
+
+    /** The middle of a list's row {@code index}, scrolled into view first (GUI pixels). */
+    public double[] listRow(ListView<?> list, int index) {
+        return onClient(() -> {
+            list.scrollToIndex(index);
+            driver.relayout();
+            UiContext context = ui().windows().context();
+            int height = list.rowHeight(context);
+            Rect bounds = list.bounds();
+            // Where the list lays the row out: a list scrolled part of a row shows its first row cut.
+            double y = bounds.y() + index * height - list.scroll().offset() + height / 2.0;
+            if (list.rowIndexAt(context, y) != index) {
+                throw new CheckDriver.Failed("row " + index + " of the list is not in view");
+            }
+            float factor = ui().uiScale().factor();
+            return new double[] {(bounds.x() + bounds.width() / 2.0) * factor, y * factor};
+        });
+    }
+
+    /** Glides the pointer to a list's row and clicks it; {@code twice}: a double click (opens a folder). */
+    public void clickListRow(ListView<?> list, int index, boolean twice) {
+        double[] at = listRow(list, index);
+        moveTo(at[0], at[1], POINTER_MS);
+        pause(300);
+        click();
+        if (twice) {
+            frames(1);
+            click();
+        }
+        frames(2);
+    }
+
+    /** Waits for a list to show a row that passes {@code test} and returns its index. */
+    public <T> int awaitRow(ListView<T> list, Predicate<T> test, String what) {
+        int[] index = {-1};
+        boolean shown = driver.until(15_000, () -> {
+            List<T> items = list.items();
+            for (int i = 0; i < items.size(); i++) {
+                if (test.test(items.get(i))) {
+                    index[0] = i;
+                    return true;
+                }
+            }
+            return false;
+        });
+        if (!shown) {
+            throw new CheckDriver.Failed("the list never showed " + what);
+        }
+        return index[0];
+    }
+
+    /**
+     * In the block-set picker on top (Replace's From, a mask rule's blocks): takes out the blocks chosen so far, adds
+     * each of {@code ids} by typing its name and clicking its row, then closes it with Done.
+     */
+    public void pickBlockSet(List<String> ids) {
+        while (true) {
+            Optional<Button> chosen = popupNodes(Button.class).stream()
+                    .filter(button -> button.text().endsWith(" " + CHOSEN_MARK)).findFirst();
+            if (chosen.isEmpty()) {
+                break;
+            }
+            clickNode(chosen.get());
+        }
+        for (String id : ids) {
+            NamespacedId block = new NamespacedId(id);
+            TextInput search = popupNodes(TextInput.class).stream().findFirst()
+                    .orElseThrow(() -> new CheckDriver.Failed("the block picker has no search field"));
+            onClient(() -> {
+                ui().windows().context().setFocus(search);
+                search.selectAll();
+            });
+            typeSlowly(block.value().substring(block.value().indexOf(':') + 1), 70);
+            pause(400);
+            @SuppressWarnings("unchecked")
+            ListView<BlockPicker.SetItem> list = (ListView<BlockPicker.SetItem>) popupNodes(ListView.class).stream()
+                    .findFirst().orElseThrow(() -> new CheckDriver.Failed("the block picker has no list"));
+            int row = awaitRow(list, item -> item instanceof BlockPicker.BlockItem b
+                    && b.entry().block().block().equals(block), id);
+            clickListRow(list, row, false);
+            pause(300);
+        }
+        long chosen = popupNodes(Button.class).stream().filter(b -> b.text().endsWith(" " + CHOSEN_MARK)).count();
+        if (chosen != ids.size()) {
+            throw new CheckDriver.Failed("the block picker holds " + chosen + " choices, not " + ids);
+        }
+        pause(500);
+        clickNode(popupNodes(Button.class).stream()
+                .filter(button -> button.text().equals(translate("sculptory.picker.set.done"))).findFirst()
+                .orElseThrow(() -> new CheckDriver.Failed("the block picker has no Done button")));
+    }
+
+    /** Clicks the row labelled {@code label} of the menu on top (a + Tree list, a dropdown's choices). */
+    public boolean clickMenuItem(String label) {
+        Optional<Rect> row = onClient(() -> {
+            driver.relayout();
+            List<Menu> menus = new ArrayList<>();
+            var popups = ui().windows().context().popups().popups();
+            if (popups.isEmpty()) {
+                return Optional.<Rect>empty();
+            }
+            CheckDriver.collect(popups.get(popups.size() - 1).content(), Menu.class, menus);
+            for (Menu menu : menus) {
+                List<MenuItem> items = menu.items();
+                for (int i = 0; i < items.size(); i++) {
+                    if (items.get(i).label().equals(label)) {
+                        return Optional.of(menu.rowBounds(i));
+                    }
+                }
+            }
+            return Optional.<Rect>empty();
+        });
+        if (row.isEmpty()) {
+            return false;
+        }
+        double[] at = screen(row.get().x() + row.get().width() / 2.0, row.get().y() + row.get().height() / 2.0);
+        moveTo(at[0], at[1], POINTER_MS);
+        pause(300);
+        click();
+        frames(2);
+        return true;
     }
 
     /** Closes the top popup with Esc, if one is open. */

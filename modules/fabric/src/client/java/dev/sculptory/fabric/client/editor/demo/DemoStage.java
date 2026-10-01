@@ -21,7 +21,8 @@ import net.minecraft.world.Heightmap;
 /**
  * The demo's stage: a {@value #SIZE} x {@value #SIZE} grass field cut into the tour world's forest at ground level
  * around the world spawn, with what each step works on built on it (a post for the box, a cliff, a house, a plank wall,
- * a basin, a mound and a tree, stairs and an armor stand, a wall to bulldoze). Coordinates given to the script are
+ * a basin, a mound and a tree, stairs and an armor stand, an oak porch, a stone hill, a gravel
+ * path, two posts for a hanging line). Coordinates given to the script are
  * relative to the corner {@code (x0, y0, z0)}, where {@code y0} is the first air layer and {@code -1} the floor's top.
  * Built on the integrated server's thread once, before the demo starts; the world is a fresh copy each run.
  */
@@ -31,17 +32,19 @@ public final class DemoStage {
     public static final int HEIGHT = 40;
     /** Dirt under the grass, so a stage above lower ground shows earth at its edge. */
     private static final int DEPTH = 6;
+    /** How far around the field the cut trees are cleared. */
+    private static final int EDGE = 6;
     private static final int FLAGS = Block.NOTIFY_LISTENERS | Block.FORCE_STATE;
 
     // ---- What is where (relative; the floor's top is y -1) ----
 
-    /** Step 3: a post whose top and the floor span a 7x6x7 box when dragged between. */
+    /** select: a post whose top and the floor span a 7x6x7 box when dragged between. */
     public static final int BOX_X = 16;
     public static final int BOX_Z = 16;
     public static final int POST_X = 22;
     public static final int POST_Z = 22;
     public static final int POST_TOP = 4;
-    /** Step 4: the cliff (stone at x >= CLIFF_X, its west face aimed at from the west). */
+    /** brushes: the cliff (stone at x >= CLIFF_X, its west face aimed at from the west). */
     public static final int CLIFF_X = 84;
     public static final int CLIFF_TOP = 17;
     public static final int CLIFF_Z0 = 36;
@@ -52,15 +55,15 @@ public final class DemoStage {
     /** Where the Terrain-mode mound is raised on the grass. */
     public static final int MOUND_X = 70;
     public static final int MOUND_Z = 62;
-    /** Step 5 and 6: flat grass. */
+    /** paint and shape: flat grass. */
     public static final int PAINT_X = 12;
     public static final int PAINT_Z = 72;
     public static final int SHAPE_X = 38;
     public static final int SHAPE_Z = 72;
-    /** Step 7: the symmetry centre and the stroke beside it. */
+    /** symmetry: the symmetry centre and the stroke beside it. */
     public static final int SYM_X = 19;
     public static final int SYM_Z = 47;
-    /** Step 8: the house, its chimney at the far corner so one drag selects it all; pasted east of it. */
+    /** paste: the house, its chimney at the far corner so one drag selects it all; pasted east of it. */
     public static final int HOUSE_X0 = 36;
     public static final int HOUSE_X1 = 42;
     public static final int HOUSE_Z0 = 44;
@@ -68,7 +71,7 @@ public final class DemoStage {
     public static final int CHIMNEY_TOP = 7;
     public static final int PASTE_X = 50;
     public static final int PASTE_Z = 47;
-    /** Step 9: the road's nodes and the roofless plank box. */
+    /** generate: the road's nodes and the roofless plank box. */
     public static final int ROAD_X0 = 60;
     public static final int ROAD_X1 = 96;
     public static final int ROAD_Z = 98;
@@ -77,12 +80,12 @@ public final class DemoStage {
     public static final int ROOF_Z0 = 68;
     public static final int ROOF_Z1 = 74;
     public static final int ROOF_TOP = 3;
-    /** Step 10: the plank wall, its south face at z = WALL_Z. */
+    /** extrude: the plank wall, its south face at z = WALL_Z. */
     public static final int WALL_X0 = 62;
     public static final int WALL_X1 = 68;
     public static final int WALL_Z = 48;
     public static final int WALL_TOP = 4;
-    /** Step 11: the basin (its inside one block in from the outer box) and the water ball's spot. */
+    /** fluid: the basin (its inside one block in from the outer box) and the water ball's spot. */
     public static final int BASIN_X0 = 38;
     public static final int BASIN_X1 = 45;
     public static final int BASIN_Z0 = 16;
@@ -90,26 +93,52 @@ public final class DemoStage {
     public static final int BASIN_DEPTH = 3;
     public static final int BALL_X = 52;
     public static final int BALL_Z = 20;
-    /** Step 12: the mound Scatter paints and the tree it copies. */
+    /** scatter: the mound Scatter paints and the tree it copies. */
     public static final int MOUND2_X = 24;
     public static final int MOUND2_Z = 98;
     public static final int MOUND2_RADIUS = 12;
     public static final int MOUND2_HEIGHT = 5;
     public static final int TREE_X = 48;
     public static final int TREE_Z = 98;
-    /** Step 13 and 18: the stairs (facing south) and the armor stand. */
+    /** tinker and builder: the stairs (facing south) and the armor stand. */
     public static final int STAIRS_X = 65;
     public static final int STAIRS_Z = 20;
     public static final int STAND_X = 70;
     public static final int STAND_Z = 20;
-    /** Step 15: three quick fills happen here. */
+    /** history (when there is too little to show) and tutorial: quick edits here. */
     public static final int FILLS_X = 8;
     public static final int FILLS_Z = 36;
-    /** Step 18: the cobblestone wall to bulldoze. */
-    public static final int BULLDOZE_X0 = 88;
-    public static final int BULLDOZE_X1 = 96;
-    public static final int BULLDOZE_Z = 16;
-    public static final int BULLDOZE_TOP = 3;
+    /** builder: where the player stands, south of the stairs with open air ahead, to place planks in mid-air. */
+    public static final int BUILDER_Z = STAIRS_Z + 13;
+    /** Replace: an oak porch (plank floor, stairs, fence posts, slab roof) for the several-blocks and family swaps. */
+    public static final int PORCH_X0 = 4;
+    public static final int PORCH_X1 = 10;
+    public static final int PORCH_Z0 = 24;
+    public static final int PORCH_Z1 = 28;
+    public static final int PORCH_ROOF = 3;
+    /** Overlay and Naturalize: a bare stone hill. */
+    public static final int HILL_X = 77;
+    public static final int HILL_Z = 89;
+    public static final int HILL_RADIUS = 6;
+    public static final int HILL_HEIGHT = 5;
+    /** The mask: a gravel path three wide through the grass, along x. */
+    public static final int PATH_X0 = 2;
+    public static final int PATH_X1 = 34;
+    public static final int PATH_Z = 62;
+    /** The hanging line: two stone brick pillars; the line hangs from their tops. */
+    public static final int LINE_POST_X0 = 98;
+    public static final int LINE_POST_X1 = 110;
+    public static final int LINE_POST_Z = 6;
+    public static final int LINE_POST_TOP = 4;
+    /** The Shape brush line: the floor points its curve goes through (x, z pairs). */
+    public static final int[][] CURVE = {{58, 38}, {64, 31}, {72, 38}, {78, 32}};
+    /** Where the library's pieces are placed: the cottage, the boulder beside it, the lamp post by its door. */
+    public static final int COTTAGE_X = 100;
+    public static final int COTTAGE_Z = 89;
+    public static final int BOULDER_X = 108;
+    public static final int BOULDER_Z = 85;
+    public static final int LAMP_X = 95;
+    public static final int LAMP_Z = 95;
 
     private final int x0;
     private final int y0;
@@ -147,6 +176,15 @@ public final class DemoStage {
         return h - 1;
     }
 
+    /** The height of the stone hill's top block above the floor at a relative cell, or -1 off the hill. */
+    public static int hillTop(int dx, int dz) {
+        double d = Math.hypot(dx - HILL_X, dz - HILL_Z);
+        if (d >= HILL_RADIUS) {
+            return -1;
+        }
+        return (int) Math.round(HILL_HEIGHT * Math.cos(d / HILL_RADIUS * Math.PI / 2)) - 1;
+    }
+
     @Override
     public String toString() {
         return "stage at " + x0 + " " + y0 + " " + z0;
@@ -163,8 +201,8 @@ public final class DemoStage {
         net.minecraft.util.math.BlockPos spawn = world.getSpawnPos();
         int x0 = ((spawn.getX() - SIZE / 2) >> 4) << 4;
         int z0 = ((spawn.getZ() - SIZE / 2) >> 4) << 4;
-        for (int cx = x0 >> 4; cx <= (x0 + SIZE - 1) >> 4; cx++) {
-            for (int cz = z0 >> 4; cz <= (z0 + SIZE - 1) >> 4; cz++) {
+        for (int cx = (x0 - EDGE) >> 4; cx <= (x0 + SIZE - 1 + EDGE) >> 4; cx++) {
+            for (int cz = (z0 - EDGE) >> 4; cz <= (z0 + SIZE - 1 + EDGE) >> 4; cz++) {
                 world.setChunkForced(cx, cz, true);
                 world.getChunk(cx, cz);
             }
@@ -218,6 +256,20 @@ public final class DemoStage {
                 }
             }
         }
+        // The forest's trees cut at the field's edge leave crowns hanging in the air: leaves and logs go around it too.
+        for (int dx = -EDGE; dx < SIZE + EDGE; dx++) {
+            for (int dz = -EDGE; dz < SIZE + EDGE; dz++) {
+                if (dx >= 0 && dx < SIZE && dz >= 0 && dz < SIZE) {
+                    continue;
+                }
+                for (int dy = 0; dy < HEIGHT; dy++) {
+                    BlockState state = world.getBlockState(at.set(x(dx), y(dy), z(dz)));
+                    if (state.isIn(BlockTags.LEAVES) || state.isIn(BlockTags.LOGS)) {
+                        world.setBlockState(at, air, FLAGS);
+                    }
+                }
+            }
+        }
         for (Entity entity : world.getOtherEntities(null, new net.minecraft.util.math.Box(x(0), y(-DEPTH), z(0),
                 x(SIZE), y(HEIGHT), z(SIZE)))) {
             if (!entity.isPlayer()) {
@@ -228,15 +280,15 @@ public final class DemoStage {
 
     private void buildFixtures(ServerWorld world) {
         Writer w = new Writer(world);
-        // Step 3: the post.
+        // select: the post.
         w.fill(POST_X, 0, POST_Z, POST_X, POST_TOP, POST_Z, "minecraft:stone_bricks");
-        // Step 4: the cliff, grass on top, a bump to smooth and one to flatten in front of its face.
+        // brushes: the cliff, grass on top, a bump to smooth and one to flatten in front of its face.
         w.fill(CLIFF_X, 0, CLIFF_Z0, SIZE - 1, CLIFF_TOP - 1, CLIFF_Z1, "minecraft:stone");
         w.fill(CLIFF_X, CLIFF_TOP, CLIFF_Z0, SIZE - 1, CLIFF_TOP, CLIFF_Z1, "minecraft:grass_block");
         w.fill(CLIFF_X - 1, 6, BUMP_Z - 1, CLIFF_X - 1, 8, BUMP_Z + 1, "minecraft:stone");
         w.fill(CLIFF_X - 1, 7, FLAT_BUMP_Z - 1, CLIFF_X - 1, 9, FLAT_BUMP_Z + 1, "minecraft:stone");
         w.set(CLIFF_X - 2, 8, FLAT_BUMP_Z, "minecraft:stone");
-        // Step 8: the house.
+        // paste: the house.
         w.fill(HOUSE_X0, 0, HOUSE_Z0, HOUSE_X1, 3, HOUSE_Z1, "minecraft:oak_planks");
         w.fill(HOUSE_X0 + 1, 0, HOUSE_Z0 + 1, HOUSE_X1 - 1, 3, HOUSE_Z1 - 1, "minecraft:air");
         w.fill(HOUSE_X0, 4, HOUSE_Z0, HOUSE_X1, 4, HOUSE_Z1, "minecraft:oak_planks");
@@ -251,15 +303,15 @@ public final class DemoStage {
         w.set(HOUSE_X1 - 1, 1, HOUSE_Z1, "minecraft:glass");
         w.set(HOUSE_X0, 1, HOUSE_Z0 + 3, "minecraft:glass");
         w.set(HOUSE_X1, 1, HOUSE_Z0 + 3, "minecraft:glass");
-        // Step 9: the roofless box.
+        // generate: the roofless box.
         w.fill(ROOF_X0, 0, ROOF_Z0, ROOF_X1, ROOF_TOP, ROOF_Z1, "minecraft:oak_planks");
         w.fill(ROOF_X0 + 1, 0, ROOF_Z0 + 1, ROOF_X1 - 1, ROOF_TOP, ROOF_Z1 - 1, "minecraft:air");
-        // Step 10: the wall.
+        // extrude: the wall.
         w.fill(WALL_X0, 0, WALL_Z, WALL_X1, WALL_TOP, WALL_Z, "minecraft:oak_planks");
-        // Step 11: the basin.
+        // fluid: the basin.
         w.fill(BASIN_X0, 0, BASIN_Z0, BASIN_X1, BASIN_DEPTH - 1, BASIN_Z1, "minecraft:stone_bricks");
         w.fill(BASIN_X0 + 1, 0, BASIN_Z0 + 1, BASIN_X1 - 1, BASIN_DEPTH - 1, BASIN_Z1 - 1, "minecraft:air");
-        // Step 12: the mound and the tree.
+        // scatter: the mound and the tree.
         for (int dx = MOUND2_X - MOUND2_RADIUS; dx <= MOUND2_X + MOUND2_RADIUS; dx++) {
             for (int dz = MOUND2_Z - MOUND2_RADIUS; dz <= MOUND2_Z + MOUND2_RADIUS; dz++) {
                 int top = moundTop(dx, dz);
@@ -282,10 +334,32 @@ public final class DemoStage {
                 }
             }
         }
-        // Step 13: the stairs.
+        // tinker: the stairs.
         w.fill(STAIRS_X - 1, 0, STAIRS_Z, STAIRS_X + 1, 0, STAIRS_Z, "minecraft:oak_stairs[facing=south]");
-        // Step 18: the wall to bulldoze.
-        w.fill(BULLDOZE_X0, 0, BULLDOZE_Z, BULLDOZE_X1, BULLDOZE_TOP, BULLDOZE_Z, "minecraft:cobblestone");
+        // Replace: the porch.
+        w.fill(PORCH_X0, 0, PORCH_Z0, PORCH_X1, 0, PORCH_Z1, "minecraft:oak_planks");
+        w.fill(PORCH_X0 + 2, 0, PORCH_Z1 + 1, PORCH_X1 - 2, 0, PORCH_Z1 + 1, "minecraft:oak_stairs[facing=north]");
+        for (int x : new int[] {PORCH_X0, PORCH_X1}) {
+            for (int z : new int[] {PORCH_Z0, PORCH_Z1}) {
+                w.fill(x, 1, z, x, PORCH_ROOF - 1, z, "minecraft:oak_fence");
+            }
+        }
+        w.fill(PORCH_X0, PORCH_ROOF, PORCH_Z0, PORCH_X1, PORCH_ROOF, PORCH_Z1, "minecraft:oak_slab[type=bottom]");
+        // Overlay and Naturalize: the stone hill.
+        for (int dx = HILL_X - HILL_RADIUS; dx <= HILL_X + HILL_RADIUS; dx++) {
+            for (int dz = HILL_Z - HILL_RADIUS; dz <= HILL_Z + HILL_RADIUS; dz++) {
+                int top = hillTop(dx, dz);
+                if (top >= 0) {
+                    w.fill(dx, 0, dz, dx, top, dz, "minecraft:stone");
+                }
+            }
+        }
+        // The mask: the gravel path.
+        w.fill(PATH_X0, -1, PATH_Z - 1, PATH_X1, -1, PATH_Z + 1, "minecraft:gravel");
+        // The hanging line: its posts.
+        for (int x : new int[] {LINE_POST_X0, LINE_POST_X1}) {
+            w.fill(x, 0, LINE_POST_Z, x, LINE_POST_TOP, LINE_POST_Z, "minecraft:stone_bricks");
+        }
     }
 
     private void placeArmorStand(ServerWorld world) {

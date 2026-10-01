@@ -7,7 +7,9 @@ import dev.sculptory.fabric.client.editor.ExitReason;
 import dev.sculptory.fabric.client.editor.check.CheckDriver;
 import dev.sculptory.fabric.client.editor.hud.EditorUi;
 import dev.sculptory.fabric.client.session.SessionState;
+import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -16,12 +18,14 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.minecraft.SharedConstants;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.GameMenuScreen;
@@ -41,7 +45,8 @@ import org.lwjgl.glfw.GLFW;
  * The dev-only scripted demo: once the world is joined and the editor is ready, it builds the
  * {@link DemoStage}, puts the player over it and shows "Press Enter when recording"; on Enter it plays
  * {@link DemoScript#steps()} through the real client on its own thread, captions on the {@link CaptionOverlay}, and
- * writes {@code <dir>/report.txt} (one line per step). The client stays open afterwards. Installed only when
+ * writes {@code <dir>/report.txt} (one line per step) and, at the end, {@code <dir>/chapters.txt} (the video's chapter
+ * list, {@link DemoChapters}). The client stays open afterwards. Installed only when
  * {@code -Dsculptory.demo=<dir>} is set ({@link DemoConfig}); {@code scripts/playtest.ps1 -Demo} runs it.
  */
 public final class PlayDemo {
@@ -56,6 +61,8 @@ public final class PlayDemo {
     /** The caption's bottom edge above the hotbar, outside the editor (GUI pixels). */
     private static final int ABOVE_HOTBAR = 48;
     private static final int ABOVE_UI = 6;
+    /** How long a chapter's title shows as the chapter starts, with captions on. */
+    private static final long CHAPTER_TITLE_MS = 1_500;
 
     private enum Phase { WAITING, READY, RUNNING, DONE }
 
@@ -282,6 +289,12 @@ public final class PlayDemo {
             return DemoStage.build(server, client.player.getUuid());
         });
         SculptoryMod.LOG.info("Demo: {} built in {} ms", stage, System.currentTimeMillis() - started);
+        try {
+            DemoLibrary.seed(ServerClipboards.defaultLibraryRoot(),
+                    SharedConstants.getGameVersion().getSaveVersion().getId());
+        } catch (IOException e) {
+            throw new UncheckedIOException("Demo: cannot write the starter library", e);
+        }
         driver.clearClientWeather();
         driver.onClient(() -> {
             if (client.player != null) {
@@ -295,6 +308,8 @@ public final class PlayDemo {
     private final class Host implements DemoRunner.Host<Demo> {
         private final Demo demo;
         private final CheckDriver driver;
+        private final List<DemoChapter<Demo>> chapters = DemoScript.chapters();
+        private final Map<String, DemoChapter<Demo>> chapterOf = DemoChapters.byStep(chapters);
 
         Host(Demo demo, CheckDriver driver) {
             this.demo = demo;
@@ -335,6 +350,13 @@ public final class PlayDemo {
                 }
                 demo.tidyEditor();
             }
+            DemoChapter<Demo> chapter = chapterOf.get(step.id());
+            if (demo.pacing().showsCaptions() && chapter != null && chapter != chapters.get(0)
+                    && chapter.steps().get(0).id().equals(step.id())) {
+                // With captions, a chapter's title for a moment as it starts (the first one has the title card).
+                demo.note(chapter.titleKey());
+                demo.pause(CHAPTER_TITLE_MS);
+            }
         }
 
         @Override
@@ -359,8 +381,31 @@ public final class PlayDemo {
         @Override
         public void report(List<DemoRunner.Result> results, boolean done) {
             writeReport(results, done, "");
+            if (done) {
+                writeChapters(results);
+            }
             if (!done && !results.isEmpty()) {
                 picture(results.get(results.size() - 1));
+            }
+        }
+
+        /** The video's chapter list, ready for the description; none when no step played. */
+        private void writeChapters(List<DemoRunner.Result> results) {
+            List<String> lines = DemoChapters.lines(chapters, results, driver::translate);
+            if (lines.isEmpty()) {
+                return;
+            }
+            List<String> file = new ArrayList<>();
+            file.add("# Times from the Enter press: trim the recording to start where \"Press Enter\" goes.");
+            file.add("# Paste the lines below into the video's description.");
+            if (lines.size() < 3) {
+                file.add("# YouTube shows chapters only from three on: this run has " + lines.size() + ".");
+            }
+            file.addAll(lines);
+            try {
+                Files.write(config.dir().resolve(DemoChapters.FILE), file, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                SculptoryMod.LOG.warn("Demo: cannot write the chapters", e);
             }
         }
 

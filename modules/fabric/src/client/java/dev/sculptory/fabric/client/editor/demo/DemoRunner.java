@@ -13,10 +13,21 @@ import java.util.Objects;
 public final class DemoRunner<C> {
     public enum Status { OK, FAILED, SKIPPED }
 
-    /** How one step went: its number (from 1), id, status, how long it took and why it failed or was skipped. */
-    public record Result(int number, String id, Status status, long millis, String detail) {
+    /**
+     * How one step went: its number (from 1), id, status, when it started (ms after Enter; {@link #NOT_STARTED} for a
+     * step that never did), how long it took and why it failed or was skipped.
+     */
+    public record Result(int number, String id, Status status, long offsetMs, long millis, String detail) {
+        public static final long NOT_STARTED = -1;
+
+        /** Whether the step played on screen (OK or FAILED), so it is in the recording. */
+        public boolean played() {
+            return offsetMs >= 0 && status != Status.SKIPPED;
+        }
+
         public String line() {
-            return String.format(java.util.Locale.ROOT, "%-7s %2d %-14s %5.1f s%s", status, number, id, millis / 1000.0,
+            return String.format(java.util.Locale.ROOT, "%-7s %2d %-14s %5.1f s%s%s", status, number, id,
+                    millis / 1000.0, offsetMs >= 0 ? "  at " + DemoChapters.clock(offsetMs) : "",
                     detail.isEmpty() ? "" : " -- " + detail);
         }
     }
@@ -88,22 +99,26 @@ public final class DemoRunner<C> {
         int start = startIndex(steps, from);
         List<Result> results = new ArrayList<>();
         for (int i = 0; i < start; i++) {
-            results.add(new Result(i + 1, steps.get(i).id(), Status.SKIPPED, 0, "before the start step"));
+            results.add(new Result(i + 1, steps.get(i).id(), Status.SKIPPED, Result.NOT_STARTED, 0,
+                    "before the start step"));
         }
         if (!host.awaitEnter()) {
             for (int i = start; i < steps.size(); i++) {
-                results.add(new Result(i + 1, steps.get(i).id(), Status.SKIPPED, 0, "the demo was not started"));
+                results.add(new Result(i + 1, steps.get(i).id(), Status.SKIPPED, Result.NOT_STARTED, 0,
+                        "the demo was not started"));
             }
             host.finish();
             host.report(results, true);
             return List.copyOf(results);
         }
         host.started();
+        long enter = host.nowMs();
         boolean stopped = false;
         for (int i = start; i < steps.size(); i++) {
             DemoStep<C> step = steps.get(i);
             if (stopped || Thread.currentThread().isInterrupted()) {
-                results.add(new Result(i + 1, step.id(), Status.SKIPPED, 0, "the demo was stopped"));
+                results.add(new Result(i + 1, step.id(), Status.SKIPPED, Result.NOT_STARTED, 0,
+                        "the demo was stopped"));
                 continue;
             }
             long started = host.nowMs();
@@ -111,15 +126,17 @@ public final class DemoRunner<C> {
             try {
                 host.prepare(step);
                 step.body().run(host.context());
-                results.add(new Result(i + 1, step.id(), Status.OK, host.nowMs() - started, ""));
+                results.add(new Result(i + 1, step.id(), Status.OK, started - enter, host.nowMs() - started, ""));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 stopped = true;
-                results.add(new Result(i + 1, step.id(), Status.SKIPPED, host.nowMs() - started, "interrupted"));
+                results.add(new Result(i + 1, step.id(), Status.SKIPPED, started - enter,
+                        host.nowMs() - started, "interrupted"));
             } catch (Exception | Error e) {
                 String why = describe(e);
                 host.log("Demo step " + (i + 1) + " " + step.id() + " failed: " + why, e);
-                results.add(new Result(i + 1, step.id(), Status.FAILED, host.nowMs() - started, why));
+                results.add(new Result(i + 1, step.id(), Status.FAILED, started - enter, host.nowMs() - started,
+                        why));
                 if (Thread.currentThread().isInterrupted()) {
                     stopped = true;
                 }

@@ -20,18 +20,42 @@ class DemoScriptTest {
     Path dir;
 
     @Test
-    void theScriptHasTheNineteenStepsInOrderWithDistinctIds() {
+    void theScriptHasTwentyStepsInOrderWithDistinctIds() {
         List<DemoStep<Demo>> steps = DemoScript.steps();
-        assertEquals(List.of("title", "screen", "select", "brushes", "paint", "shape", "symmetry", "paste", "generate",
-                "extrude", "fluid", "scatter", "tinker", "library", "history", "tutorial", "wiki", "builder", "closing"),
-                steps.stream().map(DemoStep::id).toList());
+        assertEquals(List.of("title", "builder", "screen", "tutorial", "wiki", "history", "paste", "library", "brushes",
+                "fluid", "select", "overlay", "shape", "symmetry", "generate", "extrude", "paint", "scatter", "tinker",
+                "closing"), steps.stream().map(DemoStep::id).toList());
         assertEquals(steps.size(), new HashSet<>(steps.stream().map(DemoStep::id).toList()).size());
-        // The first opens the editor itself, the last closes it; builder mode closes and reopens it inside its step.
-        assertFalse(steps.get(0).startsInEditor());
-        assertFalse(steps.get(steps.size() - 1).startsInEditor());
-        assertTrue(steps.get(1).startsInEditor());
-        assertEquals(7, DemoRunner.startIndex(steps, "paste"));
-        assertEquals(7, DemoRunner.startIndex(steps, "8"));
+        // Builder mode comes first, before the editor was ever opened, and opens it at its end; the closing step
+        // opens and closes it itself. Every other step starts in the editor.
+        List<String> outside = steps.stream().filter(step -> !step.startsInEditor()).map(DemoStep::id).toList();
+        assertEquals(List.of("title", "builder", "closing"), outside);
+        assertEquals(6, DemoRunner.startIndex(steps, "paste"));
+        assertEquals(6, DemoRunner.startIndex(steps, "7"));
+    }
+
+    @Test
+    void theStepsAreSevenChaptersEachStepInExactlyOne() {
+        List<DemoChapter<Demo>> chapters = DemoScript.chapters();
+        assertEquals(List.of("builder", "learning", "library", "land", "building", "detailing", "closing"),
+                chapters.stream().map(DemoChapter::id).toList());
+        assertEquals(DemoScript.steps().stream().map(DemoStep::id).toList(),
+                chapters.stream().flatMap(chapter -> chapter.steps().stream()).map(DemoStep::id).toList());
+        assertEquals(List.of("title", "builder"), ids(chapters.get(0)));
+        assertEquals(List.of("screen", "tutorial", "wiki"), ids(chapters.get(1)));
+        assertEquals(List.of("history", "paste", "library"), ids(chapters.get(2)));
+        Set<String> titles = new HashSet<>();
+        for (DemoChapter<Demo> chapter : chapters) {
+            assertEquals(DemoCaptions.PREFIX + "chapter." + chapter.id(), chapter.titleKey());
+            assertTrue(English.INSTANCE.has(chapter.titleKey()), chapter.titleKey());
+            assertTrue(titles.add(English.INSTANCE.translate(chapter.titleKey())), chapter.id());
+        }
+        assertEquals("Builder mode", English.INSTANCE.translate(chapters.get(0).titleKey()));
+        assertEquals(DemoScript.steps().size(), DemoChapters.byStep(chapters).size());
+    }
+
+    private static List<String> ids(DemoChapter<Demo> chapter) {
+        return chapter.steps().stream().map(DemoStep::id).toList();
     }
 
     @Test

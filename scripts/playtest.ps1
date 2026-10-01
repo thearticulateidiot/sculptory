@@ -33,9 +33,10 @@
 #   scripts/playtest.ps1 -Demo                # the scripted demonstration for a screen recording: a fresh copy of the tour world ("BS Demo <time>"), the client
 #                                             #   at its default window size (maximise it, or -DemoMaximize), then
 #                                             #   "Press Enter when recording"; Enter plays the demo with captions and
-#                                             #   leaves the client open. report.txt (one line per step) goes to
-#                                             #   <main checkout>\.local\demo\<yyyyMMdd-HHmmss> (or -DemoDir <dir>) and
-#                                             #   is printed once the client is closed.
+#                                             #   leaves the client open. report.txt (one line per step) and
+#                                             #   chapters.txt (YouTube chapter times, counted from Enter) go to
+#                                             #   <main checkout>\.local\demo\<yyyyMMdd-HHmmss> (or -DemoDir <dir>);
+#                                             #   the report is printed once the client is closed.
 #   scripts/playtest.ps1 -Demo -DemoFrom 8    # a retake from step 8 (a number or a step id such as "paste")
 #   scripts/playtest.ps1 -Demo -DemoAutoStart 10  # starts 10 s after "Press Enter" shows, Enter or not (unattended)
 #   scripts/playtest.ps1 -Demo -NoCaptions    # no caption bar, title or closing card after Enter (a voice-over take);
@@ -299,6 +300,11 @@ if ($Tour) {
     $demoWorld = 'BS Demo ' + (Get-Date -Format 'yyyyMMdd-HHmmss')
     Write-Host "Creating world '$demoWorld' from $template"
     Copy-WorldReadOnly $template (Join-Path $saves $demoWorld)
+    # The video's History starts empty: the copy (new, nothing has it open) drops the template's saved edit history.
+    foreach ($folder in @('sculptory', 'buildersuite')) {
+        $history = Join-Path (Join-Path (Join-Path $saves $demoWorld) $folder) 'history'
+        if (Test-Path -LiteralPath $history) { Remove-Item -LiteralPath $history -Recurse -Force }
+    }
     $gradleArgs += "-PbsWorld=$demoWorld"
     # A new game directory gets the main checkout's game options: no tutorial, no onboarding.
     $options = Join-Path $clientDir 'options.txt'

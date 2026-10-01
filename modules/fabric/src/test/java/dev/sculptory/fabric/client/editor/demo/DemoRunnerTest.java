@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 
-/** The demo's sequencing: the Enter gate, the start step, a failed step, the closing state and the report. */
+/** The demo's sequencing: the Enter gate, the start step, a failed step, the closing state, the report and when each step started. */
 class DemoRunnerTest {
     /** Records what the runner asks of the game; the context is the list of events. */
     private static final class FakeHost implements DemoRunner.Host<List<String>> {
@@ -105,6 +105,24 @@ class DemoRunnerTest {
         assertFalse(host.events.contains("started: prompt gone"));
         assertTrue(results.stream().allMatch(r -> r.status() == DemoRunner.Status.SKIPPED));
         assertEquals("the demo was not started", results.get(0).detail());
+        assertTrue(results.stream().allMatch(r -> r.offsetMs() == DemoRunner.Result.NOT_STARTED && !r.played()));
+        assertTrue(results.stream().noneMatch(r -> r.line().contains(" at ")), results.get(0).line());
+    }
+
+    @Test
+    void eachStepRecordsWhenItStartedCountingFromTheEnterPress() {
+        // The fake clock moves a second per call: Enter reads 1 s, then each step reads its start and its end.
+        FakeHost host = new FakeHost();
+        List<DemoRunner.Result> results = new DemoRunner<>(steps(), host).run("");
+        assertEquals(List.of(1_000L, 3_000L, 5_000L, 7_000L),
+                results.stream().map(DemoRunner.Result::offsetMs).toList());
+        assertEquals(List.of(1_000L, 1_000L, 1_000L, 1_000L),
+                results.stream().map(DemoRunner.Result::millis).toList());
+        // A failed step played too: it is in the recording.
+        assertTrue(results.stream().allMatch(DemoRunner.Result::played));
+        assertTrue(results.get(0).line().contains(" at 0:01"), results.get(0).line());
+        assertTrue(results.get(2).line().contains(" at 0:05"), results.get(2).line());
+        assertTrue(results.get(3).line().contains(" at 0:07"), results.get(3).line());
     }
 
     @Test
@@ -115,6 +133,16 @@ class DemoRunnerTest {
         assertEquals("before the start step", results.get(0).detail());
         assertFalse(byNumber.events.contains("run title"));
         assertTrue(byNumber.events.contains("run broken"));
+        // The skipped steps never started; the first played step starts a second after Enter.
+        assertEquals(DemoRunner.Result.NOT_STARTED, results.get(0).offsetMs());
+        assertEquals(DemoRunner.Result.NOT_STARTED, results.get(1).offsetMs());
+        assertFalse(results.get(0).played());
+        assertFalse(results.get(1).played());
+        assertFalse(results.get(1).line().contains(" at "), results.get(1).line());
+        assertEquals(1_000, results.get(2).offsetMs());
+        assertEquals(3_000, results.get(3).offsetMs());
+        assertTrue(results.get(2).played());
+        assertTrue(results.get(2).line().contains(" at 0:01"), results.get(2).line());
 
         FakeHost byId = new FakeHost();
         new DemoRunner<>(steps(), byId).run("closing");
@@ -155,6 +183,12 @@ class DemoRunnerTest {
         assertEquals(List.of("OK", "SKIPPED", "SKIPPED"), results.stream().map(r -> r.status().name()).toList());
         assertEquals("interrupted", results.get(1).detail());
         assertEquals("the demo was stopped", results.get(2).detail());
+        // The interrupted step started (at 3 s) but is not counted as played; the one after never started.
+        assertEquals(3_000, results.get(1).offsetMs());
+        assertFalse(results.get(1).played());
+        assertEquals(DemoRunner.Result.NOT_STARTED, results.get(2).offsetMs());
+        assertFalse(results.get(2).played());
+        assertFalse(results.get(2).line().contains(" at "), results.get(2).line());
         assertFalse(host.events.contains("run last"));
         assertTrue(host.finished);
     }
