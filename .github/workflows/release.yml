@@ -1,0 +1,192 @@
+# Release workflow for tags v<mod_version>, e.g. v0.3.0-alpha:
+#   1. build:      the full check, then the release jar (sculptory-<version>.jar, no commit suffix);
+#   2. github:     a GitHub Release (a pre-release for versions with a "-") with the jar and the CHANGELOG.md entry;
+#   3. modrinth,   uploads to Modrinth and CurseForge, each only when its token secret (MODRINTH_TOKEN,
+#      curseforge: CURSEFORGE_TOKEN) and its project id variable (MODRINTH_PROJECT_ID, CURSEFORGE_PROJECT_ID) are set.
+# The build job sees no secret and no write token. Actions are pinned to full commit SHAs; the comment names the release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          cache-read-only: true
+
+      - name: Version from the tag
+        id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          declared="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          if [ "$version" != "$declared" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match mod_version=$declared in gradle.properties"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Gradle makes a release build for a v* tag in GitHub Actions; -Prelease says so explicitly.
+      - name: Check
+        run: ./gradlew check -Prelease --stacktrace
+
+      - name: Release jar
+        run: ./gradlew :fabric:remapJar -Prelease --stacktrace
+
+      - name: Collect the jar and the release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir dist
+          jar="modules/fabric/build/libs/sculptory-$VERSION.jar"
+          if [ ! -f "$jar" ]; then
+            echo "::error::$jar was not built"
+            ls -l modules/fabric/build/libs
+            exit 1
+          fi
+          cp "$jar" dist/
+          # The CHANGELOG.md section whose heading starts with "## <version>", up to the next "## " heading.
+          awk -v v="## $VERSION" 'index($0, v) == 1 { found = 1; next } found && /^## / { exit } found' CHANGELOG.md \
+            > dist/release-notes.md
+          if [ ! -s dist/release-notes.md ]; then
+            echo "::error::CHANGELOG.md has no section headed '## $VERSION'"
+            exit 1
+          fi
+          (cd dist && sha256sum "sculptory-$VERSION.jar" > "sculptory-$VERSION.jar.sha256")
+          ls -l dist
+
+      - name: Upload the release files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-reports
+          path: |
+            modules/*/build/reports/tests/
+            modules/*/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  github:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release
+          path: dist
+
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
+            --title "Sculptory $VERSION" --notes-file dist/release-notes.md \
+            "dist/sculptory-$VERSION.jar" "dist/sculptory-$VERSION.jar.sha256"
+
+  # Optional: runs only when the MODRINTH_TOKEN secret and the MODRINTH_PROJECT_ID variable exist.
+  modrinth:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+      MODRINTH_PROJECT_ID: ${{ vars.MODRINTH_PROJECT_ID }}
+    steps:
+      - name: Skip unless Modrinth is set up
+        if: env.MODRINTH_TOKEN == '' || env.MODRINTH_PROJECT_ID == ''
+        run: echo "::notice::Modrinth upload skipped (set the MODRINTH_TOKEN secret and the MODRINTH_PROJECT_ID variable)"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: env.MODRINTH_TOKEN != '' && env.MODRINTH_PROJECT_ID != ''
+        with:
+          name: release
+          path: dist
+
+      - name: Publish to Modrinth
+        if: env.MODRINTH_TOKEN != '' && env.MODRINTH_PROJECT_ID != ''
+        uses: Kir-Antipov/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
+        with:
+          modrinth-id: ${{ env.MODRINTH_PROJECT_ID }}
+          modrinth-token: ${{ env.MODRINTH_TOKEN }}
+          files: dist/sculptory-${{ needs.build.outputs.version }}.jar
+          name: Sculptory ${{ needs.build.outputs.version }}
+          version: ${{ needs.build.outputs.version }}
+          version-type: alpha
+          changelog-file: dist/release-notes.md
+          loaders: fabric
+          game-versions: 1.21.1
+          java: 21
+          dependencies: fabric-api(required)
+          fail-mode: fail
+
+  # Optional: runs only when the CURSEFORGE_TOKEN secret and the CURSEFORGE_PROJECT_ID variable exist.
+  curseforge:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+      CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+    steps:
+      - name: Skip unless CurseForge is set up
+        if: env.CURSEFORGE_TOKEN == '' || env.CURSEFORGE_PROJECT_ID == ''
+        run: echo "::notice::CurseForge upload skipped (set the CURSEFORGE_TOKEN secret and the CURSEFORGE_PROJECT_ID variable)"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: env.CURSEFORGE_TOKEN != '' && env.CURSEFORGE_PROJECT_ID != ''
+        with:
+          name: release
+          path: dist
+
+      - name: Publish to CurseForge
+        if: env.CURSEFORGE_TOKEN != '' && env.CURSEFORGE_PROJECT_ID != ''
+        uses: Kir-Antipov/mc-publish@52307b03863581dec6b652b83e597aec02ebb075 # v3.3.1
+        with:
+          curseforge-id: ${{ env.CURSEFORGE_PROJECT_ID }}
+          curseforge-token: ${{ env.CURSEFORGE_TOKEN }}
+          files: dist/sculptory-${{ needs.build.outputs.version }}.jar
+          name: Sculptory ${{ needs.build.outputs.version }}
+          version: ${{ needs.build.outputs.version }}
+          version-type: alpha
+          changelog-file: dist/release-notes.md
+          loaders: fabric
+          game-versions: 1.21.1
+          java: 21
+          dependencies: fabric-api(required)
+          fail-mode: fail

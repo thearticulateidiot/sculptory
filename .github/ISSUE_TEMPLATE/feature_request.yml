@@ -1,0 +1,34 @@
+name: Feature request
+description: An idea for a new tool, setting or improvement.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [FAQ](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/faq.md) and existing issues first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: The building task you're trying to get done, and what makes it hard today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could Sculptory help?
+      description: What you'd click or press, and what should happen. Mention how other editors (Axiom, WorldEdit, ...) do it, if you know.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where would you use it?
+      options:
+        - Singleplayer
+        - On a server
+        - Both
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else

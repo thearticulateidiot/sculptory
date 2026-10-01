@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "sculptory",
+  "version": "${version}",
+  "name": "Sculptory",
+  "description": "An open-source world editor for builders: an editor mode with terrain and shape brushes, selections, masks, copy and paste, schematics, scatter and undo, in singleplayer and on servers.",
+  "authors": ["Sculptory contributors"],
+  "contact": {
+    "homepage": "https://github.com/thearticulateidiot/sculptory",
+    "sources": "https://github.com/thearticulateidiot/sculptory",
+    "issues": "https://github.com/thearticulateidiot/sculptory/issues"
+  },
+  "license": "AGPL-3.0-or-later",
+  "icon": "assets/sculptory/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.sculptory.fabric.SculptoryMod"],
+    "client": ["dev.sculptory.fabric.client.SculptoryClientMod"]
+  },
+  "mixins": [
+    "sculptory.mixins.json",
+    { "config": "sculptory.client.mixins.json", "environment": "client" }
+  ],
+  "accessWidener": "sculptory.accesswidener",
+  "depends": {
+    "fabricloader": ">=0.16.14",
+    "minecraft": "1.21.1",
+    "java": ">=21",
+    "fabric-api": ">=0.116.4+1.21.1"
+  },
+  "breaks": {
+    "buildersuite": "*",
+    "buildersuite_client": "*",
+    "buildersuite_server_fabric": "*",
+    "buildersuite_fabric_transport": "*"
+  }
+}

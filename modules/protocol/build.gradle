@@ -1,0 +1,7 @@
+// Protocol v2 messages and codecs; platform-neutral.
+dependencies {
+    api project(':core')
+    compileOnly "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+    testImplementation "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+    testImplementation testFixtures(project(':core'))
+}

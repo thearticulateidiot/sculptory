@@ -1,0 +1,78 @@
+name: Bug report
+description: Something in Sculptory doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check the [known limits](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/faq.md#known-limits)
+        and [troubleshooting](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/troubleshooting.md) first.
+        Security problems go to a private advisory instead (see SECURITY.md).
+  - type: input
+    id: sculptory
+    attributes:
+      label: Sculptory version
+      description: The build id from `/sculptory version` or the jar's name, e.g. `0.3.0-alpha`. On a server, the server's and your client's.
+      placeholder: 0.3.0-alpha
+    validations:
+      required: true
+  - type: input
+    id: minecraft
+    attributes:
+      label: Minecraft version
+      placeholder: "1.21.1"
+    validations:
+      required: true
+  - type: input
+    id: fabric
+    attributes:
+      label: Fabric Loader and Fabric API versions
+      placeholder: "Loader 0.16.14, Fabric API 0.116.4+1.21.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      options:
+        - Singleplayer
+        - LAN (Open to LAN)
+        - Dedicated server
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: mods
+    attributes:
+      label: Other mods
+      description: The other mods installed (on the client, and on the server if there is one), or "none". A permissions mod such as LuckPerms matters too.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, step by step, with the tool and its settings.
+      placeholder: |
+        1. Open the editor (B) and pick the Select tool
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `logs/latest.log` from the game (and the server's, if there is one), or a crash report from `crash-reports/`.
+        Upload the file or paste a link (e.g. mclo.gs); please don't paste a whole log inline.
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, a schematic that shows it, how often it happens.

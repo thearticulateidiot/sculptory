@@ -1,0 +1,77 @@
+plugins {
+    id 'fabric-loom' version '1.10.5' apply false
+}
+
+// The build id. A dev build's id is mod_version plus the commit the build was
+// made from, e.g. 0.3.0-alpha+6a043a85, with ".dirty" when the checkout had uncommitted changes (new files that git
+// doesn't ignore included), and "+nogit" where git or the repository is missing (a copy of the source without .git).
+// A release build's id is mod_version alone (e.g. 0.3.0-alpha): built with -Prelease, or in GitHub Actions from a
+// v<mod_version> tag (CONTRIBUTING.md "Releases"). The id names the jar, is the version in the mod list, and client
+// and server compare it at the handshake.
+def git = { List<String> args ->
+    try {
+        def result = providers.exec {
+            commandLine(['git', '--no-optional-locks', '-C', rootDir.absolutePath] + args)
+            ignoreExitValue = true
+        }
+        return result.result.get().exitValue == 0 ? result.standardOutput.asText.get().trim() : null
+    } catch (Exception noGit) {
+        return null
+    }
+}
+def ciTag = providers.environmentVariable('GITHUB_REF_TYPE').getOrElse('') == 'tag'
+        ? providers.environmentVariable('GITHUB_REF_NAME').getOrElse('') : ''
+def release = providers.gradleProperty('release').map { it != 'false' }.getOrElse(false) || ciTag.startsWith('v')
+if (ciTag.startsWith('v') && ciTag != "v${mod_version}") {
+    throw new GradleException("The release tag ${ciTag} doesn't match mod_version ${mod_version} in gradle.properties; " +
+            "tag v${mod_version}, or change mod_version first")
+}
+if (release) {
+    ext.buildId = mod_version.toString()
+    def changes = git(['status', '--porcelain'])
+    if (changes) {
+        logger.warn("Release build ${mod_version} from a checkout with ${changes.readLines().size()} uncommitted " +
+                "changes (git status); the jar's version doesn't show them")
+    }
+} else {
+    def commit = git(['rev-parse', '--short=8', 'HEAD'])
+    def buildMetadata = commit == null || commit.isEmpty() ? 'nogit'
+            : commit + (git(['status', '--porcelain']) ? '.dirty' : '')
+    ext.buildId = "${mod_version}+${buildMetadata}"
+}
+
+subprojects {
+    apply plugin: 'java-library'
+    group = rootProject.maven_group
+    version = rootProject.buildId
+
+    repositories {
+        mavenCentral()
+    }
+    java {
+        toolchain.languageVersion = JavaLanguageVersion.of(21)
+    }
+    tasks.withType(JavaCompile).configureEach {
+        options.release = 21
+        options.encoding = 'UTF-8'
+    }
+    tasks.withType(AbstractArchiveTask).configureEach {
+        preserveFileTimestamps = false
+        reproducibleFileOrder = true
+    }
+    dependencies {
+        testImplementation platform('org.junit:junit-bom:5.10.2')
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+        testLogging { events 'failed'; exceptionFormat 'full' }
+    }
+    tasks.named('jar') {
+        // Every jar (the mod and its nested core and protocol jars) carries the licence texts NOTICE.md names.
+        from(rootProject.file('LICENSE'))
+        from(rootProject.file('NOTICE.md'))
+        from(rootProject.file('LICENSES/CC-BY-SA-4.0.txt')) { into 'LICENSES' }
+    }
+}

@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+.venv/
+.local/
+generated/
+build/
+.gradle/
+*.log
+*.zip
+*.bundle
+.DS_Store
+Thumbs.db
+.env
+!.env.example
+
+# Local tool folders
+.claude/worktrees/
+
+# Test/runtime logs written into module dirs
+modules/*/logs/
+
+# Local working notes, kept out of the repository
+/CLAUDE.md
+/STATUS.md
+
+# Original art (full-size logos and their sources), kept out of the repository
+/assets/
+/archive/

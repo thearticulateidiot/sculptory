@@ -1,0 +1,13 @@
+accessWidener v2 named
+# Brush prediction runs inside vanilla's pending-update sequence.
+accessible method net/minecraft/client/world/ClientWorld getPendingUpdateManager ()Lnet/minecraft/client/network/PendingUpdateManager;
+# Section captures read the palette and packed indices directly (FabricWorldReader.copySection; the record's
+# storage() and palette() accessors are public once the class is).
+accessible class net/minecraft/world/chunk/PalettedContainer$Data
+accessible field net/minecraft/world/chunk/PalettedContainer data Lnet/minecraft/world/chunk/PalettedContainer$Data;
+# Resent chunk columns refresh the client's pending predictions inside them (client ResentChunks).
+accessible field net/minecraft/client/network/PendingUpdateManager blockPosToPendingUpdate Lit/unimi/dsi/fastutil/longs/Long2ObjectOpenHashMap;
+# /sculptory cancel under "execute as <player>": who issued the command (SculptoryCommands.cancel).
+accessible field net/minecraft/server/command/ServerCommandSource output Lnet/minecraft/server/command/CommandOutput;
+# Scatter column plants: an upward-growing two-part plant (kelp, twisting vines) grows as a column (FabricStateSpace).
+accessible field net/minecraft/block/AbstractPlantPartBlock growthDirection Lnet/minecraft/util/math/Direction;

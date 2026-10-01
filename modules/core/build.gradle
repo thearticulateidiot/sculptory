@@ -1,0 +1,10 @@
+// Platform-neutral engine: no Minecraft imports.
+plugins { id 'java-test-fixtures' }
+
+dependencies {
+    // Minecraft ships fastutil at runtime; don't bundle it.
+    compileOnly "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+    testFixturesCompileOnly "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+    testImplementation "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+    testFixturesApi "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+}

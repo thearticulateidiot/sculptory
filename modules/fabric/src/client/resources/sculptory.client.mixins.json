@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.sculptory.fabric.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientWorldMixin",
+    "InGameHudAccessor",
+    "InGameHudMixin",
+    "MouseAccessor",
+    "MouseScrollMixin"
+  ],
+  "injectors": { "defaultRequire": 1 }
+}

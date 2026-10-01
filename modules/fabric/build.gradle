@@ -1,0 +1,392 @@
+// The single Sculptory mod: common/server in src/main, client-only in src/client.
+import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
+
+apply plugin: 'fabric-loom'
+
+base { archivesName = 'sculptory' }
+
+loom {
+    splitEnvironmentSourceSets()
+    mods {
+        sculptory {
+            sourceSet sourceSets.main
+            sourceSet sourceSets.client
+        }
+    }
+    accessWidenerPath = file('src/main/resources/sculptory.accesswidener')
+    runs {
+        client {
+            // -PbsRunDir=<dir relative to modules/fabric>: a second client's own game directory (the two-client play check).
+            runDir((project.findProperty('bsRunDir') ?: '../../.local/run/client').toString())
+            // Fixed offline name so test-server ops/permissions are predictable; -PbsUser=<name> for a second player.
+            programArgs '--username', (project.findProperty('bsUser') ?: 'BuilderDev').toString()
+            if (project.hasProperty('bsWorld')) programArgs '--quickPlaySingleplayer', project.property('bsWorld').toString()
+            if (project.hasProperty('bsServer')) programArgs '--quickPlayMultiplayer', project.property('bsServer').toString()
+            // -PbsSize=<width>x<height>: the game window's size (the screenshot tour uses 1600x900).
+            if (project.hasProperty('bsSize')) {
+                def size = project.property('bsSize').toString().split('x')
+                if (size.length != 2 || !size.every { it.isInteger() }) {
+                    throw new GradleException("-PbsSize wants <width>x<height>, e.g. 1600x900")
+                }
+                programArgs '--width', size[0], '--height', size[1]
+            }
+            // -PbsTour=<absolute dir>: the dev-only screenshot tour (scripts/playtest.ps1 -Tour).
+            if (project.hasProperty('bsTour')) property 'sculptory.tour', project.property('bsTour').toString()
+            // The tour's base UI size (percent) and window layout file, and whether it maximises the window.
+            if (project.hasProperty('bsTourUiSize')) property 'sculptory.tour.uiSize', project.property('bsTourUiSize').toString()
+            if (project.hasProperty('bsTourLayout')) property 'sculptory.tour.layout', project.property('bsTourLayout').toString()
+            if (project.hasProperty('bsTourMaximize')) property 'sculptory.tour.maximize', 'true'
+            // -PbsTourWiki=<absolute dir>: the tour's wiki mode writes the wiki pictures there (scripts/playtest.ps1 -Tour -Wiki).
+            if (project.hasProperty('bsTourWiki')) property 'sculptory.tour.wiki', project.property('bsTourWiki').toString()
+            // -PbsCheck=<absolute dir>: the dev-only play check (scripts/playtest.ps1 -Check), with
+            // its role (solo, a, b), suite (full, visual), scenario name prefixes and the renderer's name for the report.
+            if (project.hasProperty('bsCheck')) property 'sculptory.check', project.property('bsCheck').toString()
+            if (project.hasProperty('bsCheckRole')) property 'sculptory.check.role', project.property('bsCheckRole').toString()
+            if (project.hasProperty('bsCheckSuite')) property 'sculptory.check.suite', project.property('bsCheckSuite').toString()
+            if (project.hasProperty('bsCheckOnly')) property 'sculptory.check.only', project.property('bsCheckOnly').toString()
+            if (project.hasProperty('bsCheckLabel')) property 'sculptory.check.label', project.property('bsCheckLabel').toString()
+            // -PbsDemo=<absolute dir>: the dev-only scripted demo (scripts/playtest.ps1 -Demo), with the
+            // step to start at (a number or id) and whether to maximise the window.
+            if (project.hasProperty('bsDemo')) property 'sculptory.demo', project.property('bsDemo').toString()
+            if (project.hasProperty('bsDemoFrom')) property 'sculptory.demo.from', project.property('bsDemoFrom').toString()
+            if (project.hasProperty('bsDemoMaximize')) property 'sculptory.demo.maximize', 'true'
+            if (project.hasProperty('bsDemoAutoStart')) property 'sculptory.demo.autoStart', project.property('bsDemoAutoStart').toString()
+            if (project.hasProperty('bsDemoNoCaptions')) property 'sculptory.demo.captions', 'false'
+        }
+        server {
+            runDir '../../.local/run/server'
+        }
+    }
+}
+
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = 'sculptory-gametest'
+        enableGameTests = true
+        enableClientGameTests = false
+        eula = true
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
+    mappings "net.fabricmc:yarn:${rootProject.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${rootProject.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_version}"
+
+    implementation project(':core')
+    include project(':core')
+    implementation project(':protocol')
+    include project(':protocol')
+
+    modImplementation "me.lucko:fabric-permissions-api:${rootProject.permissions_api_version}"
+    include "me.lucko:fabric-permissions-api:${rootProject.permissions_api_version}"
+
+    testImplementation "net.fabricmc:fabric-loader-junit:${rootProject.loader_version}"
+    testImplementation testFixtures(project(':core'))
+}
+
+// JUnit tests may exercise pure client-side classes (UI layout, input routing, math).
+sourceSets {
+    test {
+        compileClasspath += sourceSets.client.output + sourceSets.client.compileClasspath
+        runtimeClasspath += sourceSets.client.output + sourceSets.client.runtimeClasspath
+    }
+}
+
+// The dev-only client harnesses (the screenshot tour, the play check, the scripted demo, and
+// the unregistered UI toolkit preview) run from the source sets (runClient, scripts/playtest.ps1) and never from the
+// jar, so the jar leaves them out. SculptoryClientMod starts them only when their class is there
+// (DevHarnessClassesTest checks that nothing else refers to them). Their sources stay in the sources jar.
+def devHarnessPackages = ['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/fabric/client/editor/${it}/**".toString() }
+tasks.named('jar') { exclude devHarnessPackages }
+
+// DedicatedServerClassesTest scans the common/server output (what a dedicated server loads) for client-only references;
+// DevHarnessClassesTest scans the client output for references to the dev harnesses the jar leaves out (above).
+tasks.named('test') {
+    systemProperty 'sculptory.mainClassDirs', sourceSets.main.output.classesDirs.asPath
+    systemProperty 'sculptory.mainResourceDir', sourceSets.main.output.resourcesDir.absolutePath
+    systemProperty 'sculptory.clientClassDirs', sourceSets.client.output.classesDirs.asPath
+    systemProperty 'sculptory.devHarnessPackages', devHarnessPackages.join(',')
+}
+
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand version: project.version }
+}
+
+// The jar is named after the build id (root build.gradle), so a new build leaves the older builds' jars behind: they
+// are removed from build/libs when the new jar is written, and only the current build is there to pick up.
+tasks.named('remapJar') {
+    def libs = layout.buildDirectory.dir('libs')
+    def keep = ["sculptory-${project.version}.jar".toString(), "sculptory-${project.version}-sources.jar".toString()]
+    doFirst {
+        libs.get().asFile.listFiles()?.each { file ->
+            if (file.name.startsWith('sculptory-') && file.name.endsWith('.jar') && !keep.contains(file.name)) {
+                file.delete()
+            }
+        }
+    }
+}
+
+// The wiki (docs/wiki: pages and their pictures) goes into the mod for the in-game reader, which reads
+// sculptory:wiki/<page>.md and wiki/images/*.png.
+tasks.named('processClientResources') {
+    from(rootProject.file('docs/wiki')) {
+        include '*.md', 'images/*.png'
+        into 'assets/sculptory/wiki'
+    }
+}
+
+// Game tests run headless on a throwaway server; make them part of `check`.
+tasks.named('check') { dependsOn tasks.named('runGameTest') }
+
+// Every GameTest run starts from a fresh world. Tests work in regions thousands of blocks away
+// at random offsets, so a world kept between runs only grows; at ~18,000 region files its chunk I/O made a timing test
+// fail. The old world is moved aside and deleted before the run, unless a process still holds it (a GameTest server
+// that is running: its session.lock is locked, or the folder can't be moved); then the run stops and says so.
+// Nothing here follows a link. A symbolic link or a junction (a Windows reparse point: `isOther` when read without
+// following links) where the world or a leftover belongs is refused; inside a world one is removed as the link itself,
+// never descended into, so nothing outside the run folder can be deleted.
+def isLinkOrJunction = { Path path ->
+    def attributes = Files.readAttributes(path, BasicFileAttributes, LinkOption.NOFOLLOW_LINKS)
+    attributes.isSymbolicLink() || attributes.isOther()
+}
+def refuseLink = { Path path ->
+    if (isLinkOrJunction(path)) {
+        throw new GradleException("${path} is a symbolic link or junction, not a GameTest world, so it is left alone. " +
+                "Remove it by hand, then run the tests again.")
+    }
+}
+// Deletes a folder tree without following links (Files.walkFileTree follows none unless asked; a junction still reads as
+// a directory, so preVisitDirectory removes it as a link and skips it). Returns the paths it could not delete.
+def deleteTree = { Path root ->
+    List<Path> failed = []
+    Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+        @Override
+        FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attributes) {
+            if (dir == root || !(attributes.isSymbolicLink() || attributes.isOther())) return FileVisitResult.CONTINUE
+            try {
+                Files.delete(dir)
+            } catch (IOException e) {
+                failed << dir
+            }
+            return FileVisitResult.SKIP_SUBTREE
+        }
+
+        @Override
+        FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+            try {
+                Files.delete(file)
+            } catch (IOException e) {
+                failed << file
+            }
+            return FileVisitResult.CONTINUE
+        }
+
+        @Override
+        FileVisitResult visitFileFailed(Path file, IOException e) {
+            failed << file
+            return FileVisitResult.CONTINUE
+        }
+
+        @Override
+        FileVisitResult postVisitDirectory(Path dir, IOException e) {
+            try {
+                Files.delete(dir)
+            } catch (IOException notEmpty) {
+                failed << dir
+            }
+            return FileVisitResult.CONTINUE
+        }
+    })
+    failed
+}
+def freshGameTestWorld = { File runDir ->
+    Path run = runDir.toPath()
+    Path world = run.resolve('world')
+    // Leftovers of earlier runs whose deletion was cut short.
+    if (Files.isDirectory(run, LinkOption.NOFOLLOW_LINKS)) {
+        Files.list(run).withCloseable { entries ->
+            entries.filter { it.fileName.toString().startsWith('world.old-') }.toList().each { Path old ->
+                refuseLink(old)
+                if (!deleteTree(old).isEmpty()) {
+                    logger.warn("Could not delete all of ${old} yet; it is tried again before the next GameTest run")
+                }
+            }
+        }
+    }
+    if (!Files.exists(world, LinkOption.NOFOLLOW_LINKS)) return
+    refuseLink(world)
+    Path lock = world.resolve('session.lock')
+    if (Files.exists(lock, LinkOption.NOFOLLOW_LINKS)) {
+        boolean held
+        try {
+            def channel = FileChannel.open(lock, StandardOpenOption.WRITE)
+            try {
+                def acquired = channel.tryLock()
+                held = acquired == null
+                acquired?.release()
+            } finally {
+                channel.close()
+            }
+        } catch (IOException | OverlappingFileLockException e) {
+            held = true
+        }
+        if (held) {
+            throw new GradleException("The GameTest world ${world} is in use by a running process (its session.lock " +
+                    "is locked). Stop that GameTest server, then run the tests again.")
+        }
+    }
+    Path old = run.resolve("world.old-${System.currentTimeMillis()}")
+    try {
+        Files.move(world, old)
+    } catch (IOException e) {
+        throw new GradleException("Could not move the GameTest world ${world} aside (${e}); a process may still " +
+                "have files in it open. Close it, then run the tests again.", e)
+    }
+    if (!deleteTree(old).isEmpty()) {
+        logger.warn("Could not delete all of ${old}; it is tried again before the next GameTest run")
+    }
+}
+tasks.register('freshGameTestWorld') {
+    description = 'Removes the GameTest world, so runGameTest starts from a fresh one.'
+    def runDir = file('build/run/gameTest')
+    doLast { freshGameTestWorld(runDir) }
+}
+tasks.named('runGameTest') { dependsOn tasks.named('freshGameTestWorld') }
+
+// Mod-fidelity GameTests (M4): the engine against Chipped and Farmer's Delight.
+// They get their own source set, mod (sculptory-fidelity) and headless server run, so the third-party mods reach
+// neither the jar nor runClient/runServer/runGameTest. The source set sees the gametest helper classes (not its
+// resources, so the vanilla tests do not run again here).
+repositories {
+    exclusiveContent {
+        forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
+        filter { includeGroup 'maven.modrinth' }
+    }
+}
+
+sourceSets {
+    fidelity {
+        def shared = sourceSets.main.output + sourceSets.client.output + sourceSets.gametest.output.classesDirs
+        compileClasspath += shared
+        runtimeClasspath += shared
+    }
+}
+
+configurations {
+    fidelityCompileClasspath.extendsFrom gametestCompileClasspath
+    fidelityRuntimeClasspath.extendsFrom gametestRuntimeClasspath
+    // The mods that nest libraries (jar-in-jar), unremapped: see extractFidelityNestedJars.
+    fidelityNesting { transitive = false }
+}
+
+loom {
+    createRemapConfigurations(sourceSets.fidelity)
+    mods {
+        'sculptory-fidelity' { sourceSet sourceSets.fidelity }
+    }
+    runs {
+        fidelityGameTest {
+            server()
+            name "Fidelity Game Test"
+            source sourceSets.fidelity
+            property 'fabric-api.gametest'
+            runDir 'build/run/fidelityGameTest'
+            ideConfigGenerated false
+        }
+    }
+}
+
+// Loom strips jar-in-jar libraries from the mods it remaps, so the run adds the ones these mods ship themselves,
+// unchanged: Fabric ASM v2.3 (Farmer's Delight), yabn 1.0.3 and bytecodecs 1.1.2 (Resourceful Lib).
+def fidelityNested = tasks.register('extractFidelityNestedJars', Sync) {
+    from(configurations.fidelityNesting.elements.map { jars -> jars.collect { zipTree(it.asFile) } }) {
+        include 'META-INF/jars/*.jar'
+        eachFile { path = name }
+    }
+    into layout.buildDirectory.dir('fidelity-nested')
+    includeEmptyDirs = false
+}
+
+dependencies {
+    modFidelityImplementation "maven.modrinth:farmers-delight-refabricated:${rootProject.fidelity_farmersdelight}"
+    modFidelityRuntimeOnly "maven.modrinth:chipped:${rootProject.fidelity_chipped}"
+    modFidelityRuntimeOnly "maven.modrinth:athena-ctm:${rootProject.fidelity_athena}"
+    modFidelityRuntimeOnly "maven.modrinth:resourceful-lib:${rootProject.fidelity_resourcefullib}"
+    fidelityRuntimeOnly fileTree(dir: layout.buildDirectory.dir('fidelity-nested').get().asFile, include: '*.jar')
+            .builtBy(fidelityNested)
+    fidelityNesting "maven.modrinth:farmers-delight-refabricated:${rootProject.fidelity_farmersdelight}"
+    fidelityNesting "maven.modrinth:resourceful-lib:${rootProject.fidelity_resourcefullib}"
+}
+
+def fidelityEula = tasks.register('acceptFidelityGameTestEula') {
+    def eula = file('build/run/fidelityGameTest/eula.txt')
+    outputs.file eula
+    doLast {
+        eula.parentFile.mkdirs()
+        eula.text = 'eula=true\n'
+    }
+}
+// A fresh world for every run, as for runGameTest.
+tasks.register('freshFidelityGameTestWorld') {
+    description = 'Removes the fidelity GameTest world, so runFidelityGameTest starts from a fresh one.'
+    def runDir = file('build/run/fidelityGameTest')
+    doLast { freshGameTestWorld(runDir) }
+}
+tasks.named('runFidelityGameTest') {
+    dependsOn fidelityEula, tasks.named('freshFidelityGameTestWorld')
+    mustRunAfter tasks.named('runGameTest')
+}
+tasks.named('check') { dependsOn tasks.named('runFidelityGameTest') }
+
+// -PgameTestFilter=<text>[,<text>...] runs only the GameTests whose name (<class>.<method>, lower case) or batch id
+// contains one of the entries, in runGameTest and runFidelityGameTest. Fabric API 0.116.4 has no filter of its own:
+// GameTestFilter (src/gametest) reads this system property, and a filter that matches nothing fails the run.
+if (project.hasProperty('gameTestFilter')) {
+    def gameTestFilter = project.property('gameTestFilter').toString()
+    loom.runs.matching { it.name in ['gameTest', 'fidelityGameTest'] }.configureEach {
+        property 'sculptory.gametest.filter', gameTestFilter
+    }
+}
+
+// Optional render mods for Sodium/Iris compatibility checks in the dev client. Off by
+// default: -PbsSodium adds Sodium, -PbsIris adds Iris and the Sodium it needs. modLocalRuntime only, so they are never
+// bundled, published or compiled against. Pinned by Modrinth version id in gradle.properties.
+// The Modrinth Maven is the exclusive repository declared above for the fidelity tests.
+if (project.hasProperty('bsSodium') || project.hasProperty('bsIris')) {
+    configurations {
+        // Iris unremapped, for the libraries it nests: see extractRenderModNestedJars.
+        renderModNesting { transitive = false }
+    }
+    // Loom drops the jar-in-jar list of the mods it remaps. Iris nests glsl-transformer, jcpp and antlr4-runtime
+    // (Sodium nests only Fabric API modules, already present), so the run gets those jars unchanged out of the pinned
+    // Iris jar.
+    def renderModNested = tasks.register('extractRenderModNestedJars', Sync) {
+        from(configurations.renderModNesting.elements.map { jars -> jars.collect { zipTree(it.asFile) } }) {
+            include 'META-INF/jars/glsl-transformer-*.jar', 'META-INF/jars/jcpp-*.jar', 'META-INF/jars/antlr4-runtime-*.jar'
+            eachFile { path = name }
+        }
+        into layout.buildDirectory.dir('render-mod-nested')
+        includeEmptyDirs = false
+    }
+    dependencies {
+        modLocalRuntime "maven.modrinth:sodium:${rootProject.sodium_version}"
+        if (project.hasProperty('bsIris')) {
+            modLocalRuntime "maven.modrinth:iris:${rootProject.iris_version}"
+            renderModNesting "maven.modrinth:iris:${rootProject.iris_version}"
+            localRuntime fileTree(dir: layout.buildDirectory.dir('render-mod-nested').get().asFile, include: '*.jar')
+                    .builtBy(renderModNested)
+        }
+    }
+}

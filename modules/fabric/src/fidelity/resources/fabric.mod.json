@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "sculptory-fidelity",
+  "version": "1.0.0",
+  "name": "Sculptory mod-fidelity game tests",
+  "license": "AGPL-3.0-or-later",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.sculptory.fabric.gametest.FidelityTestBootstrap"],
+    "fabric-gametest": [
+      "dev.sculptory.fabric.gametest.FidelityStateGameTest",
+      "dev.sculptory.fabric.gametest.FidelityEditGameTest",
+      "dev.sculptory.fabric.gametest.FidelitySchematicGameTest",
+      "dev.sculptory.fabric.gametest.FidelityBrushGameTest",
+      "dev.sculptory.fabric.gametest.FidelityTurnGameTest",
+      "dev.sculptory.fabric.gametest.FidelityTinkerGameTest",
+      "dev.sculptory.fabric.gametest.FidelityFlipGameTest"
+    ]
+  },
+  "mixins": ["sculptory-fidelity.mixins.json"],
+  "depends": {
+    "sculptory": "*",
+    "fabric-gametest-api-v1": "*",
+    "chipped": "*",
+    "farmersdelight": "*"
+  }
+}
