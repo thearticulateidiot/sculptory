@@ -1247,14 +1247,14 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
 
     // ================================================================== Tinker
 
-    /** See {@link TinkerService#block} and {@link TinkerEdits}. */
+    /** See {@link TinkerService#block} and the platform's Tinker ({@code TinkerEdits} on Fabric). */
     @Override
     public void block(P player, BlockPos pos, int expected, int target,
                       dev.sculptory.core.tinker.SignText sign) throws EditRejected {
         tinker.block(player, pos, expected, target, sign);
     }
 
-    /** See {@link TinkerService#entity} and {@link TinkerEdits}. */
+    /** See {@link TinkerService#entity} and the platform's Tinker ({@code TinkerEdits} on Fabric). */
     @Override
     public dev.sculptory.core.tinker.EntityView entity(P player, UUID id,
                                                           List<dev.sculptory.core.tinker.EntityEdit> edits)
@@ -2410,7 +2410,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * {@value #SMALL_RECORD_SECTIONS} sections to prepare) the operation is refused {@code QUEUE_FULL} with
      * {@link EditRejected#STROKE_PENDING} instead of doing it in one tick: the open stroke's commit is queued behind the
      * lane's work, so a retry a moment later goes ahead. The player's open builder-mode drag becomes its entry first
-     * ({@link BuilderService#commitDrag}).
+     * ({@link BuilderMode#commitDrag}).
      */
     public void commitStroke(UUID player) throws EditRejected {
         builder.commitDrag(player);
