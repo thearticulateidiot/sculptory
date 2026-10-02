@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.net;
+package dev.sculptory.server.net;
 
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.protocol.v2.Features;
@@ -23,8 +23,10 @@ import java.util.function.LongSupplier;
  * permissions and limits last sent, rate limiters, prediction acks, the open stroke and its footprint, streams
  * and the violation count. Created on the player's first frame, so vanilla clients never get one. Server thread
  * only.
+ *
+ * @param <P> the platform's player type
  */
-public final class NetSession {
+public final class NetSession<P> {
     public enum Stage {
         /** Only {@code Hello} is accepted (and only it is decoded). */
         AWAITING_HELLO,
@@ -58,7 +60,7 @@ public final class NetSession {
     public static final int RECENT_UPLOADS = 8;
     public static final long RECENT_UPLOAD_NANOS = 10_000_000_000L;
 
-    final ServerTransport transport;
+    final ServerTransport<P> transport;
     final long epoch;
     final RateLimiter limiter;
     final TokenBucket unknownStates;
@@ -176,7 +178,7 @@ public final class NetSession {
         return selections;
     }
 
-    NetSession(ServerTransport transport, long epoch, LongSupplier nanoClock) {
+    NetSession(ServerTransport<P> transport, long epoch, LongSupplier nanoClock) {
         this.transport = Objects.requireNonNull(transport);
         this.epoch = epoch;
         this.limiter = new RateLimiter(nanoClock);
@@ -188,6 +190,11 @@ public final class NetSession {
 
     public Stage stage() {
         return stage;
+    }
+
+    /** The build id the client sent in {@code Hello}, cleaned ({@code ""} before it). */
+    public String clientBuild() {
+        return clientBuild;
     }
 
     public boolean ready() {
@@ -214,7 +221,7 @@ public final class NetSession {
         return violations;
     }
 
-    public ServerTransport transport() {
+    public ServerTransport<P> transport() {
         return transport;
     }
 

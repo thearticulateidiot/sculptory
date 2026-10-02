@@ -6,9 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.PermissionService;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.perm.ChunkPermits;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,7 +22,7 @@ import org.junit.jupiter.api.Test;
  */
 class PermitSourceTest {
     /** A claim over columns x 40..47 (in chunk 2, 0); the corner rule as the server applies it. */
-    private static final class Claim implements PermissionService {
+    private static final class Claim implements PermissionService<ServerPlayerEntity, ServerWorld> {
         final List<Box> asked = new ArrayList<>();
 
         @Override

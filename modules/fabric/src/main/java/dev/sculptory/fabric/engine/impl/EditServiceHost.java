@@ -17,12 +17,6 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.schem.SchematicFormat;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.fabric.config.FolderMigration;
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.EditService;
-import dev.sculptory.fabric.engine.PermissionService;
-import dev.sculptory.fabric.engine.ScatterService;
-import dev.sculptory.fabric.engine.TinkerService;
-import dev.sculptory.fabric.net.HistoryView;
 import dev.sculptory.fabric.schem.FabricDataFixHook;
 import dev.sculptory.protocol.v2.AssetAccess;
 import dev.sculptory.protocol.v2.C2S;
@@ -32,15 +26,21 @@ import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.ChunkPermit;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.EditService;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.library.Library;
+import dev.sculptory.server.net.HistoryView;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -395,14 +395,14 @@ public final class EditServiceHost {
     }
 
     /** A {@link ScatterService} delegating to the running server's; refuses with {@code DISABLED} without one. */
-    public static ScatterService scatter() {
+    public static ScatterService<ServerPlayerEntity> scatter() {
         return SCATTER;
     }
 
     /**
      * A {@link TinkerService} delegating to the running server's edit service; refuses with {@code DISABLED} without one.
      */
-    public static TinkerService tinker() {
+    public static TinkerService<ServerPlayerEntity> tinker() {
         return TINKER;
     }
 
@@ -413,7 +413,7 @@ public final class EditServiceHost {
     }
 
     /** A {@link ClipboardService} delegating to the running server's; refuses with {@code DISABLED} without one. */
-    public static ClipboardService clipboards() {
+    public static ClipboardService<ServerPlayerEntity> clipboards() {
         return CLIPBOARDS;
     }
 
@@ -424,12 +424,12 @@ public final class EditServiceHost {
     }
 
     /** An {@link EditService} (and {@link HistoryView}) delegating to the running server's service. */
-    public static EditService service() {
+    public static EditService<ServerPlayerEntity> service() {
         return FACADE;
     }
 
     /** A {@link PermissionService} delegating to the running server's engine; denies everything without one. */
-    public static PermissionService permissions() {
+    public static PermissionService<ServerPlayerEntity, ServerWorld> permissions() {
         return PERMISSIONS;
     }
 
@@ -455,7 +455,7 @@ public final class EditServiceHost {
         return find(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"));
     }
 
-    private static final class Facade implements EditService, HistoryView {
+    private static final class Facade implements EditService<ServerPlayerEntity>, HistoryView<ServerPlayerEntity> {
         @Override
         public JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l) throws EditRejected {
             return of(p).run(p, s, o, l);
@@ -539,7 +539,7 @@ public final class EditServiceHost {
         }
     }
 
-    private static final class ClipboardFacade implements ClipboardService {
+    private static final class ClipboardFacade implements ClipboardService<ServerPlayerEntity> {
         private static ServerClipboards of(ServerPlayerEntity p) throws EditRejected {
             return findClipboards(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"));
         }
@@ -658,7 +658,7 @@ public final class EditServiceHost {
         }
     }
 
-    private static final class ScatterFacade implements ScatterService {
+    private static final class ScatterFacade implements ScatterService<ServerPlayerEntity> {
         @Override
         public void preview(ServerPlayerEntity p, C2S.ScatterPreview request, PreviewReply reply) throws EditRejected {
             findScatter(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"))
@@ -666,7 +666,7 @@ public final class EditServiceHost {
         }
     }
 
-    private static final class TinkerFacade implements TinkerService {
+    private static final class TinkerFacade implements TinkerService<ServerPlayerEntity> {
         @Override
         public void block(ServerPlayerEntity p, BlockPos pos, int expected, int target,
                           dev.sculptory.core.tinker.SignText sign) throws EditRejected {
@@ -681,7 +681,7 @@ public final class EditServiceHost {
         }
     }
 
-    private static final class PermissionFacade implements PermissionService {
+    private static final class PermissionFacade implements PermissionService<ServerPlayerEntity, ServerWorld> {
         @Override
         public boolean has(ServerPlayerEntity p, Perm node) {
             return EngineRuntime.find(p.getServer()).map(runtime -> runtime.permissions().has(p, node)).orElse(false);

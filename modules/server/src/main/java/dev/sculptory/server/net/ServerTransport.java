@@ -1,14 +1,22 @@
-package dev.sculptory.fabric.net;
+package dev.sculptory.server.net;
 
-import net.minecraft.server.network.ServerPlayerEntity;
+import java.util.UUID;
 
 /**
- * How a {@link NetSession} reaches its player. {@link ServerNet} wraps the play network handler; tests use a
- * fake. All methods run on the server thread.
+ * How a {@link NetSession} reaches its player. The platform wraps its connection (on Fabric, {@code ServerNet} wraps
+ * the play network handler); tests use a fake. All methods run on the server thread.
+ *
+ * @param <P> the platform's player type
  */
-public interface ServerTransport {
+public interface ServerTransport<P> {
     /** The player's current entity (it changes on respawn). */
-    ServerPlayerEntity player();
+    P player();
+
+    /** The player's id, or {@code null} when there is no player. */
+    UUID playerId();
+
+    /** The player's account name, or {@code null} when there is no player. */
+    String playerName();
 
     /** Whether the client registered {@code sculptory:s2c}; never send to a client without it. */
     boolean canSend();

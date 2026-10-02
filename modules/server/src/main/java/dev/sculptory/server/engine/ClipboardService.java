@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine;
+package dev.sculptory.server.engine;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
@@ -24,15 +24,16 @@ import java.util.Optional;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.UUID;
-import net.minecraft.server.network.ServerPlayerEntity;
 
 /**
  * Server clipboards, schematics and the asset library (M2), called by the protocol dispatcher on the server
  * thread. A request that is refused up front throws {@link EditRejected} and changes nothing. Everything else
  * answers through its {@link Reply}, on the server thread, exactly once, usually on a later tick: capture
  * finishing, file I/O and encoding run off the server thread.
+ *
+ * @param <P> the platform's player type
  */
-public interface ClipboardService {
+public interface ClipboardService<P> {
     /** The answer to an asynchronous request; called on the server thread, exactly once. */
     interface Reply<T> {
         void done(T value);
@@ -155,30 +156,30 @@ public interface ClipboardService {
      *
      * @return the erase job of a cut, or {@code null}
      */
-    JobTicket copy(ServerPlayerEntity p, Region region, BlockPos origin, boolean cut, CellMask mask,
+    JobTicket copy(P p, Region region, BlockPos origin, boolean cut, CellMask mask,
                    EntityFilter entities, JobListener cutListener, Reply<ClipboardInfo> reply) throws EditRejected;
 
     /**
-     * {@link #copy(ServerPlayerEntity, Region, BlockPos, boolean, CellMask, EntityFilter, JobListener, Reply) Copies} a
+     * {@link #copy(P, Region, BlockPos, boolean, CellMask, EntityFilter, JobListener, Reply) Copies} a
      * box without entities.
      */
-    default JobTicket copy(ServerPlayerEntity p, Box box, BlockPos origin, boolean cut, CellMask mask,
+    default JobTicket copy(P p, Box box, BlockPos origin, boolean cut, CellMask mask,
                            JobListener cutListener, Reply<ClipboardInfo> reply) throws EditRejected {
         return copy(p, new Region.Cuboid(box), origin, cut, mask, EntityFilter.NONE, cutListener, reply);
     }
 
     /** A {@code CLIPBOARD_PREVIEW} (the player's clipboard) or {@code ASSET_PREVIEW} (a library asset) payload. */
-    void preview(ServerPlayerEntity p, SourceRef source, Reply<Outbound> reply) throws EditRejected;
+    void preview(P p, SourceRef source, Reply<Outbound> reply) throws EditRejected;
 
     /**
      * The player's clipboard as a file of {@code format} ({@code SCHEM_FILE}: Sponge v3 {@code .schem}, Litematica
      * {@code .litematic} or a structure {@code .nbt}); the meta's {@code fileName} has the format's extension.
      */
-    void export(ServerPlayerEntity p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
+    void export(P p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
             throws EditRejected;
 
-    /** {@link #export(ServerPlayerEntity, UUID, SchematicFormat, Reply)} as a Sponge {@code .schem}. */
-    default void export(ServerPlayerEntity p, UUID clipboardId, Reply<Outbound> reply) throws EditRejected {
+    /** {@link #export(P, UUID, SchematicFormat, Reply)} as a Sponge {@code .schem}. */
+    default void export(P p, UUID clipboardId, Reply<Outbound> reply) throws EditRejected {
         export(p, clipboardId, SchematicFormat.SPONGE, reply);
     }
 
@@ -186,7 +187,7 @@ public interface ClipboardService {
      * Checks that the player may upload a schematic file ({@code .schem}, {@code .litematic} or {@code .nbt}: the
      * server reads it as what its content is) of {@code totalBytes} and reserves what its decoding will need.
      */
-    Upload beginUpload(ServerPlayerEntity p, String fileName, long totalBytes) throws EditRejected;
+    Upload beginUpload(P p, String fileName, long totalBytes) throws EditRejected;
 
     /**
      * A granted selection upload ({@code SelectionUpload}): it holds a request
@@ -216,7 +217,7 @@ public interface ClipboardService {
      * then have {@code hash}, {@code bounds} and {@code cells}. Refused with {@code DISABLED} by services without an
      * engine.
      */
-    default SelectionUpload beginSelectionUpload(ServerPlayerEntity p, Sha256 hash, Box bounds, long cells,
+    default SelectionUpload beginSelectionUpload(P p, Sha256 hash, Box bounds, long cells,
                                                  long totalBytes) throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
@@ -231,36 +232,36 @@ public interface ClipboardService {
      * becomes the player's clipboard, absent cells absent, no tiles, no entities. Refused with {@code DISABLED} by
      * services without an engine.
      */
-    default Upload beginGeneratedUpload(ServerPlayerEntity p, Box bounds, long cells, long totalBytes)
+    default Upload beginGeneratedUpload(P p, Box bounds, long cells, long totalBytes)
             throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
 
-    void list(ServerPlayerEntity p, String folder, Reply<Listing> reply) throws EditRejected;
+    void list(P p, String folder, Reply<Listing> reply) throws EditRejected;
 
     /** Loads a library asset into the player's clipboard. */
-    void load(ServerPlayerEntity p, String path, Reply<ClipboardInfo> reply) throws EditRejected;
+    void load(P p, String path, Reply<ClipboardInfo> reply) throws EditRejected;
 
     /** Saves the player's clipboard into the library. */
-    void save(ServerPlayerEntity p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected;
+    void save(P p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected;
 
     /**
      * M4. Renames or moves a library file, or renames a folder in place; never replaces anything. Permissions are
      * checked for both paths. Refused with {@code DISABLED} by services without a library.
      */
-    default void move(ServerPlayerEntity p, boolean folder, String from, String to, Reply<LibraryChange> reply)
+    default void move(P p, boolean folder, String from, String to, Reply<LibraryChange> reply)
             throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
 
     /** M4. Deletes a library file into the trash, or an empty folder. */
-    default void delete(ServerPlayerEntity p, boolean folder, String path, Reply<LibraryChange> reply)
+    default void delete(P p, boolean folder, String path, Reply<LibraryChange> reply)
             throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
 
     /** M4. Creates a library folder. */
-    default void createFolder(ServerPlayerEntity p, String path, Reply<LibraryChange> reply) throws EditRejected {
+    default void createFolder(P p, String path, Reply<LibraryChange> reply) throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
 
@@ -268,7 +269,7 @@ public interface ClipboardService {
      * M4. {@code change} as {@code viewer} may see it, for pushing to an open Library window: a path they may not read
      * becomes {@code ""}; empty when they may see neither path, or may not use the library at all.
      */
-    default Optional<LibraryChange> shownTo(ServerPlayerEntity viewer, LibraryChange change) {
+    default Optional<LibraryChange> shownTo(P viewer, LibraryChange change) {
         return Optional.empty();
     }
 
@@ -291,13 +292,13 @@ public interface ClipboardService {
      * with the change made ({@code from} {@code ""}, {@code to} the path written). Refused with {@code DISABLED} by
      * services without a library.
      */
-    default void savePalette(ServerPlayerEntity p, String path, BlockPalette palette, Reply<LibraryChange> reply)
+    default void savePalette(P p, String path, BlockPalette palette, Reply<LibraryChange> reply)
             throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
 
     /** Palettes. Reads a library palette; states the server doesn't know are left out and counted. */
-    default void loadPalette(ServerPlayerEntity p, String path, Reply<LoadedPalette> reply) throws EditRejected {
+    default void loadPalette(P p, String path, Reply<LoadedPalette> reply) throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
 
@@ -322,7 +323,7 @@ public interface ClipboardService {
      * Per-asset access. Who may load the library file {@code path}; only who may change that may ask
      * ({@code NO_PERMISSION} otherwise). Refused with {@code DISABLED} by services without a library.
      */
-    default void access(ServerPlayerEntity p, String path, Reply<AssetAccess> reply) throws EditRejected {
+    default void access(P p, String path, Reply<AssetAccess> reply) throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
 
@@ -331,7 +332,7 @@ public interface ClipboardService {
      * without a UUID are resolved by name (online players, then the server's user cache); one that cannot be is
      * {@code INVALID} and nothing changes. Takes the player's save slot. Answers with the access before and after.
      */
-    default void setAccess(ServerPlayerEntity p, String path, AssetAccess access, Reply<AccessChange> reply)
+    default void setAccess(P p, String path, AssetAccess access, Reply<AccessChange> reply)
             throws EditRejected {
         throw new EditRejected(RejectReason.DISABLED);
     }
@@ -341,48 +342,50 @@ public interface ClipboardService {
      * twice when they may read the file afterwards, the path then {@code ""} when they could before but no longer
      * (it vanishes for them), empty when neither (or they may not use the library at all).
      */
-    default Optional<LibraryChange> shownAccessChange(ServerPlayerEntity viewer, AccessChange change) {
+    default Optional<LibraryChange> shownAccessChange(P viewer, AccessChange change) {
         return Optional.empty();
     }
 
     /** Refuses everything with {@code DISABLED} (no engine running). */
-    ClipboardService DISABLED = new ClipboardService() {
-        @Override
-        public JobTicket copy(ServerPlayerEntity p, Region region, BlockPos origin, boolean cut, CellMask mask,
-                              EntityFilter entities, JobListener cutListener, Reply<ClipboardInfo> reply)
-                throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
+    static <P> ClipboardService<P> disabled() {
+        return new ClipboardService<>() {
+            @Override
+            public JobTicket copy(P p, Region region, BlockPos origin, boolean cut, CellMask mask,
+                                  EntityFilter entities, JobListener cutListener, Reply<ClipboardInfo> reply)
+                    throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
 
-        @Override
-        public void preview(ServerPlayerEntity p, SourceRef source, Reply<Outbound> reply) throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
+            @Override
+            public void preview(P p, SourceRef source, Reply<Outbound> reply) throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
 
-        @Override
-        public void export(ServerPlayerEntity p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
-                throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
+            @Override
+            public void export(P p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
+                    throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
 
-        @Override
-        public Upload beginUpload(ServerPlayerEntity p, String fileName, long totalBytes) throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
+            @Override
+            public Upload beginUpload(P p, String fileName, long totalBytes) throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
 
-        @Override
-        public void list(ServerPlayerEntity p, String folder, Reply<Listing> reply) throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
+            @Override
+            public void list(P p, String folder, Reply<Listing> reply) throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
 
-        @Override
-        public void load(ServerPlayerEntity p, String path, Reply<ClipboardInfo> reply) throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
+            @Override
+            public void load(P p, String path, Reply<ClipboardInfo> reply) throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
 
-        @Override
-        public void save(ServerPlayerEntity p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
-    };
+            @Override
+            public void save(P p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
+        };
+    }
 }

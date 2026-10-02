@@ -19,16 +19,12 @@ import dev.sculptory.core.generate.GeneratedSource;
 import dev.sculptory.core.generate.SparseUpload;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.ScatterService;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.net.NetSession;
-import dev.sculptory.fabric.net.ServerDispatcher;
-import dev.sculptory.fabric.net.ServerTransport;
+import dev.sculptory.fabric.net.FabricTransport;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
@@ -43,9 +39,13 @@ import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.protocol.v2.StreamAbort;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.protocol.v2.StreamSender;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.net.NetSession;
+import dev.sculptory.server.net.ServerDispatcher;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -142,10 +142,10 @@ public final class GenerateGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
         ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
-        ServerDispatcher dispatcher = new ServerDispatcher(h.service, clips, ScatterService.DISABLED, h.runtime.permissions(),
+        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, h.player);
-        NetSession session = dispatcher.open(transport);
+        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
         transport.receive(dispatcher, session, new C2S.GeneratedUpload(1, bounds, source.cells(), payload.length));
         S2C.UploadGrant grant = transport.first(S2C.UploadGrant.class);
@@ -257,10 +257,10 @@ public final class GenerateGameTest implements FabricGameTest {
         }
 
         // Through the network: garbage of the announced size, then a stream aborted mid-way.
-        ServerDispatcher dispatcher = new ServerDispatcher(h.service, clips, ScatterService.DISABLED, h.runtime.permissions(),
+        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, builder);
-        NetSession session = dispatcher.open(transport);
+        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
         Captured<ClipboardService.ClipboardInfo> good = new Captured<>();
         java.util.UUID[] previousId = new java.util.UUID[1];
@@ -610,10 +610,10 @@ public final class GenerateGameTest implements FabricGameTest {
         check(h.service.clipboards().get(clipboardOnly.getUuid()).isEmpty(), "a clipboard was made");
 
         // Through the network: refused before the grant, so nothing is streamed.
-        ServerDispatcher dispatcher = new ServerDispatcher(h.service, clips, ScatterService.DISABLED, h.runtime.permissions(),
+        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, clipboardOnly);
-        NetSession session = dispatcher.open(transport);
+        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
         transport.receive(dispatcher, session, new C2S.GeneratedUpload(5, source.bounds(), source.cells(), payload.length));
         check(transport.sent(S2C.UploadGrant.class).isEmpty(), "a clipboard-only player was granted the upload");
@@ -676,7 +676,7 @@ public final class GenerateGameTest implements FabricGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded, for one player. */
-    private static final class Transport implements ServerTransport {
+    private static final class Transport implements FabricTransport {
         final Harness h;
         final ServerPlayerEntity player;
         final List<S2C> sent = new ArrayList<>();
@@ -686,7 +686,7 @@ public final class GenerateGameTest implements FabricGameTest {
             this.player = player;
         }
 
-        void receive(ServerDispatcher dispatcher, NetSession session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {

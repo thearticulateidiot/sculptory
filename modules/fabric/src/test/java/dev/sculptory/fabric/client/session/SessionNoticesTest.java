@@ -7,11 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import dev.sculptory.fabric.net.ServerDispatcher;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Limits;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.net.ServerDispatcher;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;

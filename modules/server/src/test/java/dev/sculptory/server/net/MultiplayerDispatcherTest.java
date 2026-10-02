@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.net;
+package dev.sculptory.server.net;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -18,8 +18,6 @@ import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.testing.FakeStateSpace;
-import dev.sculptory.fabric.engine.EditService;
-import dev.sculptory.fabric.engine.PermissionService;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
 import dev.sculptory.protocol.v2.Features;
@@ -39,10 +37,12 @@ import dev.sculptory.protocol.v2.StreamOpen;
 import dev.sculptory.protocol.v2.StreamSender;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.DabOutcome;
+import dev.sculptory.server.engine.EditService;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.engine.RunOptions;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -52,8 +52,6 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -73,14 +71,14 @@ class MultiplayerDispatcherTest {
     private AtomicLong clock;
     private FakeEdits edits;
     private Granted permissions;
-    private ServerDispatcher dispatcher;
+    private ServerDispatcher<FakePlayer> dispatcher;
 
     @BeforeEach
     void setUp() {
         clock = new AtomicLong(1_000_000_000L);
         edits = new FakeEdits();
         permissions = new Granted();
-        dispatcher = new ServerDispatcher(edits, permissions, () -> Limits.DEFAULTS, () -> STATES, clock::get);
+        dispatcher = new ServerDispatcher<>(edits, permissions, () -> Limits.DEFAULTS, () -> STATES, clock::get);
     }
 
     private Player connect(String name) {
@@ -406,7 +404,7 @@ class MultiplayerDispatcherTest {
     private final class Player {
         final FakeTransport transport = new FakeTransport();
         final String name;
-        NetSession session;
+        NetSession<FakePlayer> session;
 
         Player(String name) {
             this.name = name;
@@ -433,13 +431,23 @@ class MultiplayerDispatcherTest {
         }
     }
 
-    private static final class FakeTransport implements ServerTransport {
+    private static final class FakeTransport implements ServerTransport<FakePlayer> {
         final List<S2C> sent = new ArrayList<>();
         int frames;
         String disconnected;
 
         @Override
-        public ServerPlayerEntity player() {
+        public FakePlayer player() {
+            return null;
+        }
+
+        @Override
+        public UUID playerId() {
+            return null;
+        }
+
+        @Override
+        public String playerName() {
             return null;
         }
 
@@ -488,52 +496,52 @@ class MultiplayerDispatcherTest {
     }
 
     /** Every node, unless the test removes some. */
-    private static final class Granted implements PermissionService {
+    private static final class Granted implements PermissionService<FakePlayer, Object> {
         final Set<Perm> granted = EnumSet.allOf(Perm.class);
 
         @Override
-        public boolean has(ServerPlayerEntity p, Perm node) {
+        public boolean has(FakePlayer p, Perm node) {
             return granted.contains(node);
         }
 
         @Override
-        public ChunkPermit chunk(ServerPlayerEntity p, ServerWorld w, int cx, int cz, Box bounds) {
+        public ChunkPermit chunk(FakePlayer p, Object w, int cx, int cz, Box bounds) {
             return ChunkPermit.ALLOW;
         }
     }
 
-    private static final class FakeEdits implements EditService {
+    private static final class FakeEdits implements EditService<FakePlayer> {
         int dabBatches;
 
         @Override
-        public JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l) {
+        public JobTicket run(FakePlayer p, OpSpec s, RunOptions o, JobListener l) {
             return new JobTicket(UUID.randomUUID(), "Fill", 64);
         }
 
         @Override
-        public void beginStroke(ServerPlayerEntity p, int strokeId, BrushSpec spec) {}
+        public void beginStroke(FakePlayer p, int strokeId, BrushSpec spec) {}
 
         @Override
-        public DabOutcome dabs(ServerPlayerEntity p, int strokeId, int seq, List<Dab> dabs) {
+        public DabOutcome dabs(FakePlayer p, int strokeId, int seq, List<Dab> dabs) {
             dabBatches++;
             return DabOutcome.accepted(dabs.get(dabs.size() - 1).index());
         }
 
         @Override
-        public void endStroke(ServerPlayerEntity p, int strokeId) {}
+        public void endStroke(FakePlayer p, int strokeId) {}
 
         @Override
-        public JobTicket undo(ServerPlayerEntity p, ConflictPolicy c) {
+        public JobTicket undo(FakePlayer p, ConflictPolicy c) {
             return new JobTicket(UUID.randomUUID(), "Undo", 10);
         }
 
         @Override
-        public JobTicket redo(ServerPlayerEntity p, ConflictPolicy c) {
+        public JobTicket redo(FakePlayer p, ConflictPolicy c) {
             return new JobTicket(UUID.randomUUID(), "Redo", 10);
         }
 
         @Override
-        public boolean cancel(ServerPlayerEntity p, UUID jobId) {
+        public boolean cancel(FakePlayer p, UUID jobId) {
             return true;
         }
     }

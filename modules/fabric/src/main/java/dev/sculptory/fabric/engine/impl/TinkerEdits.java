@@ -18,7 +18,6 @@ import dev.sculptory.core.tinker.EntityView;
 import dev.sculptory.core.tinker.SignText;
 import dev.sculptory.core.tinker.TinkerKind;
 import dev.sculptory.core.tinker.TinkerProperties;
-import dev.sculptory.fabric.engine.TinkerService;
 import dev.sculptory.fabric.perm.FabricPermissionService;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.EntityTypeRules;
@@ -31,6 +30,7 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.RecordSink;
 import dev.sculptory.server.schem.TileSanitizer;
@@ -77,7 +77,7 @@ import org.slf4j.LoggerFactory;
  * entity before and after ({@link EntityChange}), and its undo compares where it stands too when that is all it changed
  * ({@code EntityMatcher.placementAware}).
  */
-final class TinkerEdits implements TinkerService {
+final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Longest detail a refusal carries (the protocol's free-text cap is 1 KiB). */
     private static final int MAX_DETAIL_CHARS = 300;

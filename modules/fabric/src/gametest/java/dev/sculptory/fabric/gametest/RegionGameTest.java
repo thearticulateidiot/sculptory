@@ -24,16 +24,12 @@ import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.ScatterService;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.net.NetSession;
-import dev.sculptory.fabric.net.ServerDispatcher;
-import dev.sculptory.fabric.net.ServerTransport;
+import dev.sculptory.fabric.net.FabricTransport;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
@@ -47,10 +43,14 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.protocol.v2.StreamSender;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.net.NetSession;
+import dev.sculptory.server.net.ServerDispatcher;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -573,10 +573,10 @@ public final class RegionGameTest implements FabricGameTest {
         check(refusal(() -> h.service.run(h.player, new OpSpec.Fill(vast, new Pattern.Single(stone), CellMask.ANY),
                 RunOptions.DEFAULT, null)).reason() == RejectReason.TOO_LARGE, "a shape of too many rows");
 
-        ServerDispatcher dispatcher = new ServerDispatcher(h.service, clips, ScatterService.DISABLED, h.runtime.permissions(),
+        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h);
-        NetSession session = dispatcher.open(transport);
+        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
         OpSpec.Fill fill = new OpSpec.Fill(reference, new Pattern.Single(stone), CellMask.ANY);
         transport.receive(dispatcher, session, new C2S.RunOp(1, fill, false, ConflictPolicy.SKIP_CONFLICTS));
@@ -622,7 +622,7 @@ public final class RegionGameTest implements FabricGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded. */
-    private static final class Transport implements ServerTransport {
+    private static final class Transport implements FabricTransport {
         final Harness h;
         final List<S2C> sent = new ArrayList<>();
 
@@ -630,7 +630,7 @@ public final class RegionGameTest implements FabricGameTest {
             this.h = h;
         }
 
-        void receive(ServerDispatcher dispatcher, NetSession session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {

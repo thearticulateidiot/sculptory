@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine;
+package dev.sculptory.server.engine;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.tinker.EntityEdit;
@@ -8,7 +8,6 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
 import java.util.List;
 import java.util.UUID;
-import net.minecraft.server.network.ServerPlayerEntity;
 
 /**
  * Tinker: changes one block or one entity in place, each change one step of the
@@ -18,8 +17,10 @@ import net.minecraft.server.network.ServerPlayerEntity;
  * respects protection (spawn protection, claims, the world border). A refusal throws {@link EditRejected} and changes
  * nothing; "Apply to all like it in the selection" is not here but an ordinary region op, a {@code Fill} with the
  * property pattern ({@code Pattern.SetProperty}).
+ *
+ * @param <P> the platform's player type
  */
-public interface TinkerService {
+public interface TinkerService<P> {
     /**
      * Changes the block at {@code pos}, which the player saw as state {@code expected}, to {@code target} (the same block
      * with other property values; {@code expected} itself to change only the sign text), and, when {@code sign} is not
@@ -32,7 +33,7 @@ public interface TinkerService {
      *     {@code UNLOADED}, {@code PROTECTED}, {@code AREA_BUSY} (a job holds its section), {@code NO_PERMISSION},
      *     {@code DISABLED}; {@code QUEUE_FULL} while the player's brush stroke is still being written
      */
-    void block(ServerPlayerEntity player, BlockPos pos, int expected, int target, SignText sign) throws EditRejected;
+    void block(P player, BlockPos pos, int expected, int target, SignText sign) throws EditRejected;
 
     /**
      * Applies {@code edits} to the entity with UUID {@code id} in the player's world (an armor stand, item frame, glow
@@ -44,19 +45,21 @@ public interface TinkerService {
      *     entity cannot be placed (a painting that would not fit its wall); {@code PROTECTED} where it stands or would
      *     stand; {@code UNLOADED}, {@code NO_PERMISSION}, {@code DISABLED}, {@code QUEUE_FULL} as for blocks
      */
-    EntityView entity(ServerPlayerEntity player, UUID id, List<EntityEdit> edits) throws EditRejected;
+    EntityView entity(P player, UUID id, List<EntityEdit> edits) throws EditRejected;
 
     /** Refuses everything with {@code DISABLED} (no engine running). */
-    TinkerService DISABLED = new TinkerService() {
-        @Override
-        public void block(ServerPlayerEntity player, BlockPos pos, int expected, int target, SignText sign)
-                throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
+    static <P> TinkerService<P> disabled() {
+        return new TinkerService<>() {
+            @Override
+            public void block(P player, BlockPos pos, int expected, int target, SignText sign)
+                    throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
 
-        @Override
-        public EntityView entity(ServerPlayerEntity player, UUID id, List<EntityEdit> edits) throws EditRejected {
-            throw new EditRejected(RejectReason.DISABLED);
-        }
-    };
+            @Override
+            public EntityView entity(P player, UUID id, List<EntityEdit> edits) throws EditRejected {
+                throw new EditRejected(RejectReason.DISABLED);
+            }
+        };
+    }
 }

@@ -48,8 +48,6 @@ import dev.sculptory.core.region.RegionTooLargeException;
 import dev.sculptory.core.region.Regions;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
-import dev.sculptory.fabric.engine.EditService;
-import dev.sculptory.fabric.engine.TinkerService;
 import dev.sculptory.fabric.perm.FabricPermissionService;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.FabricEntities;
@@ -70,11 +68,13 @@ import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.EditService;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.BrushWork;
 import dev.sculptory.server.engine.impl.EditMasks;
@@ -253,7 +253,7 @@ import org.slf4j.LoggerFactory;
  * whichever is smaller: open records are not counted by the global history cap, so this bounds what they can hold.
  * Empty records push nothing.
  */
-public final class EngineEditService implements EditService, TinkerService {
+public final class EngineEditService implements EditService<ServerPlayerEntity>, TinkerService<ServerPlayerEntity> {
     /** The refusal of a scatter commit whose every placement the mask (changed since the preview) rules out. */
     public static final String MASK_RULES_OUT_SCATTER =
             "the mask rules out every placement (change the mask or preview again)";

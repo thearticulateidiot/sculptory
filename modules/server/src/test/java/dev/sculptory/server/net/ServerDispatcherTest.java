@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.net;
+package dev.sculptory.server.net;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,11 +39,6 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.ClipboardService.LibraryChange;
-import dev.sculptory.fabric.engine.EditService;
-import dev.sculptory.fabric.engine.PermissionService;
-import dev.sculptory.fabric.engine.ScatterService;
 import dev.sculptory.protocol.v2.AssetAccess;
 import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
@@ -71,13 +66,18 @@ import dev.sculptory.protocol.v2.StreamOpen;
 import dev.sculptory.protocol.v2.StreamSender;
 import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.ChunkPermit;
+import dev.sculptory.server.engine.ClipboardService.LibraryChange;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.EditService;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.net.SelectionStore;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -88,8 +88,6 @@ import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -106,9 +104,9 @@ class ServerDispatcherTest {
     private FakePermissions permissions;
     private AtomicLong clock;
     private Limits limits;
-    private ServerDispatcher dispatcher;
+    private ServerDispatcher<FakePlayer> dispatcher;
     private FakeTransport transport;
-    private NetSession session;
+    private NetSession<FakePlayer> session;
 
     @BeforeEach
     void setUp() {
@@ -118,7 +116,7 @@ class ServerDispatcherTest {
         permissions = new FakePermissions(EnumSet.of(Perm.USE, Perm.BRUSH, Perm.REGION));
         clock = new AtomicLong(1_000_000_000L);
         limits = Limits.DEFAULTS;
-        dispatcher = new ServerDispatcher(edits, clipboards, scatter, permissions, () -> limits, () -> STATES,
+        dispatcher = new ServerDispatcher<>(edits, clipboards, scatter, permissions, () -> limits, () -> STATES,
                 clock::get);
         transport = new FakeTransport();
         session = dispatcher.open(transport);
@@ -203,7 +201,7 @@ class ServerDispatcherTest {
         assertEquals("0.3.0+future", session.clientBuild);
         assertEquals(NetSession.Stage.INCOMPATIBLE, session.stage());
 
-        NetSession old = dispatcher.open(transport);
+        NetSession<FakePlayer> old = dispatcher.open(transport);
         transport.sent.clear();
         dispatcher.receive(old, Codec.encodeC2S(new C2S.Hello(4, 4, "0.2.0-dev", Features.NONE), STATES));
         assertEquals("", transport.first(S2C.Incompatible.class).serverBuild());
@@ -380,35 +378,35 @@ class ServerDispatcherTest {
 
     @Test
     void anEditServiceWithoutUndoAnywayRefusesItAsDisabled() {
-        EditService plain = new EditService() {
+        EditService<FakePlayer> plain = new EditService<>() {
             @Override
-            public JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l) {
+            public JobTicket run(FakePlayer p, OpSpec s, RunOptions o, JobListener l) {
                 throw new AssertionError();
             }
 
             @Override
-            public void beginStroke(ServerPlayerEntity p, int strokeId, BrushSpec spec) {}
+            public void beginStroke(FakePlayer p, int strokeId, BrushSpec spec) {}
 
             @Override
-            public DabOutcome dabs(ServerPlayerEntity p, int strokeId, int seq, List<Dab> dabs) {
+            public DabOutcome dabs(FakePlayer p, int strokeId, int seq, List<Dab> dabs) {
                 throw new AssertionError();
             }
 
             @Override
-            public void endStroke(ServerPlayerEntity p, int strokeId) {}
+            public void endStroke(FakePlayer p, int strokeId) {}
 
             @Override
-            public JobTicket undo(ServerPlayerEntity p, ConflictPolicy c) {
+            public JobTicket undo(FakePlayer p, ConflictPolicy c) {
                 throw new AssertionError();
             }
 
             @Override
-            public JobTicket redo(ServerPlayerEntity p, ConflictPolicy c) {
+            public JobTicket redo(FakePlayer p, ConflictPolicy c) {
                 throw new AssertionError();
             }
 
             @Override
-            public boolean cancel(ServerPlayerEntity p, UUID jobId) {
+            public boolean cancel(FakePlayer p, UUID jobId) {
                 return false;
             }
         };
@@ -435,8 +433,8 @@ class ServerDispatcherTest {
 
     @Test
     void withoutClipboardAndScatterServicesM2AndM3RequestsAreDisabled() {
-        ServerDispatcher plain = new ServerDispatcher(edits, permissions, () -> limits, () -> STATES, clock::get);
-        NetSession other = plain.open(transport);
+        ServerDispatcher<FakePlayer> plain = new ServerDispatcher<>(edits, permissions, () -> limits, () -> STATES, clock::get);
+        NetSession<FakePlayer> other = plain.open(transport);
         receiveOn(plain, other, Handshake.hello("t", Features.NONE));
         transport.sent.clear();
         receiveOn(plain, other, new C2S.LibraryList(11, ""));
@@ -563,7 +561,7 @@ class ServerDispatcherTest {
 
     // ---------------------------------------------------------------- clipboards, schematics, library (M2)
 
-    private void receiveOn(ServerDispatcher d, NetSession s, C2S message) {
+    private void receiveOn(ServerDispatcher<FakePlayer> d, NetSession<FakePlayer> s, C2S message) {
         try {
             d.receive(s, Codec.encodeC2S(message, STATES));
         } catch (ProtocolException e) {
@@ -778,7 +776,7 @@ class ServerDispatcherTest {
     void theStoresOfEveryConnectionShareAServerWideCap() {
         handshake();
         FakeTransport otherTransport = new FakeTransport();
-        NetSession other = otherPlayer(otherTransport);
+        NetSession<FakePlayer> other = otherPlayer(otherTransport);
         CellSet mine = selection(30);
         CellSet theirs = selection(31);
         CellSet third = selection(32);
@@ -909,8 +907,8 @@ class ServerDispatcherTest {
     }
 
     /** A ready session on its own transport (another player). */
-    private NetSession otherPlayer(FakeTransport other) {
-        NetSession s = dispatcher.open(other);
+    private NetSession<FakePlayer> otherPlayer(FakeTransport other) {
+        NetSession<FakePlayer> s = dispatcher.open(other);
         receiveOn(dispatcher, s, Handshake.hello("t", Features.of(Features.LIBRARY)));
         other.sent.clear();
         return s;
@@ -931,10 +929,10 @@ class ServerDispatcherTest {
         otherPlayer(seesNothing);
         otherPlayer(throwing);
         dispatcher.open(notReady); // no handshake: never told anything
-        NetSession withoutLibrary = dispatcher.open(noLibrary);
+        NetSession<FakePlayer> withoutLibrary = dispatcher.open(noLibrary);
         receiveOn(dispatcher, withoutLibrary, Handshake.hello("t", Features.of(Features.CLIPBOARD)));
         noLibrary.sent.clear();
-        NetSession gone = otherPlayer(left);
+        NetSession<FakePlayer> gone = otherPlayer(left);
         dispatcher.close(gone);
 
         receive(new C2S.LibraryMove(21, false, "shared/x.schem", "_players/" + new UUID(1, 2) + "/x.schem"));
@@ -1059,7 +1057,7 @@ class ServerDispatcherTest {
         otherPlayer(revoked);
         otherPlayer(unaffected);
         otherPlayer(throwing);
-        NetSession withoutLibrary = dispatcher.open(noLibrary);
+        NetSession<FakePlayer> withoutLibrary = dispatcher.open(noLibrary);
         receiveOn(dispatcher, withoutLibrary, Handshake.hello("t", Features.of(Features.CLIPBOARD)));
         noLibrary.sent.clear();
 
@@ -1485,16 +1483,16 @@ class ServerDispatcherTest {
         assertTrue(clipboards.calls.isEmpty());
         assertEquals(new S2C.JobRejected(5, RejectReason.QUEUE_FULL), transport.sent(S2C.JobRejected.class).get(0));
         // Other players share the server-wide cap: 3 more full sessions fill it.
-        List<NetSession> others = new ArrayList<>();
+        List<NetSession<FakePlayer>> others = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
-            NetSession other = dispatcher.open(new FakeTransport());
+            NetSession<FakePlayer> other = dispatcher.open(new FakeTransport());
             dispatcher.receive(other, encode(Handshake.hello("t", Features.NONE)));
             others.add(other);
             assertTrue(dispatcher.openStream(other, StreamKind.SCHEM_FILE, big, new TreeMap<>()).isPresent());
             assertTrue(dispatcher.openStream(other, StreamKind.SCHEM_FILE, big, new TreeMap<>()).isPresent());
         }
         assertEquals(4 * perPlayer, dispatcher.outboundBytesTotal());
-        NetSession fifth = dispatcher.open(new FakeTransport());
+        NetSession<FakePlayer> fifth = dispatcher.open(new FakeTransport());
         dispatcher.receive(fifth, encode(Handshake.hello("t", Features.NONE)));
         assertTrue(dispatcher.openStream(fifth, StreamKind.SCHEM_FILE, new byte[1], new TreeMap<>()).isEmpty(),
                 "past the server-wide byte cap");
@@ -1888,8 +1886,8 @@ class ServerDispatcherTest {
     @Test
     void onlyHelloIsDecodedBeforeTheHandshakeAndRateLimitsApplyBeforeDecoding() throws ProtocolException {
         CountingStates counting = new CountingStates();
-        ServerDispatcher counted = new ServerDispatcher(edits, permissions, limits, () -> counting, clock::get);
-        NetSession other = counted.open(transport);
+        ServerDispatcher<FakePlayer> counted = new ServerDispatcher<>(edits, permissions, limits, () -> counting, clock::get);
+        NetSession<FakePlayer> other = counted.open(transport);
         byte[] runOp = Codec.encodeC2S(fill(1), STATES);
         counted.receive(other, runOp);
         assertEquals(0, counting.parses, "nothing but Hello is decoded before the handshake");
@@ -1906,8 +1904,8 @@ class ServerDispatcherTest {
 
     @Test
     void unknownStateRefusalsAreBudgetedThenCountAsViolations() throws ProtocolException {
-        ServerDispatcher noStates = new ServerDispatcher(edits, permissions, limits, () -> null, clock::get);
-        NetSession other = noStates.open(transport);
+        ServerDispatcher<FakePlayer> noStates = new ServerDispatcher<>(edits, permissions, limits, () -> null, clock::get);
+        NetSession<FakePlayer> other = noStates.open(transport);
         noStates.receive(other, Codec.encodeC2S(Handshake.hello("t", Features.NONE), STATES));
         byte[] frame = Codec.encodeC2S(fill(22), STATES);
         // One frame every 200 ms keeps the ops bucket topped up; the unknown-state budget is 20/min.
@@ -1957,8 +1955,8 @@ class ServerDispatcherTest {
     void unknownBlockStatesAreRefusedWithoutCountingAsViolations() throws ProtocolException {
         handshake();
         byte[] frame = Codec.encodeC2S(fill(22), STATES);
-        ServerDispatcher noStates = new ServerDispatcher(edits, permissions, limits, () -> null, clock::get);
-        NetSession other = noStates.open(transport);
+        ServerDispatcher<FakePlayer> noStates = new ServerDispatcher<>(edits, permissions, limits, () -> null, clock::get);
+        NetSession<FakePlayer> other = noStates.open(transport);
         noStates.receive(other, Codec.encodeC2S(Handshake.hello("t", Features.NONE), STATES));
         transport.sent.clear();
         noStates.receive(other, frame);
@@ -2323,7 +2321,7 @@ class ServerDispatcherTest {
         assertTrue(ServerDispatcher.SERVER_FEATURES.has(Features.BUILDER));
     }
 
-    private static final class FakeTransport implements ServerTransport {
+    private static final class FakeTransport implements ServerTransport<FakePlayer> {
         boolean canSend = true;
         int frames;
         byte[] lastFrame;
@@ -2334,7 +2332,17 @@ class ServerDispatcherTest {
         String disconnected;
 
         @Override
-        public ServerPlayerEntity player() {
+        public FakePlayer player() {
+            return null;
+        }
+
+        @Override
+        public UUID playerId() {
+            return null;
+        }
+
+        @Override
+        public String playerName() {
             return null;
         }
 
@@ -2391,7 +2399,7 @@ class ServerDispatcherTest {
         }
     }
 
-    private static final class FakePermissions implements PermissionService {
+    private static final class FakePermissions implements PermissionService<FakePlayer, Object> {
         final Set<Perm> granted;
         int checks;
 
@@ -2400,19 +2408,19 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public boolean has(ServerPlayerEntity p, Perm node) {
+        public boolean has(FakePlayer p, Perm node) {
             checks++;
             return granted.contains(node);
         }
 
         @Override
-        public ChunkPermit chunk(ServerPlayerEntity p, ServerWorld w, int cx, int cz, Box bounds) {
+        public ChunkPermit chunk(FakePlayer p, Object w, int cx, int cz, Box bounds) {
             return ChunkPermit.ALLOW;
         }
     }
 
     /** Records calls and keeps each reply so tests can answer later, as the real service does off-thread. */
-    private static final class FakeClipboards implements ClipboardService {
+    private static final class FakeClipboards implements ClipboardService<FakePlayer> {
         final List<String> calls = new ArrayList<>();
         final List<Reply<?>> replies = new ArrayList<>();
         EditRejected rejectNext;
@@ -2446,7 +2454,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public JobTicket copy(ServerPlayerEntity p, Region region, BlockPos origin, boolean cut, CellMask mask,
+        public JobTicket copy(FakePlayer p, Region region, BlockPos origin, boolean cut, CellMask mask,
                               EntityFilter entities, JobListener listener, Reply<ClipboardInfo> reply)
                 throws EditRejected {
             copyEntities = entities;
@@ -2461,14 +2469,14 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public void preview(ServerPlayerEntity p, SourceRef source, Reply<Outbound> reply) throws EditRejected {
+        public void preview(FakePlayer p, SourceRef source, Reply<Outbound> reply) throws EditRejected {
             calls.add("preview " + source);
             refuseIfAsked();
             replies.add(reply);
         }
 
         @Override
-        public void export(ServerPlayerEntity p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
+        public void export(FakePlayer p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
                 throws EditRejected {
             calls.add("export " + clipboardId + (format == SchematicFormat.SPONGE ? "" : " " + format));
             refuseIfAsked();
@@ -2476,7 +2484,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public Upload beginUpload(ServerPlayerEntity p, String fileName, long totalBytes) throws EditRejected {
+        public Upload beginUpload(FakePlayer p, String fileName, long totalBytes) throws EditRejected {
             calls.add("begin " + fileName + " " + totalBytes);
             refuseIfAsked();
             reservedUploads++;
@@ -2509,7 +2517,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public SelectionUpload beginSelectionUpload(ServerPlayerEntity p, Sha256 hash, Box bounds, long cells,
+        public SelectionUpload beginSelectionUpload(FakePlayer p, Sha256 hash, Box bounds, long cells,
                                                     long totalBytes) throws EditRejected {
             calls.add("begin selection " + cells + " " + totalBytes);
             refuseIfAsked();
@@ -2553,7 +2561,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public Upload beginGeneratedUpload(ServerPlayerEntity p, Box bounds, long cells, long totalBytes)
+        public Upload beginGeneratedUpload(FakePlayer p, Box bounds, long cells, long totalBytes)
                 throws EditRejected {
             calls.add("begin generated " + cells + " " + totalBytes);
             refuseIfAsked();
@@ -2587,21 +2595,21 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public void list(ServerPlayerEntity p, String folder, Reply<Listing> reply) throws EditRejected {
+        public void list(FakePlayer p, String folder, Reply<Listing> reply) throws EditRejected {
             calls.add("list " + folder);
             refuseIfAsked();
             replies.add(reply);
         }
 
         @Override
-        public void load(ServerPlayerEntity p, String path, Reply<ClipboardInfo> reply) throws EditRejected {
+        public void load(FakePlayer p, String path, Reply<ClipboardInfo> reply) throws EditRejected {
             calls.add("load " + path);
             refuseIfAsked();
             replies.add(reply);
         }
 
         @Override
-        public void save(ServerPlayerEntity p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected {
+        public void save(FakePlayer p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected {
             calls.add("save " + clipboardId + " " + path);
             refuseIfAsked();
             replies.add(reply);
@@ -2612,7 +2620,7 @@ class ServerDispatcherTest {
         int shownCalls;
 
         @Override
-        public void move(ServerPlayerEntity p, boolean folder, String from, String to, Reply<LibraryChange> reply)
+        public void move(FakePlayer p, boolean folder, String from, String to, Reply<LibraryChange> reply)
                 throws EditRejected {
             calls.add("move " + folder + " " + from + " " + to);
             refuseIfAsked();
@@ -2620,7 +2628,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public void delete(ServerPlayerEntity p, boolean folder, String path, Reply<LibraryChange> reply)
+        public void delete(FakePlayer p, boolean folder, String path, Reply<LibraryChange> reply)
                 throws EditRejected {
             calls.add("delete " + folder + " " + path);
             refuseIfAsked();
@@ -2628,21 +2636,21 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public void createFolder(ServerPlayerEntity p, String path, Reply<LibraryChange> reply) throws EditRejected {
+        public void createFolder(FakePlayer p, String path, Reply<LibraryChange> reply) throws EditRejected {
             calls.add("folder " + path);
             refuseIfAsked();
             replies.add(reply);
         }
 
         @Override
-        public java.util.Optional<LibraryChange> shownTo(ServerPlayerEntity viewer, LibraryChange change) {
+        public java.util.Optional<LibraryChange> shownTo(FakePlayer viewer, LibraryChange change) {
             shownCalls++;
             java.util.function.UnaryOperator<LibraryChange> answer = shown.poll();
             return java.util.Optional.ofNullable(answer == null ? null : answer.apply(change));
         }
 
         @Override
-        public void savePalette(ServerPlayerEntity p, String path, BlockPalette palette, Reply<LibraryChange> reply)
+        public void savePalette(FakePlayer p, String path, BlockPalette palette, Reply<LibraryChange> reply)
                 throws EditRejected {
             calls.add("save palette " + path + " " + palette.size());
             refuseIfAsked();
@@ -2650,7 +2658,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public void loadPalette(ServerPlayerEntity p, String path, Reply<LoadedPalette> reply) throws EditRejected {
+        public void loadPalette(FakePlayer p, String path, Reply<LoadedPalette> reply) throws EditRejected {
             calls.add("load palette " + path);
             refuseIfAsked();
             replies.add(reply);
@@ -2661,14 +2669,14 @@ class ServerDispatcherTest {
         int shownAccessCalls;
 
         @Override
-        public void access(ServerPlayerEntity p, String path, Reply<AssetAccess> reply) throws EditRejected {
+        public void access(FakePlayer p, String path, Reply<AssetAccess> reply) throws EditRejected {
             calls.add("access " + path);
             refuseIfAsked();
             replies.add(reply);
         }
 
         @Override
-        public void setAccess(ServerPlayerEntity p, String path, AssetAccess access, Reply<AccessChange> reply)
+        public void setAccess(FakePlayer p, String path, AssetAccess access, Reply<AccessChange> reply)
                 throws EditRejected {
             calls.add("set access " + path + " " + access.mode() + " " + access.players().size());
             refuseIfAsked();
@@ -2676,7 +2684,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public java.util.Optional<LibraryChange> shownAccessChange(ServerPlayerEntity viewer, AccessChange change) {
+        public java.util.Optional<LibraryChange> shownAccessChange(FakePlayer viewer, AccessChange change) {
             shownAccessCalls++;
             java.util.function.Function<AccessChange, LibraryChange> answer = shownAccess.poll();
             return java.util.Optional.ofNullable(answer == null ? null : answer.apply(change));
@@ -2684,14 +2692,14 @@ class ServerDispatcherTest {
     }
 
     /** Records previews and keeps each reply so tests can answer later, as the real service does on a later tick. */
-    private static final class FakeScatter implements ScatterService {
+    private static final class FakeScatter implements ScatterService<FakePlayer> {
         final List<String> calls = new ArrayList<>();
         final List<PreviewReply> replies = new ArrayList<>();
         EditRejected rejectNext;
         RuntimeException failNext;
 
         @Override
-        public void preview(ServerPlayerEntity p, C2S.ScatterPreview request, PreviewReply reply) throws EditRejected {
+        public void preview(FakePlayer p, C2S.ScatterPreview request, PreviewReply reply) throws EditRejected {
             calls.add("preview " + request.reqId());
             EditRejected rejected = rejectNext;
             RuntimeException failure = failNext;
@@ -2703,7 +2711,7 @@ class ServerDispatcherTest {
         }
     }
 
-    private static final class FakeEdits implements EditService, HistoryView {
+    private static final class FakeEdits implements EditService<FakePlayer>, HistoryView<FakePlayer> {
         final List<String> calls = new ArrayList<>();
         EditRejected rejectNext;
         RuntimeException failNext;
@@ -2728,7 +2736,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l) throws EditRejected {
+        public JobTicket run(FakePlayer p, OpSpec s, RunOptions o, JobListener l) throws EditRejected {
             calls.add("run " + s.getClass().getSimpleName());
             lastOp = s;
             refuseIfAsked();
@@ -2739,30 +2747,30 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public void beginStroke(ServerPlayerEntity p, int strokeId, BrushSpec spec) throws EditRejected {
+        public void beginStroke(FakePlayer p, int strokeId, BrushSpec spec) throws EditRejected {
             calls.add("begin " + strokeId);
             lastSpec = spec;
             refuseIfAsked();
         }
 
         @Override
-        public DabOutcome dabs(ServerPlayerEntity p, int strokeId, int seq, List<Dab> dabs) {
+        public DabOutcome dabs(FakePlayer p, int strokeId, int seq, List<Dab> dabs) {
             calls.add("dabs " + strokeId + " " + seq + " " + dabs.size());
             return dabOutcome != null ? dabOutcome : DabOutcome.accepted(dabs.get(dabs.size() - 1).index());
         }
 
         @Override
-        public void predicted(ServerPlayerEntity p) {
+        public void predicted(FakePlayer p) {
             predictions++;
         }
 
         @Override
-        public void endStroke(ServerPlayerEntity p, int strokeId) {
+        public void endStroke(FakePlayer p, int strokeId) {
             calls.add("end " + strokeId);
         }
 
         @Override
-        public JobTicket undo(ServerPlayerEntity p, ConflictPolicy c) throws EditRejected {
+        public JobTicket undo(FakePlayer p, ConflictPolicy c) throws EditRejected {
             calls.add("undo " + c);
             duringHistory.run();
             refuseIfAsked();
@@ -2770,7 +2778,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public JobTicket redo(ServerPlayerEntity p, ConflictPolicy c) throws EditRejected {
+        public JobTicket redo(FakePlayer p, ConflictPolicy c) throws EditRejected {
             calls.add("redo " + c);
             duringHistory.run();
             refuseIfAsked();
@@ -2778,7 +2786,7 @@ class ServerDispatcherTest {
         }
 
         @Override
-        public JobTicket historyOverwrite(ServerPlayerEntity p, boolean redo, int steps) throws EditRejected {
+        public JobTicket historyOverwrite(FakePlayer p, boolean redo, int steps) throws EditRejected {
             calls.add((redo ? "redo" : "undo") + " anyway " + steps);
             duringHistory.run();
             refuseIfAsked();
@@ -2788,35 +2796,35 @@ class ServerDispatcherTest {
         BuilderOutcome builderOutcome = BuilderOutcome.done(1, 0);
 
         @Override
-        public void builderPowers(ServerPlayerEntity p, int powers) {
+        public void builderPowers(FakePlayer p, int powers) {
             calls.add("powers " + powers);
         }
 
         @Override
-        public BuilderOutcome builderPlace(ServerPlayerEntity p, C2S.BuilderPlace place) {
+        public BuilderOutcome builderPlace(FakePlayer p, C2S.BuilderPlace place) {
             calls.add("place " + place.seq());
             return builderOutcome;
         }
 
         @Override
-        public BuilderOutcome builderBreak(ServerPlayerEntity p, C2S.BuilderBreak breaks) {
+        public BuilderOutcome builderBreak(FakePlayer p, C2S.BuilderBreak breaks) {
             calls.add("break " + breaks.seq() + " drag " + breaks.dragId() + (breaks.last() ? " last" : ""));
             return builderOutcome;
         }
 
         @Override
-        public void builderDragEnd(ServerPlayerEntity p, int dragId) {
+        public void builderDragEnd(FakePlayer p, int dragId) {
             calls.add("drag end " + dragId);
         }
 
         @Override
-        public boolean cancel(ServerPlayerEntity p, UUID jobId) {
+        public boolean cancel(FakePlayer p, UUID jobId) {
             calls.add("cancel " + jobId);
             return true;
         }
 
         @Override
-        public S2C.HistoryState historyState(ServerPlayerEntity player) {
+        public S2C.HistoryState historyState(FakePlayer player) {
             historyQueries++;
             return historyState;
         }

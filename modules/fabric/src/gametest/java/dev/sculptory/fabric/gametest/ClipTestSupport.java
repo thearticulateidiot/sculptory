@@ -3,12 +3,12 @@ package dev.sculptory.fabric.gametest;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.check;
 
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.ClipboardService;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.schem.FabricDataFixHook;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.library.Library;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;

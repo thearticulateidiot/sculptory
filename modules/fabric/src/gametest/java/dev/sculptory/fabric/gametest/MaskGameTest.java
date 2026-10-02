@@ -42,7 +42,6 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.scatter.ScatterArea;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.ClipboardService;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
@@ -50,9 +49,7 @@ import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.net.NetSession;
-import dev.sculptory.fabric.net.ServerDispatcher;
-import dev.sculptory.fabric.net.ServerTransport;
+import dev.sculptory.fabric.net.FabricTransport;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
@@ -66,12 +63,15 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.BuilderOutcome;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.net.NetSession;
+import dev.sculptory.server.net.ServerDispatcher;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -959,10 +959,10 @@ public final class MaskGameTest implements FabricGameTest {
         for (int x = x0; x <= x0 + 15; x++) {
             for (int z = z0; z <= z0 + 15; z++) h.world.setBlockState(pos(x, 100, z), Blocks.STONE.getDefaultState(), 2);
         }
-        ServerDispatcher dispatcher = new ServerDispatcher(h.service, h.runtime.permissions(), () -> Limits.DEFAULTS,
+        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, h.runtime.permissions(), () -> Limits.DEFAULTS,
                 h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h);
-        NetSession session = dispatcher.open(transport);
+        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.HISTORY,
                 Features.EDIT_MASK)));
         check(transport.first(S2C.Welcome.class).features().has(Features.EDIT_MASK), "edit_mask is not offered");
@@ -1001,7 +1001,7 @@ public final class MaskGameTest implements FabricGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded. */
-    private static final class Transport implements ServerTransport {
+    private static final class Transport implements FabricTransport {
         final Harness h;
         final List<S2C> sent = new ArrayList<>();
 
@@ -1009,7 +1009,7 @@ public final class MaskGameTest implements FabricGameTest {
             this.h = h;
         }
 
-        void receive(ServerDispatcher dispatcher, NetSession session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {

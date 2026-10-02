@@ -3,11 +3,11 @@ package dev.sculptory.fabric.engine.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.EditService;
-import dev.sculptory.fabric.engine.PermissionService;
-import dev.sculptory.fabric.engine.ScatterService;
-import dev.sculptory.fabric.net.HistoryView;
+import dev.sculptory.server.engine.ClipboardService;
+import dev.sculptory.server.engine.EditService;
+import dev.sculptory.server.engine.PermissionService;
+import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.net.HistoryView;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
@@ -39,16 +39,28 @@ class EditServiceHostFacadesTest {
                     if (Modifier.isStatic(method.getModifiers())) continue;
                     checked++;
                     String name = type.getSimpleName() + "." + method.getName() + " (" + service.getSimpleName() + ")";
-                    try {
-                        Method declared = type.getDeclaredMethod(method.getName(), method.getParameterTypes());
-                        if (declared.isBridge() || declared.isSynthetic()) missing.add(name);
-                    } catch (NoSuchMethodException e) {
-                        missing.add(name);
-                    }
+                    if (!declaresOverride(type, method)) missing.add(name);
                 }
             }
         }
         assertTrue(checked >= 20, "the service interfaces were read: " + checked + " methods");
         assertEquals(List.of(), missing, "facade methods left to the interface's default");
+    }
+
+    /**
+     * Whether {@code type} itself declares {@code method}: the services are generic in the player type, so a facade
+     * declares it with the platform's types (the {@code Object} form the interface erases to is a bridge).
+     */
+    private static boolean declaresOverride(Class<?> type, Method method) {
+        Class<?>[] erased = method.getParameterTypes();
+        for (Method declared : type.getDeclaredMethods()) {
+            if (declared.isBridge() || declared.isSynthetic() || !declared.getName().equals(method.getName())) continue;
+            Class<?>[] params = declared.getParameterTypes();
+            if (params.length != erased.length) continue;
+            boolean matches = true;
+            for (int i = 0; i < params.length && matches; i++) matches = erased[i].isAssignableFrom(params[i]);
+            if (matches) return true;
+        }
+        return false;
     }
 }

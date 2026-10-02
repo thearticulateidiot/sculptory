@@ -21,15 +21,11 @@ import dev.sculptory.core.scatter.ScatterArea;
 import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.schem.AssetInfo;
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.ScatterService;
 import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.net.NetSession;
-import dev.sculptory.fabric.net.ServerDispatcher;
-import dev.sculptory.fabric.net.ServerTransport;
+import dev.sculptory.fabric.net.FabricTransport;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.WorldChecks;
 import dev.sculptory.protocol.v2.C2S;
@@ -47,12 +43,16 @@ import dev.sculptory.protocol.v2.StreamChunk;
 import dev.sculptory.protocol.v2.StreamEnd;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.protocol.v2.StreamOpen;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.ScatterPlans;
 import dev.sculptory.server.library.LibraryPath;
+import dev.sculptory.server.net.NetSession;
+import dev.sculptory.server.net.ServerDispatcher;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -649,10 +649,10 @@ public final class ScatterGameTest implements FabricGameTest {
         Clipboard slab = slab(h, "minecraft:emerald_block");
         String hash = Sha256.digest(new byte[] {7}).hex();
         h.service.assets().put(new AssetCache.Asset(hash, libraryFile("rocks/slab.schem"), slab));
-        ServerDispatcher dispatcher = new ServerDispatcher(h.service, ClipboardService.DISABLED, scatter,
+        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, ClipboardService.disabled(), scatter,
                 h.runtime.permissions(), () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h);
-        NetSession session = dispatcher.open(transport);
+        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         ScatterArea area = new ScatterArea.Stamps(List.of(ScatterArea.Stamp.paint(x0 + 20, z0 + 20, 18),
                 ScatterArea.Stamp.erase(x0 + 20, z0 + 20, 4), ScatterArea.Stamp.paint(x0 + 38, z0 + 38, 8)));
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.SCATTER)));
@@ -723,7 +723,7 @@ public final class ScatterGameTest implements FabricGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded. */
-    private static final class Transport implements ServerTransport {
+    private static final class Transport implements FabricTransport {
         final Harness h;
         final List<S2C> sent = new ArrayList<>();
 
@@ -731,7 +731,7 @@ public final class ScatterGameTest implements FabricGameTest {
             this.h = h;
         }
 
-        void receive(ServerDispatcher dispatcher, NetSession session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {

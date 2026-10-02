@@ -17,12 +17,9 @@ import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.ScatterService;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
-import dev.sculptory.fabric.net.NetSession;
-import dev.sculptory.fabric.net.ServerDispatcher;
-import dev.sculptory.fabric.net.ServerTransport;
+import dev.sculptory.fabric.net.FabricTransport;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
@@ -34,6 +31,9 @@ import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.protocol.v2.ProtocolException;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
+import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.net.NetSession;
+import dev.sculptory.server.net.ServerDispatcher;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -72,10 +72,10 @@ public final class ToolLabelGameTest implements FabricGameTest {
             for (int z = z0; z < z0 + 4; z++) writer.write(x, 104, z, water, null);
         }
         ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
-        ServerDispatcher dispatcher = new ServerDispatcher(h.service, clips, ScatterService.DISABLED, h.runtime.permissions(),
+        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, h.player);
-        NetSession session = dispatcher.open(transport);
+        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
 
         Region flood = new Region.Cuboid(box(x0 + 8, 104, z0, x0 + 11, 104, z0 + 3));       // air over the stone
@@ -173,7 +173,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
         return new OpSpec.Paste(new SourceRef.Clipboard(clipboardId), origin, Transform.IDENTITY, new PasteOptions(true, false, false));
     }
 
-    private static void run(Transport transport, ServerDispatcher dispatcher, NetSession session, int reqId, OpSpec op,
+    private static void run(Transport transport, ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, int reqId, OpSpec op,
                             OpLabel label) {
         transport.receive(dispatcher, session, new C2S.RunOp(reqId, op, false, ConflictPolicy.SKIP_CONFLICTS, label));
         check(transport.sent(S2C.JobAccepted.class).stream().anyMatch(a -> a.reqId() == reqId),
@@ -196,7 +196,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded (as GenerateGameTest's). */
-    private static final class Transport implements ServerTransport {
+    private static final class Transport implements FabricTransport {
         final Harness h;
         final ServerPlayerEntity player;
         final List<S2C> sent = new ArrayList<>();
@@ -206,7 +206,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
             this.player = player;
         }
 
-        void receive(ServerDispatcher dispatcher, NetSession session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {

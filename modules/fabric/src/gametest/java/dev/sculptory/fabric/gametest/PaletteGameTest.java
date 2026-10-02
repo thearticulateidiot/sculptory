@@ -11,9 +11,6 @@ import dev.sculptory.core.palette.BlockPalette;
 import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.scatter.ScatterSource;
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.ClipboardService.LibraryChange;
-import dev.sculptory.fabric.engine.ScatterService;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.engine.impl.ServerScatter;
@@ -21,8 +18,11 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
+import dev.sculptory.server.engine.ClipboardService.LibraryChange;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.library.PaletteFile;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -344,7 +344,7 @@ public final class PaletteGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_palette_host", tickLimit = LIMIT)
     public void theHostServiceForwardsPalettesAndLibraryChanges(TestContext context) {
         Harness h = new Harness(context);
-        ClipboardService host = EditServiceHost.clipboards();
+        ClipboardService<ServerPlayerEntity> host = EditServiceHost.clipboards();
         check(EditServiceHost.findClipboards(context.getWorld().getServer()).isPresent(), "the host runs a library");
         Path root = ServerClipboards.defaultLibraryRoot();
         String folder = "palette-host-" + java.util.UUID.randomUUID().toString().substring(0, 8);

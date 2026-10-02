@@ -2,11 +2,11 @@ package dev.sculptory.fabric.perm;
 
 import com.mojang.authlib.GameProfile;
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.PermissionService;
 import dev.sculptory.protocol.v2.PermissionMask;
 import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.perm.ChunkPermits;
 import java.util.EnumSet;
 import java.util.Map;
@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  * requests are refused {@code NO_PERMISSION}); {@link #check} reports it as unknown instead, so re-checks of work
  * already admitted can leave that work alone. Failures are logged at most once a minute per player.
  */
-public final class FabricPermissionService implements PermissionService {
+public final class FabricPermissionService implements PermissionService<ServerPlayerEntity, ServerWorld> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Failed permission checks are logged at most this often per player. */
     static final long FAILURE_LOG_INTERVAL_NANOS = 60_000_000_000L;

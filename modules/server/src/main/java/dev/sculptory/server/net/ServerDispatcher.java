@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.net;
+package dev.sculptory.server.net;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.BrushTool;
@@ -10,13 +10,6 @@ import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.tinker.EntityView;
-import dev.sculptory.fabric.SculptoryMod;
-import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.EditService;
-import dev.sculptory.fabric.engine.PermissionService;
-import dev.sculptory.fabric.engine.ScatterService;
-import dev.sculptory.fabric.engine.TinkerService;
-import dev.sculptory.fabric.net.NetSession.Stage;
 import dev.sculptory.protocol.v2.AssetAccess;
 import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
@@ -40,15 +33,22 @@ import dev.sculptory.protocol.v2.StreamEnd;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.protocol.v2.StreamOpen;
 import dev.sculptory.protocol.v2.StreamSender;
+import dev.sculptory.server.ServerLog;
 import dev.sculptory.server.engine.BuilderOutcome;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.EditService;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.net.NetSession.Stage;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
@@ -67,7 +67,6 @@ import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
-import net.minecraft.server.network.ServerPlayerEntity;
 
 /**
  * Decodes client frames and drives {@link EditService}; turns results and {@link JobListener} callbacks into
@@ -147,8 +146,10 @@ import net.minecraft.server.network.ServerPlayerEntity;
  * Prediction acknowledgements are ordered through {@link PredictionAcks}.
  *
  * <p>Server thread only.
+ *
+ * @param <P> the platform's player type
  */
-public final class ServerDispatcher {
+public final class ServerDispatcher<P> {
     /** What this server offers (M1, M2 and M3, and builder mode). */
     public static final Features SERVER_FEATURES = Features.of(Features.STROKES, Features.REGION_OPS, Features.HISTORY,
             Features.CLIPBOARD, Features.SCHEMATICS, Features.LIBRARY, Features.SCATTER, Features.TINKER,
@@ -207,16 +208,16 @@ public final class ServerDispatcher {
         default void failed(String reason) {}
     }
 
-    private final EditService edits;
-    private final ClipboardService clipboards;
-    private final ScatterService scatter;
-    private final PermissionService permissions;
+    private final EditService<P> edits;
+    private final ClipboardService<P> clipboards;
+    private final ScatterService<P> scatter;
+    private final PermissionService<P, ?> permissions;
     private final Supplier<Limits> limits;
     private final Supplier<StateSpace> states;
     private final LongSupplier nanoClock;
     private final AtomicLong epochs = new AtomicLong(System.currentTimeMillis() << 20);
     /** Every session opened and not closed, for pushes to all players (library changes). Server thread only. */
-    private final Set<NetSession> sessions = new LinkedHashSet<>();
+    private final Set<NetSession<P>> sessions = new LinkedHashSet<>();
     /** Payload bytes of every session's outbound streams. Server thread only. */
     private long outboundBytesTotal;
     /** Stamps every use of an uploaded set, so the least recently used of all connections can be told. */
@@ -226,7 +227,7 @@ public final class ServerDispatcher {
     /** What {@code Hello} is answered with (read at each handshake); {@link #SERVER_FEATURES} unless offered otherwise. */
     private Supplier<Features> offered = () -> SERVER_FEATURES;
     /** Tinker (protocol 5): {@code DISABLED} until {@link #serveTinker} gives the running server's. */
-    private TinkerService tinker = TinkerService.DISABLED;
+    private TinkerService<P> tinker = TinkerService.disabled();
     /** This server's build id, sent in {@code Welcome} and {@code Incompatible} ({@code ""}: not sent). */
     private String buildId = "";
 
@@ -236,8 +237,8 @@ public final class ServerDispatcher {
      * @param states the server's state space, read when a frame is decoded (it may be built after install)
      * @param nanoClock a monotonic clock for rate limits and resync windows, normally {@code System::nanoTime}
      */
-    public ServerDispatcher(EditService edits, ClipboardService clipboards, ScatterService scatter,
-                            PermissionService permissions, Supplier<Limits> limits, Supplier<StateSpace> states,
+    public ServerDispatcher(EditService<P> edits, ClipboardService<P> clipboards, ScatterService<P> scatter,
+                            PermissionService<P, ?> permissions, Supplier<Limits> limits, Supplier<StateSpace> states,
                             LongSupplier nanoClock) {
         this.edits = Objects.requireNonNull(edits);
         this.clipboards = Objects.requireNonNull(clipboards);
@@ -249,19 +250,19 @@ public final class ServerDispatcher {
     }
 
     /** Without scatter: previews are refused with {@code DISABLED}. */
-    public ServerDispatcher(EditService edits, ClipboardService clipboards, PermissionService permissions,
+    public ServerDispatcher(EditService<P> edits, ClipboardService<P> clipboards, PermissionService<P, ?> permissions,
                             Supplier<Limits> limits, Supplier<StateSpace> states, LongSupplier nanoClock) {
-        this(edits, clipboards, ScatterService.DISABLED, permissions, limits, states, nanoClock);
+        this(edits, clipboards, ScatterService.disabled(), permissions, limits, states, nanoClock);
     }
 
     /** Without clipboards or scatter: M2 and M3 requests are refused with {@code DISABLED}. */
-    public ServerDispatcher(EditService edits, PermissionService permissions, Supplier<Limits> limits,
+    public ServerDispatcher(EditService<P> edits, PermissionService<P, ?> permissions, Supplier<Limits> limits,
                             Supplier<StateSpace> states, LongSupplier nanoClock) {
-        this(edits, ClipboardService.DISABLED, permissions, limits, states, nanoClock);
+        this(edits, ClipboardService.disabled(), permissions, limits, states, nanoClock);
     }
 
     /** Fixed limits. */
-    public ServerDispatcher(EditService edits, PermissionService permissions, Limits limits, Supplier<StateSpace> states,
+    public ServerDispatcher(EditService<P> edits, PermissionService<P, ?> permissions, Limits limits, Supplier<StateSpace> states,
                             LongSupplier nanoClock) {
         this(edits, permissions, () -> limits, states, nanoClock);
     }
@@ -275,7 +276,7 @@ public final class ServerDispatcher {
     }
 
     /** The service {@code TinkerBlock} and {@code TinkerEntity} go to. */
-    public void serveTinker(TinkerService tinker) {
+    public void serveTinker(TinkerService<P> tinker) {
         this.tinker = Objects.requireNonNull(tinker);
     }
 
@@ -284,15 +285,15 @@ public final class ServerDispatcher {
         this.buildId = Objects.requireNonNull(buildId);
     }
 
-    public NetSession open(ServerTransport transport) {
-        NetSession session = new NetSession(transport, epochs.incrementAndGet(), nanoClock);
+    public NetSession<P> open(ServerTransport<P> transport) {
+        NetSession<P> session = new NetSession(transport, epochs.incrementAndGet(), nanoClock);
         sessions.add(session);
         return session;
     }
 
     // =================================================================== inbound
 
-    public void receive(NetSession s, byte[] frame) {
+    public void receive(NetSession<P> s, byte[] frame) {
         if (s.stage == Stage.CLOSED || s.stage == Stage.INCOMPATIBLE) return;
         MessageType type = Codec.peekType(frame);
         if (type == null || !type.clientToServer()) {
@@ -332,7 +333,7 @@ public final class ServerDispatcher {
      * What a {@code Dabs} frame costs in the dab bucket: every dab with its copies under the open stroke's symmetry
      * (one per dab for a frame of another stroke, which is refused anyway).
      */
-    private static int dabCost(NetSession s, C2S.Dabs dabs) {
+    private static int dabCost(NetSession<?> s, C2S.Dabs dabs) {
         if (!s.strokeOpen || s.strokeId != dabs.strokeId()) return dabs.dabs().size();
         int cost = 0;
         for (Dab dab : dabs.dabs()) cost += s.strokeSymmetry.copyCount(dab);
@@ -345,11 +346,11 @@ public final class ServerDispatcher {
      * before any of those checks, and bulk writes near the player do not resend whole columns over its predictions.
      * ({@link EditService#dabs} records it too, for callers other than this dispatcher.)
      */
-    private void predicted(NetSession s) {
+    private void predicted(NetSession<P> s) {
         try {
             edits.predicted(s.transport.player());
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: recording a brush prediction failed", e);
+            ServerLog.LOG.error("Sculptory: recording a brush prediction failed", e);
         }
     }
 
@@ -364,7 +365,7 @@ public final class ServerDispatcher {
      *
      * @return whether the refusal is within the allowance and should be answered
      */
-    private boolean withinFloodAllowance(NetSession s, MessageType type) {
+    private boolean withinFloodAllowance(NetSession<P> s, MessageType type) {
         if (s.floodAllowance.tryAcquire(1)) return true;
         if (s.stage != Stage.CLOSED && !s.floodCountedThisTick) {
             s.floodCountedThisTick = true;
@@ -379,7 +380,7 @@ public final class ServerDispatcher {
      * in flight for an upload that ended recently are dropped; a chunk of a stream that was never granted is a
      * violation.
      */
-    private void refuseChunk(NetSession s, byte[] frame) {
+    private void refuseChunk(NetSession<P> s, byte[] frame) {
         OptionalInt id = Codec.peekLeadingId(frame);
         if (id.isEmpty()) {
             violation(s, "malformed stream chunk");
@@ -391,7 +392,7 @@ public final class ServerDispatcher {
     }
 
     /** Remembers an upload that ended, so the chunks the client still had in flight for it are not violations. */
-    private void rememberEnded(NetSession s, int id) {
+    private void rememberEnded(NetSession<P> s, int id) {
         s.endedUploads.remove(id);
         s.endedUploads.put(id, nanoClock.getAsLong() + NetSession.RECENT_UPLOAD_NANOS);
         Iterator<Integer> oldest = s.endedUploads.keySet().iterator();
@@ -401,12 +402,12 @@ public final class ServerDispatcher {
         }
     }
 
-    private boolean recentlyEnded(NetSession s, int id) {
+    private boolean recentlyEnded(NetSession<P> s, int id) {
         Long until = s.endedUploads.get(id);
         return until != null && nanoClock.getAsLong() - until < 0;
     }
 
-    private void dispatch(NetSession s, C2S message) {
+    private void dispatch(NetSession<P> s, C2S message) {
         switch (message) {
             case C2S.Hello m -> hello(s, m);
             case C2S.StrokeBegin m -> beginStroke(s, m);
@@ -462,7 +463,7 @@ public final class ServerDispatcher {
         }
     }
 
-    private void hello(NetSession s, C2S.Hello hello) {
+    private void hello(NetSession<P> s, C2S.Hello hello) {
         if (s.stage != Stage.AWAITING_HELLO) {
             violation(s, "repeated Hello");
             return;
@@ -472,12 +473,12 @@ public final class ServerDispatcher {
         // Cleaned before it is stored, logged or shown (/sculptory version): it is whatever the client sent.
         s.clientBuild = Handshake.cleanBuild(hello.modVersion());
         S2C answer = Handshake.answer(hello, offered.get(), current, mask, s.epoch, buildId);
-        ServerPlayerEntity player = s.transport.player();
-        String name = player == null ? "a player" : player.getName().getString();
+        String playerName = s.transport.playerName();
+        String name = playerName == null ? "a player" : playerName;
         if (answer instanceof S2C.Welcome welcome) {
             s.stage = Stage.READY;
             // Every connection starts with the global mask off; the client sends its mask after the Welcome.
-            EditMasks.reset(player == null ? null : player.getUuid());
+            EditMasks.reset(s.transport.playerId());
             s.protocol = welcome.protocol();
             s.features = welcome.features();
             s.permissions = mask;
@@ -485,16 +486,16 @@ public final class ServerDispatcher {
             send(s, welcome);
             sendHistory(s);
             if (Handshake.differentBuilds(s.clientBuild, buildId)) {
-                SculptoryMod.LOG.info("Sculptory: {} connected with the editor (protocol {}, client build {}, "
+                ServerLog.LOG.info("Sculptory: {} connected with the editor (protocol {}, client build {}, "
                         + "a different build from this server's {})", name, welcome.protocol(), s.clientBuild, buildId);
             } else {
-                SculptoryMod.LOG.info("Sculptory: {} connected with the editor (protocol {}, build {})", name,
+                ServerLog.LOG.info("Sculptory: {} connected with the editor (protocol {}, build {})", name,
                         welcome.protocol(), s.clientBuild);
             }
         } else {
             s.stage = Stage.INCOMPATIBLE;
             send(s, answer);
-            SculptoryMod.LOG.info("Sculptory: {} has an incompatible editor (client build {}, protocol {}-{}; this "
+            ServerLog.LOG.info("Sculptory: {} has an incompatible editor (client build {}, protocol {}-{}; this "
                     + "server's build {}, protocol {}-{}): editing is off for them", name, s.clientBuild,
                     hello.minProtocol(), hello.maxProtocol(), buildId.isEmpty() ? "unknown" : buildId,
                     Handshake.MIN_PROTOCOL, Handshake.MAX_PROTOCOL);
@@ -503,7 +504,7 @@ public final class ServerDispatcher {
 
     // =================================================================== strokes
 
-    private void beginStroke(NetSession s, C2S.StrokeBegin m) {
+    private void beginStroke(NetSession<P> s, C2S.StrokeBegin m) {
         if (s.strokeOpen) finishStroke(s);
         try {
             edits.beginStroke(s.transport.player(), m.strokeId(), m.spec());
@@ -511,7 +512,7 @@ public final class ServerDispatcher {
             send(s, new S2C.StrokeStatus(m.strokeId(), -1, S2C.StrokeStatus.Status.REJECTED, e.reason()));
             return;
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: beginStroke failed", e);
+            ServerLog.LOG.error("Sculptory: beginStroke failed", e);
             send(s, new S2C.StrokeStatus(m.strokeId(), -1, S2C.StrokeStatus.Status.REJECTED, RejectReason.INVALID));
             return;
         }
@@ -532,7 +533,7 @@ public final class ServerDispatcher {
         send(s, new S2C.StrokeStatus(m.strokeId(), -1, S2C.StrokeStatus.Status.OK, null));
     }
 
-    private void dabs(NetSession s, C2S.Dabs m) {
+    private void dabs(NetSession<P> s, C2S.Dabs m) {
         if (!s.strokeOpen || s.strokeId != m.strokeId()) {
             refuse(s, m, RejectReason.INVALID);
             return;
@@ -541,7 +542,7 @@ public final class ServerDispatcher {
         try {
             outcome = edits.dabs(s.transport.player(), m.strokeId(), m.seq(), m.dabs());
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: dabs failed", e);
+            ServerLog.LOG.error("Sculptory: dabs failed", e);
             outcome = null;
         }
         if (outcome == null) outcome = DabOutcome.rejected(lastIndex(m), RejectReason.INVALID);
@@ -562,7 +563,7 @@ public final class ServerDispatcher {
      * Remembers the chunks accepted dabs and their symmetric copies may change, so resyncs can be limited to them. (The
      * edit service refuses copies outside the world; one beyond the dab coordinates' range is left out here.)
      */
-    private static void recordFootprint(NetSession s, List<Dab> dabs) {
+    private static void recordFootprint(NetSession<?> s, List<Dab> dabs) {
         int r = s.strokeReach;
         for (Dab original : dabs) {
             List<Dab> copies;
@@ -587,7 +588,7 @@ public final class ServerDispatcher {
      * client paces its large dabs on what is written, and shows the shapes still being written), this sends
      * {@code StrokeStatus OK} with the new applied index.
      */
-    public void dabsApplied(NetSession s, int strokeId, int lastIndex) {
+    public void dabsApplied(NetSession<P> s, int strokeId, int lastIndex) {
         if (s.stage == Stage.CLOSED) return;
         boolean current = s.strokeOpen && s.strokeId == strokeId;
         if (current) s.strokeAppliedIndex = Math.max(s.strokeAppliedIndex, lastIndex);
@@ -599,7 +600,7 @@ public final class ServerDispatcher {
     }
 
     /** The brush lane wrote (or dropped) a batch admitted under {@code seq}: acknowledge it in order. */
-    public void predictionApplied(NetSession s, int seq) {
+    public void predictionApplied(NetSession<P> s, int seq) {
         if (s.stage == Stage.CLOSED) return;
         s.acks.applied(seq);
     }
@@ -611,11 +612,11 @@ public final class ServerDispatcher {
     /** A placement left out some of its mirrored copies ({@code [copies]}). */
     public static final String NOTICE_BUILDER_COPIES_SKIPPED = "sculptory.notice.builder.copies_skipped";
 
-    private void builderPowers(NetSession s, C2S.BuilderPowers m) {
+    private void builderPowers(NetSession<P> s, C2S.BuilderPowers m) {
         try {
             edits.builderPowers(s.transport.player(), m.powers());
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: builderPowers failed", e);
+            ServerLog.LOG.error("Sculptory: builderPowers failed", e);
         }
     }
 
@@ -623,12 +624,12 @@ public final class ServerDispatcher {
      * A builder placement: carried out (or refused) at once, then its prediction sequence is acknowledged in order with
      * the player's other predictions; a refusal gets a notice with its reason.
      */
-    private void builderPlace(NetSession s, C2S.BuilderPlace m) {
+    private void builderPlace(NetSession<P> s, C2S.BuilderPlace m) {
         BuilderOutcome outcome;
         try {
             outcome = edits.builderPlace(s.transport.player(), m);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: builderPlace failed", e);
+            ServerLog.LOG.error("Sculptory: builderPlace failed", e);
             outcome = BuilderOutcome.refused(BuilderOutcome.Refusal.FAILED, e.toString());
         }
         s.acks.refused(m.seq());
@@ -639,23 +640,23 @@ public final class ServerDispatcher {
         }
     }
 
-    private void builderBreak(NetSession s, C2S.BuilderBreak m) {
+    private void builderBreak(NetSession<P> s, C2S.BuilderBreak m) {
         BuilderOutcome outcome;
         try {
             outcome = edits.builderBreak(s.transport.player(), m);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: builderBreak failed", e);
+            ServerLog.LOG.error("Sculptory: builderBreak failed", e);
             outcome = BuilderOutcome.refused(BuilderOutcome.Refusal.FAILED, e.toString());
         }
         s.acks.refused(m.seq());
         builderNotice(s, outcome);
     }
 
-    private void builderDragEnd(NetSession s, C2S.BuilderDragEnd m) {
+    private void builderDragEnd(NetSession<P> s, C2S.BuilderDragEnd m) {
         try {
             edits.builderDragEnd(s.transport.player(), m.dragId());
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: builderDragEnd failed", e);
+            ServerLog.LOG.error("Sculptory: builderDragEnd failed", e);
         }
     }
 
@@ -666,7 +667,7 @@ public final class ServerDispatcher {
      * inside rule on an uploaded selection resolved against this connection's store. Answered {@code EditMaskState}; a
      * refusal (here, over the rate limit or undecodable) leaves the player's edits refused until a mask is accepted.
      */
-    private void setEditMask(NetSession s, C2S.SetEditMask m) {
+    private void setEditMask(NetSession<P> s, C2S.SetEditMask m) {
         UUID owner = owner(s);
         try {
             EditMasks.set(owner, m.mask(), region -> resolveSelection(s, region), states.get());
@@ -675,36 +676,35 @@ public final class ServerDispatcher {
             send(s, S2C.EditMaskState.refused(m.reqId(), e.reason(), clip(e.detail())));
         } catch (RuntimeException e) {
             EditMasks.refuse(owner);
-            SculptoryMod.LOG.error("Sculptory: setEditMask failed", e);
+            ServerLog.LOG.error("Sculptory: setEditMask failed", e);
             send(s, S2C.EditMaskState.refused(m.reqId(), RejectReason.INVALID, ""));
         }
     }
 
-    private static UUID owner(NetSession s) {
-        ServerPlayerEntity player = s.transport.player();
-        return player == null ? null : player.getUuid();
+    private static UUID owner(NetSession<?> s) {
+        return s.transport.playerId();
     }
 
     /** {@code Navigate}: carried out (or refused) at once by the edit service, answered {@code NavigateResult}. */
-    private void navigate(NetSession s, C2S.Navigate m) {
+    private void navigate(NetSession<P> s, C2S.Navigate m) {
         S2C.NavigateResult result;
         try {
             result = edits.navigate(s.transport.player(), m);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: navigate failed", e);
+            ServerLog.LOG.error("Sculptory: navigate failed", e);
             result = S2C.NavigateResult.refused(m.reqId(), RejectReason.INVALID);
         }
         send(s, result);
     }
 
     /** The refusal's notice ({@code [detail]}), at most once a second per reason; none for "nothing to break". */
-    private void builderNotice(NetSession s, BuilderOutcome outcome) {
+    private void builderNotice(NetSession<P> s, BuilderOutcome outcome) {
         if (outcome.accepted() || outcome.refusal() == BuilderOutcome.Refusal.NOTHING) return;
         throttledNotice(s, new S2C.Notice(S2C.Notice.Level.WARN, outcome.refusal().noticeKey(),
                 List.of(clip(outcome.detail()))));
     }
 
-    private void throttledNotice(NetSession s, S2C.Notice notice) {
+    private void throttledNotice(NetSession<P> s, S2C.Notice notice) {
         long now = nanoClock.getAsLong();
         Long last = s.builderNoticeAt.get(notice.key());
         if (last != null && now - last < BUILDER_NOTICE_NANOS) return;
@@ -712,7 +712,7 @@ public final class ServerDispatcher {
         send(s, notice);
     }
 
-    private void endStroke(NetSession s, int strokeId) {
+    private void endStroke(NetSession<P> s, int strokeId) {
         if (s.strokeOpen && s.strokeId == strokeId) {
             finishStroke(s);
         } else {
@@ -720,13 +720,13 @@ public final class ServerDispatcher {
         }
     }
 
-    private void finishStroke(NetSession s) {
+    private void finishStroke(NetSession<P> s) {
         s.strokeOpen = false;
         s.strokeEndedAt = nanoClock.getAsLong();
         try {
             edits.endStroke(s.transport.player(), s.strokeId);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: endStroke failed", e);
+            ServerLog.LOG.error("Sculptory: endStroke failed", e);
         }
         send(s, new S2C.StrokeStatus(s.strokeId, s.strokeAckedIndex, S2C.StrokeStatus.Status.ENDED, null));
         sendHistory(s);
@@ -739,7 +739,7 @@ public final class ServerDispatcher {
      * {@link #MAX_RESYNC_CHUNKS}. A request with no chunk in the footprint, or over the chunk cap, counts as a
      * violation; a cap overrun is still served (clamped) and answered with a notice.
      */
-    private void resync(NetSession s, Box box) {
+    private void resync(NetSession<P> s, Box box) {
         long now = nanoClock.getAsLong();
         if (!has(s, Perm.USE) || !has(s, Perm.BRUSH)) {
             refuseResync(s, RESYNC_NO_PERMISSION);
@@ -795,7 +795,7 @@ public final class ServerDispatcher {
     }
 
     /** @param key one translatable message per reason, so the player reads plain English rather than a code */
-    private void refuseResync(NetSession s, String key) {
+    private void refuseResync(NetSession<P> s, String key) {
         send(s, new S2C.Notice(S2C.Notice.Level.WARN, key, List.of()));
     }
 
@@ -805,7 +805,7 @@ public final class ServerDispatcher {
 
     // =================================================================== jobs
 
-    private void runOp(NetSession s, C2S.RunOp m) {
+    private void runOp(NetSession<P> s, C2S.RunOp m) {
         JobRelay relay = new JobRelay(s);
         JobTicket ticket;
         try {
@@ -820,7 +820,7 @@ public final class ServerDispatcher {
             return;
         } catch (RuntimeException e) {
             relay.discard();
-            SculptoryMod.LOG.error("Sculptory: run failed", e);
+            ServerLog.LOG.error("Sculptory: run failed", e);
             send(s, new S2C.JobRejected(m.reqId(), RejectReason.INVALID));
             return;
         }
@@ -829,14 +829,14 @@ public final class ServerDispatcher {
     }
 
     /**
-     * Undo and redo take no listener: the engine reports their jobs through {@link #jobListener} (via
-     * {@link ServerNet#jobListener}). Events reported while the job is being admitted are held until the
-     * {@code JobAccepted} or {@code JobRejected} is sent.
+     * Undo and redo take no listener: the engine reports their jobs through {@link #jobListener} (via the
+     * platform's hook; on Fabric, {@code ServerNet.jobListener}). Events reported while the job is being
+     * admitted are held until the {@code JobAccepted} or {@code JobRejected} is sent.
      */
-    private void history(NetSession s, int reqId, ConflictPolicy policy, boolean undo) {
+    private void history(NetSession<P> s, int reqId, ConflictPolicy policy, boolean undo) {
         s.heldJobEvents = new ArrayList<>();
         try {
-            ServerPlayerEntity player = s.transport.player();
+            P player = s.transport.player();
             JobTicket ticket = undo ? edits.undo(player, policy) : edits.redo(player, policy);
             send(s, new S2C.JobAccepted(reqId, ticket.jobId(), ticket.estimatedCells()));
         } catch (EditRejected e) {
@@ -844,7 +844,7 @@ public final class ServerDispatcher {
             send(s, new S2C.JobRejected(reqId, e.reason()));
             sendHistory(s);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: {} failed", undo ? "undo" : "redo", e);
+            ServerLog.LOG.error("Sculptory: {} failed", undo ? "undo" : "redo", e);
             send(s, new S2C.JobRejected(reqId, RejectReason.INVALID));
         } finally {
             List<S2C> held = s.heldJobEvents;
@@ -861,7 +861,7 @@ public final class ServerDispatcher {
      * ({@link EditRejected#HISTORY_RUN} when the player's run is not the one asked for, else "") to decide whether to
      * withdraw its offer.
      */
-    private void historyOverwrite(NetSession s, C2S.HistoryOverwrite m) {
+    private void historyOverwrite(NetSession<P> s, C2S.HistoryOverwrite m) {
         s.heldJobEvents = new ArrayList<>();
         try {
             JobTicket ticket = edits.historyOverwrite(s.transport.player(), m.redo(), m.steps());
@@ -872,7 +872,7 @@ public final class ServerDispatcher {
             send(s, new S2C.JobRejected(m.reqId(), e.reason()));
             sendHistory(s);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: {} anyway failed", m.redo() ? "redo" : "undo", e);
+            ServerLog.LOG.error("Sculptory: {} anyway failed", m.redo() ? "redo" : "undo", e);
             send(s, new S2C.JobRejected(m.reqId(), RejectReason.INVALID));
         } finally {
             List<S2C> held = s.heldJobEvents;
@@ -888,14 +888,14 @@ public final class ServerDispatcher {
      * {@code TinkerResult(reqId)}, or refused with the reason and detail, nothing changed. The history state follows as
      * the history service reports the push.
      */
-    private void tinkerBlock(NetSession s, C2S.TinkerBlock m) {
+    private void tinkerBlock(NetSession<P> s, C2S.TinkerBlock m) {
         try {
             tinker.block(s.transport.player(), m.pos(), m.expected(), m.target(), m.sign());
             send(s, S2C.TinkerResult.done(m.reqId(), new byte[0]));
         } catch (EditRejected e) {
             send(s, S2C.TinkerResult.refused(m.reqId(), e.reason(), clip(e.detail())));
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: a Tinker block change failed", e);
+            ServerLog.LOG.error("Sculptory: a Tinker block change failed", e);
             send(s, S2C.TinkerResult.refused(m.reqId(), RejectReason.INVALID, "the server failed to make the change"));
         }
     }
@@ -904,34 +904,34 @@ public final class ServerDispatcher {
      * {@code TinkerEntity}: the edits are made at once (none: only a look) and answered {@code TinkerResult(reqId)}
      * carrying what the panel shows of the entity afterwards ({@code EntityView}), or refused.
      */
-    private void tinkerEntity(NetSession s, C2S.TinkerEntity m) {
+    private void tinkerEntity(NetSession<P> s, C2S.TinkerEntity m) {
         try {
             EntityView view = tinker.entity(s.transport.player(), m.entity(), m.edits());
             byte[] data = dev.sculptory.core.nbt.NbtIo.toBytes(view.write());
             if (data.length > S2C.TinkerResult.MAX_DATA_BYTES) {
                 // Cannot happen with the view's bounded fields; answer without it rather than fail the request.
-                SculptoryMod.LOG.warn("Sculptory: a Tinker entity view of {} bytes is not sent", data.length);
+                ServerLog.LOG.warn("Sculptory: a Tinker entity view of {} bytes is not sent", data.length);
                 data = new byte[0];
             }
             send(s, S2C.TinkerResult.done(m.reqId(), data));
         } catch (EditRejected e) {
             send(s, S2C.TinkerResult.refused(m.reqId(), e.reason(), clip(e.detail())));
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: a Tinker entity edit failed", e);
+            ServerLog.LOG.error("Sculptory: a Tinker entity edit failed", e);
             send(s, S2C.TinkerResult.refused(m.reqId(), RejectReason.INVALID, "the server failed to make the change"));
         }
     }
 
-    private void cancel(NetSession s, UUID jobId) {
+    private void cancel(NetSession<P> s, UUID jobId) {
         try {
             edits.cancel(s.transport.player(), jobId);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: cancel failed", e);
+            ServerLog.LOG.error("Sculptory: cancel failed", e);
         }
     }
 
     /** A listener that reports a job's progress and end to this session (for jobs started without one). */
-    public JobListener jobListener(NetSession s) {
+    public JobListener jobListener(NetSession<P> s) {
         return new JobListener() {
             @Override
             public void progress(UUID job, long done, long total, Phase ph) {
@@ -945,7 +945,7 @@ public final class ServerDispatcher {
         };
     }
 
-    private void sessionJobEvent(NetSession s, S2C event) {
+    private void sessionJobEvent(NetSession<P> s, S2C event) {
         List<S2C> held = s.heldJobEvents;
         if (held != null) {
             if (held.size() < MAX_HELD_EVENTS || event instanceof S2C.JobFinished) held.add(event);
@@ -954,7 +954,7 @@ public final class ServerDispatcher {
         forwardJobEvent(s, event);
     }
 
-    private void forwardJobEvent(NetSession s, S2C event) {
+    private void forwardJobEvent(NetSession<P> s, S2C event) {
         send(s, event);
         if (event instanceof S2C.JobFinished) sendHistory(s);
     }
@@ -966,7 +966,7 @@ public final class ServerDispatcher {
 
     // =================================================================== clipboards, schematics, library (M2)
 
-    private void copy(NetSession s, C2S.Copy m) {
+    private void copy(NetSession<P> s, C2S.Copy m) {
         JobRelay relay = new JobRelay(s);
         JobTicket ticket;
         try {
@@ -984,7 +984,7 @@ public final class ServerDispatcher {
             return;
         } catch (RuntimeException e) {
             relay.discard();
-            SculptoryMod.LOG.error("Sculptory: copy failed", e);
+            ServerLog.LOG.error("Sculptory: copy failed", e);
             send(s, new S2C.JobRejected(m.reqId(), RejectReason.INVALID));
             return;
         }
@@ -997,7 +997,7 @@ public final class ServerDispatcher {
     }
 
     /** {@code ClipboardReady} (and the import notices), or {@code JobRejected}. */
-    private ClipboardService.Reply<ClipboardService.ClipboardInfo> clipboardReply(NetSession s, int reqId) {
+    private ClipboardService.Reply<ClipboardService.ClipboardInfo> clipboardReply(NetSession<P> s, int reqId) {
         return new ClipboardService.Reply<>() {
             @Override
             public void done(ClipboardService.ClipboardInfo info) {
@@ -1014,13 +1014,13 @@ public final class ServerDispatcher {
     }
 
     /** Whether another outbound stream fits, counting the ones still being produced ({@code QUEUE_FULL} before work). */
-    private boolean streamRoom(NetSession s) {
+    private boolean streamRoom(NetSession<P> s) {
         return s.outbound.size() + s.pendingStreams < NetSession.MAX_OUTBOUND_STREAMS
                 && s.outboundBytes < maxPlayerOutboundBytes && outboundBytesTotal < maxServerOutboundBytes;
     }
 
     /** Whether two more outbound streams of {@code bytes} together fit now (a scatter plan with grown cells). */
-    private boolean roomForTwo(NetSession s, long bytes) {
+    private boolean roomForTwo(NetSession<P> s, long bytes) {
         return s.ready() && s.outbound.size() + s.pendingStreams + 2 <= NetSession.MAX_OUTBOUND_STREAMS
                 && s.outboundBytes + bytes <= maxPlayerOutboundBytes
                 && outboundBytesTotal + bytes <= maxServerOutboundBytes;
@@ -1028,10 +1028,10 @@ public final class ServerDispatcher {
 
     /** Counts a stream being produced until {@link #run()} (only the first call has an effect). */
     private static final class PendingStream implements Runnable {
-        private final NetSession session;
+        private final NetSession<?> session;
         private boolean released;
 
-        PendingStream(NetSession session) {
+        PendingStream(NetSession<?> session) {
             this.session = session;
             session.pendingStreams++;
         }
@@ -1044,7 +1044,7 @@ public final class ServerDispatcher {
         }
     }
 
-    private void preview(NetSession s, C2S.PreviewRequest m) {
+    private void preview(NetSession<P> s, C2S.PreviewRequest m) {
         if (!streamRoom(s)) {
             notice(s, NOTICE_PREVIEW_REFUSED, RejectReason.QUEUE_FULL, "too many streams");
             return;
@@ -1074,12 +1074,12 @@ public final class ServerDispatcher {
             notice(s, NOTICE_PREVIEW_REFUSED, e.reason(), e.getMessage());
         } catch (RuntimeException e) {
             pending.run();
-            SculptoryMod.LOG.error("Sculptory: preview failed", e);
+            ServerLog.LOG.error("Sculptory: preview failed", e);
             notice(s, NOTICE_PREVIEW_REFUSED, RejectReason.INVALID, "internal error");
         }
     }
 
-    private void libraryList(NetSession s, C2S.LibraryList m) {
+    private void libraryList(NetSession<P> s, C2S.LibraryList m) {
         request(s, m.reqId(), "library list", () -> clipboards.list(s.transport.player(), m.folder(), new ClipboardService.Reply<>() {
             @Override
             public void done(ClipboardService.Listing listing) {
@@ -1097,22 +1097,22 @@ public final class ServerDispatcher {
         }));
     }
 
-    private void libraryLoad(NetSession s, C2S.LibraryLoad m) {
+    private void libraryLoad(NetSession<P> s, C2S.LibraryLoad m) {
         request(s, m.reqId(), "library load",
                 () -> clipboards.load(s.transport.player(), m.path(), clipboardReply(s, m.reqId())));
     }
 
-    private void libraryMove(NetSession s, C2S.LibraryMove m) {
+    private void libraryMove(NetSession<P> s, C2S.LibraryMove m) {
         request(s, m.reqId(), "library move",
                 () -> clipboards.move(s.transport.player(), m.folder(), m.from(), m.to(), libraryChanged(s, m.reqId())));
     }
 
-    private void libraryDelete(NetSession s, C2S.LibraryDelete m) {
+    private void libraryDelete(NetSession<P> s, C2S.LibraryDelete m) {
         request(s, m.reqId(), "library delete",
                 () -> clipboards.delete(s.transport.player(), m.folder(), m.path(), libraryChanged(s, m.reqId())));
     }
 
-    private void libraryCreateFolder(NetSession s, C2S.LibraryCreateFolder m) {
+    private void libraryCreateFolder(NetSession<P> s, C2S.LibraryCreateFolder m) {
         request(s, m.reqId(), "library folder",
                 () -> clipboards.createFolder(s.transport.player(), m.path(), libraryChanged(s, m.reqId())));
     }
@@ -1122,7 +1122,7 @@ public final class ServerDispatcher {
      * other ready session as that player may see it ({@link ClipboardService#shownTo}); or {@code JobRejected} and a
      * notice.
      */
-    private ClipboardService.Reply<ClipboardService.LibraryChange> libraryChanged(NetSession s, int reqId) {
+    private ClipboardService.Reply<ClipboardService.LibraryChange> libraryChanged(NetSession<P> s, int reqId) {
         return new ClipboardService.Reply<>() {
             @Override
             public void done(ClipboardService.LibraryChange change) {
@@ -1138,20 +1138,20 @@ public final class ServerDispatcher {
     }
 
     /** Pushes a library change to the other ready sessions (that negotiated the library) that may see some of it. */
-    private void pushLibraryChange(NetSession requester, ClipboardService.LibraryChange change) {
+    private void pushLibraryChange(NetSession<P> requester, ClipboardService.LibraryChange change) {
         pushLibraryChange(requester, other -> clipboards.shownTo(other.transport.player(), change));
     }
 
     /** {@link #pushLibraryChange(NetSession, ClipboardService.LibraryChange)} with {@code view} deciding what each sees. */
-    private void pushLibraryChange(NetSession requester,
-                                   java.util.function.Function<NetSession, Optional<ClipboardService.LibraryChange>> view) {
-        for (NetSession other : new ArrayList<>(sessions)) {
+    private void pushLibraryChange(NetSession<P> requester,
+            java.util.function.Function<NetSession<P>, Optional<ClipboardService.LibraryChange>> view) {
+        for (NetSession<P> other : new ArrayList<>(sessions)) {
             if (other == requester || !other.ready() || !other.features().has(Features.LIBRARY)) continue;
             Optional<ClipboardService.LibraryChange> shown;
             try {
                 shown = view.apply(other);
             } catch (RuntimeException e) {
-                SculptoryMod.LOG.error("Sculptory: could not tell {} about a library change", playerName(other), e);
+                ServerLog.LOG.error("Sculptory: could not tell {} about a library change", playerName(other), e);
                 continue;
             }
             shown.ifPresent(visible -> send(other, new S2C.LibraryChanged(S2C.LibraryChanged.PUSH, visible.folder(),
@@ -1163,13 +1163,13 @@ public final class ServerDispatcher {
      * Palettes. A save is a library write like the M4 changes: {@code LibraryChanged(reqId, false, "", path written)}
      * for the requester and the same change pushed to the other players who may see it ({@link #libraryChanged}).
      */
-    private void paletteSave(NetSession s, C2S.PaletteSave m) {
+    private void paletteSave(NetSession<P> s, C2S.PaletteSave m) {
         request(s, m.reqId(), "palette save",
                 () -> clipboards.savePalette(s.transport.player(), m.path(), m.palette(), libraryChanged(s, m.reqId())));
     }
 
     /** Palettes. {@code PaletteData(reqId)}, or {@code JobRejected} and a notice. */
-    private void paletteLoad(NetSession s, C2S.PaletteLoad m) {
+    private void paletteLoad(NetSession<P> s, C2S.PaletteLoad m) {
         request(s, m.reqId(), "palette load", () -> clipboards.loadPalette(s.transport.player(), m.path(),
                 new ClipboardService.Reply<>() {
                     @Override
@@ -1186,7 +1186,7 @@ public final class ServerDispatcher {
     }
 
     /** Per-asset access. {@code LibraryAccess(reqId)}, or {@code JobRejected} and a notice. */
-    private void libraryAccessGet(NetSession s, C2S.LibraryAccessGet m) {
+    private void libraryAccessGet(NetSession<P> s, C2S.LibraryAccessGet m) {
         request(s, m.reqId(), "library access", () -> clipboards.access(s.transport.player(), m.path(),
                 new ClipboardService.Reply<>() {
                     @Override
@@ -1207,7 +1207,7 @@ public final class ServerDispatcher {
      * ({@link ClipboardService#shownAccessChange}: the entry appearing, or vanishing for a player who lost access); or
      * {@code JobRejected} and a notice.
      */
-    private void libraryAccessSet(NetSession s, C2S.LibraryAccessSet m) {
+    private void libraryAccessSet(NetSession<P> s, C2S.LibraryAccessSet m) {
         request(s, m.reqId(), "library access change", () -> clipboards.setAccess(s.transport.player(), m.path(),
                 m.access(), new ClipboardService.Reply<>() {
                     @Override
@@ -1224,7 +1224,7 @@ public final class ServerDispatcher {
                 }));
     }
 
-    private void saveAsset(NetSession s, C2S.SaveAsset m) {
+    private void saveAsset(NetSession<P> s, C2S.SaveAsset m) {
         request(s, m.reqId(), "save asset", () -> clipboards.save(s.transport.player(), m.clipboardId(), m.path(),
                 new ClipboardService.Reply<>() {
                     @Override
@@ -1240,7 +1240,7 @@ public final class ServerDispatcher {
                 }));
     }
 
-    private void export(NetSession s, C2S.ExportClipboard m) {
+    private void export(NetSession<P> s, C2S.ExportClipboard m) {
         if (!streamRoom(s)) {
             refuseRequest(s, m.reqId(), RejectReason.QUEUE_FULL, "too many streams");
             return;
@@ -1268,7 +1268,7 @@ public final class ServerDispatcher {
                 }), pending);
     }
 
-    private void uploadBegin(NetSession s, C2S.UploadBegin m) {
+    private void uploadBegin(NetSession<P> s, C2S.UploadBegin m) {
         ClipboardService.Upload upload;
         try {
             upload = clipboards.beginUpload(s.transport.player(), m.fileName(), m.totalBytes());
@@ -1276,7 +1276,7 @@ public final class ServerDispatcher {
             refuseRequest(s, m.reqId(), e);
             return;
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: upload refused after an error", e);
+            ServerLog.LOG.error("Sculptory: upload refused after an error", e);
             send(s, new S2C.JobRejected(m.reqId(), RejectReason.INVALID));
             return;
         }
@@ -1307,7 +1307,7 @@ public final class ServerDispatcher {
                     upload.completed(bytes, reply);
                 } catch (RuntimeException e) {
                     upload.abort();
-                    SculptoryMod.LOG.error("Sculptory: upload handling failed", e);
+                    ServerLog.LOG.error("Sculptory: upload handling failed", e);
                     send(s, new S2C.UploadResult(reqId, null, "INVALID: internal error"));
                 }
             }
@@ -1332,7 +1332,7 @@ public final class ServerDispatcher {
      * player's clipboard and answers {@code ClipboardReady} + {@code UploadResult(reqId, clipboardId)}, or
      * {@code UploadResult(reqId, "REASON: detail")}. A refusal before the grant is {@code JobRejected}.
      */
-    private void generatedUpload(NetSession s, C2S.GeneratedUpload m) {
+    private void generatedUpload(NetSession<P> s, C2S.GeneratedUpload m) {
         int reqId = m.reqId();
         ClipboardService.Upload upload;
         try {
@@ -1341,7 +1341,7 @@ public final class ServerDispatcher {
             refuseRequest(s, reqId, e);
             return;
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: generated upload refused after an error", e);
+            ServerLog.LOG.error("Sculptory: generated upload refused after an error", e);
             send(s, new S2C.JobRejected(reqId, RejectReason.INVALID));
             return;
         }
@@ -1371,7 +1371,7 @@ public final class ServerDispatcher {
                     upload.completed(bytes, reply);
                 } catch (RuntimeException e) {
                     upload.abort();
-                    SculptoryMod.LOG.error("Sculptory: generated upload handling failed", e);
+                    ServerLog.LOG.error("Sculptory: generated upload handling failed", e);
                     send(s, new S2C.UploadResult(reqId, null, "INVALID: internal error"));
                 }
             }
@@ -1399,7 +1399,7 @@ public final class ServerDispatcher {
      * and a set too large for a store are {@code JobRejected(reqId, reason)} with a {@code request_refused} notice. A set
      * decoded after the connection closed is dropped.
      */
-    private void selectionUpload(NetSession s, C2S.SelectionUpload m) {
+    private void selectionUpload(NetSession<P> s, C2S.SelectionUpload m) {
         int reqId = m.reqId();
         ClipboardService.SelectionUpload upload;
         try {
@@ -1408,7 +1408,7 @@ public final class ServerDispatcher {
             refuseRequest(s, reqId, e);
             return;
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: selection upload refused after an error", e);
+            ServerLog.LOG.error("Sculptory: selection upload refused after an error", e);
             send(s, new S2C.JobRejected(reqId, RejectReason.INVALID));
             return;
         }
@@ -1443,7 +1443,7 @@ public final class ServerDispatcher {
                     upload.completed(bytes, reply);
                 } catch (RuntimeException e) {
                     upload.abort();
-                    SculptoryMod.LOG.error("Sculptory: selection upload handling failed", e);
+                    ServerLog.LOG.error("Sculptory: selection upload handling failed", e);
                     send(s, new S2C.JobRejected(reqId, RejectReason.INVALID));
                 }
             }
@@ -1471,10 +1471,10 @@ public final class ServerDispatcher {
      */
     private void keepSelectionsWithin(long maxBytes) {
         long total = 0;
-        for (NetSession session : sessions) total += session.selections.bytes();
+        for (NetSession<P> session : sessions) total += session.selections.bytes();
         while (total > maxBytes) {
-            NetSession oldest = null;
-            for (NetSession session : sessions) {
+            NetSession<P> oldest = null;
+            for (NetSession<P> session : sessions) {
                 if (session.selections.size() > 0
                         && (oldest == null || session.selections.oldestStamp() < oldest.selections.oldestStamp())) {
                     oldest = session;
@@ -1488,7 +1488,7 @@ public final class ServerDispatcher {
     /** The uploaded sets every connection holds together (tests). */
     public long selectionBytes() {
         long total = 0;
-        for (NetSession session : sessions) total += session.selections.bytes();
+        for (NetSession<P> session : sessions) total += session.selections.bytes();
         return total;
     }
 
@@ -1498,7 +1498,7 @@ public final class ServerDispatcher {
      * uploads it again), {@code INVALID} when the reference's bounds or cell count are not the set's. Any other region
      * is returned as it is.
      */
-    Region resolveSelection(NetSession s, Region region) throws EditRejected {
+    Region resolveSelection(NetSession<P> s, Region region) throws EditRejected {
         if (!(region instanceof Region.Uploaded uploaded)) return region;
         CellSet set = s.selections.get(uploaded.hash(), ++selectionStamp).orElseThrow(() -> new EditRejected(
                 RejectReason.SELECTION_NOT_LOADED, "the server does not hold that selection"));
@@ -1515,7 +1515,7 @@ public final class ServerDispatcher {
      * check. (If the new one is then refused, the old one plans on without a reservation; its stream may then be
      * refused for room, with a notice.)
      */
-    private void scatterPreview(NetSession s, C2S.ScatterPreview m) {
+    private void scatterPreview(NetSession<P> s, C2S.ScatterPreview m) {
         int reqId = m.reqId();
         if (s.scatterReservation != null) {
             s.scatterReservation.run();
@@ -1584,12 +1584,12 @@ public final class ServerDispatcher {
     }
 
     /** Runs a request, answering a synchronous refusal or failure with {@code JobRejected}. */
-    private void request(NetSession s, int reqId, String what, Request request) {
+    private void request(NetSession<P> s, int reqId, String what, Request request) {
         request(s, reqId, what, request, () -> { });
     }
 
     /** As {@link #request(NetSession, int, String, Request)}; {@code refused} runs first when it throws. */
-    private void request(NetSession s, int reqId, String what, Request request, Runnable refused) {
+    private void request(NetSession<P> s, int reqId, String what, Request request, Runnable refused) {
         try {
             request.run();
         } catch (EditRejected e) {
@@ -1597,12 +1597,12 @@ public final class ServerDispatcher {
             refuseRequest(s, reqId, e);
         } catch (RuntimeException e) {
             refused.run();
-            SculptoryMod.LOG.error("Sculptory: {} failed", what, e);
+            ServerLog.LOG.error("Sculptory: {} failed", what, e);
             send(s, new S2C.JobRejected(reqId, RejectReason.INVALID));
         }
     }
 
-    private void refuseRequest(NetSession s, int reqId, EditRejected e) {
+    private void refuseRequest(NetSession<P> s, int reqId, EditRejected e) {
         strokePending(s, reqId, e);
         refuseRequest(s, reqId, e.reason(), e.getMessage());
     }
@@ -1612,25 +1612,25 @@ public final class ServerDispatcher {
      * being written or committed ({@link EditRejected#STROKE_PENDING}), a {@link #NOTICE_STROKE_PENDING} notice
      * {@code [reqId]}, so the client holds the request and sends it again a moment later instead of reporting it.
      */
-    private void strokePending(NetSession s, int reqId, EditRejected e) {
+    private void strokePending(NetSession<P> s, int reqId, EditRejected e) {
         if (!EditRejected.STROKE_PENDING.equals(e.kind())) return;
         send(s, new S2C.Notice(S2C.Notice.Level.INFO, NOTICE_STROKE_PENDING, List.of(Integer.toString(reqId))));
     }
 
     /** {@code JobRejected} plus a notice with the detail. */
-    private void refuseRequest(NetSession s, int reqId, RejectReason reason, String detail) {
+    private void refuseRequest(NetSession<P> s, int reqId, RejectReason reason, String detail) {
         send(s, new S2C.JobRejected(reqId, reason));
         notice(s, NOTICE_REQUEST_REFUSED, reason, detail);
     }
 
-    private void notice(NetSession s, String key, RejectReason reason, String detail) {
+    private void notice(NetSession<P> s, String key, RejectReason reason, String detail) {
         send(s, new S2C.Notice(S2C.Notice.Level.WARN, key, List.of(reason.name(), clip(detail))));
     }
 
     // =================================================================== refusals and violations
 
     /** Answers a decoded message that will not be carried out, so the client's pending request completes. */
-    private void refuse(NetSession s, C2S message, RejectReason reason) {
+    private void refuse(NetSession<P> s, C2S message, RejectReason reason) {
         switch (message) {
             case C2S.StrokeBegin m -> send(s, new S2C.StrokeStatus(m.strokeId(), -1, S2C.StrokeStatus.Status.REJECTED, reason));
             case C2S.Dabs m -> {
@@ -1653,7 +1653,7 @@ public final class ServerDispatcher {
     }
 
     /** A frame over its rate limit, refused without decoding it (dabs excepted, so the prediction reverts). */
-    private void refuseRateLimited(NetSession s, MessageType type, byte[] frame) {
+    private void refuseRateLimited(NetSession<P> s, MessageType type, byte[] frame) {
         if (type == MessageType.DABS) {
             try {
                 C2S dabs = Codec.decodeC2S(frame, null);
@@ -1691,7 +1691,7 @@ public final class ServerDispatcher {
         }
     }
 
-    private void refuseUndecodable(NetSession s, byte[] frame, ProtocolException e) {
+    private void refuseUndecodable(NetSession<P> s, byte[] frame, ProtocolException e) {
         boolean unknownState = e.reason() == ProtocolException.Reason.UNKNOWN_STATE;
         // A registry mismatch is not the client's fault, but only a few per minute are excused.
         boolean excused = unknownState && s.unknownStates.tryAcquire(1);
@@ -1719,13 +1719,13 @@ public final class ServerDispatcher {
         }
     }
 
-    private void violation(NetSession s, String reason) {
+    private void violation(NetSession<P> s, String reason) {
         s.violations++;
         if (s.violations <= LOGGED_VIOLATIONS) {
-            SculptoryMod.LOG.warn("Sculptory: invalid message from {}: {}", playerName(s), reason);
+            ServerLog.LOG.warn("Sculptory: invalid message from {}: {}", playerName(s), reason);
         }
         if (s.violations >= NetSession.MAX_VIOLATIONS && s.stage != Stage.CLOSED) {
-            SculptoryMod.LOG.warn("Sculptory: disconnecting {} after {} invalid messages", playerName(s), s.violations);
+            ServerLog.LOG.warn("Sculptory: disconnecting {} after {} invalid messages", playerName(s), s.violations);
             close(s);
             s.transport.disconnect("Sculptory: too many invalid messages");
         }
@@ -1734,26 +1734,28 @@ public final class ServerDispatcher {
     // =================================================================== outbound and lifecycle
 
     /** Encodes and sends; drops the message when the session is closed or the client lacks the channel. */
-    public void send(NetSession s, S2C message) {
+    public void send(NetSession<P> s, S2C message) {
         if (s.stage == Stage.CLOSED || !s.transport.canSend()) return;
         byte[] frame;
         try {
             frame = Codec.encodeS2C(message, states.get());
         } catch (ProtocolException e) {
-            SculptoryMod.LOG.error("Sculptory: cannot encode {}: {}", message.type(), e.getMessage());
+            ServerLog.LOG.error("Sculptory: cannot encode {}: {}", message.type(), e.getMessage());
             return;
         }
         s.transport.send(frame);
     }
 
     /** Sends the history state from the {@link HistoryView} edit service, if it is one. */
-    public void sendHistory(NetSession s) {
-        if (!s.ready() || !(edits instanceof HistoryView view)) return;
+    public void sendHistory(NetSession<P> s) {
+        if (!s.ready() || !(edits instanceof HistoryView<?> history)) return;
+        @SuppressWarnings("unchecked") // the edit service's history view serves the same players
+        HistoryView<P> view = (HistoryView<P>) history;
         S2C.HistoryState state;
         try {
             state = view.historyState(s.transport.player());
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: history state failed", e);
+            ServerLog.LOG.error("Sculptory: history state failed", e);
             return;
         }
         if (state != null) send(s, state);
@@ -1764,7 +1766,7 @@ public final class ServerDispatcher {
      * session without a completed handshake (vanilla clients never have one), and nothing is sent when nothing
      * changed.
      */
-    public void permissionsChanged(NetSession s) {
+    public void permissionsChanged(NetSession<P> s) {
         if (!s.ready()) return;
         s.ticksSincePermissionCheck = 0;
         PermissionMask mask = permissionMask(s);
@@ -1781,7 +1783,7 @@ public final class ServerDispatcher {
      * payload would take the player's queued bytes over {@link #MAX_PLAYER_OUTBOUND_BYTES} or everyone's over
      * {@link #MAX_SERVER_OUTBOUND_BYTES}. The stream must finish before {@link #streamDeadlineNanos its deadline}.
      */
-    public OptionalInt openStream(NetSession s, StreamKind kind, byte[] payload, SortedMap<String, String> meta) {
+    public OptionalInt openStream(NetSession<P> s, StreamKind kind, byte[] payload, SortedMap<String, String> meta) {
         if (!s.ready() || s.outbound.size() >= NetSession.MAX_OUTBOUND_STREAMS) return OptionalInt.empty();
         long size = payload.length;
         if (s.outboundBytes + size > maxPlayerOutboundBytes || outboundBytesTotal + size > maxServerOutboundBytes) {
@@ -1821,7 +1823,7 @@ public final class ServerDispatcher {
     }
 
     /** Drops an outbound stream (finished, aborted by either side) and its byte count. */
-    private void removeOutbound(NetSession s, int id) {
+    private void removeOutbound(NetSession<P> s, int id) {
         StreamSender sender = s.outbound.remove(id);
         s.outboundProgress.remove(id);
         if (sender == null) return;
@@ -1839,7 +1841,7 @@ public final class ServerDispatcher {
      * ({@link StreamSender#CLIENT_BYTES_PER_TICK}). Empty when the session is not ready or already has
      * {@link NetSession#MAX_UPLOADS} uploads.
      */
-    public OptionalInt grantUpload(NetSession s, int reqId, long maxBytes, UploadHandler handler) {
+    public OptionalInt grantUpload(NetSession<P> s, int reqId, long maxBytes, UploadHandler handler) {
         Objects.requireNonNull(handler);
         if (!s.ready() || s.uploads.size() >= NetSession.MAX_UPLOADS) return OptionalInt.empty();
         int id = s.nextStreamId++;
@@ -1850,7 +1852,7 @@ public final class ServerDispatcher {
         return OptionalInt.of(id);
     }
 
-    private void uploadOpen(NetSession s, StreamOpen m) {
+    private void uploadOpen(NetSession<P> s, StreamOpen m) {
         NetSession.Upload upload = s.uploads.get(m.id());
         if (upload == null) {
             refuse(s, m, RejectReason.INVALID);
@@ -1868,7 +1870,7 @@ public final class ServerDispatcher {
         }
     }
 
-    private void uploadChunk(NetSession s, StreamChunk m) {
+    private void uploadChunk(NetSession<P> s, StreamChunk m) {
         NetSession.Upload upload = s.uploads.get(m.id());
         if (upload == null) {
             // Chunks still in flight after an upload ended are dropped; a stream that was never granted is a violation.
@@ -1891,7 +1893,7 @@ public final class ServerDispatcher {
         }
     }
 
-    private void uploadEnd(NetSession s, StreamEnd m) {
+    private void uploadEnd(NetSession<P> s, StreamEnd m) {
         NetSession.Upload upload = s.uploads.get(m.id());
         if (upload == null || upload.assembler == null) return;
         s.uploads.remove(m.id());
@@ -1907,11 +1909,11 @@ public final class ServerDispatcher {
         try {
             upload.handler.completed(upload.assembler.open(), bytes);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: upload handler failed", e);
+            ServerLog.LOG.error("Sculptory: upload handler failed", e);
         }
     }
 
-    private void failUpload(NetSession s, int id, String reason) {
+    private void failUpload(NetSession<P> s, int id, String reason) {
         NetSession.Upload upload = s.uploads.remove(id);
         if (upload == null) return;
         rememberEnded(s, id);
@@ -1924,7 +1926,7 @@ public final class ServerDispatcher {
         try {
             upload.handler.failed(reason);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: upload handler failed", e);
+            ServerLog.LOG.error("Sculptory: upload handler failed", e);
         }
     }
 
@@ -1941,7 +1943,7 @@ public final class ServerDispatcher {
      *       Failed uploads release what their handler reserved.</li>
      * </ul>
      */
-    public void tick(NetSession s) {
+    public void tick(NetSession<P> s) {
         s.floodCountedThisTick = false;
         if (!s.ready()) return;
         if (++s.ticksSincePermissionCheck >= PERMISSION_RECHECK_TICKS) permissionsChanged(s);
@@ -1989,14 +1991,14 @@ public final class ServerDispatcher {
         }
     }
 
-    private void abortOutbound(NetSession s, int id, StreamSender sender, String reason) {
+    private void abortOutbound(NetSession<P> s, int id, StreamSender sender, String reason) {
         removeOutbound(s, id);
         StreamAbort abort = sender.abort(reason);
         if (abort != null) send(s, abort);
     }
 
     /** The connection ended: ends an open stroke and drops everything queued. Idempotent. */
-    public void close(NetSession s) {
+    public void close(NetSession<P> s) {
         sessions.remove(s);
         if (s.stage == Stage.CLOSED) return;
         s.stage = Stage.CLOSED;
@@ -2012,7 +2014,7 @@ public final class ServerDispatcher {
             try {
                 edits.endStroke(s.transport.player(), s.strokeId);
             } catch (RuntimeException e) {
-                SculptoryMod.LOG.error("Sculptory: endStroke on disconnect failed", e);
+                ServerLog.LOG.error("Sculptory: endStroke on disconnect failed", e);
             }
         }
     }
@@ -2024,16 +2026,16 @@ public final class ServerDispatcher {
         return current != null ? current : Limits.DEFAULTS;
     }
 
-    private boolean has(NetSession s, Perm perm) {
+    private boolean has(NetSession<P> s, Perm perm) {
         try {
             return permissions.has(s.transport.player(), perm);
         } catch (RuntimeException e) {
-            SculptoryMod.LOG.error("Sculptory: permission check {} failed", perm.node(), e);
+            ServerLog.LOG.error("Sculptory: permission check {} failed", perm.node(), e);
             return false;
         }
     }
 
-    private PermissionMask permissionMask(NetSession s) {
+    private PermissionMask permissionMask(NetSession<P> s) {
         EnumSet<Perm> granted = EnumSet.noneOf(Perm.class);
         for (Perm perm : Perm.values()) {
             if (has(s, perm)) granted.add(perm);
@@ -2077,9 +2079,9 @@ public final class ServerDispatcher {
         };
     }
 
-    private static String playerName(NetSession s) {
-        ServerPlayerEntity player = s.transport.player();
-        return player == null ? "an unknown player" : player.getGameProfile().getName();
+    private static String playerName(NetSession<?> s) {
+        String name = s.transport.playerName();
+        return name == null ? "an unknown player" : name;
     }
 
     private static String clip(String text) {
@@ -2092,11 +2094,11 @@ public final class ServerDispatcher {
      * reported inside {@code EditService.run}) are held so {@code JobAccepted} always goes first.
      */
     private final class JobRelay implements JobListener {
-        private final NetSession session;
+        private final NetSession<P> session;
         private List<S2C> held = new ArrayList<>();
         private boolean discarded;
 
-        JobRelay(NetSession session) {
+        JobRelay(NetSession<P> session) {
             this.session = session;
         }
 

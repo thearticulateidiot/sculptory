@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine;
+package dev.sculptory.server.engine;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.protocol.v2.C2S;
@@ -9,15 +9,16 @@ import java.util.Objects;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.UUID;
-import net.minecraft.server.network.ServerPlayerEntity;
 
 /**
  * Scatter previews (M3), called by the protocol dispatcher on the server thread. A preview refused up front throws
  * {@link EditRejected}; otherwise it is planned over later ticks and answered once through its
  * {@link PreviewReply}, on the server thread. The plan it produces is committed with
  * {@code RunOp(OpSpec.ScatterCommit(planId))} through the {@link EditService}.
+ *
+ * @param <P> the platform's player type
  */
-public interface ScatterService {
+public interface ScatterService<P> {
     /**
      * A finished preview.
      *
@@ -54,10 +55,12 @@ public interface ScatterService {
     }
 
     /** Plans a scatter for the player; the player's newer preview replaces this one (and its plan). */
-    void preview(ServerPlayerEntity p, C2S.ScatterPreview request, PreviewReply reply) throws EditRejected;
+    void preview(P p, C2S.ScatterPreview request, PreviewReply reply) throws EditRejected;
 
     /** Refuses everything with {@code DISABLED} (no engine running). */
-    ScatterService DISABLED = (p, request, reply) -> {
-        throw new EditRejected(RejectReason.DISABLED);
-    };
+    static <P> ScatterService<P> disabled() {
+        return (p, request, reply) -> {
+            throw new EditRejected(RejectReason.DISABLED);
+        };
+    }
 }

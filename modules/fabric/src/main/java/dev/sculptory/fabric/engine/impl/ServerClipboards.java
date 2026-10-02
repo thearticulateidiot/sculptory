@@ -39,7 +39,6 @@ import dev.sculptory.core.schem.StructureCodec;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.fabric.config.FolderMigration;
-import dev.sculptory.fabric.engine.ClipboardService;
 import dev.sculptory.fabric.perm.FabricPermissionService;
 import dev.sculptory.fabric.world.FabricEntities;
 import dev.sculptory.fabric.world.FabricTile;
@@ -50,6 +49,7 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.server.config.SculptoryConfig;
+import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
@@ -159,7 +159,7 @@ import org.slf4j.LoggerFactory;
  * <p>Messages sent to the client never carry exception text that may contain server paths: unexpected errors are
  * logged and answered with a generic detail.
  */
-public final class ServerClipboards implements ClipboardService {
+public final class ServerClipboards implements ClipboardService<ServerPlayerEntity> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Largest preview payload sent. */
     public static final long MAX_PREVIEW_BYTES = 32L << 20;

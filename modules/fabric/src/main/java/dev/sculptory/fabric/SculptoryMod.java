@@ -9,13 +9,13 @@ import dev.sculptory.fabric.net.ServerNet;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
+import dev.sculptory.server.ServerLog;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import java.util.List;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.server.network.ServerPlayerEntity;
 import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Common/server entrypoint. Runs on dedicated servers and on the integrated (singleplayer) server.
@@ -30,7 +30,7 @@ import org.slf4j.LoggerFactory;
  */
 public final class SculptoryMod implements ModInitializer {
     public static final String MOD_ID = "sculptory";
-    public static final Logger LOG = LoggerFactory.getLogger(MOD_ID);
+    public static final Logger LOG = ServerLog.LOG;
     private static volatile String buildId;
 
     /**

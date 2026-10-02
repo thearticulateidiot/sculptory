@@ -19,8 +19,6 @@ import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.scatter.ScatterSource;
 import dev.sculptory.core.schem.AssetInfo;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.PermissionService;
-import dev.sculptory.fabric.engine.ScatterService;
 import dev.sculptory.fabric.perm.FabricPermissionService;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import dev.sculptory.fabric.world.FabricWorldReader;
@@ -33,6 +31,8 @@ import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.PermissionService;
+import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.ColumnPlan;
 import dev.sculptory.server.engine.impl.EditMasks;
@@ -151,7 +151,7 @@ import org.slf4j.LoggerFactory;
  * payload ({@link ScatterPlacements}) (and the grown cells' payload): encoded off the server thread and sent on a
  * later tick. A newer preview of the same player answers a reply still being encoded as superseded.
  */
-public final class ServerScatter implements ScatterService {
+public final class ServerScatter implements ScatterService<ServerPlayerEntity> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
 
     /** Painted stamps per preview (the wire cap too). */
@@ -703,19 +703,19 @@ public final class ServerScatter implements ScatterService {
      * The player's protection as a planner column guard: one {@code PermissionService.chunk} permit per chunk,
      * cached (never loads chunks).
      */
-    public static ScatterPlanner.ColumnGuard protectionGuard(PermissionService permissions, ServerPlayerEntity p,
+    public static ScatterPlanner.ColumnGuard protectionGuard(PermissionService<ServerPlayerEntity, ServerWorld> permissions, ServerPlayerEntity p,
                                                              ServerWorld world) {
         return protectionGuard(permissions, p, world, new Long2ObjectOpenHashMap<>());
     }
 
     /** {@link #protectionGuard(PermissionService, ServerPlayerEntity, ServerWorld)} caching into {@code permits}. */
-    static ScatterPlanner.ColumnGuard protectionGuard(PermissionService permissions, ServerPlayerEntity p,
+    static ScatterPlanner.ColumnGuard protectionGuard(PermissionService<ServerPlayerEntity, ServerWorld> permissions, ServerPlayerEntity p,
                                                       ServerWorld world, Long2ObjectOpenHashMap<ChunkPermit> permits) {
         return (x, z) -> chunkPermit(permissions, p, world, permits, x >> 4, z >> 4).allows(x, z);
     }
 
     /** The player's permit for chunk (cx, cz), asked once and kept in {@code permits}. */
-    private static ChunkPermit chunkPermit(PermissionService permissions, ServerPlayerEntity p, ServerWorld world,
+    private static ChunkPermit chunkPermit(PermissionService<ServerPlayerEntity, ServerWorld> permissions, ServerPlayerEntity p, ServerWorld world,
                                            Long2ObjectOpenHashMap<ChunkPermit> permits, int cx, int cz) {
         long key = ColumnPlan.pack(cx, cz);
         ChunkPermit permit = permits.get(key);
@@ -1185,7 +1185,7 @@ public final class ServerScatter implements ScatterService {
     }
 
     /** Whether the player may use plain blocks as scatter variants ({@code brush} or {@code region}). */
-    public static boolean mayScatterBlocks(PermissionService permissions, ServerPlayerEntity p) {
+    public static boolean mayScatterBlocks(PermissionService<ServerPlayerEntity, ServerWorld> permissions, ServerPlayerEntity p) {
         return permissions.has(p, Perm.BRUSH) || permissions.has(p, Perm.REGION);
     }
 
