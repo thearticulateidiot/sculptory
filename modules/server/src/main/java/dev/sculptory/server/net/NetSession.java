@@ -9,8 +9,6 @@ import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.protocol.v2.StreamAssembler;
 import dev.sculptory.protocol.v2.StreamSender;
 import dev.sculptory.protocol.v2.TokenBucket;
-import dev.sculptory.server.net.PredictionAcks;
-import dev.sculptory.server.net.SelectionStore;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;

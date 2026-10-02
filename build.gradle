@@ -69,7 +69,7 @@ subprojects {
         testLogging { events 'failed'; exceptionFormat 'full' }
     }
     tasks.named('jar') {
-        // Every jar (the mod and its nested core and protocol jars) carries the licence texts NOTICE.md names.
+        // Every jar (the mod and its nested core, protocol and server jars) carries the licence texts NOTICE.md names.
         from(rootProject.file('LICENSE'))
         from(rootProject.file('NOTICE.md'))
         from(rootProject.file('LICENSES/CC-BY-SA-4.0.txt')) { into 'LICENSES' }

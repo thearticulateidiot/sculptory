@@ -78,7 +78,6 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
-import dev.sculptory.server.net.SelectionStore;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;

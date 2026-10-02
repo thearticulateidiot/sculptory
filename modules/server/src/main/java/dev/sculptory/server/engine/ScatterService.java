@@ -3,7 +3,6 @@ package dev.sculptory.server.engine;
 import dev.sculptory.core.Box;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.RejectReason;
-import dev.sculptory.server.engine.EditRejected;
 import java.util.Collections;
 import java.util.Objects;
 import java.util.SortedMap;

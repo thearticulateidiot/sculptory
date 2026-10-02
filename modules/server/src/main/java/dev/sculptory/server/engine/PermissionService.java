@@ -1,8 +1,6 @@
 package dev.sculptory.server.engine;
 
 import dev.sculptory.core.Box;
-import dev.sculptory.server.engine.ChunkPermit;
-import dev.sculptory.server.engine.Perm;
 
 /**
  * Permission nodes and per-chunk protection. The singleplayer host is always allowed; otherwise nodes are

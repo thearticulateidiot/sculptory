@@ -286,7 +286,7 @@ public final class ServerDispatcher<P> {
     }
 
     public NetSession<P> open(ServerTransport<P> transport) {
-        NetSession<P> session = new NetSession(transport, epochs.incrementAndGet(), nanoClock);
+        NetSession<P> session = new NetSession<>(transport, epochs.incrementAndGet(), nanoClock);
         sessions.add(session);
         return session;
     }
