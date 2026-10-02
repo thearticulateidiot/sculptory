@@ -21,7 +21,6 @@ import dev.sculptory.core.brush.SurfacePlane;
 import dev.sculptory.core.brush.SymmetricStep;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.region.Facing;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -32,6 +31,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -226,7 +226,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_brush_surface_refused", tickLimit = LIMIT)
     public void surfaceRefusalsAndLimits(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 944);

@@ -23,7 +23,6 @@ import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.StateSpace;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -35,6 +34,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.Locale;
@@ -343,7 +343,7 @@ public final class FluidGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_ball", tickLimit = LIMIT)
     public void aFluidBallWaterlogsWhatItCanAndUndoesExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 904);

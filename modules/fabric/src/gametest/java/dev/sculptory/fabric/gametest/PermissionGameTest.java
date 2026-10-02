@@ -8,7 +8,6 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.runtime;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.fabric.net.ServerNet;
 import dev.sculptory.fabric.perm.FabricPermissionService;
@@ -17,6 +16,7 @@ import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.JobRequest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -52,7 +52,7 @@ public final class PermissionGameTest implements FabricGameTest {
             int[] at = EngineTestSupport.regionCorner(context, 5);
             Box far = box(at[0], 0, at[1], at[0] + 15, 15, at[1] + 15);
             BoxFill program = new BoxFill("far", far, handle(runtime.states(), "minecraft:stone"));
-            JobRequest request = forPlayer(runtime, player, program, RunOptions.DEFAULT);
+            JobRequest<ServerWorld> request = forPlayer(runtime, player, program, RunOptions.DEFAULT);
             check(!request.mayLoadChunks(), "non-op may load chunks");
             try {
                 runtime.executor().submit(request);
@@ -64,7 +64,8 @@ public final class PermissionGameTest implements FabricGameTest {
 
             // Physics needs sculptory.physics.
             try {
-                runtime.forPlayer(player, program, new RunOptions(true, ConflictPolicy.SKIP_CONFLICTS), null, null);
+                JobRequest.forPlayer(runtime, player, program, new RunOptions(true, ConflictPolicy.SKIP_CONFLICTS),
+                        null, null);
                 throw new GameTestException("physics was allowed for a non-op");
             } catch (EditRejected e) {
                 check(e.reason() == RejectReason.NO_PERMISSION, "reason " + e.reason());
@@ -143,10 +144,10 @@ public final class PermissionGameTest implements FabricGameTest {
         context.complete();
     }
 
-    private static JobRequest forPlayer(EngineRuntime runtime, ServerPlayerEntity player, BoxFill program,
+    private static JobRequest<ServerWorld> forPlayer(EngineRuntime runtime, ServerPlayerEntity player, BoxFill program,
                                         RunOptions options) {
         try {
-            return runtime.forPlayer(player, program, options, null, null);
+            return JobRequest.forPlayer(runtime, player, program, options, null, null);
         } catch (EditRejected e) {
             throw new GameTestException("forPlayer rejected: " + e.getMessage());
         }

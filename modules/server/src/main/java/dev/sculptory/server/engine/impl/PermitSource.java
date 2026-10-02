@@ -1,12 +1,10 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.PermissionService;
 import java.util.Objects;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 
 /**
  * Per-chunk protection for one job, asked once per chunk column the job writes. For a player this is
@@ -31,8 +29,7 @@ public interface PermitSource {
      * A player's permits for a job over {@code bounds}: {@link #chunk} by the corner rule over the part of the bounds in
      * that chunk; {@link #mayChangeColumn} for the column itself, wherever it is.
      */
-    static PermitSource forPlayer(PermissionService<ServerPlayerEntity, ServerWorld> permissions, ServerPlayerEntity player, ServerWorld world,
-                                  Box bounds) {
+    static <P, W> PermitSource forPlayer(PermissionService<P, W> permissions, P player, W world, Box bounds) {
         Objects.requireNonNull(permissions);
         Objects.requireNonNull(bounds);
         return new PermitSource() {

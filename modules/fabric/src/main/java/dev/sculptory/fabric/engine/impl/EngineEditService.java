@@ -77,10 +77,15 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.BrushWork;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.EditMasks;
 import dev.sculptory.server.engine.impl.EntityColumns;
+import dev.sculptory.server.engine.impl.EntityJobs;
+import dev.sculptory.server.engine.impl.EntityWork;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.engine.impl.JobRequest;
+import dev.sculptory.server.engine.impl.PermitSource;
 import dev.sculptory.server.engine.impl.PlayerClipboards;
 import dev.sculptory.server.engine.impl.RecordSink;
 import dev.sculptory.server.engine.impl.ScatterPlans;
@@ -300,7 +305,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
 
     private final EngineRuntime runtime;
     private final MinecraftServer server;
-    private final EditExecutor executor;
+    private final EditExecutor<ServerWorld> executor;
     /**
      * The global mask of the Move {@link #run} is compiling ({@link MaskSide#SOURCE}),
      * which {@link #compile}'s context gives as its {@code sourceMask()}; {@link BoundMask#ALL} otherwise. Server
@@ -362,14 +367,14 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** With an explicit executor, history caps and clock (tests); history in memory only. */
-    public EngineEditService(EngineRuntime runtime, EditExecutor executor, HistoryLimits limits,
+    public EngineEditService(EngineRuntime runtime, EditExecutor<ServerWorld> executor, HistoryLimits limits,
                              Function<ServerPlayerEntity, JobListener> listeners, AckSink acks, EditEvents events,
                              LongSupplier clock) {
         this(runtime, executor, limits, listeners, acks, events, clock, null);
     }
 
     /** With an explicit executor, history caps, clock and history persistence (null: memory only). */
-    public EngineEditService(EngineRuntime runtime, EditExecutor executor, HistoryLimits limits,
+    public EngineEditService(EngineRuntime runtime, EditExecutor<ServerWorld> executor, HistoryLimits limits,
                              Function<ServerPlayerEntity, JobListener> listeners, AckSink acks, EditEvents events,
                              LongSupplier clock, HistoryService.Persistence persistence) {
         this.runtime = Objects.requireNonNull(runtime);
@@ -405,7 +410,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         return runtime;
     }
 
-    public EditExecutor executor() {
+    public EditExecutor<ServerWorld> executor() {
         return executor;
     }
 
@@ -679,7 +684,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         // Saved section by section as the job writes, once it is admitted (history.editStarted below).
         job.openRecord = history.record(session, job.worldId, job.label, this::createdMillis, record);
         // Fluid the job writes is marked as the entry's: what it does later is taken back with the entry's undo.
-        JobRequest request = runtime.forPlayer(p, program, options, job,
+        JobRequest<ServerWorld> request = JobRequest.forPlayer(runtime, p, program, options, job,
                 trails.marking(history.sink(record, job.openRecord), world, record.id()))
                 .withEntities(entityWork);
         if (!trustSource) {
@@ -1133,11 +1138,11 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
                 null, entry.world(), session, op, EnumSet.of(Perm.USE));
         // Fluid the step puts where there was none (a drain's water an undo puts back) is followed as the entry's.
         UUID id = entry.id();
-        JobRequest request = runtime.forPlayer(p, program, new RunOptions(false, policy), job,
+        JobRequest<ServerWorld> request = JobRequest.forPlayer(runtime, p, program, new RunOptions(false, policy), job,
                 trails.stepMarking(RecordSink.NONE, world, (x, y, z) -> id));
         if (request.world() != world) {
             Box bounds = program.bounds();
-            request = new JobRequest(request.owner(), world, program, request.writeOptions(),
+            request = new JobRequest<>(request.owner(), world, program, request.writeOptions(),
                     PermitSource.forPlayer(permissions, p, world, bounds), request.mayLoadChunks(), request.seed(),
                     request.listener(), request.records());
         }
@@ -1230,10 +1235,11 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             }
             return null;
         });
-        JobRequest request = runtime.forPlayer(p, program, new RunOptions(false, ConflictPolicy.OVERWRITE), job, marks);
+        JobRequest<ServerWorld> request = JobRequest.forPlayer(runtime, p, program,
+                new RunOptions(false, ConflictPolicy.OVERWRITE), job, marks);
         if (request.world() != world) {
             Box bounds = program.bounds();
-            request = new JobRequest(request.owner(), world, program, request.writeOptions(),
+            request = new JobRequest<>(request.owner(), world, program, request.writeOptions(),
                     PermitSource.forPlayer(permissions, p, world, bounds), request.mayLoadChunks(), request.seed(),
                     request.listener(), request.records());
         }

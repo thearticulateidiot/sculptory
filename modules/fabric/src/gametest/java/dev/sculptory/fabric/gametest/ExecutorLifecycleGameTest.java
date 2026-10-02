@@ -15,9 +15,7 @@ import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.ComputeContext;
 import dev.sculptory.core.edit.EditProgram;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.fabric.gametest.EngineTestSupport.CountingSink;
 import dev.sculptory.fabric.gametest.EngineTestSupport.MapSink;
@@ -34,6 +32,8 @@ import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.impl.BrushWork;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -59,8 +59,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
     public void shutdownKeepsAppliedWork(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = new EditExecutor(world.getServer(), runtime.states(),
-                settings(5000, 1024, 16_384));
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(runtime, settings(5000, 1024, 16_384));
         int stone = handle(runtime.states(), "minecraft:smooth_stone");
 
         int[] far = regionCorner(context, 7);
@@ -161,7 +160,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
     public void failedJobKeepsAppliedWork(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = privateExecutor(runtime, world);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, world);
         int[] at = regionCorner(context, 9);
         Box region = box(at[0], 0, at[1], at[0] + 31, 15, at[1] + 31); // 4 sections
         loadChunks(world, region);
@@ -190,7 +189,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
         FabricStateSpace states = runtime.states();
-        EditExecutor executor = privateExecutor(runtime, world);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, world);
         int[] at = regionCorner(context, 10);
         Box source = box(at[0], 0, at[1], at[0] + 47, 15, at[1] + 15); // 3 sections along x
         loadChunks(world, box(at[0], 0, at[1], at[0] + 79, 15, at[1] + 15)); // source and shifted target
@@ -293,12 +292,13 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
         }
     }
 
-    private static EditExecutor privateExecutor(EngineRuntime runtime, ServerWorld world) {
+    private static EditExecutor<ServerWorld> privateExecutor(EngineRuntime runtime, ServerWorld world) {
         return privateExecutor(runtime, world, settings(0, 1024, 16_384));
     }
 
-    private static EditExecutor privateExecutor(EngineRuntime runtime, ServerWorld world, EditExecutor.Settings s) {
-        return new EditExecutor(world.getServer(), runtime.states(), s);
+    private static EditExecutor<ServerWorld> privateExecutor(EngineRuntime runtime, ServerWorld world,
+                                                             EditExecutor.Settings s) {
+        return new EditExecutor<>(runtime, s);
     }
 
     /** A 200 ms budget (so only the caps matter), REFUSE policy. */
@@ -315,7 +315,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
     public void liveBeforeIsRecordedMidSection(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = privateExecutor(runtime, world, settings(1000, 1024, 16_384));
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, world, settings(1000, 1024, 16_384));
         int[] at = regionCorner(context, 12);
         Box region = box(at[0], 0, at[1], at[0] + 15, 15, at[1] + 15); // one section
         loadChunks(world, region);
@@ -352,7 +352,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
     public void skippedCellsKeepScheduledTicks(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = privateExecutor(runtime, world);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, world);
         int[] at = regionCorner(context, 13);
         Box region = box(at[0], 0, at[1], at[0] + 15, 15, at[1] + 15);
         loadChunks(world, region);
@@ -392,7 +392,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
     public void sharedColumnTicketsAreCounted(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = runtime.executor();
+        EditExecutor<ServerWorld> executor = runtime.executor();
         int[] at = regionCorner(context, 14);
         int cx = at[0] >> 4, cz = at[1] >> 4;
         check(!WorldChecks.isChunkLoaded(world, cx, cz), "setup: column already loaded");
@@ -427,7 +427,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
     public void capsRefuse(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = privateExecutor(runtime, world, settings(0, 2, 4));
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, world, settings(0, 2, 4));
         int[] ran = {0};
         int[] dropped = {0};
         BrushWork work = new BrushWork() {
@@ -467,7 +467,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
         }
     }
 
-    private static void submitTo(EditExecutor executor, JobRequest request) {
+    private static void submitTo(EditExecutor<ServerWorld> executor, JobRequest<ServerWorld> request) {
         try {
             executor.submit(request);
         } catch (EditRejected e) {

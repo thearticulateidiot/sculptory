@@ -27,6 +27,7 @@ import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.EditMasks;
 import dev.sculptory.server.engine.impl.HistoryService;
 import java.io.IOException;
@@ -120,7 +121,7 @@ final class BuilderService {
     /** The config in effect ({@code /sculptory reload} replaces it): read whenever a check runs. */
     private final Supplier<SculptoryConfig> configs;
     private final FabricPermissionService permissions;
-    private final EditExecutor executor;
+    private final EditExecutor<ServerWorld> executor;
     private final HistoryService history;
     private final FluidTrails trails;
     private final StateSpace states;
@@ -167,7 +168,7 @@ final class BuilderService {
     }
 
     BuilderService(EngineEditService edits, Supplier<SculptoryConfig> configs, FabricPermissionService permissions,
-                   EditExecutor executor, HistoryService history, FluidTrails trails, StateSpace states,
+                   EditExecutor<ServerWorld> executor, HistoryService history, FluidTrails trails, StateSpace states,
                    LongSupplier clock) {
         this.edits = Objects.requireNonNull(edits);
         this.server = edits.server();

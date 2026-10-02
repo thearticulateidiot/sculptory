@@ -1,11 +1,9 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.edit.EditProgram;
-import dev.sculptory.fabric.world.ClientSync;
-import dev.sculptory.fabric.world.FabricStateSpace;
-import dev.sculptory.fabric.world.WorldChecks;
+import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -16,11 +14,8 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
-import dev.sculptory.server.engine.impl.BrushWork;
-import dev.sculptory.server.engine.impl.ColumnPlan;
-import dev.sculptory.server.engine.impl.CountedTickets;
-import dev.sculptory.server.engine.impl.SectionLocks;
-import dev.sculptory.server.engine.impl.TicketWindow;
+import dev.sculptory.server.platform.BorderBounds;
+import dev.sculptory.server.platform.ClientUpdates;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -28,7 +23,6 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -38,13 +32,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.LongSupplier;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ChunkTicketType;
-import net.minecraft.server.world.ServerChunkManager;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.border.WorldBorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,8 +45,8 @@ import org.slf4j.LoggerFactory;
  *       ({@link BrushWork#runPart}) stays at the head of its player's queue.</li>
  *   <li><b>Bulk lane</b> with the rest: active jobs share the budget by deficit round robin. Each job goes
  *       {@code LOAD_CHUNKS → SNAPSHOT_SOURCES → APPLY → FINALIZE}; APPLY captures each section, runs
- *       {@code program.compute}, writes through {@link dev.sculptory.fabric.world.BlockWriter} and records
- *       changed cells into the job's {@link RecordSink}.</li>
+ *       {@code program.compute}, writes through the platform's {@link dev.sculptory.server.platform.WorldWriter}
+ *       and records changed cells into the job's {@link RecordSink}.</li>
  *   <li><b>Admission</b>: every admitted job queues on a section-lock table covering the sections it reads and
  *       writes; overlapping jobs run in FIFO order. Limits: active jobs per owner and globally, and a bounded
  *       wait queue, also bounded per owner so one player cannot fill it for everyone (beyond either,
@@ -80,13 +67,11 @@ import org.slf4j.LoggerFactory;
  * <p><b>Known limitation (physics on):</b> a chunk loaded only by the edit ticket sits at level 33, which is loaded
  * but not block-ticking. Scheduled ticks and fluid flow caused by physics-on writes in such chunks wait until a
  * player (or another ticket) makes the chunk ticking.
+ *
+ * @param <W> the platform's world type
  */
-public final class EditExecutor {
+public final class EditExecutor<W> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
-
-    /** Region-op chunk ticket: radius 0, expires after 600 ticks unless refreshed. */
-    public static final ChunkTicketType<ChunkPos> EDIT_TICKET =
-            ChunkTicketType.create("sculptory:edit", Comparator.comparingLong(ChunkPos::toLong), 600);
 
     /** The brush queue key of work without an owner. */
     private static final Object NO_OWNER = new Object();
@@ -105,8 +90,9 @@ public final class EditExecutor {
     /** A job fails if the chunk it waits for has not loaded after this much wall-clock time. */
     static final long CHUNK_WAIT_LIMIT_NANOS = 120_000_000_000L;
     /**
-     * How long after a player's last brush dabs they may still hold unacknowledged predictions (so {@link ClientSync}
-     * sends them per-block updates): the brush lane's backlog plus a round trip, with a wide margin.
+     * How long after a player's last brush dabs they may still hold unacknowledged predictions (so the client sync
+     * sends them per-block updates, {@link ClientUpdates}): the brush lane's backlog plus a round trip, with a wide
+     * margin.
      */
     static final long PREDICTION_GRACE_NANOS = 10_000_000_000L;
 
@@ -176,41 +162,46 @@ public final class EditExecutor {
         }
     }
 
-    private final MinecraftServer server;
-    private final FabricStateSpace states;
+    private final EngineHost<?, W> host;
     /** The limits in effect ({@link #updateSettings}: replaced by a config reload). */
     private Settings settings;
-    private final SectionLocks<BulkJob> locks = new SectionLocks<>();
+    private final SectionLocks<BulkJob<W>> locks = new SectionLocks<>();
     /** Queued brush work per owner ({@link #NO_OWNER} for work of no player), in submission order. */
     private final Map<Object, ArrayDeque<BrushWork>> brushQueues = new HashMap<>();
     /** The owners with queued brush work, in the order the lane serves them next. */
     private final ArrayDeque<Object> brushTurns = new ArrayDeque<>();
     private int brushQueued;
-    private final List<BulkJob> waiting = new ArrayList<>();
-    private final List<BulkJob> active = new ArrayList<>();
-    private final Map<UUID, BulkJob> jobs = new HashMap<>();
+    private final List<BulkJob<W>> waiting = new ArrayList<>();
+    private final List<BulkJob<W>> active = new ArrayList<>();
+    private final Map<UUID, BulkJob<W>> jobs = new HashMap<>();
     /** Jobs not finished that touched unloaded chunks at admission ({@link #admittedUnloaded}). */
     private final Set<UUID> admittedUnloaded = new HashSet<>();
-    private final Map<ServerWorld, CountedTickets> tickets = new HashMap<>();
+    private final Map<W, CountedTickets> tickets = new HashMap<>();
     private final List<AreaHold> holds = new ArrayList<>();
     private final List<Lane> lanes = new ArrayList<>();
     private final Map<Lane, Double> laneShares = new HashMap<>();
     /** Client sync of the bulk jobs' writes, per world; flushed at the end of every tick and when a job ends. */
-    private final Map<ServerWorld, ClientSync> clientSyncs = new HashMap<>();
+    private final Map<W, ClientUpdates> clientSyncs = new HashMap<>();
     /** When each player last sent brush dabs ({@code System.nanoTime}). */
     private final Map<UUID, Long> predictedAt = new HashMap<>();
     private int roundRobin;
     private long tickCount;
     private boolean shutDown;
 
-    public EditExecutor(MinecraftServer server, FabricStateSpace states, Settings settings) {
-        this.server = Objects.requireNonNull(server);
-        this.states = Objects.requireNonNull(states);
+    /** @param host the platform (and the engine it runs) whose tools and state space the jobs use */
+    public EditExecutor(EngineHost<?, W> host, Settings settings) {
+        this.host = Objects.requireNonNull(host);
         this.settings = Objects.requireNonNull(settings);
     }
 
-    public FabricStateSpace states() {
-        return states;
+    /** The state space jobs compute in: the platform's. */
+    public StateSpace states() {
+        return host.states();
+    }
+
+    /** The platform the jobs run on. */
+    EngineHost<?, W> host() {
+        return host;
     }
 
     public Settings settings() {
@@ -247,13 +238,13 @@ public final class EditExecutor {
      *     {@code maxQueuedPerOwner} jobs waiting, {@code UNLOADED} when it touches unloaded chunks and may not load
      *     them, {@code DISABLED} while stopping
      */
-    public JobTicket submit(JobRequest request) throws EditRejected {
+    public JobTicket submit(JobRequest<W> request) throws EditRejected {
         checkThread();
         if (shutDown) throw new EditRejected(RejectReason.DISABLED, "server is stopping");
         EditProgram program = request.program();
         Box bounds = Objects.requireNonNull(program.bounds(), "program bounds");
-        ServerWorld world = request.world();
-        if (!WorldChecks.intersectsBuildLimit(world, bounds)) {
+        W world = request.world();
+        if (!host.intersectsBuildLimit(world, bounds)) {
             throw new EditRejected(RejectReason.INVALID, "outside the build limit");
         }
         if (waiting.size() >= settings.maxQueued()) throw new EditRejected(RejectReason.QUEUE_FULL);
@@ -265,9 +256,9 @@ public final class EditExecutor {
                 throw new EditRejected(RejectReason.QUEUE_FULL, mine + " of your edits are still waiting to start");
             }
         }
-        WorldBorder border = world.getWorldBorder();
-        double west = border.getBoundWest(), east = border.getBoundEast();
-        double north = border.getBoundNorth(), south = border.getBoundSouth();
+        BorderBounds border = host.border(world);
+        double west = border.west(), east = border.east();
+        double north = border.north(), south = border.south();
         BorderSplit writes = splitByBorder(program.sectionOrder(), west, east, north, south);
         BorderSplit reads = splitByBorder(program.sourceSections(), west, east, north, south);
         long[] order = writes.inside();
@@ -291,11 +282,11 @@ public final class EditExecutor {
                 throw new EditRejected(RejectReason.UNLOADED, "loading chunks needs " + Perm.EDIT_UNLOADED.node());
             }
         }
-        BulkJob job = new BulkJob(this, UUID.randomUUID(), request, order, sources, reads.outside(), states);
+        BulkJob<W> job = new BulkJob<>(this, UUID.randomUUID(), request, order, sources, reads.outside(), states());
         // What it may use is fixed now: a config reload changes what later jobs get, not this one.
         job.admittedMaxTickets = settings.maxTicketsPerJob();
         if (unloaded) admittedUnloaded.add(job.id);
-        job.blocked = locks.acquire(world.getRegistryKey(), job.lockKeys, job);
+        job.blocked = locks.acquire(job.worldKey, job.lockKeys, job);
         for (AreaHold hold : holds) {
             if (hold.overlaps(job)) {
                 job.heldBy++;
@@ -311,7 +302,7 @@ public final class EditExecutor {
     /** Cancels a job: a queued job ends now, a running one at its next section boundary. */
     public boolean cancel(UUID jobId) {
         checkThread();
-        BulkJob job = jobs.get(jobId);
+        BulkJob<W> job = jobs.get(jobId);
         if (job == null || job.isDone()) return false;
         if (job.stage == BulkJob.Stage.WAITING) {
             finish(job, JobOutcome.CANCELLED);
@@ -324,13 +315,13 @@ public final class EditExecutor {
     /** {@link #cancel(UUID)} restricted to the owner's own jobs. */
     public boolean cancel(UUID owner, UUID jobId) {
         checkThread();
-        BulkJob job = jobs.get(jobId);
+        BulkJob<W> job = jobs.get(jobId);
         return job != null && job.owner().equals(owner) && cancel(jobId);
     }
 
     /** Whether the job is admitted and has not started yet (cancelling it ends it at once, having changed nothing). */
     public boolean isWaiting(UUID jobId) {
-        BulkJob job = jobs.get(jobId);
+        BulkJob<W> job = jobs.get(jobId);
         return job != null && job.stage == BulkJob.Stage.WAITING;
     }
 
@@ -340,8 +331,8 @@ public final class EditExecutor {
     }
 
     /** Whether an admitted (queued or running) job or an area hold holds this section of {@code world}. */
-    public boolean isLocked(ServerWorld world, long sectionKey) {
-        Object key = world.getRegistryKey();
+    public boolean isLocked(W world, long sectionKey) {
+        Object key = host.worldKey(world);
         if (locks.isLocked(key, sectionKey)) return true;
         for (AreaHold hold : holds) {
             if (hold.covers(key, sectionKey)) return true;
@@ -350,8 +341,8 @@ public final class EditExecutor {
     }
 
     /** Whether any section touched by {@code box} is locked. A query only; admission uses {@link #isLockedFor}. */
-    public boolean isLocked(ServerWorld world, Box box) {
-        Object key = world.getRegistryKey();
+    public boolean isLocked(W world, Box box) {
+        Object key = host.worldKey(world);
         for (AreaHold hold : holds) {
             if (hold.intersects(key, box)) return true;
         }
@@ -359,18 +350,18 @@ public final class EditExecutor {
     }
 
     /**
-     * {@link #isLocked(ServerWorld, Box)} for an edit {@code requester} wants to make there (dab admission, a cut:
+     * {@link #isLocked(Object, Box)} for an edit {@code requester} wants to make there (dab admission, a cut:
      * {@code AREA_BUSY}). A hold of someone else is noted as {@link AreaHold#blockedSince blocking} when it covers the
      * box, or when a job it keeps waiting locks the box. When any job locking the box is held back by no hold, that job
      * refuses the edit whatever the holds do: it is refused and no hold is charged, so a hold is never charged for a
      * refusal it did not cause. This may under-charge: that job may itself wait, through its section locks, for a job a
      * hold keeps waiting, and such chains are not followed.
      */
-    public boolean isLockedFor(ServerWorld world, Box box, UUID requester) {
+    public boolean isLockedFor(W world, Box box, UUID requester) {
         Objects.requireNonNull(requester);
-        Object key = world.getRegistryKey();
-        List<BulkJob> locking = jobsLocking(key, box);
-        for (BulkJob job : locking) {
+        Object key = host.worldKey(world);
+        List<BulkJob<W>> locking = jobsLocking(key, box);
+        for (BulkJob<W> job : locking) {
             if (job.heldBy == 0) return true;
         }
         boolean held = false;
@@ -384,15 +375,15 @@ public final class EditExecutor {
     }
 
     /**
-     * {@link #isLockedFor(ServerWorld, Box, UUID)} for exactly the sections {@code sectionKeys} (a region's, which need
+     * {@link #isLockedFor(Object, Box, UUID)} for exactly the sections {@code sectionKeys} (a region's, which need
      * not fill its bounds), charging holds the same way.
      */
-    public boolean isLockedFor(ServerWorld world, long[] sectionKeys, UUID requester) {
+    public boolean isLockedFor(W world, long[] sectionKeys, UUID requester) {
         Objects.requireNonNull(requester);
-        Object key = world.getRegistryKey();
+        Object key = host.worldKey(world);
         LongArrayList sections = LongArrayList.wrap(sectionKeys.clone());
-        List<BulkJob> locking = jobsLocking(key, sections);
-        for (BulkJob job : locking) {
+        List<BulkJob<W>> locking = jobsLocking(key, sections);
+        for (BulkJob<W> job : locking) {
             if (job.heldBy == 0) return true;
         }
         boolean held = false;
@@ -407,7 +398,7 @@ public final class EditExecutor {
     }
 
     /** The admitted (queued or running) jobs whose section locks include a section of {@code box}. */
-    private List<BulkJob> jobsLocking(Object key, Box box) {
+    private List<BulkJob<W>> jobsLocking(Object key, Box box) {
         if (!jobLocked(key, box)) return List.of();
         LongArrayList sections = new LongArrayList();
         box.forEachSectionKey(sections::add);
@@ -415,13 +406,13 @@ public final class EditExecutor {
     }
 
     /** The admitted (queued or running) jobs whose section locks include one of {@code sections}. */
-    private List<BulkJob> jobsLocking(Object key, LongArrayList sections) {
+    private List<BulkJob<W>> jobsLocking(Object key, LongArrayList sections) {
         boolean any = false;
         for (int k = 0; k < sections.size() && !any; k++) any = locks.isLocked(key, sections.getLong(k));
         if (!any) return List.of();
-        List<BulkJob> found = new ArrayList<>();
-        for (BulkJob job : jobs.values()) {
-            if (job.isDone() || !job.request.world().getRegistryKey().equals(key)) continue;
+        List<BulkJob<W>> found = new ArrayList<>();
+        for (BulkJob<W> job : jobs.values()) {
+            if (job.isDone() || !job.worldKey.equals(key)) continue;
             for (int k = 0; k < sections.size(); k++) {
                 if (Arrays.binarySearch(job.lockKeys, sections.getLong(k)) >= 0) {
                     found.add(job);
@@ -442,8 +433,11 @@ public final class EditExecutor {
 
     // ---------------------------------------------------------------- area holds and lanes
 
-    /** {@link #hold(ServerWorld, LongSet, int, int)} over the rectangle of chunk columns {@code cx0..cx1 × cz0..cz1}. */
-    public AreaHold hold(ServerWorld world, int cx0, int cz0, int cx1, int cz1, int sy0, int sy1) {
+    /**
+     * {@link #hold(Object, UUID, LongSet, int, int, LongSupplier)} over the rectangle of chunk columns
+     * {@code cx0..cx1 × cz0..cz1}.
+     */
+    public AreaHold hold(W world, int cx0, int cz0, int cx1, int cz1, int sy0, int sy1) {
         if (cx0 > cx1 || cz0 > cz1 || sy0 > sy1) throw new IllegalArgumentException("Empty hold");
         LongOpenHashSet columns = new LongOpenHashSet();
         for (int cx = cx0; cx <= cx1; cx++) {
@@ -464,12 +458,12 @@ public final class EditExecutor {
      * behind it, or their dab or cut refused through {@link #isLockedFor}): {@link AreaHold#blockedSince}. A
      * {@code null} owner counts every job and requester as someone else.
      */
-    public AreaHold hold(ServerWorld world, UUID owner, LongSet columns, int sy0, int sy1, LongSupplier clock) {
+    public AreaHold hold(W world, UUID owner, LongSet columns, int sy0, int sy1, LongSupplier clock) {
         checkThread();
         if (sy0 > sy1) throw new IllegalArgumentException("Empty hold");
-        AreaHold hold = new AreaHold(world.getRegistryKey(), owner, new LongOpenHashSet(columns), sy0, sy1,
+        AreaHold hold = new AreaHold(this, host.worldKey(world), owner, new LongOpenHashSet(columns), sy0, sy1,
                 Objects.requireNonNull(clock));
-        for (BulkJob job : jobs.values()) {
+        for (BulkJob<W> job : jobs.values()) {
             if (!job.isDone() && hold.overlaps(job)) hold.ahead.add(job);
         }
         holds.add(hold);
@@ -482,10 +476,11 @@ public final class EditExecutor {
     }
 
     /** A hold on a set of chunk columns ({@link #hold}). Server thread only. */
-    public final class AreaHold {
+    public static final class AreaHold {
         /** {@link #blockedSince()} of a hold that has held off nobody else. */
         public static final long NEVER = Long.MIN_VALUE;
 
+        private final EditExecutor<?> executor;
         private final Object world;
         private final UUID owner;
         private final LongOpenHashSet columns;
@@ -494,13 +489,15 @@ public final class EditExecutor {
         private final int sy0, sy1;
         private final LongSupplier clock;
         /** Jobs admitted before the hold, touching it, not finished yet. */
-        private final Set<BulkJob> ahead = Collections.newSetFromMap(new IdentityHashMap<>());
+        private final Set<BulkJob<?>> ahead = Collections.newSetFromMap(new IdentityHashMap<>());
         /** Jobs admitted after the hold that wait for it. */
-        private final List<BulkJob> behind = new ArrayList<>();
+        private final List<BulkJob<?>> behind = new ArrayList<>();
         private long blockedSince = NEVER;
         private boolean released;
 
-        private AreaHold(Object world, UUID owner, LongOpenHashSet columns, int sy0, int sy1, LongSupplier clock) {
+        private AreaHold(EditExecutor<?> executor, Object world, UUID owner, LongOpenHashSet columns, int sy0, int sy1,
+                         LongSupplier clock) {
+            this.executor = executor;
             this.world = world;
             this.owner = owner;
             this.clock = clock;
@@ -561,23 +558,23 @@ public final class EditExecutor {
 
         /** Gives the rectangle back: the jobs waiting for it may run. Idempotent. */
         public void release() {
-            checkThread();
+            executor.checkThread();
             if (released) return;
             released = true;
-            holds.remove(this);
-            for (BulkJob job : behind) job.heldBy--;
+            executor.holds.remove(this);
+            for (BulkJob<?> job : behind) job.heldBy--;
             behind.clear();
             ahead.clear();
         }
 
-        void jobFinished(BulkJob job) {
+        void jobFinished(BulkJob<?> job) {
             ahead.remove(job);
         }
 
         /** Whether one of {@code jobs} waits for this hold. */
-        boolean keepsWaiting(List<BulkJob> jobs) {
-            for (BulkJob job : jobs) {
-                for (BulkJob waiting : behind) {
+        boolean keepsWaiting(List<? extends BulkJob<?>> jobs) {
+            for (BulkJob<?> job : jobs) {
+                for (BulkJob<?> waiting : behind) {
                     if (waiting == job) return true;
                 }
             }
@@ -613,8 +610,8 @@ public final class EditExecutor {
             return false;
         }
 
-        boolean overlaps(BulkJob job) {
-            Object key = job.request.world().getRegistryKey();
+        boolean overlaps(BulkJob<?> job) {
+            Object key = job.worldKey;
             if (!key.equals(world)) return false;
             Box bounds = job.program.bounds();
             if (bounds != null && !intersects(key, bounds) && job.sources.length == 0) return false;
@@ -723,14 +720,14 @@ public final class EditExecutor {
     }
 
     /** How many jobs hold the edit ticket of chunk (cx, cz) in {@code world}. */
-    public int ticketHolders(ServerWorld world, int cx, int cz) {
+    public int ticketHolders(W world, int cx, int cz) {
         CountedTickets counted = tickets.get(world);
         return counted == null ? 0 : counted.holders(cx, cz);
     }
 
     /**
      * Notes that {@code player} sent predicted edits (brush dabs) just now: for {@link #PREDICTION_GRACE_NANOS} bulk
-     * writes reach them as per-block updates ({@link ClientSync}).
+     * writes reach them as per-block updates ({@link ClientUpdates}).
      */
     public void predicted(UUID player) {
         checkThread();
@@ -738,19 +735,19 @@ public final class EditExecutor {
     }
 
     /** Whether the player may still hold unacknowledged predicted block changes (see {@link #predicted}). */
-    public boolean mayHavePredictions(ServerPlayerEntity player) {
-        Long at = predictedAt.get(player.getUuid());
+    public boolean mayHavePredictions(UUID player) {
+        Long at = predictedAt.get(player);
         return at != null && System.nanoTime() - at < PREDICTION_GRACE_NANOS;
     }
 
-    /** The client sync bulk jobs in {@code world} write through (see {@link ClientSync}). */
-    public ClientSync clientSync(ServerWorld world) {
-        return clientSyncs.computeIfAbsent(world, w -> new ClientSync(w, this::mayHavePredictions));
+    /** The client sync bulk jobs in {@code world} write through ({@link EngineHost#clientUpdates}). */
+    public ClientUpdates clientSync(W world) {
+        return clientSyncs.computeIfAbsent(world, w -> host.clientUpdates(w, this::mayHavePredictions));
     }
 
-    /** Sends the bulk writes made since the last flush to the players watching them ({@link ClientSync#flush}). */
+    /** Sends the bulk writes made since the last flush to the players watching them ({@link ClientUpdates#flush}). */
     private void flushClientSync(boolean force) {
-        for (ClientSync sync : clientSyncs.values()) {
+        for (ClientUpdates sync : clientSyncs.values()) {
             try {
                 sync.flush(tickCount, force);
             } catch (RuntimeException e) {
@@ -770,7 +767,7 @@ public final class EditExecutor {
         flushClientSync(false);
         if (tickCount % TICKET_REFRESH_TICKS == 0) {
             // Worlds a dimension mod unloaded.
-            clientSyncs.keySet().removeIf(w -> server.getWorld(w.getRegistryKey()) != w);
+            clientSyncs.keySet().removeIf(w -> !host.exists(w));
         }
     }
 
@@ -786,7 +783,7 @@ public final class EditExecutor {
         runLanes(start, budget);
         admit();
         if (tickCount % TICKET_REFRESH_TICKS == 0) {
-            for (BulkJob job : active) job.refreshTickets();
+            for (BulkJob<W> job : active) job.refreshTickets();
             long now = System.nanoTime();
             predictedAt.values().removeIf(at -> now - at >= PREDICTION_GRACE_NANOS);
         }
@@ -794,7 +791,7 @@ public final class EditExecutor {
         long bulkEnd = Math.max(start + budget, afterBrushes + (long) (budget * MIN_BULK_SHARE));
         runBulkLane(new Budget(bulkEnd, settings.maxBlocksPerTick() > 0 ? settings.maxBlocksPerTick() : Long.MAX_VALUE));
         long now = System.nanoTime();
-        for (BulkJob job : active.toArray(new BulkJob[0])) emitProgress(job, now);
+        for (BulkJob<W> job : new ArrayList<>(active)) emitProgress(job, now);
     }
 
     /**
@@ -811,7 +808,7 @@ public final class EditExecutor {
                 dropped(queue.pollFirst());
             }
         }
-        for (BulkJob job : active.toArray(new BulkJob[0])) {
+        for (BulkJob<W> job : new ArrayList<>(active)) {
             try {
                 job.completeCurrentSection();
             } catch (RuntimeException e) {
@@ -819,7 +816,7 @@ public final class EditExecutor {
             }
             finish(job, JobOutcome.CANCELLED);
         }
-        for (BulkJob job : waiting.toArray(new BulkJob[0])) finish(job, JobOutcome.CANCELLED);
+        for (BulkJob<W> job : new ArrayList<>(waiting)) finish(job, JobOutcome.CANCELLED);
         flushClientSync(true);
     }
 
@@ -869,7 +866,7 @@ public final class EditExecutor {
 
     /** Starts waiting jobs, in admission order, that hold all their locks and fit the active limits. */
     private void admit() {
-        for (BulkJob job : waiting.toArray(new BulkJob[0])) {
+        for (BulkJob<W> job : new ArrayList<>(waiting)) {
             if (job.isDone()) continue;
             boolean startable = job.blocked == 0 && job.heldBy == 0
                     && active.size() < settings.maxActiveGlobal()
@@ -892,11 +889,11 @@ public final class EditExecutor {
         boolean progressed = true;
         while (progressed && !budget.exhausted() && !active.isEmpty()) {
             progressed = false;
-            BulkJob[] round = active.toArray(new BulkJob[0]);
-            int n = round.length;
+            List<BulkJob<W>> round = new ArrayList<>(active);
+            int n = round.size();
             int startAt = Math.floorMod(roundRobin, n);
             for (int k = 0; k < n && !budget.exhausted(); k++) {
-                BulkJob job = round[(startAt + k) % n];
+                BulkJob<W> job = round.get((startAt + k) % n);
                 if (job.isDone()) continue;
                 job.deficit += QUANTUM;
                 long used;
@@ -919,7 +916,7 @@ public final class EditExecutor {
     }
 
     /** Ends a job exactly once: releases tickets and locks, then reports FINALIZE and the result. */
-    void finish(BulkJob job, JobOutcome outcome) {
+    void finish(BulkJob<W> job, JobOutcome outcome) {
         if (job.isDone()) return;
         job.stage = BulkJob.Stage.DONE;
         job.outcome = outcome;
@@ -930,14 +927,14 @@ public final class EditExecutor {
         for (AreaHold hold : holds) hold.jobFinished(job);
         job.releaseTickets();
         job.releaseBuffers();
-        locks.release(job.request.world().getRegistryKey(), job.lockKeys, job, head -> head.blocked--);
+        locks.release(job.worldKey, job.lockKeys, job, head -> head.blocked--);
         if (job.writer.tileFailures() > 0) {
             LOG.warn("Sculptory job {} ({}): {} block entities could not be restored and kept their defaults; "
                     + "first: {}", job.id, job.program.label(), job.writer.tileFailures(), job.writer.firstTileFailure());
         }
         // Its columns go out at this tick's end whatever the resend interval (as with vanilla's block updates, a
         // few may arrive just after the job's result).
-        ClientSync sync = clientSyncs.get(job.request.world());
+        ClientUpdates sync = clientSyncs.get(job.world);
         if (sync != null) sync.flushNext(job.order);
         if (job.entityFailures() > 0) {
             LOG.warn("Sculptory job {} ({}): {} entities could not be placed and were left out", job.id,
@@ -954,7 +951,7 @@ public final class EditExecutor {
         }
     }
 
-    void emitPhase(BulkJob job, Phase phase) {
+    void emitPhase(BulkJob<W> job, Phase phase) {
         job.reportedPhase = phase;
         long now = System.nanoTime();
         long done = job.done();
@@ -962,7 +959,7 @@ public final class EditExecutor {
         progress(job, done, phase);
     }
 
-    private void emitProgress(BulkJob job, long now) {
+    private void emitProgress(BulkJob<W> job, long now) {
         if (job.isDone() || job.reportedPhase == null) return;
         long done = job.done();
         if (!job.throttle.shouldEmit(now, done, job.totalCells)) return;
@@ -970,7 +967,7 @@ public final class EditExecutor {
         progress(job, done, job.reportedPhase);
     }
 
-    private void progress(BulkJob job, long done, Phase phase) {
+    private void progress(BulkJob<W> job, long done, Phase phase) {
         try {
             job.request.listener().progress(job.id, done, job.totalCells, phase);
         } catch (RuntimeException e) {
@@ -978,7 +975,7 @@ public final class EditExecutor {
         }
     }
 
-    private void fail(BulkJob job, RuntimeException e) {
+    private void fail(BulkJob<W> job, RuntimeException e) {
         LOG.error("Sculptory job {} ({}) failed after {} changed cells; applied work is kept",
                 job.id, job.program.label(), job.changed(), e);
         finish(job, JobOutcome.FAILED);
@@ -986,7 +983,7 @@ public final class EditExecutor {
 
     private int activeCount(UUID owner) {
         int count = 0;
-        for (BulkJob job : active) {
+        for (BulkJob<W> job : active) {
             if (job.owner().equals(owner)) count++;
         }
         return count;
@@ -995,7 +992,7 @@ public final class EditExecutor {
     /** The owner's admitted jobs that have not started yet. */
     public int waitingCount(UUID owner) {
         int count = 0;
-        for (BulkJob job : waiting) {
+        for (BulkJob<W> job : waiting) {
             if (job.owner().equals(owner)) count++;
         }
         return count;
@@ -1008,7 +1005,7 @@ public final class EditExecutor {
     int heldBackCount(UUID owner) {
         int free = Math.min(settings.maxActivePerOwner() - activeCount(owner), settings.maxActiveGlobal() - active.size());
         int count = 0;
-        for (BulkJob job : waiting) {
+        for (BulkJob<W> job : waiting) {
             if (job.isDone() || !job.owner().equals(owner)) continue;
             if (free > 0 && job.blocked == 0 && job.heldBy == 0) {
                 free--; // starts on the next tick
@@ -1019,29 +1016,8 @@ public final class EditExecutor {
         return count;
     }
 
-    private TicketWindow.Tickets ticketsFor(ServerWorld world) {
-        return tickets.computeIfAbsent(world, w -> {
-            ServerChunkManager manager = w.getChunkManager();
-            return new CountedTickets(new TicketWindow.Tickets() {
-                @Override
-                public void add(int cx, int cz) {
-                    ChunkPos pos = new ChunkPos(cx, cz);
-                    manager.addTicket(EDIT_TICKET, pos, 0, pos);
-                }
-
-                @Override
-                public void remove(int cx, int cz) {
-                    ChunkPos pos = new ChunkPos(cx, cz);
-                    manager.removeTicket(EDIT_TICKET, pos, 0, pos);
-                }
-
-                /** Adding an equal ticket again restarts its expiry timer. */
-                @Override
-                public void refresh(int cx, int cz) {
-                    add(cx, cz);
-                }
-            });
-        });
+    private TicketWindow.Tickets ticketsFor(W world) {
+        return tickets.computeIfAbsent(world, w -> new CountedTickets(host.chunkTickets(w)));
     }
 
     /**
@@ -1076,22 +1052,22 @@ public final class EditExecutor {
      * Whether every packed column's chunk is loaded (its entities, which load a tick or more later, are waited for by the
      * job itself).
      */
-    private static boolean allEntityColumnsLoaded(ServerWorld world, long[] columns) {
+    private boolean allEntityColumnsLoaded(W world, long[] columns) {
         for (long column : columns) {
-            if (!WorldChecks.isChunkLoaded(world, ColumnPlan.unpackX(column), ColumnPlan.unpackZ(column))) return false;
+            if (!host.chunkLoaded(world, ColumnPlan.unpackX(column), ColumnPlan.unpackZ(column))) return false;
         }
         return true;
     }
 
-    private static boolean allColumnsLoaded(ServerWorld world, long[] sectionKeys) {
-        int minSection = world.getBottomSectionCoord();
-        int topSection = world.getTopSectionCoord();
+    private boolean allColumnsLoaded(W world, long[] sectionKeys) {
+        int minSection = host.bottomSection(world);
+        int topSection = host.topSection(world);
         LongOpenHashSet checked = new LongOpenHashSet();
         for (long key : sectionKeys) {
             int sy = BlockBuffer.keyY(key);
             if (sy < minSection || sy >= topSection) continue;
             int cx = BlockBuffer.keyX(key), cz = BlockBuffer.keyZ(key);
-            if (checked.add(ColumnPlan.pack(cx, cz)) && !WorldChecks.isChunkLoaded(world, cx, cz)) return false;
+            if (checked.add(ColumnPlan.pack(cx, cz)) && !host.chunkLoaded(world, cx, cz)) return false;
         }
         return true;
     }
@@ -1105,6 +1081,6 @@ public final class EditExecutor {
     }
 
     private void checkThread() {
-        if (!server.isOnThread()) throw new IllegalStateException("EditExecutor must be used on the server thread");
+        if (!host.isOnThread()) throw new IllegalStateException("EditExecutor must be used on the server thread");
     }
 }

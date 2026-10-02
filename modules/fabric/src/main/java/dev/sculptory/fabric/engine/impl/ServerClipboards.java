@@ -58,6 +58,8 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.EditMasks;
 import dev.sculptory.server.engine.impl.EntityColumns;
+import dev.sculptory.server.engine.impl.EntityJobs;
+import dev.sculptory.server.engine.impl.EntityWork;
 import dev.sculptory.server.engine.impl.PlayerClipboards;
 import dev.sculptory.server.engine.impl.RequestSlots;
 import dev.sculptory.server.library.Library;

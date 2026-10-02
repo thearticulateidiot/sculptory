@@ -24,7 +24,6 @@ import dev.sculptory.core.nbt.NbtCompound;
 import dev.sculptory.core.nbt.NbtIo;
 import dev.sculptory.core.nbt.NbtList;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -33,6 +32,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.TileSanitizer;
@@ -82,14 +82,16 @@ public final class HistoryContentsGameTest implements FabricGameTest {
         return region;
     }
 
-    private static void fillBy(Harness h, EditExecutor executor, ServerPlayerEntity player, Box box, String state) {
+    private static void fillBy(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player, Box box,
+                               String state) {
         RecordingListener listener = new RecordingListener();
         run(h, player, fill(h, box, state), listener);
         tickUntil(executor, () -> listener.result != null, TICKS, "a fill");
         check(listener.result.outcome() == JobOutcome.COMPLETED, "fill " + listener.result);
     }
 
-    private static JobResult step(Harness h, EditExecutor executor, ServerPlayerEntity player, boolean undo) {
+    private static JobResult step(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player,
+                                  boolean undo) {
         RecordingListener listener = historyStep(h, player, undo);
         tickUntil(executor, () -> listener.result != null, TICKS, undo ? "an undo" : "a redo");
         check(listener.result.outcome() == JobOutcome.COMPLETED, "step " + listener.result);
@@ -97,7 +99,8 @@ public final class HistoryContentsGameTest implements FabricGameTest {
     }
 
     /** Undo anyway (or Redo anyway) of the player's whole run, run to its end. */
-    private static JobResult anyway(Harness h, EditExecutor executor, ServerPlayerEntity player, boolean redo) {
+    private static JobResult anyway(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player,
+                                    boolean redo) {
         HistoryService.Run run = h.service.historyService().session(player.getUuid()).run().orElseThrow(
                 () -> new GameTestException("no " + (redo ? "Redo" : "Undo") + " anyway offer"));
         RecordingListener listener = new RecordingListener();
@@ -193,7 +196,7 @@ public final class HistoryContentsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_contents_undo", tickLimit = LIMIT)
     public void undoKeepsAChestFilledSinceTheEditAndUndoAnywayRemovesIt(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         int[] at = regionCorner(context, 600);
@@ -229,7 +232,7 @@ public final class HistoryContentsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_contents_untouched", tickLimit = LIMIT)
     public void anUntouchedPasteOfChestSignAndFurnaceUndoesAndRedoesExactly(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         int[] at = regionCorner(context, 602);
@@ -269,7 +272,7 @@ public final class HistoryContentsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_contents_while_writing", tickLimit = LIMIT)
     public void contentsChangedWhileTheUndoIsWrittenAreKept(TestContext context) {
-        EditExecutor executor = executor(context, 64);
+        EditExecutor<ServerWorld> executor = executor(context, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         int[] at = regionCorner(context, 604);
@@ -302,7 +305,7 @@ public final class HistoryContentsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_contents_stripped", tickLimit = LIMIT)
     public void aNonOpsStrippedCommandBlockPasteUndoesCleanly(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity carol = h.addPlayer(false);
         EditTestSupport.grant(carol, Perm.USE, Perm.REGION, Perm.CLIPBOARD);
@@ -338,7 +341,7 @@ public final class HistoryContentsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_contents_redo", tickLimit = LIMIT)
     public void redoKeepsAChestEmptiedSinceTheUndoAndRedoAnywayReplacesIt(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         int[] at = regionCorner(context, 606);

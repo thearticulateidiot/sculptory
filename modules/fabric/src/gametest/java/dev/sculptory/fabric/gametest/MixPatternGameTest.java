@@ -28,7 +28,6 @@ import dev.sculptory.core.palette.BlockPalette;
 import dev.sculptory.core.palette.PalettePattern;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
@@ -43,6 +42,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.library.PaletteFile;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
@@ -106,7 +106,7 @@ public final class MixPatternGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_palette_paint", tickLimit = LIMIT)
     public void palettePaintWithEveryPatternMatchesTheKernelAndUndoesExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 1040);
@@ -199,7 +199,7 @@ public final class MixPatternGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_shape", tickLimit = LIMIT)
     public void shapeBrushWithEveryPatternMatchesTheKernelAndUndoesExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 1042);
@@ -256,7 +256,7 @@ public final class MixPatternGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_fill", tickLimit = LIMIT)
     public void fillWithEveryPatternWritesThePatternAndUndoesExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 1044);
@@ -395,7 +395,7 @@ public final class MixPatternGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_permission", tickLimit = LIMIT)
     public void patternsNeedThePlainEditsPermission(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 1046);
@@ -456,7 +456,7 @@ public final class MixPatternGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_partial", tickLimit = LIMIT)
     public void aPatternedFillOverProtectedColumnsAppliesPartlyAndUndoesExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 1048);

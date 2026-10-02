@@ -564,10 +564,10 @@ public final class TinkerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_busy", tickLimit = LIMIT)
     public void aBusyAreaIsRefused(TestContext context) {
-        dev.sculptory.fabric.engine.impl.EditExecutor executor = new dev.sculptory.fabric.engine.impl.EditExecutor(
-                context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
-                new dev.sculptory.fabric.engine.impl.EditExecutor.Settings(200_000_000L, 4096, 0.4, 2, 8, 32, 64,
-                        dev.sculptory.server.config.UnloadedPolicy.LOAD, 1024, 16_384));
+        dev.sculptory.server.engine.impl.EditExecutor<ServerWorld> executor =
+                new dev.sculptory.server.engine.impl.EditExecutor<>(EngineTestSupport.runtime(context),
+                        new dev.sculptory.server.engine.impl.EditExecutor.Settings(200_000_000L, 4096, 0.4, 2, 8,
+                                32, 64, dev.sculptory.server.config.UnloadedPolicy.LOAD, 1024, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1024);
         int x0 = at[0] + 4, z0 = at[1] + 4;

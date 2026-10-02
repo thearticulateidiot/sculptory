@@ -720,7 +720,7 @@ public final class ClipboardGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_stroke_pending", tickLimit = LIMIT)
     public void aCopyWaitingForAStrokeLeavesNoRequestSlotBehind(TestContext context) {
-        dev.sculptory.fabric.engine.impl.EditExecutor executor = ShapeBrushGameTest.onePartATick(context);
+        dev.sculptory.server.engine.impl.EditExecutor<ServerWorld> executor = ShapeBrushGameTest.onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 758);

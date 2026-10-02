@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
@@ -11,10 +11,6 @@ import dev.sculptory.core.history.EntityMatcher;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.world.EntityWriter;
-import dev.sculptory.fabric.world.FabricEntities;
-import dev.sculptory.server.engine.impl.ColumnPlan;
-import dev.sculptory.server.engine.impl.EntityColumns;
 import dev.sculptory.server.platform.EntityPlacer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
@@ -25,7 +21,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
-import net.minecraft.entity.Entity;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,7 +31,7 @@ import org.slf4j.LoggerFactory;
  * could not record is neither removed nor left placed. Nothing is changed where its block may not be
  * ({@link EntityWork.Context#mayChange}, {@link EntityWork.Context#mayPlace}: counted as protected).
  */
-final class EntityJobs {
+public final class EntityJobs {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
 
     private EntityJobs() {}
@@ -63,10 +58,15 @@ final class EntityJobs {
         return out.toLongArray();
     }
 
+    /** Whether a block belongs to {@code region}: an entity belonging to it does. */
+    private static boolean in(Region region, BlockPos cell) {
+        return region.contains(cell.x(), cell.y(), cell.z());
+    }
+
     /** Places planned entities after the blocks, a column at a time, a step at a time. */
     private abstract static class Placing implements EntityWork {
         private Long2ObjectLinkedOpenHashMap<List<Placement>> planned;
-        private final Cursor<Placement> placing = new Cursor<>();
+        private final Cursor placing = new Cursor();
         final Transform transform;
 
         Placing(Transform transform) {
@@ -83,25 +83,25 @@ final class EntityJobs {
         }
 
         @Override
-        public boolean after(long column, Context ctx) {
+        public <E> boolean after(long column, Context<E> ctx) {
             return placing.walk(column, ctx, () -> planned.get(column), placement -> place(placement, ctx));
         }
 
-        private void place(Placement placement, Context ctx) {
-            EntityPlacer.Spawn<Entity> spawn = ctx.writer.place(placement.entity(), placement.where(), transform,
+        private <E> void place(Placement placement, Context<E> ctx) {
+            EntityPlacer.Spawn<E> spawn = ctx.writer.place(placement.entity(), placement.where(), transform,
                     ctx::mayPlace);
             if (spawn.refused()) {
                 ctx.protectedEntities++;
                 return;
             }
-            Entity placed = spawn.entity();
+            E placed = spawn.entity();
             if (placed == null) return; // counted by the writer
-            EntityState after = EntityWriter.live(placed);
+            EntityState after = ctx.world.live(placed);
             if (after == null) {
                 ctx.writer.takeBack(placed); // history could not keep it: nothing undo does not know about stays
                 return;
             }
-            ctx.records.entity(placed.getUuid(), null, after);
+            ctx.records.entity(ctx.world.id(placed), null, after);
         }
     }
 
@@ -109,7 +109,7 @@ final class EntityJobs {
      * A paste's entities: {@code entities} (a clipboard's, local to a box of {@code size}) placed with {@code t} into the
      * box that starts at {@code targetMin}.
      */
-    static EntityWork paste(List<EntitySnapshot> entities, BlockPos size, Transform t, BlockPos targetMin) {
+    public static EntityWork paste(List<EntitySnapshot> entities, BlockPos size, Transform t, BlockPos targetMin) {
         List<Placement> placements = new ArrayList<>(entities.size());
         for (EntitySnapshot entity : entities) {
             placements.add(new Placement(entity, EntityPlacement.place(entity, size, t, targetMin)));
@@ -126,7 +126,7 @@ final class EntityJobs {
             }
 
             @Override
-            public boolean before(long column, Context ctx) {
+            public <E> boolean before(long column, Context<E> ctx) {
                 return true;
             }
 
@@ -162,7 +162,7 @@ final class EntityJobs {
         private final List<EntitySnapshot> taken = new ArrayList<>();
         /** Every entity looked at, so one that walks into a later column meanwhile is not taken twice. */
         private final Set<UUID> seen = new HashSet<>();
-        private final Cursor<Entity> taking = new Cursor<>();
+        private final Cursor taking = new Cursor();
         private long takenTotal;
         private boolean cappedOut;
 
@@ -196,16 +196,16 @@ final class EntityJobs {
         }
 
         @Override
-        public boolean before(long column, Context ctx) {
-            return taking.walk(column, ctx, () -> FabricEntities.inRegion(ctx.world, region, filter,
-                    ColumnPlan.unpackX(column), ColumnPlan.unpackZ(column)), entity -> take(entity, ctx));
+        public <E> boolean before(long column, Context<E> ctx) {
+            return taking.walk(column, ctx, () -> ctx.world.inRegion(region, filter, ColumnPlan.unpackX(column),
+                    ColumnPlan.unpackZ(column)), entity -> take(entity, ctx));
         }
 
-        private void take(Entity entity, Context ctx) {
+        private <E> void take(E entity, Context<E> ctx) {
             // Fetched when the column started: it may have gone, mounted something or walked off since.
-            if (entity.isRemoved() || entity.hasVehicle() || !FabricEntities.in(region, entity)) return;
-            if (!seen.add(entity.getUuid())) return;
-            int count = FabricEntities.takenCount(entity, filter);
+            if (ctx.world.removed(entity) || ctx.world.riding(entity) || !in(region, ctx.world.cell(entity))) return;
+            if (!seen.add(ctx.world.id(entity))) return;
+            int count = ctx.world.takenCount(entity, filter);
             if (takenTotal + count > max) {
                 if (!cappedOut) {
                     cappedOut = true;
@@ -215,28 +215,27 @@ final class EntityJobs {
                 return;
             }
             // Only what is removed must be changeable here; a stack reads under the copy rule, checked on admission.
-            if (remove && !ctx.mayChange(FabricEntities.cell(entity))) {
+            if (remove && !ctx.mayChange(ctx.world.cell(entity))) {
                 ctx.protectedEntities++;
                 return;
             }
             EntitySnapshot snapshot;
             try {
-                snapshot = FabricEntities.snapshot(entity, filter, min, trusted);
+                snapshot = ctx.world.snapshot(entity, filter, min, trusted);
             } catch (IllegalArgumentException e) {
-                LOG.warn("Sculptory: a {} is too large to take along and stays where it is",
-                        FabricEntities.typeId(entity));
+                LOG.warn("Sculptory: a {} is too large to take along and stays where it is", ctx.world.typeId(entity));
                 return;
             }
             if (snapshot == null) return;
             if (remove) {
-                EntityState before = FabricEntities.state(entity, filter);
+                EntityState before = ctx.world.state(entity, filter);
                 if (before == null) {
                     LOG.warn("Sculptory: a {} cannot be recorded for undo and stays where it is",
-                            FabricEntities.typeId(entity));
+                            ctx.world.typeId(entity));
                     return;
                 }
                 ctx.writer.remove(entity, before);
-                ctx.records.entity(entity.getUuid(), before, null);
+                ctx.records.entity(ctx.world.id(entity), before, null);
             }
             taken.add(snapshot);
             takenTotal += count;
@@ -255,7 +254,7 @@ final class EntityJobs {
      * them with {@code t}: {@code frame} (the box the blocks move, of which each entity keeps its place) moved to start at
      * {@code destinationMin}. Each placement names the entity it was taken from (undo pairs them).
      */
-    static EntityWork move(Region region, EntityFilter filter, Box frame, Transform t, BlockPos destinationMin,
+    public static EntityWork move(Region region, EntityFilter filter, Box frame, Transform t, BlockPos destinationMin,
                            long max) {
         BlockPos size = new BlockPos(frame.sizeX(), frame.sizeY(), frame.sizeZ());
         Region destination = dev.sculptory.core.region.Regions.moved(region, frame, destinationMin, t);
@@ -270,7 +269,7 @@ final class EntityJobs {
      * the blocks (the cut frame lands where its image within the whole bounds would); {@code trusted} as the stack's
      * tiles. {@code max} bounds the entities taken (each placed {@code count} times).
      */
-    static EntityWork stack(Region region, EntityFilter filter, Box frame, int dx, int dy, int dz, int count,
+    public static EntityWork stack(Region region, EntityFilter filter, Box frame, int dx, int dy, int dz, int count,
                             boolean upsideDown, boolean trusted, long max) {
         BlockPos size = new BlockPos(frame.sizeX(), frame.sizeY(), frame.sizeZ());
         BlockPos min = upsideDown ? frame.flippedWithin(region.bounds()).min() : frame.min();
@@ -293,13 +292,14 @@ final class EntityJobs {
      * {@code filter} took), removed before the erase with the same riders unless protected, gone since, or no longer
      * belonging to {@code region} within {@code area} (the box the cut erases); others ride on and stay.
      */
-    static EntityWork cut(List<EntityState> taken, List<UUID> ids, EntityFilter filter, Region region, Box area) {
+    public static EntityWork cut(List<EntityState> taken, List<UUID> ids, EntityFilter filter, Region region,
+                                 Box area) {
         List<Integer> order = new ArrayList<>(ids.size());
         for (int i = 0; i < ids.size(); i++) order.add(i);
         Long2ObjectLinkedOpenHashMap<List<Integer>> columns = byColumn(order,
                 i -> columnOf(taken.get(i).x(), taken.get(i).z()));
         return new EntityWork() {
-            private final Cursor<Integer> cutting = new Cursor<>();
+            private final Cursor cutting = new Cursor();
 
             @Override
             public long[] admissionColumns() {
@@ -312,15 +312,15 @@ final class EntityJobs {
             }
 
             @Override
-            public boolean before(long column, Context ctx) {
+            public <E> boolean before(long column, Context<E> ctx) {
                 return cutting.walk(column, ctx, () -> columns.get(column), i -> cut(ids.get(i), ctx));
             }
 
-            private void cut(UUID id, Context ctx) {
-                Entity entity = FabricEntities.find(ctx.world, id);
-                if (entity == null || entity.isRemoved()) return; // gone since the copy: nothing to remove
-                net.minecraft.util.math.BlockPos cell = FabricEntities.cell(entity);
-                if (!FabricEntities.in(region, entity) || !area.contains(cell.getX(), cell.getY(), cell.getZ())) {
+            private <E> void cut(UUID id, Context<E> ctx) {
+                E entity = ctx.world.find(id);
+                if (entity == null || ctx.world.removed(entity)) return; // gone since the copy: nothing to remove
+                BlockPos cell = ctx.world.cell(entity);
+                if (!in(region, cell) || !area.contains(cell.x(), cell.y(), cell.z())) {
                     return; // moved out of what was cut since the copy: it stays where it is now
                 }
                 if (!ctx.mayChange(cell)) {
@@ -328,14 +328,14 @@ final class EntityJobs {
                     return;
                 }
                 // As it is now, with the riders the copy's filter takes: exactly what goes.
-                EntityState before = FabricEntities.state(entity, filter);
+                EntityState before = ctx.world.state(entity, filter);
                 if (before == null) {
                     LOG.warn("Sculptory: a {} cannot be recorded for undo and stays where it is",
-                            FabricEntities.typeId(entity));
+                            ctx.world.typeId(entity));
                     return;
                 }
                 ctx.writer.remove(entity, before);
-                ctx.records.entity(entity.getUuid(), before, null);
+                ctx.records.entity(ctx.world.id(entity), before, null);
             }
 
             @Override
@@ -344,7 +344,7 @@ final class EntityJobs {
             }
 
             @Override
-            public boolean after(long column, Context ctx) {
+            public <E> boolean after(long column, Context<E> ctx) {
                 return true;
             }
         };
@@ -357,13 +357,13 @@ final class EntityJobs {
      * move's source is put back whether or not the moved entity was found and removed (one that walked into a chunk
      * that is not loaded is then left as a duplicate: a known limit, never a loss).
      */
-    static EntityWork history(List<EntityHistory.Step> steps, ConflictPolicy policy, EntityMatcher matcher) {
+    public static EntityWork history(List<EntityHistory.Step> steps, ConflictPolicy policy, EntityMatcher matcher) {
         Long2ObjectLinkedOpenHashMap<List<EntityHistory.Step>> columns = byColumn(steps,
                 s -> columnOf(s.where().x(), s.where().z()));
         List<EntityHistory.Step> restore = new ArrayList<>();
         return new EntityWork() {
-            private final Cursor<EntityHistory.Step> deciding = new Cursor<>();
-            private final Cursor<EntityHistory.Step> restoring = new Cursor<>();
+            private final Cursor deciding = new Cursor();
+            private final Cursor restoring = new Cursor();
             private Long2ObjectLinkedOpenHashMap<List<EntityHistory.Step>> targets;
 
             @Override
@@ -381,14 +381,14 @@ final class EntityJobs {
             }
 
             @Override
-            public boolean before(long column, Context ctx) {
+            public <E> boolean before(long column, Context<E> ctx) {
                 return deciding.walk(column, ctx, () -> columns.get(column), step -> decide(step, ctx));
             }
 
-            private void decide(EntityHistory.Step step, Context ctx) {
-                Entity entity = FabricEntities.find(ctx.world, step.id());
-                if (entity != null && entity.isRemoved()) entity = null;
-                EntityState live = entity == null ? null : EntityWriter.live(entity);
+            private <E> void decide(EntityHistory.Step step, Context<E> ctx) {
+                E entity = ctx.world.find(step.id());
+                if (entity != null && ctx.world.removed(entity)) entity = null;
+                EntityState live = entity == null ? null : ctx.world.live(entity);
                 if (entity != null && live == null) {
                     ctx.conflicts++; // there, but too large to compare: kept
                     return;
@@ -398,7 +398,7 @@ final class EntityJobs {
                     case CONFLICT -> ctx.conflicts++;
                     case APPLY -> {
                         if (entity != null) {
-                            if (!ctx.mayChange(FabricEntities.cell(entity))) {
+                            if (!ctx.mayChange(ctx.world.cell(entity))) {
                                 ctx.protectedEntities++;
                                 return;
                             }
@@ -416,17 +416,17 @@ final class EntityJobs {
             }
 
             @Override
-            public boolean after(long column, Context ctx) {
+            public <E> boolean after(long column, Context<E> ctx) {
                 return restoring.walk(column, ctx, () -> targets.get(column), step -> restore(step, ctx));
             }
 
-            private void restore(EntityHistory.Step step, Context ctx) {
-                Entity there = FabricEntities.find(ctx.world, step.id());
-                if (there != null && !there.isRemoved()) {
+            private <E> void restore(EntityHistory.Step step, Context<E> ctx) {
+                E there = ctx.world.find(step.id());
+                if (there != null && !ctx.world.removed(there)) {
                     ctx.conflicts++; // something took its UUID meanwhile
                     return;
                 }
-                EntityPlacer.Spawn<Entity> spawn = ctx.writer.restore(step.target(), ctx::mayPlace);
+                EntityPlacer.Spawn<E> spawn = ctx.writer.restore(step.target(), ctx::mayPlace);
                 if (spawn.refused()) {
                     ctx.protectedEntities++;
                 } else if (spawn.entity() == null) {

@@ -13,7 +13,6 @@ import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.fabric.SculptoryMod;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
@@ -27,6 +26,7 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import java.util.List;
 import java.util.Locale;
@@ -41,6 +41,7 @@ import net.minecraft.command.argument.BlockStateArgumentType;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 
@@ -180,7 +181,7 @@ public final class SculptoryCommands {
         Optional<EngineEditService> service = service(source);
         if (service.isEmpty()) return 0;
         List<EngineEditService.JobInfo> jobs = service.get().jobs(player.getUuid());
-        EditExecutor executor = service.get().executor();
+        EditExecutor<ServerWorld> executor = service.get().executor();
         StringBuilder text = new StringBuilder("Executor: ").append(executor.activeJobCount()).append(" active, ")
                 .append(executor.queuedJobCount()).append(" queued, ").append(executor.brushQueueSize())
                 .append(" dabs queued. Your jobs: ").append(jobs.size());

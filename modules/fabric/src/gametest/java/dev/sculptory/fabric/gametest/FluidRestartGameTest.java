@@ -29,8 +29,6 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.store.StorageIo;
 import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Region;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.DurableHistoryGameTest.Run;
 import dev.sculptory.fabric.gametest.DurableHistoryGameTest.Scene;
 import dev.sculptory.fabric.gametest.DurableHistoryGameTest.WritesWhileWaiting;
@@ -46,6 +44,8 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -263,7 +263,7 @@ public final class FluidRestartGameTest implements FabricGameTest {
                     long trail = trails.trailCells(world, id);
                     check(trail > 0, "the water that flowed after the restart was followed");
                     HistoryEntry held = newestEntry(second[0], alice);
-                    EditExecutor executor = second[0].executor;
+                    EditExecutor<ServerWorld> executor = second[0].executor;
                     Box one = box(x0, FLOOR + 8, z0, x0, FLOOR + 8, z0);
                     List<UUID> fillers = new ArrayList<>();
                     try {

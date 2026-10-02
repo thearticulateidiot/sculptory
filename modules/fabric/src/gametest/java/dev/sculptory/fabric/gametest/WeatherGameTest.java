@@ -21,7 +21,6 @@ import dev.sculptory.core.brush.SurfaceMask;
 import dev.sculptory.core.brush.SymmetricStep;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.brush.WeatherSpec;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -33,6 +32,7 @@ import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -199,7 +199,7 @@ public final class WeatherGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_weather_refused", tickLimit = LIMIT)
     public void refusedWithoutTheBrushNodeAndWhereProtected(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 1142);
@@ -281,7 +281,7 @@ public final class WeatherGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_weather_timing", tickLimit = LIMIT)
     public void aRadius32DabComputesInMillisecondsAndFitsTheLane(TestContext context) {
-        EditExecutor executor = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 EditExecutor.Settings.from(SculptoryConfig.defaults(), true));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
@@ -352,8 +352,8 @@ public final class WeatherGameTest implements FabricGameTest {
      * {@link ShapeBrushLaneGameTest#TICK_MICROS}, GC pauses left out}, times in microseconds, each tick's time without
      * the garbage collectors' pauses during it ({@link ShapeBrushLaneGameTest#gcMillis}).
      */
-    private static long[] timedTicks(EditExecutor executor, Harness h, java.util.function.BooleanSupplier done, int max,
-                                     String what) {
+    private static long[] timedTicks(EditExecutor<ServerWorld> executor, Harness h,
+                                     java.util.function.BooleanSupplier done, int max, String what) {
         long ticks = 0, longest = 0, over = 0, gc = 0;
         while (!done.getAsBoolean() && ticks < max) {
             long gcBefore = ShapeBrushLaneGameTest.gcMillis();

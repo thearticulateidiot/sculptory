@@ -19,7 +19,6 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -31,6 +30,7 @@ import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -77,7 +77,8 @@ public final class ShapeBrushGameTest implements FabricGameTest {
     }
 
     /** Places one stroke of {@code dabs} (batches of up to 8) and waits for the lane; returns the next sequence. */
-    static int stroke(Harness h, EditExecutor executor, int strokeId, BrushSpec spec, List<Dab> dabs, int seq) {
+    static int stroke(Harness h, EditExecutor<ServerWorld> executor, int strokeId, BrushSpec spec, List<Dab> dabs,
+                      int seq) {
         BrushSymmetryGameTest.begin(h, strokeId, spec);
         for (int from = 0; from < dabs.size(); from += 8) {
             DabOutcome outcome = h.service.dabs(h.player, strokeId, seq, dabs.subList(from, Math.min(dabs.size(), from + 8)));
@@ -143,11 +144,11 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         return count;
     }
 
-    private static void undoAll(Harness h, EditExecutor executor, int entries) {
+    private static void undoAll(Harness h, EditExecutor<ServerWorld> executor, int entries) {
         undoAll(h, executor, entries, 20);
     }
 
-    static void undoAll(Harness h, EditExecutor executor, int entries, int maxTicks) {
+    static void undoAll(Harness h, EditExecutor<ServerWorld> executor, int entries, int maxTicks) {
         for (int i = 0; i < entries; i++) {
             RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
             MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, maxTicks, "undo " + i);
@@ -162,7 +163,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_cells", tickLimit = LIMIT)
     public void eachSolidWritesExactlyItsRegionAndUndoesExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 680);
@@ -222,7 +223,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_drag", tickLimit = LIMIT)
     public void aDragIsOneUndoStepAndMatchesTheKernel(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 682);
@@ -282,7 +283,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_modes", tickLimit = LIMIT)
     public void modesChangeOnlyTheirCells(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 684);
@@ -352,7 +353,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_protected", tickLimit = LIMIT)
     public void protectedCellsAreSkipped(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 686);
@@ -402,7 +403,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_refused", tickLimit = LIMIT)
     public void refusalsWriteNothing(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 688);
@@ -452,13 +453,13 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * An executor whose brush lane runs one item a tick (a dab, a part of a large step, or a slice of a commit): its
      * share of the budget is a microsecond, used up by any work. Jobs keep a full budget.
      */
-    static EditExecutor onePartATick(TestContext context) {
+    static EditExecutor<ServerWorld> onePartATick(TestContext context) {
         return onePartATick(context, 1024);
     }
 
     /** {@link #onePartATick(TestContext)} with a brush queue of at most {@code maxBrushQueue} items. */
-    static EditExecutor onePartATick(TestContext context, int maxBrushQueue) {
-        return new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+    static EditExecutor<ServerWorld> onePartATick(TestContext context, int maxBrushQueue) {
+        return new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(50_000_000L, 0, 0.00002, 2, 8, 32, 64, UnloadedPolicy.LOAD, maxBrushQueue,
                         16_384));
     }
@@ -469,7 +470,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_turns", tickLimit = LIMIT)
     public void anotherPlayersDabsRunBetweenTheParts(TestContext context) {
-        EditExecutor executor = onePartATick(context);
+        EditExecutor<ServerWorld> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 692);
@@ -527,7 +528,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_partial", tickLimit = LIMIT)
     public void aLockMidStepStopsItAndWhatWasWrittenUndoesExactly(TestContext context) {
-        EditExecutor executor = onePartATick(context);
+        EditExecutor<ServerWorld> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity other = h.addPlayer();
         ServerWorld world = h.world;
@@ -577,7 +578,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_tiles", tickLimit = LIMIT)
     public void blockEntitiesAreReplacedAndUndoneWithTheirContents(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 696);

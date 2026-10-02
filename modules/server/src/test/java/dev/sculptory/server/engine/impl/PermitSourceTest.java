@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -12,8 +12,6 @@ import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.perm.ChunkPermits;
 import java.util.ArrayList;
 import java.util.List;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -22,16 +20,16 @@ import org.junit.jupiter.api.Test;
  */
 class PermitSourceTest {
     /** A claim over columns x 40..47 (in chunk 2, 0); the corner rule as the server applies it. */
-    private static final class Claim implements PermissionService<ServerPlayerEntity, ServerWorld> {
+    private static final class Claim implements PermissionService<Object, Object> {
         final List<Box> asked = new ArrayList<>();
 
         @Override
-        public boolean has(ServerPlayerEntity p, Perm node) {
+        public boolean has(Object p, Perm node) {
             return true;
         }
 
         @Override
-        public ChunkPermit chunk(ServerPlayerEntity p, ServerWorld w, int cx, int cz, Box bounds) {
+        public ChunkPermit chunk(Object p, Object w, int cx, int cz, Box bounds) {
             asked.add(bounds);
             return ChunkPermits.forChunk(cx, cz, bounds, (x, z) -> x < 40 || x > 47);
         }

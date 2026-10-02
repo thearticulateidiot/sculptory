@@ -3,7 +3,6 @@ package dev.sculptory.fabric.engine.impl;
 import com.mojang.authlib.GameProfile;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockEntityData;
-import dev.sculptory.core.edit.EditProgram;
 import dev.sculptory.core.scatter.FeatureCatalog;
 import dev.sculptory.core.scatter.ScatterPlanner;
 import dev.sculptory.core.state.ModdedFacingFallback;
@@ -24,32 +23,31 @@ import dev.sculptory.fabric.world.FeatureGrower;
 import dev.sculptory.fabric.world.FluidTrails;
 import dev.sculptory.fabric.world.Relighter;
 import dev.sculptory.fabric.world.WorldChecks;
-import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.SculptoryConfig;
-import dev.sculptory.server.engine.EditRejected;
-import dev.sculptory.server.engine.JobListener;
-import dev.sculptory.server.engine.Perm;
-import dev.sculptory.server.engine.RunOptions;
-import dev.sculptory.server.engine.impl.RecordSink;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineHost;
+import dev.sculptory.server.engine.impl.TicketWindow;
 import dev.sculptory.server.platform.BorderBounds;
-import dev.sculptory.server.platform.Platform;
 import dev.sculptory.server.platform.Profile;
 import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ChunkTicketType;
+import net.minecraft.server.world.ServerChunkManager;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.UserCache;
+import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.border.WorldBorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,19 +57,24 @@ import org.slf4j.LoggerFactory;
  * and shut down at {@code SERVER_STOPPING}. {@link #install()} registers the lifecycle hooks once per JVM and is
  * idempotent; the mod initializer calls it (the GameTest mod calls it too, so tests run before that wiring).
  *
- * <p>It is also the Fabric {@link Platform}: the game as the shared engine sees it, over this {@link MinecraftServer}.
+ * <p>It is also the Fabric {@link EngineHost}: the game as the shared engine sees it, over this
+ * {@link MinecraftServer}.
  */
-public final class EngineRuntime implements Platform<ServerPlayerEntity, ServerWorld> {
+public final class EngineRuntime implements EngineHost<ServerPlayerEntity, ServerWorld> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static boolean installed;
     private static volatile EngineRuntime current;
+
+    /** Region-op chunk ticket: radius 0, expires after 600 ticks unless refreshed ({@link #chunkTickets}). */
+    public static final ChunkTicketType<ChunkPos> EDIT_TICKET =
+            ChunkTicketType.create("sculptory:edit", Comparator.comparingLong(ChunkPos::toLong), 600);
 
     private final MinecraftServer server;
     /** The settings in effect: replaced as a whole by {@link #reload}, so a reader sees one config or the other. */
     private volatile SculptoryConfig config;
     private final FabricStateSpace states;
     private final FabricPermissionService permissions;
-    private final EditExecutor executor;
+    private final EditExecutor<ServerWorld> executor;
     private final FluidTrails fluidTrails;
     /** Told the new config after a reload has applied it (server thread). */
     private final List<Consumer<SculptoryConfig>> reloadListeners = new CopyOnWriteArrayList<>();
@@ -81,7 +84,7 @@ public final class EngineRuntime implements Platform<ServerPlayerEntity, ServerW
         this.config = Objects.requireNonNull(config);
         this.states = buildStates(config);
         this.permissions = new FabricPermissionService(config);
-        this.executor = new EditExecutor(server, states, EditExecutor.Settings.from(config, server.isDedicated()));
+        this.executor = new EditExecutor<>(this, EditExecutor.Settings.from(config, server.isDedicated()));
         this.fluidTrails = new FluidTrails(server.getThread());
     }
 
@@ -143,6 +146,7 @@ public final class EngineRuntime implements Platform<ServerPlayerEntity, ServerW
     }
 
     /** The settings in effect ({@link #reload} replaces them). */
+    @Override
     public SculptoryConfig config() {
         return config;
     }
@@ -223,7 +227,8 @@ public final class EngineRuntime implements Platform<ServerPlayerEntity, ServerW
         return fluidTrails;
     }
 
-    public EditExecutor executor() {
+    @Override
+    public EditExecutor<ServerWorld> executor() {
         return executor;
     }
 
@@ -238,6 +243,31 @@ public final class EngineRuntime implements Platform<ServerPlayerEntity, ServerW
     }
 
     // ================================================================== the platform
+
+    /** {@link #EDIT_TICKET} tickets in {@code world}. */
+    @Override
+    public TicketWindow.Tickets chunkTickets(ServerWorld world) {
+        ServerChunkManager manager = world.getChunkManager();
+        return new TicketWindow.Tickets() {
+            @Override
+            public void add(int cx, int cz) {
+                ChunkPos pos = new ChunkPos(cx, cz);
+                manager.addTicket(EDIT_TICKET, pos, 0, pos);
+            }
+
+            @Override
+            public void remove(int cx, int cz) {
+                ChunkPos pos = new ChunkPos(cx, cz);
+                manager.removeTicket(EDIT_TICKET, pos, 0, pos);
+            }
+
+            /** Adding an equal ticket again restarts its expiry timer. */
+            @Override
+            public void refresh(int cx, int cz) {
+                add(cx, cz);
+            }
+        };
+    }
 
     @Override
     public boolean isOnThread() {
@@ -455,27 +485,6 @@ public final class EngineRuntime implements Platform<ServerPlayerEntity, ServerW
     @Override
     public ScatterPlanner.SurvivalCheck survivalCheck(ServerWorld world, int[] blockStates) {
         return ServerScatter.survivalCheck(states, world, blockStates);
-    }
-
-    /**
-     * A job request for a player, resolving the permission-dependent parts: editing enabled, physics
-     * ({@code sculptory.physics}), operator NBT, per-chunk protection and loading unloaded chunks. Does not
-     * check the op-level nodes for the op itself ({@code use}/{@code region}) or volume limits.
-     *
-     * @throws EditRejected {@code DISABLED} when editing is off, {@code NO_PERMISSION} for physics without the node
-     */
-    public JobRequest forPlayer(ServerPlayerEntity player, EditProgram program, RunOptions options,
-                                JobListener listener, RecordSink records) throws EditRejected {
-        if (!config.editingEnabled) throw new EditRejected(RejectReason.DISABLED);
-        if (options.physics() && !permissions.has(player, Perm.PHYSICS)) {
-            throw new EditRejected(RejectReason.NO_PERMISSION, Perm.PHYSICS.node());
-        }
-        ServerWorld world = player.getServerWorld();
-        Box bounds = program.bounds();
-        PermitSource permits = PermitSource.forPlayer(permissions, player, world, bounds);
-        WriteOptions write = new WriteOptions(options.physics(), permissions.mayWriteOperatorNbt(player));
-        return new JobRequest(player.getUuid(), world, program, write, permits,
-                permissions.has(player, Perm.EDIT_UNLOADED), ThreadLocalRandom.current().nextLong(), listener, records);
     }
 
     private static void start(MinecraftServer server) {

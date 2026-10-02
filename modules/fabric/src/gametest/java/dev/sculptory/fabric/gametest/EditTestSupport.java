@@ -18,17 +18,17 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.fabric.engine.impl.AckSink;
 import dev.sculptory.fabric.engine.impl.EditEvents;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.engine.impl.JobRequest;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -93,7 +93,7 @@ final class EditTestSupport {
         }
 
         /** With a private executor (ticked by the test) instead of the server's. */
-        Harness(TestContext context, HistoryLimits limits, LongSupplier clock, EditExecutor executor) {
+        Harness(TestContext context, HistoryLimits limits, LongSupplier clock, EditExecutor<ServerWorld> executor) {
             this.context = context;
             this.runtime = runtime(context);
             this.world = context.getWorld();

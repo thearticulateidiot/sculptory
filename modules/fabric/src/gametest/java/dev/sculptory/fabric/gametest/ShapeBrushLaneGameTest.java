@@ -26,11 +26,9 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.store.HistoryStore;
 import dev.sculptory.core.history.store.StorageIo;
 import dev.sculptory.core.region.Facing;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.FabricHistoryCodec;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -45,7 +43,9 @@ import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.impl.BrushWork;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistoryService;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.lang.management.GarbageCollectorMXBean;
@@ -94,10 +94,10 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
     private static final class Saved implements AutoCloseable {
         final Harness h;
         final Path dir;
-        final EditExecutor executor;
+        final EditExecutor<ServerWorld> executor;
         final EngineEditService service;
 
-        Saved(Harness h, Path dir, EditExecutor executor) {
+        Saved(Harness h, Path dir, EditExecutor<ServerWorld> executor) {
             this.h = h;
             this.dir = dir;
             this.executor = executor;
@@ -199,8 +199,8 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
     }
 
     /** An executor with a dedicated server's default settings (a 10 ms budget, 4 ms of it for brushes). */
-    private static EditExecutor dedicated(TestContext context) {
-        return new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+    private static EditExecutor<ServerWorld> dedicated(TestContext context) {
+        return new EditExecutor<>(EngineTestSupport.runtime(context),
                 EditExecutor.Settings.from(SculptoryConfig.defaults(), true));
     }
 
@@ -559,7 +559,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_next_stroke", tickLimit = LIMIT)
     public void aNewStrokeMidStepComesAfterItInHistory(TestContext context) {
-        EditExecutor executor = onePartATick(context);
+        EditExecutor<ServerWorld> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 748);
@@ -602,7 +602,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_full_queue", tickLimit = LIMIT)
     public void aFullBrushQueueStillTakesTheCommit(TestContext context) {
-        EditExecutor executor = onePartATick(context, 70);
+        EditExecutor<ServerWorld> executor = onePartATick(context, 70);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 750);
@@ -644,7 +644,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_terrain_undo", tickLimit = LIMIT)
     public void aLargeTerrainStrokeIsUndoneOnceCommitted(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 752);
@@ -701,7 +701,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_permission_mid_step", tickLimit = LIMIT)
     public void thePermissionIsAskedAgainBeforeEachPart(TestContext context) {
-        EditExecutor executor = onePartATick(context);
+        EditExecutor<ServerWorld> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] corner = regionCorner(context, 754);
@@ -801,7 +801,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_lane", tickLimit = LIMIT)
     public void theBrushLaneStartsOnlyPiecesThatFitAndSurvivesFailures(TestContext context) {
-        EditExecutor executor = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(10_000_000L, 0, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 4, 16_384));
         List<Piece> order = new ArrayList<>();
         UUID a = UUID.randomUUID(), b = UUID.randomUUID();

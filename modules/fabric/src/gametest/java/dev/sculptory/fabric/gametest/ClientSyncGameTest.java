@@ -10,9 +10,7 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.pos;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.regionCorner;
 
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.BenchSupport.LightWait;
 import dev.sculptory.fabric.gametest.BenchSupport.Watcher;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
@@ -24,6 +22,8 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -142,18 +142,19 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * An executor of the test's own, ticked (and flushed) by the test ({@link #tick}). It writes {@code maxBlocksPerTick}
      * cells a tick (0: a whole job in one tick) however loaded the machine is.
      */
-    private static EditExecutor privateExecutor(EngineRuntime runtime, ServerWorld world, long maxBlocksPerTick) {
-        return new EditExecutor(world.getServer(), runtime.states(), new EditExecutor.Settings(NO_TIME_LIMIT_NANOS,
+    private static EditExecutor<ServerWorld> privateExecutor(EngineRuntime runtime, ServerWorld world,
+                                                             long maxBlocksPerTick) {
+        return new EditExecutor<>(runtime, new EditExecutor.Settings(NO_TIME_LIMIT_NANOS,
                 maxBlocksPerTick, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
     }
 
     /** One tick of a private executor: its work (as at {@code START_SERVER_TICK}), then its flush (as at the end). */
-    private static void tick(EditExecutor executor) {
+    private static void tick(EditExecutor<ServerWorld> executor) {
         executor.tick();
         executor.endTick();
     }
 
-    private static void submit(EditExecutor executor, JobRequest request) {
+    private static void submit(EditExecutor<ServerWorld> executor, JobRequest<ServerWorld> request) {
         try {
             executor.submit(request);
         } catch (EditRejected e) {
@@ -171,14 +172,14 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_heavy", tickLimit = LIMIT)
     public void heavyEditsResendWholeColumnsExactly(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 320);
         loadAndForce(h.world, grow(region, 16));
         List<BlockPos> signs = terrainWithSigns(h, region);
         ClientView view = new ClientView(h.world);
         Watcher watcher = watch(h.world, region, view);
-        ClientSync sync = executor.clientSync(h.world);
+        ClientSync sync = (ClientSync) executor.clientSync(h.world);
         long[] resentBefore = new long[1];
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
@@ -230,7 +231,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_light", tickLimit = LIMIT)
     public void lightEditsKeepVanillaBlockUpdates(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 321);
         loadAndForce(h.world, grow(region, 16));
@@ -239,7 +240,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                 region.min().y() + 9, region.min().z() + 9);
         ClientView view = new ClientView(h.world);
         Watcher watcher = watch(h.world, region, view);
-        ClientSync sync = executor.clientSync(h.world);
+        ClientSync sync = (ClientSync) executor.clientSync(h.world);
         long[] before = new long[2];
         RecordingListener fill = new RecordingListener();
         context.createTimedTaskRunner()
@@ -285,7 +286,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_predicting", tickLimit = LIMIT)
     public void predictingPlayersGetBlockUpdates(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 322);
         loadAndForce(h.world, grow(region, 16));
@@ -294,7 +295,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
         ClientView plainView = new ClientView(h.world);
         Watcher predicting = watch(h.world, region, predictingView);
         Watcher plain = watch(h.world, region, plainView);
-        ClientSync sync = executor.clientSync(h.world);
+        ClientSync sync = (ClientSync) executor.clientSync(h.world);
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         Runnable sendDabs = () -> h.service.dabs(predicting.player, 99, 1,
@@ -307,8 +308,8 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     predictingView.resetCounts();
                     plainView.resetCounts();
                     sendDabs.run();
-                    check(executor.mayHavePredictions(predicting.player) && !executor.mayHavePredictions(plain.player),
-                            "prediction bookkeeping");
+                    check(executor.mayHavePredictions(predicting.player.getUuid())
+                            && !executor.mayHavePredictions(plain.player.getUuid()), "prediction bookkeeping");
                     h.fill(region, "minecraft:stone", fill);
                     tick(executor);
                     check(fill.result != null && fill.result.outcome() == JobOutcome.COMPLETED, "fill " + fill.result);
@@ -353,7 +354,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_protected", tickLimit = LIMIT)
     public void protectedCellsReachTheClientUnchanged(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         Box region = heavyRegion(context, 323);
@@ -367,7 +368,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
         ChunkPermit half = new ChunkPermit.Columns(westHalf);
         ClientView view = new ClientView(world);
         Watcher watcher = watch(world, region, view);
-        ClientSync sync = executor.clientSync(world);
+        ClientSync sync = (ClientSync) executor.clientSync(world);
         RecordingListener listener = new RecordingListener();
         long[] resentBefore = new long[1];
         context.createTimedTaskRunner()
@@ -415,14 +416,14 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_resent_light", tickLimit = LIMIT)
     public void resentColumnsGetTheirLightAfterTheLightEngine(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 325);
         Box region = box(at[0], 100, at[1], at[0] + 47, 139, at[1] + 47);
         loadAndForce(h.world, grow(region, 32));
         ClientView view = new ClientView(h.world);
         Watcher watcher = watch(h.world, region, view);
-        ClientSync sync = executor.clientSync(h.world);
+        ClientSync sync = (ClientSync) executor.clientSync(h.world);
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         LightWait[] light = new LightWait[1];
@@ -484,14 +485,14 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_throttle", tickLimit = LIMIT)
     public void columnsWrittenOverManyTicksAreResentSparingly(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 4096);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 4096);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 326);
         Box region = box(at[0], -48, at[1], at[0] + 15, 271, at[1] + 15); // one column, 20 sections of air
         loadAndForce(h.world, grow(region, 16));
         ClientView view = new ClientView(h.world);
         Watcher watcher = watch(h.world, region, view);
-        ClientSync sync = executor.clientSync(h.world);
+        ClientSync sync = (ClientSync) executor.clientSync(h.world);
         RecordingListener fill = new RecordingListener();
         int[] ticks = {0};
         long[] resent = new long[2];
@@ -537,7 +538,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_light_tail", tickLimit = LIMIT)
     public void writesNearAPendingResendAreLitBeforeTheLightIsSent(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 328);
         Box region = box(at[0], 100, at[1], at[0] + 47, 139, at[1] + 47);
@@ -545,7 +546,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
         loadAndForce(h.world, grow(region, 32));
         ClientView view = new ClientView(h.world);
         Watcher watcher = watch(h.world, region, view);
-        ClientSync sync = executor.clientSync(h.world);
+        ClientSync sync = (ClientSync) executor.clientSync(h.world);
         RecordingListener fill = new RecordingListener();
         RecordingListener lamp = new RecordingListener();
         LightWait[] light = new LightWait[1];
@@ -597,7 +598,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_light_predicting", tickLimit = LIMIT)
     public void predictedHeavyWritesNearAPendingResendAreLitBeforeTheLightIsSent(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 330);
         Box region = box(at[0], 100, at[1], at[0] + 47, 139, at[1] + 47);
@@ -605,7 +606,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
         loadAndForce(h.world, grow(region, 32));
         ClientView view = new ClientView(h.world);
         Watcher watcher = watch(h.world, region, view);
-        ClientSync sync = executor.clientSync(h.world);
+        ClientSync sync = (ClientSync) executor.clientSync(h.world);
         RecordingListener fill = new RecordingListener();
         RecordingListener lamp = new RecordingListener();
         LightWait[] light = new LightWait[1];
@@ -674,7 +675,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
             order.add(packet);
             view.accept(packet);
         });
-        ClientSync sync = h.runtime.executor().clientSync(h.world);
+        ClientSync sync = (ClientSync) h.runtime.executor().clientSync(h.world);
         BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT).syncThrough(sync);
         int stone = h.state("minecraft:stone");
         long[] resentBefore = new long[1];
@@ -737,7 +738,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
     public void cancelledAndFailedJobsAndLateWatchersStayExact(TestContext context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = privateExecutor(runtime, world, 4096);
+        EditExecutor<ServerWorld> executor = privateExecutor(runtime, world, 4096);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 327);
         loadAndForce(world, grow(region, 16));

@@ -21,9 +21,7 @@ import dev.sculptory.core.brush.StrokeState;
 import dev.sculptory.core.brush.SurfaceMask;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryEntry;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -35,6 +33,8 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -226,7 +226,7 @@ public final class StrokeGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_locked", tickLimit = LIMIT)
     public void dabRefusedOnLockedSection(TestContext context) {
-        EditExecutor executor = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(10_000_000_000L, 0, 1.0, 2, 8, 32, 64, UnloadedPolicy.REFUSE, 256, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
@@ -411,7 +411,7 @@ public final class StrokeGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_shutdown", tickLimit = LIMIT)
     public void acksAtShutdown(TestContext context) {
-        EditExecutor executor = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(10_000_000_000L, 0, 1.0, 2, 8, 32, 64, UnloadedPolicy.REFUSE, 256, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
@@ -471,7 +471,8 @@ public final class StrokeGameTest implements FabricGameTest {
         }
     }
 
-    private static void submit(EditExecutor executor, ServerWorld world, BoxFill program, RecordingListener listener) {
+    private static void submit(EditExecutor<ServerWorld> executor, ServerWorld world, BoxFill program,
+                               RecordingListener listener) {
         try {
             executor.submit(JobRequest.system(world, program, listener));
         } catch (EditRejected e) {

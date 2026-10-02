@@ -32,7 +32,6 @@ import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterPlanner;
 import dev.sculptory.core.scatter.ScatterSettings;
 
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -47,6 +46,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.AssetCache;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -259,7 +259,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
         ServerScatter scatter = new ServerScatter(h.service);
-        EditExecutor executor = h.service.executor();
+        EditExecutor<ServerWorld> executor = h.service.executor();
         int[] at = regionCorner(context, 82);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -529,7 +529,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     public void scatterHoldsOnlyThePaintedChunks(TestContext context) {
         Harness h = new Harness(context);
         ServerScatter scatter = new ServerScatter(h.service);
-        EditExecutor executor = h.service.executor();
+        EditExecutor<ServerWorld> executor = h.service.executor();
         int[] at = regionCorner(context, 87);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);
@@ -704,7 +704,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_stroke_pending", tickLimit = LIMIT)
     public void aPreviewWaitingForAStrokeKeepsTheRunningOne(TestContext context) {
-        EditExecutor executor = ShapeBrushGameTest.onePartATick(context);
+        EditExecutor<ServerWorld> executor = ShapeBrushGameTest.onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerScatter scatter = new ServerScatter(h.service);
         int[] at = regionCorner(context, 760);

@@ -16,7 +16,6 @@ import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.region.Facing;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -27,6 +26,7 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.BuilderOutcome.Refusal;
 import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.ArrayList;
 import java.util.List;
@@ -648,7 +648,7 @@ public final class BuilderModeGameTest implements FabricGameTest {
     /** While the player's large Shape step is still being written, builder actions are refused BUSY and spend nothing. */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_builder_busy", tickLimit = LIMIT)
     public void actionsWaitBehindAStrokeBeingWritten(TestContext context) {
-        EditExecutor executor = ShapeBrushGameTest.onePartATick(context);
+        EditExecutor<ServerWorld> executor = ShapeBrushGameTest.onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1074);
         int x0 = at[0], z0 = at[1];

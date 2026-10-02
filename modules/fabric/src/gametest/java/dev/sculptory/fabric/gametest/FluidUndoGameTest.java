@@ -24,8 +24,6 @@ import dev.sculptory.core.history.HistoryLimits;
 import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -37,6 +35,8 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -553,7 +553,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
     /** A Fluid ball (a Shape-brush stroke of water) on stone, woken on every side: it flows; undo leaves nothing. */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_ball", tickLimit = LIMIT)
     public void undoingAFluidBallTakesBackTheWaterThatFlowed(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 930);
@@ -807,7 +807,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_mid_fill", tickLimit = LIMIT)
     public void waterWokenWhileItsFillStillWritesIsUndoneExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 256);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 256);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
@@ -865,7 +865,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
         Harness h = new Harness(context);
         ServerWorld world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
-        EditExecutor executor = h.runtime.executor();
+        EditExecutor<ServerWorld> executor = h.runtime.executor();
         int[] at = regionCorner(context, 923);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -928,7 +928,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_cancelled", tickLimit = LIMIT)
     public void aCancelledUndoRunAgainLeavesNothing(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 64);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();

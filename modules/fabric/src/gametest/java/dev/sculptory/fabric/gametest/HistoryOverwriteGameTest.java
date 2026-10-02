@@ -23,8 +23,6 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.HistoryPrograms;
 import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -40,7 +38,9 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistoryService;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.Arrays;
 import java.util.List;
@@ -86,7 +86,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_undo_anyway", tickLimit = LIMIT)
     public void undoAnywayOfARunEqualsTheRunUndoneWithOverwrite(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -149,7 +149,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_redo_anyway", tickLimit = LIMIT)
     public void redoAnywayOfARunEqualsTheRunRedoneWithOverwrite(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -205,7 +205,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_refusals", tickLimit = LIMIT)
     public void undoAnywayIsRefusedWhenItsRunDoesNotMatch(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -279,7 +279,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_cancel", tickLimit = LIMIT)
     public void aCancelledUndoAnywayReportsWhatItWroteAndFinishesWhenRunAgain(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -343,7 +343,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_protected", tickLimit = LIMIT)
     public void undoAnywayLeavesAProtectedColumnAndCountsIt(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
@@ -395,7 +395,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_stroke", tickLimit = LIMIT)
     public void anOpenStrokeIsCommittedFirstSoUndoAnywayIsRefusedAndTheDabsKept(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -435,7 +435,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_revoke", tickLimit = LIMIT)
     public void losingUseCancelsUndoAnywayAndTheRunIsKeptForARetry(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
@@ -483,7 +483,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_executor", tickLimit = LIMIT)
     public void theExecutorsRefusalsKeepTheRun(TestContext context) {
-        EditExecutor executor = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, 0, 0.4, 2, 8, 1, 64, UnloadedPolicy.REFUSE, 1024, 1));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
@@ -532,7 +532,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_redo_anyway_tile", tickLimit = LIMIT)
     public void redoAnywayRestoresABlockEntityOfTheAfterStates(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -579,7 +579,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_columns", tickLimit = LIMIT)
     public void aClaimStyleColumnPermitLeavesItsColumnDuringUndoAnyway(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -647,7 +647,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
     /** One region's script, run the same way for the player under test and for a twin. */
     private static final class Scenario {
         final Harness h;
-        final EditExecutor executor;
+        final EditExecutor<ServerWorld> executor;
         final ServerPlayerEntity alice;
         final ServerPlayerEntity bob;
         final int x;
@@ -655,7 +655,8 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         final Box region;
         WorldSnapshot original;
 
-        Scenario(Harness h, EditExecutor executor, ServerPlayerEntity alice, ServerPlayerEntity bob, int x, int z) {
+        Scenario(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity alice, ServerPlayerEntity bob, int x,
+                 int z) {
             this.h = h;
             this.executor = executor;
             this.alice = alice;
@@ -730,7 +731,8 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
     }
 
     /** A fill by {@code player}, run to its end. */
-    private static void fillBy(Harness h, EditExecutor executor, ServerPlayerEntity player, Box box, String state) {
+    private static void fillBy(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player, Box box,
+                               String state) {
         RecordingListener listener = new RecordingListener();
         run(h, player, fill(h, box, state), listener);
         tickUntil(executor, () -> listener.result != null, TICKS, "a fill");
@@ -738,7 +740,8 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
     }
 
     /** One undo (or redo) step of {@code player} skipping conflicts, run to its end. */
-    private static JobResult step(Harness h, EditExecutor executor, ServerPlayerEntity player, boolean undo) {
+    private static JobResult step(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player,
+                                  boolean undo) {
         RecordingListener listener = historyStep(h, player, undo);
         tickUntil(executor, () -> listener.result != null, TICKS, undo ? "an undo" : "a redo");
         check(listener.result.outcome() == JobOutcome.COMPLETED, "step " + listener.result);
@@ -755,7 +758,8 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
     }
 
     /** Undo anyway (or Redo anyway) of {@code steps} steps, run to its end. */
-    private static JobResult overwrite(Harness h, EditExecutor executor, ServerPlayerEntity player, boolean redo, int steps) {
+    private static JobResult overwrite(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player,
+                                       boolean redo, int steps) {
         RecordingListener listener = new RecordingListener();
         overwriteAdmitted(h, player, redo, steps, listener);
         tickUntil(executor, () -> listener.result != null, TICKS, redo ? "Redo anyway" : "Undo anyway");

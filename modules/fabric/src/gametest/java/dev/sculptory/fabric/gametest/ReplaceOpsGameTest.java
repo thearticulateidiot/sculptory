@@ -19,7 +19,6 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.mask.BlockSet;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.BlockFamilies;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -30,6 +29,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -65,7 +65,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
 
     // ------------------------------------------------------------------------------------------------ helpers
 
-    private static JobResult run(Harness h, EditExecutor executor, OpSpec op) {
+    private static JobResult run(Harness h, EditExecutor<ServerWorld> executor, OpSpec op) {
         RecordingListener listener = new RecordingListener();
         try {
             h.service.run(h.player, op, RunOptions.DEFAULT, listener);
@@ -77,7 +77,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
         return listener.result;
     }
 
-    private static void step(Harness h, EditExecutor executor, boolean undo) {
+    private static void step(Harness h, EditExecutor<ServerWorld> executor, boolean undo) {
         RecordingListener listener = MultiplayerGameTest.historyStep(h, h.player, undo);
         MultiplayerGameTest.tickUntil(executor, () -> listener.result != null, 200, undo ? "undo" : "redo");
         check(listener.result.outcome() == JobOutcome.COMPLETED && listener.result.skippedConflicts() == 0,
@@ -122,7 +122,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
         return h.service.historyService().undoEntries(h.player.getUuid());
     }
 
-    private static void finish(Harness h, EditExecutor executor, Box area, TestContext context) {
+    private static void finish(Harness h, EditExecutor<ServerWorld> executor, Box area, TestContext context) {
         executor.shutdown();
         forceChunks(h.world, around(area), false);
         h.close();
@@ -142,7 +142,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_replace_ops_replace", tickLimit = LIMIT)
     public void keepShapeAndWholeFamilyKeepEveryBlocksShape(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1120);
         int x0 = at[0] + 2, z0 = at[1] + 2;
@@ -212,7 +212,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_replace_ops_layers", tickLimit = LIMIT)
     public void overlayAndNaturalizeWorkFromEachColumnsHighestBlock(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1121);
         int x0 = at[0] + 2, z0 = at[1] + 2;
@@ -278,7 +278,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_replace_ops_update", tickLimit = LIMIT)
     public void updateBlocksConnectsShapesWithoutPhysics(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1122);
         int x0 = at[0] + 2, z0 = at[1] + 2;
@@ -350,7 +350,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_replace_ops_light", tickLimit = LIMIT)
     public void updateBlocksFixesStaleLight(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1123);
         int x0 = at[0], z0 = at[1];
@@ -396,7 +396,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_replace_ops_refusals", tickLimit = LIMIT)
     public void refusalsAndProtectionWriteNothingTheyMayNot(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1124);
         int x0 = at[0], z0 = at[1];
@@ -460,7 +460,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_replace_ops_symmetry", tickLimit = LIMIT)
     public void theOpsHonourSymmetry(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1125);
         int x0 = at[0], z0 = at[1];
@@ -507,10 +507,10 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_replace_ops_budget", tickLimit = LIMIT)
     public void aTightTickBudgetSpreadsUpdateBlocksWithoutChangingIt(TestContext context) {
-        EditExecutor tight = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> tight = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(1_000_000L, 0, 0.4, 2, 8, 32, 64,
                         dev.sculptory.server.config.UnloadedPolicy.LOAD, 1024, 16_384));
-        EditExecutor wide = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> wide = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, tight);
         Harness h2 = new Harness(context, null, System::nanoTime, wide);
         int[] at = regionCorner(context, 1128);

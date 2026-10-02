@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
@@ -6,27 +6,17 @@ import dev.sculptory.core.edit.ComputeContext;
 import dev.sculptory.core.edit.EditProgram;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.EntityWriter;
-import dev.sculptory.fabric.world.FabricEntities;
-import dev.sculptory.fabric.world.FabricWorldReader;
-import dev.sculptory.fabric.world.Relighter;
-import dev.sculptory.fabric.world.EntityTypeRules;
-import dev.sculptory.fabric.world.WorldChecks;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.server.engine.ChunkPermit;
-import dev.sculptory.server.engine.impl.ColumnPlan;
-import dev.sculptory.server.engine.impl.ProgressThrottle;
-import dev.sculptory.server.engine.impl.TicketWindow;
+import dev.sculptory.server.platform.BorderBounds;
+import dev.sculptory.server.platform.LiveReader;
 import dev.sculptory.server.platform.WorldWriter;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.Arrays;
 import java.util.UUID;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.world.border.WorldBorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,8 +44,10 @@ import org.slf4j.LoggerFactory;
  * at most {@link EntityWork#ENTITIES_PER_STEP} entities, with the tick's time budget checked and its block cap charged
  * ({@link #ENTITY_UNITS} per entity) between steps. Cancelling takes effect between steps as between sections: a move
  * cancelled after taking its entities leaves them removed (and recorded) until it is undone.
+ *
+ * @param <W> the platform's world type
  */
-final class BulkJob {
+final class BulkJob<W> {
     enum Stage { WAITING, ENTITIES_BEFORE, SOURCES, APPLY, ENTITIES_AFTER, DONE }
 
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
@@ -64,9 +56,9 @@ final class BulkJob {
     /** Work units (and blocks of the tick's block cap) an entity handled counts for: it costs about this many cells. */
     private static final long ENTITY_UNITS = 64;
 
-    final EditExecutor executor;
+    final EditExecutor<W> executor;
     final UUID id;
-    final JobRequest request;
+    final JobRequest<W> request;
     final EditProgram program;
     final long[] order;
     /** Source sections read from the world (inside the world border). */
@@ -76,9 +68,13 @@ final class BulkJob {
     /** Distinct, sorted union of {@link #order} and {@link #sources}. */
     final long[] lockKeys;
     final long totalCells;
-    final FabricWorldReader reader;
-    final BlockWriter writer;
+    /** The job's world, and its key ({@link EngineHost#worldKey}) for the section locks and area holds. */
+    final W world;
+    final Object worldKey;
+    final LiveReader reader;
+    final WorldWriter writer;
     final ProgressThrottle throttle = new ProgressThrottle();
+    private final EngineHost<?, W> host;
     private final ComputeContext context;
     private final int minSection;
     private final int topSection;
@@ -122,7 +118,7 @@ final class BulkJob {
     private final ReadTickets.Chunks chunks = new ReadTickets.Chunks() {
         @Override
         public boolean loaded(long column) {
-            return reader.chunkOrNull(EditProgram.columnX(column), EditProgram.columnZ(column)) != null;
+            return reader.isLoaded(EditProgram.columnX(column), EditProgram.columnZ(column));
         }
 
         @Override
@@ -134,11 +130,11 @@ final class BulkJob {
     /** The tick budget a section was computed under last ({@link #prepare}), and a running mean of that cost. */
     private EditExecutor.Budget preparedIn;
     private long prepareNanos;
-    /** Light checks the section just finished queued ({@link Relighter}), charged to the budget. */
+    /** Light checks the section just finished queued ({@link EngineHost#relightSection}), charged to the budget. */
     private int relit;
     /** The job's entity work and what it counts, or {@code null}. */
     private final EntityWork entityWork;
-    private EntityWork.Context entities;
+    private EntityWork.Context<?> entities;
     private ColumnPlan entityPlan;
     private TicketWindow entityTickets;
     private int entityCursor;
@@ -146,7 +142,7 @@ final class BulkJob {
 
     long skippedProtected;
 
-    BulkJob(EditExecutor executor, UUID id, JobRequest request, long[] order, long[] sources, long[] airSources,
+    BulkJob(EditExecutor<W> executor, UUID id, JobRequest<W> request, long[] order, long[] sources, long[] airSources,
             StateSpace states) {
         this.executor = executor;
         this.id = id;
@@ -157,14 +153,15 @@ final class BulkJob {
         this.airSources = airSources;
         this.lockKeys = union(order, sources);
         this.totalCells = Math.max(0L, program.estimatedCells());
-        ServerWorld world = request.world();
-        this.reader = new FabricWorldReader(world, executor.states());
+        this.host = executor.host();
+        this.world = request.world();
+        this.worldKey = host.worldKey(world);
+        this.reader = host.reader(world);
         // Physics-off writes reach players through the executor's per-world client sync (whole columns when heavily
         // changed), flushed at the end of each tick and when the job ends.
-        this.writer = new BlockWriter(world, executor.states(), request.writeOptions())
-                .syncThrough(executor.clientSync(world));
-        this.minSection = world.getBottomSectionCoord();
-        this.topSection = world.getTopSectionCoord();
+        this.writer = host.writer(world, request.writeOptions()).syncThrough(executor.clientSync(world));
+        this.minSection = host.bottomSection(world);
+        this.topSection = host.topSection(world);
         this.air = states.air();
         this.context = new ComputeContext() {
             @Override
@@ -191,8 +188,7 @@ final class BulkJob {
             /** The same rule {@link #writeCell} applies: the player's chunk permit and the world border. */
             @Override
             public boolean mayWrite(int x, int z) {
-                return decisionPermit(x >> 4, z >> 4).allows(x, z)
-                        && WorldChecks.insideBorder(request.world().getWorldBorder(), x, z);
+                return decisionPermit(x >> 4, z >> 4).allows(x, z) && host.insideBorder(world, x, z);
             }
         };
         this.guard = (live, liveTile) -> program.mayReplace(guardKey, guardIndex, live, liveTile, context);
@@ -244,9 +240,9 @@ final class BulkJob {
             for (long key : airSources) snapshots.put(key, SectionBuffer.uniform(air));
         }
         if (entityWork != null) {
-            ServerWorld world = request.world();
-            entities = new EntityWork.Context(world, new EntityWriter(world, request.writeOptions(),
-                    EntityTypeRules.scan(world)), request.permits(), request.records());
+            entities = EntityWork.Context.of(host.entities(world), request.writeOptions(), request.permits(),
+                    request.records(),
+                    (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z));
             if (beginEntities(entityWork.beforeColumns())) {
                 stage = Stage.ENTITIES_BEFORE;
                 return;
@@ -296,7 +292,7 @@ final class BulkJob {
     private long entityStep(boolean before, EditExecutor.Budget budget) {
         long column = entityPlan.column(entityPlan.columnOfSection(entityCursor));
         int cx = ColumnPlan.unpackX(column), cz = ColumnPlan.unpackZ(column);
-        if (!FabricEntities.loaded(request.world(), cx, cz)) {
+        if (!entities.world.loaded(cx, cz)) {
             waitFor(cx, cz);
             return -1;
         }
@@ -465,7 +461,7 @@ final class BulkJob {
     private boolean columnReady(ColumnPlan plan, int s) {
         long column = plan.column(plan.columnOfSection(s));
         int cx = ColumnPlan.unpackX(column), cz = ColumnPlan.unpackZ(column);
-        if (reader.chunkOrNull(cx, cz) != null) return true;
+        if (reader.isLoaded(cx, cz)) return true;
         waitFor(cx, cz);
         return false;
     }
@@ -498,9 +494,9 @@ final class BulkJob {
      */
     private long[] worthLoading(long[] columns) {
         if (columns.length == 0) return columns;
-        WorldBorder border = request.world().getWorldBorder();
-        double west = border.getBoundWest(), east = border.getBoundEast();
-        double north = border.getBoundNorth(), south = border.getBoundSouth();
+        BorderBounds border = host.border(world);
+        double west = border.west(), east = border.east();
+        double north = border.north(), south = border.south();
         LongArrayList kept = new LongArrayList(columns.length);
         for (long column : columns) {
             int cx = EditProgram.columnX(column), cz = EditProgram.columnZ(column);
@@ -538,10 +534,9 @@ final class BulkJob {
         int[] n = {0};
         out.forEachPresent(i -> indices[n[0]++] = i);
         int ox = sx << 4, oz = sz << 4;
-        WorldBorder border = request.world().getWorldBorder();
-        boolean insideBorder = WorldChecks.insideBorder(border, ox, oz) && WorldChecks.insideBorder(border, ox + 15, oz)
-                && WorldChecks.insideBorder(border, ox, oz + 15) && WorldChecks.insideBorder(border, ox + 15, oz + 15);
-        return new SectionWork(key, ox, sy << 4, oz, out, indices, permitFor(sx, sz), insideBorder, border);
+        boolean insideBorder = host.insideBorder(world, ox, oz) && host.insideBorder(world, ox + 15, oz)
+                && host.insideBorder(world, ox, oz + 15) && host.insideBorder(world, ox + 15, oz + 15);
+        return new SectionWork(key, ox, sy << 4, oz, out, indices, permitFor(sx, sz), insideBorder);
     }
 
     private ChunkPermit permitFor(int cx, int cz) {
@@ -581,7 +576,7 @@ final class BulkJob {
         int x = s.ox + SectionBuffer.localX(i);
         int y = s.oy + SectionBuffer.localY(i);
         int z = s.oz + SectionBuffer.localZ(i);
-        if (!s.permit.allows(x, z) || (!s.insideBorder && !WorldChecks.insideBorder(s.border, x, z))) {
+        if (!s.permit.allows(x, z) || (!s.insideBorder && !host.insideBorder(world, x, z))) {
             skippedProtected++;
             return;
         }
@@ -595,8 +590,7 @@ final class BulkJob {
         // Update blocks fixes the light of every section it covered, once the section is written.
         if (program.relightsAfter()) {
             long key = current.key;
-            relit = Relighter.relightSection(request.world(), BlockBuffer.keyX(key), BlockBuffer.keyY(key),
-                    BlockBuffer.keyZ(key));
+            relit = host.relightSection(world, BlockBuffer.keyX(key), BlockBuffer.keyY(key), BlockBuffer.keyZ(key));
         }
         // Lets the history record build this section's part now, inside the tick budget, not all at the job's end.
         request.records().sectionFinished(current.key);
@@ -619,11 +613,10 @@ final class BulkJob {
         final int[] indices;
         final ChunkPermit permit;
         final boolean insideBorder;
-        final WorldBorder border;
         int pos;
 
         SectionWork(long key, int ox, int oy, int oz, SectionBuffer out, int[] indices, ChunkPermit permit,
-                    boolean insideBorder, WorldBorder border) {
+                    boolean insideBorder) {
             this.key = key;
             this.ox = ox;
             this.oy = oy;
@@ -632,7 +625,6 @@ final class BulkJob {
             this.indices = indices;
             this.permit = permit;
             this.insideBorder = insideBorder;
-            this.border = border;
         }
 
         boolean done() {

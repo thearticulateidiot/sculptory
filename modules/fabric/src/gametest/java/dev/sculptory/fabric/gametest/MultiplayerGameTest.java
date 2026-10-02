@@ -29,7 +29,6 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
@@ -50,6 +49,7 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
@@ -97,7 +97,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_overlap", tickLimit = LIMIT)
     public void overlappingEditsFromTwoPlayersQueueAndNeverInterleave(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -171,7 +171,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_history", tickLimit = LIMIT)
     public void perPlayerUndoSkipsTheOtherPlayersCellsAndBothHistoriesStayExact(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -242,7 +242,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_fairness", tickLimit = LIMIT)
     public void aSmallEditIsNotStarvedByAnotherPlayersMillionBlockJob(TestContext context) {
-        EditExecutor executor = executor(context, 4096);
+        EditExecutor<ServerWorld> executor = executor(context, 4096);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -319,7 +319,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_nodes", tickLimit = LIMIT)
     public void everyEntryPointChecksItsNodeWithTheOpLevelFallback(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Path root = ClipTestSupport.libraryRoot(context);
         ServerClipboards clips = ClipTestSupport.clipboards(h, root);
@@ -458,7 +458,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_revoke", tickLimit = LIMIT)
     public void removedNodesCancelTheJobsAndPreviewsThatNeedThem(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.SCATTER);
@@ -603,7 +603,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_revoke_undo", tickLimit = LIMIT)
     public void anUndoCutShortByAPermissionLossFinishesExactlyLater(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
@@ -651,7 +651,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_broken_perms", tickLimit = LIMIT)
     public void aThrowingPermissionCheckCancelsNothingAndNeverEscapesTheTick(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.SCATTER);
@@ -709,7 +709,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_admission_rights", tickLimit = LIMIT)
     public void losingARightTheAdmissionUsedCancelsTheJobsThatUsedIt(TestContext context) {
-        EditExecutor executor = executor(context, 0); // never ticked: every job stays waiting
+        EditExecutor<ServerWorld> executor = executor(context, 0); // never ticked: every job stays waiting
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         Perm[] all = {Perm.USE, Perm.REGION, Perm.CLIPBOARD, Perm.LIMIT_BYPASS, Perm.EDIT_UNLOADED, Perm.NBT_OPERATOR};
@@ -765,7 +765,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_world_contexts", tickLimit = LIMIT)
     public void thePeriodicRecheckLeavesJobsInOtherWorldsAlone(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
@@ -800,7 +800,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_leave_jobs", tickLimit = LIMIT)
     public void leavingCancelsWaitingJobsAndRechecksTheRunningOnes(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer(false);
@@ -864,7 +864,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_burst", tickLimit = LIMIT)
     public void aBurstOfTenEditsOnAnIdleServerIsAdmitted(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 137);
         int x = at[0], z = at[1];
@@ -999,7 +999,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_cancel_leaver", tickLimit = LIMIT)
     public void theRunningJobOfAPlayerWhoLeftCanBeCancelled(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 140);
         Box region = box(at[0], 112, at[1], at[0] + 15, 143, at[1] + 15); // two sections
@@ -1161,7 +1161,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_operator_nbt", tickLimit = LIMIT)
     public void theOperatorNbtRightIsNeededOnlyForUntrustedOperatorTiles(TestContext context) {
-        EditExecutor executor = executor(context, 0); // never ticked: every job stays waiting
+        EditExecutor<ServerWorld> executor = executor(context, 0); // never ticked: every job stays waiting
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         Perm[] all = {Perm.USE, Perm.REGION, Perm.CLIPBOARD, Perm.NBT_OPERATOR, Perm.LIMIT_BYPASS};
@@ -1225,7 +1225,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_leave_undo", tickLimit = LIMIT)
     public void aWaitingUndoIsCancelledWhenThePlayerLeaves(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -1266,7 +1266,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_protection", tickLimit = LIMIT)
     public void protectionHoldsOnEveryWritePath(TestContext context) {
-        EditExecutor executor = executor(context, 0);
+        EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.CLIPBOARD, Perm.BRUSH);
@@ -1425,7 +1425,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_leave", tickLimit = LIMIT)
     public void aPlayerLeavingMidJobFreesEverythingAndOthersCarryOn(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -1504,7 +1504,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_stop", tickLimit = LIMIT)
     public void serverStopEndsEveryPlayersJobsOnWholeSections(TestContext context) {
-        EditExecutor executor = executor(context, 1024);
+        EditExecutor<ServerWorld> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
@@ -1569,18 +1569,18 @@ public final class MultiplayerGameTest implements FabricGameTest {
     }
 
     /** A private executor ticked by the test: the LOAD policy and at most {@code cellsPerTick} cells a tick (0: any). */
-    static EditExecutor executor(TestContext context, long cellsPerTick) {
-        return new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+    static EditExecutor<ServerWorld> executor(TestContext context, long cellsPerTick) {
+        return new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, cellsPerTick, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
     }
 
-    static void tickUntil(EditExecutor executor, BooleanSupplier done, int maxTicks, String what) {
+    static void tickUntil(EditExecutor<ServerWorld> executor, BooleanSupplier done, int maxTicks, String what) {
         ticksUntil(executor, done, maxTicks);
         check(done.getAsBoolean(), what + " did not finish in " + maxTicks + " ticks");
     }
 
     /** Ticks until {@code done} (at most {@code maxTicks}); how many ticks that took. */
-    static int ticksUntil(EditExecutor executor, BooleanSupplier done, int maxTicks) {
+    static int ticksUntil(EditExecutor<ServerWorld> executor, BooleanSupplier done, int maxTicks) {
         int ticks = 0;
         while (!done.getAsBoolean() && ticks < maxTicks) {
             executor.tick();

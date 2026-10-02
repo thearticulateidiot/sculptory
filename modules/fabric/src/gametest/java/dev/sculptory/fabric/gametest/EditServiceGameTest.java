@@ -14,7 +14,6 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.HistoryLimits;
 import dev.sculptory.core.history.RecordBuilder;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
@@ -30,6 +29,7 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
@@ -580,7 +580,7 @@ public final class EditServiceGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_leave_undo", tickLimit = LIMIT)
     public void disconnectDuringUndo(TestContext context) {
-        EditExecutor executor = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, 4096, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
@@ -677,7 +677,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         return copy;
     }
 
-    private static void runUntilFinished(EditExecutor executor, RecordingListener listener, String what) {
+    private static void runUntilFinished(EditExecutor<ServerWorld> executor, RecordingListener listener, String what) {
         for (int i = 0; i < 10_000 && listener.result == null; i++) executor.tick();
         check(listener.result != null, what + " did not finish");
     }
@@ -689,7 +689,7 @@ public final class EditServiceGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_history_race", tickLimit = LIMIT)
     public void undoAndRedoLeaveACellChangedWhileTheyWrite(TestContext context) {
-        EditExecutor executor = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, 8, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 92);

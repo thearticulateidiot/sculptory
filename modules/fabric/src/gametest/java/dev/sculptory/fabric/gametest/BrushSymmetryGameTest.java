@@ -21,7 +21,6 @@ import dev.sculptory.core.brush.SymmetricStep;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryEntry;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -31,6 +30,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -60,7 +60,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_strokes", tickLimit = LIMIT)
     public void symmetricStrokesMatchTheKernelAndUndoExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 500);
@@ -143,7 +143,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_large", tickLimit = LIMIT)
     public void largeServerOnlySmoothAndFlattenReplicateToo(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 502);
@@ -214,7 +214,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_refused", tickLimit = LIMIT)
     public void refusalsAndBudgetsCountEveryCopy(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 504);
@@ -324,7 +324,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_protected", tickLimit = LIMIT)
     public void aProtectedCopyWritesNothingWhileTheOthersWrite(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 506);
@@ -390,7 +390,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_recheck", tickLimit = LIMIT)
     public void theLaneChecksEveryCopyAgain(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 508);
@@ -440,7 +440,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_slope", tickLimit = LIMIT)
     public void copiesFollowASlopeOnHigherGroundAndUndoExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 560);
@@ -515,7 +515,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_no_ground", tickLimit = LIMIT)
     public void aCopyWithoutGroundWritesNothingAndIsReported(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 562);
@@ -571,7 +571,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_flatten", tickLimit = LIMIT)
     public void flattenBringsEveryCopyToTheStrokesPlane(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 564);
@@ -623,7 +623,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_cliff", tickLimit = LIMIT)
     public void aCliffAtThePlaneIsShapedOnEachSideAsEachDabAloneWould(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 566);
@@ -698,7 +698,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_search_lock", tickLimit = LIMIT)
     public void aLockOnACopysSearchedColumnRefusesTheDab(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 0);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 568);

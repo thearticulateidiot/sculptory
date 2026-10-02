@@ -22,7 +22,6 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.clipboard.Clipboard;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.scatter.ScatterPlan;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -33,6 +32,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.UnloadedPolicy;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -41,6 +41,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.ChestBlockEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
 
@@ -52,14 +53,14 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
     /** A private executor: a 200 ms budget, the LOAD policy, a cell cap per tick and a ticket window. */
-    private static EditExecutor executor(TestContext context, long maxBlocksPerTick, int maxTickets) {
-        return new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
+    private static EditExecutor<ServerWorld> executor(TestContext context, long maxBlocksPerTick, int maxTickets) {
+        return new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, maxBlocksPerTick, 0.4, 2, 8, 32, maxTickets, UnloadedPolicy.LOAD,
                         1024, 16_384));
     }
 
     /** Ticks the executor until the listener has a result (bounded). */
-    private static void runUntilFinished(EditExecutor executor, RecordingListener listener, String what) {
+    private static void runUntilFinished(EditExecutor<ServerWorld> executor, RecordingListener listener, String what) {
         for (int i = 0; i < 10_000 && listener.result == null; i++) executor.tick();
         check(listener.result != null, what + " did not finish");
     }
@@ -84,7 +85,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_lane", tickLimit = LIMIT)
     public void scatterPlansInTheExecutorLane(TestContext context) {
-        EditExecutor executor = executor(context, 0, 64);
+        EditExecutor<ServerWorld> executor = executor(context, 0, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerScatter scatter = new ServerScatter(h.service);
         EditExecutor.Lane lane = scatter.lane();
@@ -141,7 +142,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_race", tickLimit = LIMIT)
     public void scatterCommitLeavesACellBuiltWhileItWrites(TestContext context) {
-        EditExecutor executor = executor(context, 8, 64);
+        EditExecutor<ServerWorld> executor = executor(context, 8, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerScatter scatter = new ServerScatter(h.service);
         int[] at = regionCorner(context, 89);
@@ -213,7 +214,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_remote", tickLimit = LIMIT)
     public void scatterCommitWaitsForNeighbouringChunks(TestContext context) {
-        EditExecutor executor = executor(context, 0, 1);
+        EditExecutor<ServerWorld> executor = executor(context, 0, 1);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerScatter scatter = new ServerScatter(h.service);
         int[] at = regionCorner(context, 90);
@@ -271,7 +272,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_readcap", tickLimit = LIMIT)
     public void scatterReadColumnTicketsAreCapped(TestContext context) {
-        EditExecutor executor = executor(context, 0, 1);
+        EditExecutor<ServerWorld> executor = executor(context, 0, 1);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerScatter scatter = new ServerScatter(h.service);
         int[] at = regionCorner(context, 93);

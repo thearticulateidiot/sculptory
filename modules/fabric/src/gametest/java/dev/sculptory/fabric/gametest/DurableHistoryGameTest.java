@@ -31,11 +31,9 @@ import dev.sculptory.core.history.store.HistoryStore;
 import dev.sculptory.core.history.store.StorageIo;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.FabricHistoryCodec;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -47,8 +45,10 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -73,6 +73,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -112,7 +113,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
     /** One run of the server's edit service: its own executor, and history saved in {@code dir}. */
     static final class Run {
         final Harness h;
-        final EditExecutor executor;
+        final EditExecutor<ServerWorld> executor;
         final EngineEditService service;
 
         Run(Harness h, Path dir, long cellsPerTick, StorageIo io) {

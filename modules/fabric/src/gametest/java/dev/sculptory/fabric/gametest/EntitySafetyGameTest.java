@@ -30,7 +30,6 @@ import dev.sculptory.core.entity.EntityNbt;
 import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
@@ -46,6 +45,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -229,7 +229,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_entities_cancelled_move", tickLimit = LIMIT)
     public void aMoveCancelledAfterTakingItsEntitiesIsUndoneExactly(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 64);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 654);
@@ -365,12 +365,12 @@ public final class EntitySafetyGameTest implements FabricGameTest {
 
     /**
      * Entity work comes in bounded steps: 30 armor stands stacked 12 times (360 placements) with a block cap that lets
-     * one step run per tick never place more than {@value dev.sculptory.fabric.engine.impl.EntityWork#ENTITIES_PER_STEP}
-     * in one tick, and all 360 are placed.
+     * one step run per tick never place more than
+     * {@value dev.sculptory.server.engine.impl.EntityWork#ENTITIES_PER_STEP} in one tick, and all 360 are placed.
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_entities_steps", tickLimit = LIMIT)
     public void entityWorkIsBoundedPerStep(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 1000);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 1000);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 656);
@@ -401,7 +401,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                         check(stack.result != null && stack.result.outcome() == JobOutcome.COMPLETED,
                                 "stack " + stack.result);
                         check(last == 360, "stacked " + last);
-                        check(most > 0 && most <= dev.sculptory.fabric.engine.impl.EntityWork.ENTITIES_PER_STEP,
+                        check(most > 0 && most <= dev.sculptory.server.engine.impl.EntityWork.ENTITIES_PER_STEP,
                                 "placed " + most + " in one tick");
                         entitiesIn(world, all).forEach(Entity::discard);
                     } catch (EditRejected e) {
@@ -423,7 +423,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_entities_cancelled_history", tickLimit = LIMIT)
     public void cancelledUndoAndRedoOfAMoveKeepTheEntityOnce(TestContext context) {
-        EditExecutor executor = MultiplayerGameTest.executor(context, 64);
+        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 657);

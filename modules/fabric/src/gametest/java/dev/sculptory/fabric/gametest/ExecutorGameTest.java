@@ -11,9 +11,7 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.runtime;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
-import dev.sculptory.fabric.engine.impl.JobRequest;
 import dev.sculptory.fabric.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.fabric.gametest.EngineTestSupport.CountingSink;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -23,6 +21,8 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.JobRequest;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.List;
@@ -79,7 +79,7 @@ public final class ExecutorGameTest implements FabricGameTest {
     public void overlappingJobsSerialize(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = runtime.executor();
+        EditExecutor<ServerWorld> executor = runtime.executor();
         int[] at = regionCorner(context, 2);
         int x = at[0], z = at[1];
         Box a = box(x, 0, z, x + 31, 31, z + 31);
@@ -139,7 +139,7 @@ public final class ExecutorGameTest implements FabricGameTest {
     public void cancelMidJob(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = runtime.executor();
+        EditExecutor<ServerWorld> executor = runtime.executor();
         int[] at = regionCorner(context, 3);
         Box region = box(at[0], 0, at[1], at[0] + 63, 31, at[1] + 63); // 32 sections of 4096 cells
         forceChunks(world, region, true);
@@ -222,7 +222,7 @@ public final class ExecutorGameTest implements FabricGameTest {
     public void queueFullRejects(TestContext context) {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
-        EditExecutor executor = runtime.executor();
+        EditExecutor<ServerWorld> executor = runtime.executor();
         BlockPos cell = context.getAbsolutePos(new BlockPos(1, 1, 1));
         Box one = box(cell.getX(), cell.getY(), cell.getZ(), cell.getX(), cell.getY(), cell.getZ());
         int stone = handle(runtime.states(), "minecraft:stone");
@@ -249,7 +249,7 @@ public final class ExecutorGameTest implements FabricGameTest {
         context.complete();
     }
 
-    static JobTicket submit(EngineRuntime runtime, JobRequest request) {
+    static JobTicket submit(EngineRuntime runtime, JobRequest<ServerWorld> request) {
         try {
             return runtime.executor().submit(request);
         } catch (EditRejected e) {

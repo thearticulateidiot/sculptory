@@ -7,13 +7,13 @@ import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.ComputeContext;
 import dev.sculptory.core.edit.EditProgram;
-import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
+import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.RecordSink;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -164,7 +164,7 @@ final class EngineTestSupport {
             if (tickets == null) return 0;
             int count = 0;
             for (ChunkTicket<?> ticket : tickets) {
-                if (ticket.getType() == EditExecutor.EDIT_TICKET) count++;
+                if (ticket.getType() == EngineRuntime.EDIT_TICKET) count++;
             }
             return count;
         } catch (ReflectiveOperationException e) {
@@ -173,7 +173,7 @@ final class EngineTestSupport {
     }
 
     /** Fails unless no edit ticket (vanilla side) and no holder (executor side) remains on any column of box. */
-    static void checkNoEditTickets(EditExecutor executor, ServerWorld world, Box box) {
+    static void checkNoEditTickets(EditExecutor<ServerWorld> executor, ServerWorld world, Box box) {
         check(executor.ticketsInFlight() == 0, executor.ticketsInFlight() + " edit tickets still held");
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
