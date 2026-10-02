@@ -20,7 +20,6 @@ import dev.sculptory.core.scatter.ScatterArea;
 import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.scatter.ScatterSource;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -29,6 +28,7 @@ import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,6 +39,8 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.fluid.FluidState;
 import net.minecraft.fluid.Fluids;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.state.property.Properties;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
@@ -140,7 +142,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_lake", tickLimit = LIMIT)
     public void scatterWaterPlantsGoUnderWaterOrOnIt(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 150);
         int x0 = at[0], z0 = at[1];
         Box all = shore(h, x0, z0);
@@ -248,7 +250,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_land", tickLimit = LIMIT)
     public void scatterLandPlantsWithSurvivalOffStayOnLand(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 151);
         int x0 = at[0], z0 = at[1];
         Box all = shore(h, x0, z0);
@@ -308,7 +310,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_mix", tickLimit = LIMIT)
     public void scatterShorelineMixPutsEachPlantOnItsSide(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 152);
         int x0 = at[0], z0 = at[1];
         Box all = shore(h, x0, z0);
@@ -387,7 +389,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_cactus", tickLimit = LIMIT)
     public void scatterCactusColumnsStandWhereEveryCellSurvives(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 153);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);

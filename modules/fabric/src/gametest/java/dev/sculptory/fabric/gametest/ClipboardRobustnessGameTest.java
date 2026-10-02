@@ -2,16 +2,17 @@ package dev.sculptory.fabric.gametest;
 
 import static dev.sculptory.fabric.gametest.EngineTestSupport.check;
 
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import java.nio.file.Path;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -31,7 +32,7 @@ public final class ClipboardRobustnessGameTest implements FabricGameTest {
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.SCHEMATIC_IMPORT);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         ClipboardService.Upload upload;
         try {
             upload = clips.beginUpload(builder, "x.schem", 100);
@@ -68,7 +69,7 @@ public final class ClipboardRobustnessGameTest implements FabricGameTest {
     public void throwingRepliesAreAnsweredAndReleased(TestContext context) {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         int[] done = {0};
         Captured<ClipboardService.Listing> failures = new Captured<>();
         ClipboardService.Reply<ClipboardService.Listing> reply = new ClipboardService.Reply<>() {
@@ -106,7 +107,7 @@ public final class ClipboardRobustnessGameTest implements FabricGameTest {
     public void shutdownOnlyReleasesLeases(TestContext context) {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.Listing> listed = new Captured<>();
         try {
             clips.list(h.player, "", listed);

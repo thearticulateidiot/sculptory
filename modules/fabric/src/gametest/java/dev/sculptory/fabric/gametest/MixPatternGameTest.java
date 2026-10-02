@@ -28,7 +28,6 @@ import dev.sculptory.core.palette.BlockPalette;
 import dev.sculptory.core.palette.PalettePattern;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
@@ -43,6 +42,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.library.PaletteFile;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
@@ -337,7 +337,7 @@ public final class MixPatternGameTest implements FabricGameTest {
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.LIBRARY_WRITE);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         PalettePattern pattern = new PalettePattern(PalettePattern.Kind.STEEPNESS, 9, 5, 22, -123456789012345L);
         BlockPalette saved = new BlockPalette(List.of(new BlockPalette.Entry("minecraft:grass_block", 3),
                 new BlockPalette.Entry("minecraft:coarse_dirt", 1), new BlockPalette.Entry("minecraft:stone", 2)), pattern);

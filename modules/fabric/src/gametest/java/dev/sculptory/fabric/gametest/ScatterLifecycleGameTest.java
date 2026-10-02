@@ -32,7 +32,6 @@ import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterPlanner;
 import dev.sculptory.core.scatter.ScatterSettings;
 
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
 import dev.sculptory.fabric.gametest.ScatterGameTest.Reply;
@@ -47,6 +46,7 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -77,13 +77,15 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     }
 
     /** No hold left behind, nothing in flight, and (no job being there) the area unlocked. */
-    private static void checkReleased(Harness h, ServerScatter scatter, int holds, Box area, String what) {
+    private static void checkReleased(Harness h, ServerScatter<ServerPlayerEntity, ServerWorld> scatter, int holds,
+                                      Box area, String what) {
         checkReleased(h, scatter, holds, what);
         check(!h.service.executor().isLocked(h.world, area), what + ": the area is still locked");
     }
 
     /** No hold left behind and nothing in flight (jobs may lock the area). */
-    private static void checkReleased(Harness h, ServerScatter scatter, int holds, String what) {
+    private static void checkReleased(Harness h, ServerScatter<ServerPlayerEntity, ServerWorld> scatter, int holds,
+                                      String what) {
         check(h.service.executor().holdCount() == holds, what + ": " + h.service.executor().holdCount() + " holds, expected "
                 + holds);
         check(scatter.active() == 0, what + ": " + scatter.active() + " previews in flight");
@@ -96,7 +98,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_endings", tickLimit = LIMIT)
     public void scatterEndingsReleaseTheArea(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 80);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -178,7 +180,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     public void scatterDeadlineAndCooldown(TestContext context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 81);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -258,7 +260,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     public void scatterHoldsWaitAndHoldOff(TestContext context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         EditExecutor<ServerWorld> executor = h.service.executor();
         int[] at = regionCorner(context, 82);
         int x0 = at[0], z0 = at[1];
@@ -340,7 +342,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_caps", tickLimit = LIMIT)
     public void scatterCapsAndQueue(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 83);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -408,7 +410,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     public void scatterHoldBudgetChargesOnlyBlockingTime(TestContext context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 91);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 64, 32);
@@ -528,7 +530,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_heldchunks", tickLimit = LIMIT)
     public void scatterHoldsOnlyThePaintedChunks(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         EditExecutor<ServerWorld> executor = h.service.executor();
         int[] at = regionCorner(context, 87);
         int x0 = at[0], z0 = at[1];
@@ -569,7 +571,8 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         context.complete();
     }
 
-    private static void tooLarge(ServerScatter scatter, ServerPlayerEntity p, C2S.ScatterPreview request, String what) {
+    private static void tooLarge(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, ServerPlayerEntity p,
+                                 C2S.ScatterPreview request, String what) {
         EditRejected e = refusal(() -> scatter.preview(p, request, new Reply()));
         check(e.reason() == RejectReason.TOO_LARGE, what + ": " + e.reason() + " " + e.getMessage());
     }
@@ -581,7 +584,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_stepped", tickLimit = LIMIT)
     public void scatterSteppedPlanMatchesSynchronousFinish(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 84);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 96, 96);
@@ -608,7 +611,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                 ? Long.MAX_VALUE : h.runtime.config().limits.maxOpVolume;
         ScatterPlan synchronous = new ScatterPlanner(stepped.settings(), stepped.sources(), h.runtime.reader(h.world),
                 maxCells, h.runtime.config().scatter.maxWork,
-                ServerScatter.protectionGuard(h.runtime.permissions(), h.player, h.world)).finish();
+                ServerScatter.protectionGuard(h.runtime, h.player, h.world)).finish();
         check(stepped.placements().size() > 50, "only " + stepped.placements().size() + " placements");
         check(synchronous.hash().equals(stepped.hash()), "the stepped plan differs from a synchronous one");
         forceChunks(h.world, all, false);
@@ -623,7 +626,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_library", tickLimit = LIMIT)
     public void scatterCommitRechecksLibraryAccess(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 86);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -655,7 +658,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_builton", tickLimit = LIMIT)
     public void scatterCommitSkipsAPlacementBuiltOn(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 85);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -706,7 +709,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     public void aPreviewWaitingForAStrokeKeepsTheRunningOne(TestContext context) {
         EditExecutor<ServerWorld> executor = ShapeBrushGameTest.onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 760);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);

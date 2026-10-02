@@ -31,6 +31,7 @@ import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.TinkerService;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.RecordSink;
 import dev.sculptory.server.platform.EntityPlacer;
@@ -66,7 +67,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The server side of Tinker, for {@link EngineEditService}, which implements
+ * The Fabric side of Tinker ({@link EngineRuntime#tinker}), for {@link EngineEditService}, which implements
  * {@link TinkerService} with it. Server thread only.
  *
  * <p>Each change is written at once, in the request's own tick (it is one block, its other half, or one entity), and
@@ -84,10 +85,12 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     /** Longest detail a refusal carries (the protocol's free-text cap is 1 KiB). */
     private static final int MAX_DETAIL_CHARS = 300;
 
-    private final EngineEditService service;
+    private final EngineEditService<ServerPlayerEntity, ServerWorld> service;
+    private final EngineRuntime runtime;
 
-    TinkerEdits(EngineEditService service) {
+    TinkerEdits(EngineEditService<ServerPlayerEntity, ServerWorld> service, EngineRuntime runtime) {
         this.service = Objects.requireNonNull(service);
+        this.runtime = Objects.requireNonNull(runtime);
     }
 
     // =================================================================== blocks
@@ -97,7 +100,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
                       SignText sign) throws EditRejected {
         checkThread();
         Objects.requireNonNull(at);
-        FabricStateSpace states = service.runtime().states();
+        FabricStateSpace states = runtime.states();
         requireAllowed(player);
         if (expected < 0 || expected >= states.size() || target < 0 || target >= states.size()) {
             throw new EditRejected(RejectReason.INVALID, "unknown block state");
@@ -116,7 +119,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
                     + clip(live < 0 ? "an unknown state" : states.format(live)) + ")");
         }
         RegistryWrapper.WrapperLookup registries = world.getRegistryManager();
-        FabricPermissionService permissions = service.runtime().permissions();
+        FabricPermissionService permissions = runtime.permissions();
         boolean operatorNbt = permissions.mayWriteOperatorNbt(player);
         BlockEntityData tile = null;
         boolean textChanged = false;
@@ -180,8 +183,8 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         // The open brush stroke is older than this change: it goes into history first.
         service.commitStroke(player.getUuid());
         RecordBuilder builder = new RecordBuilder();
-        RecordSink sink = service.runtime().fluidTrails().marking(RecordSink.into(builder), world, builder.id());
-        BlockWriter writer = service.runtime().writer(world, new WriteOptions(false, operatorNbt));
+        RecordSink sink = runtime.fluidTrails().marking(RecordSink.into(builder), world, builder.id());
+        BlockWriter writer = runtime.writer(world, new WriteOptions(false, operatorNbt));
         final int want = expected;
         writer.write(pos.getX(), pos.getY(), pos.getZ(), target, tile, sink, (state, liveTile) -> state == want);
         if (partnerPos != null) {
@@ -281,7 +284,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         if (before == null) throw new EditRejected(RejectReason.INVALID, "the entity's data is too large");
         if (edits.isEmpty()) return view(kind, before, world);
 
-        FabricStateSpace states = service.runtime().states();
+        FabricStateSpace states = runtime.states();
         checkRegistries(world, edits);
         dev.sculptory.core.nbt.NbtCompound edited;
         try {
@@ -301,7 +304,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         if (!FabricEntities.restorable(target.nbt())) {
             throw new EditRejected(RejectReason.INVALID, "the edited entity's data is too large");
         }
-        FabricPermissionService permissions = service.runtime().permissions();
+        FabricPermissionService permissions = runtime.permissions();
         // Protection where the edited entity would stand, as for entities a job places; its chunk must be loaded.
         Predicate<Entity> allowed = placed -> {
             BlockPos cell = FabricEntities.cell(placed);
@@ -431,13 +434,13 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     private void push(ServerPlayerEntity player, UUID entryId, ServerWorld world, String label, EditRecord record) {
         HistoryService history = service.historyService();
         history.push(history.session(player.getUuid()), new HistoryEntry(entryId, player.getUuid(),
-                EngineEditService.worldId(world), label, record, service.createdMillis()));
+                runtime.worldId(world), label, record, service.createdMillis()));
     }
 
     /** {@code use} and {@code region}, with editing enabled. */
     private void requireAllowed(ServerPlayerEntity player) throws EditRejected {
-        if (!service.runtime().config().editingEnabled) throw new EditRejected(RejectReason.DISABLED);
-        FabricPermissionService permissions = service.runtime().permissions();
+        if (!runtime.config().editingEnabled) throw new EditRejected(RejectReason.DISABLED);
+        FabricPermissionService permissions = runtime.permissions();
         for (Perm node : new Perm[] {Perm.USE, Perm.REGION}) {
             if (!permissions.has(player, node)) throw new EditRejected(RejectReason.NO_PERMISSION, node.node());
         }
@@ -452,7 +455,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         if (!WorldChecks.isChunkLoaded(world, pos.getX() >> 4, pos.getZ() >> 4)) {
             throw new EditRejected(RejectReason.UNLOADED, "the chunk is not loaded");
         }
-        ChunkPermit permit = service.runtime().permissions().chunk(player, world, pos.getX() >> 4, pos.getZ() >> 4,
+        ChunkPermit permit = runtime.permissions().chunk(player, world, pos.getX() >> 4, pos.getZ() >> 4,
                 box(pos));
         if (permit == null || !permit.allows(pos.getX(), pos.getZ())) {
             throw new EditRejected(RejectReason.PROTECTED, "you may not change blocks here");
@@ -476,7 +479,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     }
 
     private void checkThread() {
-        if (!service.server().isOnThread()) throw new IllegalStateException("Tinker must be used on the server thread");
+        if (!runtime.isOnThread()) throw new IllegalStateException("Tinker must be used on the server thread");
     }
 
     private static String clip(String text) {

@@ -33,7 +33,6 @@ import dev.sculptory.core.schem.Schematic;
 import dev.sculptory.core.schem.SchematicCodec;
 import dev.sculptory.core.schem.SchematicMetadata;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -49,6 +48,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.net.PreviewPayload;
 import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.SanitizedTile;
@@ -118,7 +118,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         decorate(h, world, source);
         WorldSnapshot before = capture(world, source);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, source.min().offset(1, 0, 2));
         Captured<ClipboardService.Outbound> exported = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
@@ -227,7 +227,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Box region = box(at[0], 100, at[1], at[0] + 7, 101, at[1] + 7);
         loadAndForce(world, region);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         ClipTestSupport.upload(clips, h.player, "old.schem", bytes.toByteArray(), uploaded);
@@ -314,7 +314,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                 .write(worldBlock.getX(), worldBlock.getY(), worldBlock.getZ(), h.state("minecraft:command_block[facing=up]"), null);
         ((CommandBlockBlockEntity) world.getBlockEntity(worldBlock)).getCommandExecutor().setCommand("say trusted");
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> fromBuilder = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> fromOp = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> worldCopy = new Captured<>();
@@ -397,7 +397,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Path root = ClipTestSupport.libraryRoot(context);
         Files.createDirectories(root.resolve("planted"));
         Files.write(root.resolve("planted").resolve("cmd.schem"), operatorFile(h));
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> loaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         run(() -> clips.load(h.player, "planted/cmd.schem", loaded));
@@ -454,7 +454,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         h.runtime.writer(world, WriteOptions.DEFAULT).write(reference.getX(), reference.getY(), reference.getZ(),
                 command, null);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         RecordingListener undo = new RecordingListener();
@@ -536,7 +536,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         loadAndForce(world, source);
         decorate(h, world, source);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> builderCopy = copy(clips, builder, source, source.min());
         Captured<ClipboardService.ClipboardInfo> opCopy = copy(clips, h.player, source, source.min());
         Captured<ClipboardService.Outbound> builderExport = new Captured<>();
@@ -603,7 +603,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD);
         Path root = ClipTestSupport.libraryRoot(context);
         Path sandbox = root.getParent();
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         UUID opClip = giveClipboard(h, h.player);
         UUID builderClip = giveClipboard(h, builder);
         List<String> bad = List.of("../evil.schem", "../../evil.schem", "a/../../evil.schem", "a/b/../c.schem",
@@ -673,7 +673,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
             context.complete();
             return;
         }
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         UUID clip = giveClipboard(h, h.player);
         Captured<ClipboardService.Saved> saved = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> loaded = new Captured<>();
@@ -725,7 +725,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         decorate(h, world, source);
         WorldSnapshot before = capture(world, source);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, source.min());
         Captured<ClipboardService.Saved> saved = new Captured<>();
         Captured<ClipboardService.Listing> listed = new Captured<>();

@@ -3,12 +3,12 @@ package dev.sculptory.fabric.gametest;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.check;
 
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.schem.FabricDataFixHook;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ClipboardService;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.library.Library;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
@@ -21,6 +21,7 @@ import java.util.Objects;
 import java.util.UUID;
 import net.minecraft.block.Block;
 import net.minecraft.nbt.NbtCompound;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -78,14 +79,15 @@ final class ClipTestSupport {
     }
 
     /** A clipboard service over the harness's edit service and a private library, with its own bounded executor. */
-    static ServerClipboards clipboards(Harness h, Path libraryRoot) {
-        return new ServerClipboards(h.service, new Library(libraryRoot, Library.Settings.DEFAULTS),
+    static ServerClipboards<ServerPlayerEntity, ServerWorld> clipboards(Harness h, Path libraryRoot) {
+        return new ServerClipboards<>(h.service, new Library(libraryRoot, Library.Settings.DEFAULTS),
                 ServerClipboards.newExecutor(), FabricDataFixHook.get());
     }
 
     /** Begins and completes an upload in one go (the network part is the dispatcher's, unit-tested). */
-    static void upload(ServerClipboards clips, net.minecraft.server.network.ServerPlayerEntity player, String name,
-                       byte[] bytes, ClipboardService.Reply<ClipboardService.ClipboardInfo> reply) {
+    static void upload(ServerClipboards<ServerPlayerEntity, ServerWorld> clips,
+                       net.minecraft.server.network.ServerPlayerEntity player, String name, byte[] bytes,
+                       ClipboardService.Reply<ClipboardService.ClipboardInfo> reply) {
         try {
             clips.beginUpload(player, name, bytes.length).completed(bytes, reply);
         } catch (dev.sculptory.server.engine.EditRejected e) {

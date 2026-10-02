@@ -42,8 +42,6 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.scatter.ScatterArea;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
@@ -70,6 +68,8 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.engine.impl.ServerClipboards;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
 import dev.sculptory.server.platform.WriteOptions;
@@ -368,7 +368,7 @@ public final class MaskGameTest implements FabricGameTest {
         mask(h, rule(new MaskRule.Is(set("minecraft:stone"))));
         Box source = box(x0, 100, z0, x0 + 7, 100, z0 + 7);
         WorldSnapshot before = capture(h.world, area);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copy = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> cut = new Captured<>();
         RecordingListener erase = new RecordingListener();
@@ -448,7 +448,7 @@ public final class MaskGameTest implements FabricGameTest {
         }
         mask(h, rule(new MaskRule.OnTopOf(set("minecraft:stone"))));
         WorldSnapshot before = capture(h.world, area);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> cut = new Captured<>();
         RecordingListener erase = new RecordingListener();
         RecordingListener undo = new RecordingListener();
@@ -687,7 +687,7 @@ public final class MaskGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mask_scatter", tickLimit = LIMIT)
     public void aScatterCommitIsJudgedWhereItLands(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] corner = regionCorner(context, 1107);
         int x0 = corner[0], z0 = corner[1];
         Box all = ScatterGameTest.floor(h, x0, z0, 32, 32);
@@ -765,7 +765,7 @@ public final class MaskGameTest implements FabricGameTest {
         BuilderOutcome place = h.service.builderPlace(h.player, new C2S.BuilderPlace(1, false,
                 new BlockPos(x0 + 6, 100, z0 + 2), Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE));
         check(place.refusal() == BuilderOutcome.Refusal.INVALID && place.changed() == 0, "builder: " + place);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         EditRejected copy = refusal(() -> clips.copy(h.player, box(x0, 100, z0, x0 + 3, 100, z0 + 3),
                 new BlockPos(x0, 100, z0), true, CellMask.ANY, null, new Captured<>()));
         check(copy.reason() == RejectReason.INVALID, "cut: " + copy.getMessage());

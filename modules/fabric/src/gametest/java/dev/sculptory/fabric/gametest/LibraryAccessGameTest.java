@@ -21,8 +21,6 @@ import dev.sculptory.core.scatter.ScatterArea;
 import dev.sculptory.core.schem.SchematicCodec;
 import dev.sculptory.core.schem.SchematicMetadata;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.protocol.v2.AssetAccess;
@@ -33,6 +31,8 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.ServerClipboards;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -41,6 +41,7 @@ import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -80,8 +81,8 @@ public final class LibraryAccessGameTest implements FabricGameTest {
     }
 
     /** A load whose refusal, at admission or later, lands in {@code reply} either way. */
-    private static void load(ServerClipboards clips, ServerPlayerEntity player, String path,
-                             Captured<ClipboardService.ClipboardInfo> reply) {
+    private static void load(ServerClipboards<ServerPlayerEntity, ServerWorld> clips, ServerPlayerEntity player,
+                             String path, Captured<ClipboardService.ClipboardInfo> reply) {
         try {
             clips.load(player, path, reply);
         } catch (EditRejected e) {
@@ -121,8 +122,8 @@ public final class LibraryAccessGameTest implements FabricGameTest {
         String hut = "_players/" + writer.getUuid() + "/hut.schem";
         put(root, "trees/oak.schem", gold);
         put(root, hut, schem(h, "minecraft:dirt"));
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var clips = ClipTestSupport.clipboards(h, root);
+        var scatter = new ServerScatter<>(h.service);
         UUID bobId = bob.getUuid();
 
         Captured<ClipboardService.Listing> indexed = new Captured<>();

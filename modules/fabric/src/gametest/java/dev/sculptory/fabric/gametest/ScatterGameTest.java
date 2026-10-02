@@ -21,7 +21,6 @@ import dev.sculptory.core.scatter.ScatterArea;
 import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.schem.AssetInfo;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -50,6 +49,7 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.ScatterPlans;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.library.LibraryPath;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
@@ -172,7 +172,8 @@ public final class ScatterGameTest implements FabricGameTest {
         }
     }
 
-    static Reply preview(ServerScatter scatter, ServerPlayerEntity player, C2S.ScatterPreview request) {
+    static Reply preview(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, ServerPlayerEntity player,
+                         C2S.ScatterPreview request) {
         Reply reply = new Reply();
         try {
             scatter.preview(player, request, reply);
@@ -187,7 +188,7 @@ public final class ScatterGameTest implements FabricGameTest {
     }
 
     /** Plans synchronously (one simulated tick after another) until the reply arrives. */
-    static void planNow(ServerScatter scatter, Reply reply) {
+    static void planNow(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, Reply reply) {
         for (int i = 0; i < 100_000 && !reply.finished(); i++) scatter.tick();
         check(reply.finished(), "planning did not finish");
     }
@@ -227,7 +228,7 @@ public final class ScatterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_determinism", tickLimit = LIMIT)
     public void scatterDeterministicAndSpaced(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 70);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 64, 64);
@@ -315,7 +316,7 @@ public final class ScatterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_undo", tickLimit = LIMIT)
     public void scatterCommitUndoExact(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 71);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 48, 48);
@@ -377,7 +378,7 @@ public final class ScatterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_ownership", tickLimit = LIMIT)
     public void scatterRefusesUnownedPlan(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         ServerPlayerEntity other = h.addPlayer();
         ServerPlayerEntity noScatter = h.addPlayer(false);
         EditTestSupport.grant(noScatter, Perm.USE, Perm.REGION, Perm.CLIPBOARD);
@@ -436,7 +437,7 @@ public final class ScatterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_protect", tickLimit = LIMIT)
     public void scatterRespectsProtection(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 73);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 16);
@@ -509,7 +510,7 @@ public final class ScatterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_unloaded", tickLimit = LIMIT)
     public void scatterPreviewDoesNotLoadChunks(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 74);
         int x0 = at[0], z0 = at[1];
         int cx0 = x0 >> 4, cz0 = z0 >> 4;
@@ -553,7 +554,7 @@ public final class ScatterGameTest implements FabricGameTest {
     public void scatterPlanExpires(TestContext context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 75);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);
@@ -590,7 +591,7 @@ public final class ScatterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_fluid", tickLimit = LIMIT)
     public void scatterFluidDefault(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 76);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -642,7 +643,7 @@ public final class ScatterGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_stream", tickLimit = LIMIT)
     public void scatterPlacementsStream(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 77);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 48, 48);

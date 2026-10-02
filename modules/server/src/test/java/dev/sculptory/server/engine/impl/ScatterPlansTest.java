@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -15,7 +15,6 @@ import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.schem.AssetInfo;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
-import dev.sculptory.server.engine.impl.ScatterPlans;
 import dev.sculptory.server.library.LibraryPath;
 import dev.sculptory.server.library.LibraryPathException;
 import java.util.HashMap;

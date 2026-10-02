@@ -26,7 +26,6 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -40,6 +39,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -133,8 +133,8 @@ public final class ClipboardGameTest implements FabricGameTest {
     }
 
     /** Copies {@code box} for {@code player} (anchor {@code origin - box.min}); the reply arrives on a later tick. */
-    static Captured<ClipboardService.ClipboardInfo> copy(ServerClipboards clips, ServerPlayerEntity player, Box box,
-                                                         BlockPos origin) {
+    static Captured<ClipboardService.ClipboardInfo> copy(ServerClipboards<ServerPlayerEntity, ServerWorld> clips,
+                                                         ServerPlayerEntity player, Box box, BlockPos origin) {
         Captured<ClipboardService.ClipboardInfo> reply = new Captured<>();
         try {
             clips.copy(player, box, origin, false, CellMask.ANY, null, reply);
@@ -190,7 +190,7 @@ public final class ClipboardGameTest implements FabricGameTest {
             writer.write(x0 + Integer.parseInt(xyz[0]), y0 + Integer.parseInt(xyz[1]), z0 + Integer.parseInt(xyz[2]),
                     h.state(cell[1]), null);
         }
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, source.min());
         List<RecordingListener> pastes = new ArrayList<>();
         List<BlockPos> origins = new ArrayList<>();
@@ -285,7 +285,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         decorate(h, world, source);
         WorldSnapshot before = capture(world, source);
         check(before.tiles.size() == 4, "fixture has " + before.tiles.size() + " block entities");
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         BlockPos origin = new BlockPos(source.min().x() + 2, source.min().y(), source.min().z() + 3);
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, origin);
         RecordingListener paste = new RecordingListener();
@@ -358,7 +358,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         loadAndForce(world, all);
         decorate(h, world, source);
         WorldSnapshot before = capture(world, source);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> cut = new Captured<>();
         RecordingListener erase = new RecordingListener();
         RecordingListener undo = new RecordingListener();
@@ -538,7 +538,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         for (int i = 0; i < 8; i++) dabs.add(EditTestSupport.dab(i, x0 + 12 + i, 110, z0 + 16));
         check(h.service.dabs(h.player, 3, 50, dabs).accepted(), "dabs refused");
         check(h.service.queuedDabs(h.player.getUuid()) == 8, "the dabs ran already");
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, area, area.min());
         check(h.service.queuedDabs(h.player.getUuid()) == 0, "the copy did not apply the queued dabs first");
         WorldSnapshot atCopy = capture(world, area);
@@ -586,7 +586,7 @@ public final class ClipboardGameTest implements FabricGameTest {
                 .write(command.getX(), command.getY(), command.getZ(), h.state("minecraft:command_block"), null);
         ((CommandBlockBlockEntity) world.getBlockEntity(command)).getCommandExecutor().setCommand("op me");
         Box source = box(x0 + 8, 100, z0 + 2, x0 + 15, 102, z0 + 9);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> inside = new Captured<>();
         RecordingListener untrusted = new RecordingListener();
         RecordingListener trusted = new RecordingListener();
@@ -662,7 +662,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         writer.write(x0 + 20, 101, z0 + 5, h.state("minecraft:command_block"), null);
         ((CommandBlockBlockEntity) world.getBlockEntity(pos(x0 + 20, 101, z0 + 5))).getCommandExecutor().setCommand("op me");
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> allowed = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> bypassed = new Captured<>();
         Pattern air = new Pattern.Single(h.state("minecraft:air"));
@@ -740,7 +740,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         }
         check(h.service.dabs(h.player, 5, 1, List.of(ShapeBrushGameTest.at(0, x0 + 44, 120, z0 + 44))).accepted(), "the step");
         executor.tick(); // its first part
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         for (boolean cut : new boolean[] {false, true, false, true}) {
             EditRejected e = refusal(() -> clips.copy(h.player, copied, copied.min(), cut, CellMask.ANY, null,
                     new Captured<>()));

@@ -32,7 +32,6 @@ import dev.sculptory.core.history.store.StorageIo;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.FabricHistoryCodec;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -46,6 +45,7 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.engine.impl.JobRequest;
@@ -114,7 +114,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
     static final class Run {
         final Harness h;
         final EditExecutor<ServerWorld> executor;
-        final EngineEditService service;
+        final EngineEditService<ServerPlayerEntity, ServerWorld> service;
 
         Run(Harness h, Path dir, long cellsPerTick, StorageIo io) {
             this.h = h;
@@ -126,7 +126,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             } catch (IOException e) {
                 throw new GameTestException("the history store did not open: " + e);
             }
-            this.service = new EngineEditService(h.runtime, executor, h.runtime.config().toHistoryLimits(),
+            this.service = new EngineEditService<>(h.runtime, executor, h.runtime.config().toHistoryLimits(),
                     p -> JobRequest.NO_LISTENER, h.acks, h.events, System::nanoTime,
                     new HistoryService.Persistence(store, 1L << 40, 0, System::currentTimeMillis));
         }
@@ -1022,7 +1022,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_wiring", tickLimit = LIMIT)
     public void theServerSavesHistoryAndChunkSavesGoThroughTheHook(TestContext context) {
         MinecraftServer server = context.getWorld().getServer();
-        EngineEditService host = EditServiceHost.find(server)
+        var host = EditServiceHost.find(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
         String status = host.historyService().storageStatus();
         check(host.historyService().persistent() && status.contains(EditServiceHost.historyDir(server).toString()),

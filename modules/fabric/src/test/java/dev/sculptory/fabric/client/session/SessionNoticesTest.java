@@ -161,7 +161,7 @@ class SessionNoticesTest {
         assertFalse(lang.has("sculptory.notice.dab_rejected"), "stroke refusals are toasted per reason instead");
         // Sent by the server (SculptoryMod's EditEvents) and by the brush tool.
         assertTranslatable(Notice.of(Notice.Level.WARNING,
-                dev.sculptory.fabric.engine.impl.EditEvents.SYMMETRY_NO_GROUND, "1", "64"));
+                dev.sculptory.server.engine.impl.EditEvents.SYMMETRY_NO_GROUND, "1", "64"));
         assertTranslatable(Notice.of(Notice.Level.WARNING,
                 dev.sculptory.fabric.client.editor.tools.brush.TerrainBrushTool.SPEC_TOO_LARGE, "32000"));
         assertFalse(lang.has("sculptory.palette.truncated"), "Palette Paint holds a whole palette");
@@ -180,9 +180,9 @@ class SessionNoticesTest {
         assertTranslatable(Notice.of(Notice.Level.INFO, "sculptory.notice.import_biomes_skipped"));
         assertTranslatable(Notice.of(Notice.Level.WARNING, "sculptory.notice.import_newer_version", "4100"));
         assertTranslatable(Notice.of(Notice.Level.WARNING,
-                dev.sculptory.fabric.engine.impl.ServerClipboards.NOTICE_IMPORT_OPERATOR_NBT, "2", "1"));
+                dev.sculptory.server.engine.impl.ServerClipboards.NOTICE_IMPORT_OPERATOR_NBT, "2", "1"));
         assertTranslatable(Notice.of(Notice.Level.WARNING,
-                dev.sculptory.fabric.engine.impl.ServerClipboards.NOTICE_EXPORT_OPERATOR_NBT, "2", "1"));
+                dev.sculptory.server.engine.impl.ServerClipboards.NOTICE_EXPORT_OPERATOR_NBT, "2", "1"));
     }
 
     @Test

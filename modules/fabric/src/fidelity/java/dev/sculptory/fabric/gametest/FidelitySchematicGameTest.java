@@ -27,7 +27,6 @@ import dev.sculptory.core.schem.SchematicFiles;
 import dev.sculptory.core.schem.SchematicFormat;
 import dev.sculptory.core.schem.SchematicMetadata;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -38,6 +37,7 @@ import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -81,7 +81,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         loadAndForce(world, all);
         FidelitySupport.build(h, world, x0, y0, z0);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         WorldSnapshot[] before = new WorldSnapshot[1];
         List<Captured<ClipboardService.ClipboardInfo>> copies = new ArrayList<>();
         Captured<ClipboardService.Outbound> exported = new Captured<>();
@@ -163,7 +163,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         loadAndForce(world, all);
         FidelitySupport.build(h, world, x0, y0, z0);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         WorldSnapshot[] before = new WorldSnapshot[2];
         List<Captured<ClipboardService.ClipboardInfo>> copies = new ArrayList<>();
         Captured<ClipboardService.Outbound> exported = new Captured<>();
@@ -248,7 +248,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         ByteArrayOutputStream file = new ByteArrayOutputStream();
         SchematicCodec.write(file, content.build(), SchematicMetadata.EMPTY, FabricDataFixHook.currentDataVersion());
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> fromOp = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> fromBuilder = new Captured<>();
         RecordingListener opPaste = new RecordingListener();
@@ -315,7 +315,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                 "farmersdelight:roast_chicken_block[facing=east,servings=3]",
                 "farmersdelight:roast_chicken_block[facing=east,flavor=spicy,servings=3]");
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         List<Captured<ClipboardService.ClipboardInfo>> copied = new ArrayList<>();
         Captured<ClipboardService.Outbound> exported = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();

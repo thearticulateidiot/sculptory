@@ -22,7 +22,6 @@ import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -32,6 +31,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +41,7 @@ import java.util.stream.Collectors;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.Entity;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
@@ -73,8 +74,9 @@ public final class EntityRegionGameTest implements FabricGameTest {
         }
     }
 
-    private static void copy(ServerClipboards clips, Harness h, Region region, boolean cut, CellMask mask,
-                             RecordingListener erase, Captured<ClipboardService.ClipboardInfo> reply) {
+    private static void copy(ServerClipboards<ServerPlayerEntity, ServerWorld> clips, Harness h, Region region,
+                             boolean cut, CellMask mask, RecordingListener erase,
+                             Captured<ClipboardService.ClipboardInfo> reply) {
         try {
             clips.copy(h.player, region, region.bounds().min(), cut, mask, EntityFilter.DECORATIONS, erase, reply);
         } catch (EditRejected e) {
@@ -105,7 +107,7 @@ public final class EntityRegionGameTest implements FabricGameTest {
         }
         Region set = new Region.Cells(cells.build());
         Box between = box(x0, y0, z0, x0 + 11, y0 + 2, z0 + 11);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         List<Entity> inSet = new ArrayList<>();
         Entity[] outside = {null};
         Captured<ClipboardService.ClipboardInfo> copyAll = new Captured<>();
@@ -196,7 +198,7 @@ public final class EntityRegionGameTest implements FabricGameTest {
         Box shapeBox = box(x0, y0 + 1, z0, x0 + 11, y0 + 1, z0 + 11);
         Region ellipse = new Region.Shape(shapeBox, ShapeKind.ELLIPSOID, Facing.UP);
         Box area = box(x0, y0, z0, x0 + 11, y0 + 2, z0 + 11);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         List<Entity> stands = new ArrayList<>();
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener move = new RecordingListener();
@@ -258,7 +260,7 @@ public final class EntityRegionGameTest implements FabricGameTest {
             }
         }
         Region set = new Region.Cells(cells.build());
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener stack = new RecordingListener();
         context.createTimedTaskRunner()

@@ -8,16 +8,17 @@ import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.OperatorEntry;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -96,7 +97,7 @@ public final class CommandAccessGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_command_access_use")
     public void editorUsersMayCancelTheirOwnJobsByCommand(TestContext context) {
         MinecraftServer server = context.getWorld().getServer();
-        EngineEditService host = EditServiceHost.find(server)
+        var host = EditServiceHost.find(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
         EditTestSupport.Harness h = new EditTestSupport.Harness(context);
         ServerPlayerEntity user = h.addPlayer(false);
@@ -137,7 +138,7 @@ public final class CommandAccessGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_command_access_execute")
     public void executeAsCannotCancelAnotherPlayersJobsWithoutAdmin(TestContext context) {
         MinecraftServer server = context.getWorld().getServer();
-        EngineEditService host = EditServiceHost.find(server)
+        var host = EditServiceHost.find(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
         EditTestSupport.Harness h = new EditTestSupport.Harness(context);
         ServerPlayerEntity victim = h.addPlayer(false);
@@ -164,7 +165,8 @@ public final class CommandAccessGameTest implements FabricGameTest {
     }
 
     /** Admits a small fill for {@code player} on the server's own edit service; it waits until the next tick. */
-    private static void waitingFill(TestContext context, EditTestSupport.Harness h, EngineEditService host,
+    private static void waitingFill(TestContext context, EditTestSupport.Harness h,
+                                    EngineEditService<ServerPlayerEntity, ServerWorld> host,
                                     ServerPlayerEntity player) {
         BlockPos corner = context.getAbsolutePos(new BlockPos(0, 1, 0));
         Box box = new Box(new dev.sculptory.core.BlockPos(corner.getX(), corner.getY(), corner.getZ()),

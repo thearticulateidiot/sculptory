@@ -7,7 +7,7 @@ import dev.sculptory.fabric.client.editor.ExitReason;
 import dev.sculptory.fabric.client.editor.check.CheckDriver;
 import dev.sculptory.fabric.client.editor.hud.EditorUi;
 import dev.sculptory.fabric.client.session.SessionState;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
+import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
@@ -290,7 +290,7 @@ public final class PlayDemo {
         });
         SculptoryMod.LOG.info("Demo: {} built in {} ms", stage, System.currentTimeMillis() - started);
         try {
-            DemoLibrary.seed(ServerClipboards.defaultLibraryRoot(),
+            DemoLibrary.seed(EditServiceHost.defaultLibraryRoot(),
                     SharedConstants.getGameVersion().getSaveVersion().getId());
         } catch (IOException e) {
             throw new UncheckedIOException("Demo: cannot write the starter library", e);

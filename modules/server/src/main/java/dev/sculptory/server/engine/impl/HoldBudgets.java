@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import dev.sculptory.server.config.SculptoryConfig;
 import java.util.HashMap;

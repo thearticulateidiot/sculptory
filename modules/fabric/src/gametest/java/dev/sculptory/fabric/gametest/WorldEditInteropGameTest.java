@@ -15,7 +15,6 @@ import dev.sculptory.core.nbt.BlockEntityNbt;
 import dev.sculptory.core.nbt.NbtList;
 import dev.sculptory.core.schem.Schematic;
 import dev.sculptory.core.schem.SchematicCodec;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.schem.FabricDataFixHook;
@@ -23,6 +22,7 @@ import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -37,6 +37,7 @@ import net.minecraft.block.Block;
 import net.minecraft.block.entity.ChestBlockEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
@@ -115,7 +116,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         check(items != null && items.size() == 1, "chest items " + items);
 
         // (2) We write, WorldEdit reads.
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = ClipboardGameTest.copy(clips, h.player, source, origin);
         Captured<ClipboardService.Outbound> exported = new Captured<>();
         context.createTimedTaskRunner()

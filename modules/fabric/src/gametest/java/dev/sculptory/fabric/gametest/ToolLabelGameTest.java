@@ -17,7 +17,6 @@ import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.net.FabricTransport;
 import dev.sculptory.fabric.world.BlockWriter;
@@ -32,6 +31,7 @@ import dev.sculptory.protocol.v2.ProtocolException;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
 import dev.sculptory.server.platform.WriteOptions;
@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -72,7 +73,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
         for (int x = x0; x < x0 + 4; x++) {
             for (int z = z0; z < z0 + 4; z++) writer.write(x, 104, z, water, null);
         }
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, h.player);

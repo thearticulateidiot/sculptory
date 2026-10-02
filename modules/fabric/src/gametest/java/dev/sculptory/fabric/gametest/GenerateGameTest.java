@@ -19,7 +19,6 @@ import dev.sculptory.core.generate.GeneratedSource;
 import dev.sculptory.core.generate.SparseUpload;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -44,6 +43,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
 import dev.sculptory.server.platform.WriteOptions;
@@ -142,7 +142,7 @@ public final class GenerateGameTest implements FabricGameTest {
         Box bounds = source.bounds();
         WorldSnapshot before = capture(world, area);
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, h.player);
@@ -221,7 +221,7 @@ public final class GenerateGameTest implements FabricGameTest {
         GeneratedSource source = source(h, x0, z0);
         Box bounds = source.bounds();
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         long limit = h.runtime.config().limits.maxClipboardVolume;
         Box vast = box(x0, 0, z0, x0 + 199, 63, z0 + 199);
         check(vast.volume() > limit, "the fixture box holds the limit");
@@ -368,7 +368,7 @@ public final class GenerateGameTest implements FabricGameTest {
         Box bounds = source.bounds();
         WorldSnapshot before = capture(world, area);
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         try {
             clips.beginGeneratedUpload(builder, bounds, source.cells(), payload.length).completed(payload, uploaded);
@@ -455,7 +455,7 @@ public final class GenerateGameTest implements FabricGameTest {
         check(source.bounds().equals(vast), "bounds " + source.bounds());
         WorldSnapshot before = capture(world, box(x0, 90, z0, x0 + 74, 130, z0 + 74));
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         check(refusal(() -> h.service.run(builder, new OpSpec.Fill(vast, new dev.sculptory.core.edit.Pattern.Single(bricks),
                 dev.sculptory.core.edit.CellMask.ANY), RunOptions.DEFAULT, null)).reason() == RejectReason.TOO_LARGE,
                 "a fill of the box is over the limit");
@@ -522,7 +522,7 @@ public final class GenerateGameTest implements FabricGameTest {
         GeneratedSource fits = GeneratedSource.builder(10).set(x0, 104, z0, bricks).set(x0 + 99, 105, z0 + 99, bricks)
                 .build();
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> wideUpload = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> fitsUpload = new Captured<>();
         // Even with limit.bypass (the op), no save or export writes a box over MAX_STORED_BOX.
@@ -601,7 +601,7 @@ public final class GenerateGameTest implements FabricGameTest {
                 .set(x0 + 3, 104, z0 + 2, h.state("minecraft:bedrock")).build();
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
         WorldSnapshot before = capture(world, area);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
 
         EditRejected refused = refusal(() -> clips.beginGeneratedUpload(clipboardOnly, source.bounds(), source.cells(),
                 payload.length));
@@ -662,8 +662,8 @@ public final class GenerateGameTest implements FabricGameTest {
                 .completeIfSuccessful();
     }
 
-    private static void upload(ServerClipboards clips, ServerPlayerEntity player, GeneratedSource source, Harness h,
-                               Captured<ClipboardService.ClipboardInfo> reply) {
+    private static void upload(ServerClipboards<ServerPlayerEntity, ServerWorld> clips, ServerPlayerEntity player,
+                               GeneratedSource source, Harness h, Captured<ClipboardService.ClipboardInfo> reply) {
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
         try {
             clips.beginGeneratedUpload(player, source.bounds(), source.cells(), payload.length).completed(payload, reply);

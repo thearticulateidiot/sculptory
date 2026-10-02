@@ -16,9 +16,6 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.history.HistoryLimits;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
-import dev.sculptory.fabric.engine.impl.AckSink;
-import dev.sculptory.fabric.engine.impl.EditEvents;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
@@ -26,7 +23,10 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.AckSink;
+import dev.sculptory.server.engine.impl.EditEvents;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.engine.impl.JobRequest;
 import io.netty.channel.embedded.EmbeddedChannel;
@@ -77,7 +77,7 @@ final class EditTestSupport {
         final ServerPlayerEntity player;
         final RecordingAcks acks = new RecordingAcks();
         final RecordingEvents events = new RecordingEvents();
-        final EngineEditService service;
+        final EngineEditService<ServerPlayerEntity, ServerWorld> service;
         private final List<ServerPlayerEntity> players = new ArrayList<>();
 
         Harness(TestContext context) {
@@ -98,7 +98,7 @@ final class EditTestSupport {
             this.runtime = runtime(context);
             this.world = context.getWorld();
             this.player = addPlayer();
-            this.service = new EngineEditService(runtime, executor == null ? runtime.executor() : executor,
+            this.service = new EngineEditService<>(runtime, executor == null ? runtime.executor() : executor,
                     limits == null ? runtime.config().toHistoryLimits() : limits, p -> JobRequest.NO_LISTENER, acks,
                     events, clock);
             acks.service = service;
@@ -321,10 +321,10 @@ final class EditTestSupport {
     }
 
     /** Acknowledged sequences, in order, with the player's queued dabs at each acknowledgement. */
-    static final class RecordingAcks implements AckSink {
+    static final class RecordingAcks implements AckSink<ServerPlayerEntity> {
         final List<Integer> seqs = new ArrayList<>();
         final List<Integer> queuedAtAck = new ArrayList<>();
-        EngineEditService service;
+        EngineEditService<ServerPlayerEntity, ServerWorld> service;
 
         @Override
         public void ack(ServerPlayerEntity player, int seq) {
@@ -333,7 +333,7 @@ final class EditTestSupport {
         }
     }
 
-    static final class RecordingEvents implements EditEvents {
+    static final class RecordingEvents implements EditEvents<ServerPlayerEntity> {
         final List<RejectReason> dabRejections = new ArrayList<>();
         final List<String> evictions = new ArrayList<>();
         int historyChanges;

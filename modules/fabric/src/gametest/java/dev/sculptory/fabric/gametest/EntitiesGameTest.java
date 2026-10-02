@@ -23,7 +23,6 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -37,6 +36,7 @@ import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EntityColumns;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -220,8 +220,9 @@ public final class EntitiesGameTest implements FabricGameTest {
     }
 
     /** Copies {@code box} with the entities {@code filter} takes; the answer arrives in {@code reply} later. */
-    static void copyInto(Captured<ClipboardService.ClipboardInfo> reply, ServerClipboards clips,
-                         ServerPlayerEntity player, Box box, BlockPos origin, EntityFilter filter) {
+    static void copyInto(Captured<ClipboardService.ClipboardInfo> reply,
+                         ServerClipboards<ServerPlayerEntity, ServerWorld> clips, ServerPlayerEntity player, Box box,
+                         BlockPos origin, EntityFilter filter) {
         try {
             clips.copy(player, new Region.Cuboid(box), origin, false, CellMask.ANY, filter, null, reply);
         } catch (EditRejected e) {
@@ -316,7 +317,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + spacing * (transforms.size() + 1) + 16, y0 + 8, z0 + 16);
         loadAndForce(world, all);
         List<Entity> fixture = new ArrayList<>();
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         List<RecordingListener> pastes = new ArrayList<>();
         List<Expected> expectations = new ArrayList<>();
@@ -393,7 +394,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         loadAndForce(world, all);
         List<Entity> fixture = new ArrayList<>();
         Map<UUID, dev.sculptory.core.nbt.NbtCompound> sourceBefore = new HashMap<>();
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener paste = new RecordingListener();
         RecordingListener undo = new RecordingListener();
@@ -473,7 +474,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         Box source = box(x0, y0, z0, x0 + 3, y0 + 2, z0 + 3);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 16, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Map<UUID, dev.sculptory.core.nbt.NbtCompound> before = new HashMap<>();
         Captured<ClipboardService.ClipboardInfo> cut = new Captured<>();
         RecordingListener erase = new RecordingListener();
@@ -637,7 +638,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         Box source = box(x0, y0, z0, x0 + 5, y0 + 2, z0 + 5);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 16, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Map<EntityFilter, Captured<ClipboardService.ClipboardInfo>> copies = new java.util.EnumMap<>(EntityFilter.class);
         context.createTimedTaskRunner()
                 .createAndAdd(() -> ready(world, all))
@@ -691,8 +692,9 @@ public final class EntitiesGameTest implements FabricGameTest {
     }
 
     /** Starts a copy of {@code source} with {@code filter} (once: a step retried after it started only waits). */
-    private static void copy(Map<EntityFilter, Captured<ClipboardService.ClipboardInfo>> copies, ServerClipboards clips,
-                             Harness h, Box source, EntityFilter filter) {
+    private static void copy(Map<EntityFilter, Captured<ClipboardService.ClipboardInfo>> copies,
+                             ServerClipboards<ServerPlayerEntity, ServerWorld> clips, Harness h, Box source,
+                             EntityFilter filter) {
         if (copies.containsKey(filter)) return;
         Captured<ClipboardService.ClipboardInfo> reply = new Captured<>();
         copyInto(reply, clips, h.player, source, source.min(), filter);
@@ -741,7 +743,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         Box source = box(x0 + 2, y0, z0 + 2, x0 + 5, y0 + 2, z0 + 5);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         boolean[] checked = {false};
         Captured<ClipboardService.ClipboardInfo> blocksOnly = new Captured<>();
         if (FabricEntities.firstUnloaded(world, source) != null) {
@@ -799,7 +801,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         Box source = box(x0 + 8, 100, z0 + 2, x0 + 15, 102, z0 + 9);
         Box untrustedCopy = source.offset(-16, 0, 0);
         Box trustedCopy = source.offset(0, 0, 16);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         RecordingListener untrusted = new RecordingListener();
         RecordingListener trusted = new RecordingListener();
         context.createTimedTaskRunner()
@@ -881,7 +883,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 24);
         loadAndForce(world, all);
         java.nio.file.Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         List<Entity> fixture = new ArrayList<>();
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         Captured<ClipboardService.Outbound> exported = new Captured<>();
@@ -1066,7 +1068,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         Box source = box(x0 - 6, y0 - 4, z0 - 6, x0 + 6, y0 + 6, z0 + 6);
         Box all = box(x0 - 32, y0 - 8, z0 - 32, x0 + 32, y0 + 16, z0 + 32);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Map<EntityFilter, Captured<ClipboardService.ClipboardInfo>> copies = new java.util.EnumMap<>(EntityFilter.class);
         context.createTimedTaskRunner()
                 .createAndAdd(() -> ready(world, all))

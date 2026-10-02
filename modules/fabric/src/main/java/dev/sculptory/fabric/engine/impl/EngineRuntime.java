@@ -23,9 +23,16 @@ import dev.sculptory.fabric.world.FeatureGrower;
 import dev.sculptory.fabric.world.FluidTrails;
 import dev.sculptory.fabric.world.Relighter;
 import dev.sculptory.fabric.world.WorldChecks;
+import dev.sculptory.protocol.v2.C2S;
+import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.config.SculptoryConfig;
+import dev.sculptory.server.engine.TinkerService;
+import dev.sculptory.server.engine.impl.AckSink;
+import dev.sculptory.server.engine.impl.BuilderMode;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.EngineHost;
+import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.TicketWindow;
 import dev.sculptory.server.platform.BorderBounds;
 import dev.sculptory.server.platform.Profile;
@@ -38,6 +45,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -68,6 +76,13 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
     /** Region-op chunk ticket: radius 0, expires after 600 ticks unless refreshed ({@link #chunkTickets}). */
     public static final ChunkTicketType<ChunkPos> EDIT_TICKET =
             ChunkTicketType.create("sculptory:edit", Comparator.comparingLong(ChunkPos::toLong), 600);
+    /**
+     * Prediction acknowledgements the game's own way ({@code networkHandler.updateSequence}; negative sequences are
+     * ignored): the edit service's default, for GameTests and servers without the network layer.
+     */
+    public static final AckSink<ServerPlayerEntity> VANILLA_ACKS = (player, seq) -> {
+        if (seq >= 0 && player.networkHandler != null) player.networkHandler.updateSequence(seq);
+    };
 
     private final MinecraftServer server;
     /** The settings in effect: replaced as a whole by {@link #reload}, so a reader sees one config or the other. */
@@ -269,6 +284,26 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
         };
     }
 
+    /** A {@link BuilderService}: vanilla's own placement and break steps. */
+    @Override
+    public BuilderMode<ServerPlayerEntity> builderMode(EngineEditService<ServerPlayerEntity, ServerWorld> edits,
+                                                       HistoryService history, EditExecutor<ServerWorld> executor,
+                                                       LongSupplier clock) {
+        return new BuilderService(edits, this, executor, history, clock);
+    }
+
+    /** {@link TinkerEdits}. */
+    @Override
+    public TinkerService<ServerPlayerEntity> tinker(EngineEditService<ServerPlayerEntity, ServerWorld> edits) {
+        return new TinkerEdits(edits, this);
+    }
+
+    /** {@link NavigateService}. */
+    @Override
+    public S2C.NavigateResult navigate(ServerPlayerEntity player, C2S.Navigate request) {
+        return NavigateService.navigate(this, player, request);
+    }
+
     @Override
     public boolean isOnThread() {
         return server.isOnThread();
@@ -327,10 +362,10 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
         return new Profile(profile.getId(), profile.getName());
     }
 
-    /** {@link AckSink#VANILLA}: {@code networkHandler.updateSequence}. */
+    /** {@link #VANILLA_ACKS}: {@code networkHandler.updateSequence}. */
     @Override
     public void acknowledge(ServerPlayerEntity player, int sequence) {
-        AckSink.VANILLA.ack(player, sequence);
+        VANILLA_ACKS.ack(player, sequence);
     }
 
     @Override
@@ -340,7 +375,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     @Override
     public String worldId(ServerWorld world) {
-        return EngineEditService.worldId(world);
+        return world.getRegistryKey().getValue().toString();
     }
 
     /** The world's registry key. */
@@ -458,7 +493,8 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     @Override
     public BlockEntityData untrusted(BlockEntityData tile) {
-        return ServerClipboards.untrusted(tile);
+        return tile instanceof FabricTile captured && captured.serverCaptured()
+                ? FabricTile.of(captured.typeId(), captured.copyNbt()) : tile;
     }
 
     /** A {@link FeatureGrower}. */
@@ -484,7 +520,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     @Override
     public ScatterPlanner.SurvivalCheck survivalCheck(ServerWorld world, int[] blockStates) {
-        return ServerScatter.survivalCheck(states, world, blockStates);
+        return ScatterSurvival.survivalCheck(states, world, blockStates);
     }
 
     private static void start(MinecraftServer server) {

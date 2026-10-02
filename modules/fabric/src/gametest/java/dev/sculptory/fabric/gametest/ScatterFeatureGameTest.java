@@ -33,8 +33,6 @@ import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterPlanner;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.scatter.ScatterSource;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -51,6 +49,8 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.engine.impl.EngineEditService;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -66,6 +66,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.BeehiveBlockEntity;
 import net.minecraft.block.entity.BlockEntity;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -126,7 +127,8 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     }
 
     /** Plans synchronously, tick after tick, waiting for payloads encoded off the server thread (a server has 50 ms). */
-    static void planNow(ServerScatter scatter, Reply reply, ServerPlayerEntity player) {
+    static void planNow(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, Reply reply,
+                        ServerPlayerEntity player) {
         long until = System.nanoTime() + 60_000_000_000L;
         while (!reply.finished() && System.nanoTime() < until) {
             scatter.tick();
@@ -250,7 +252,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_commit", tickLimit = LIMIT)
     public void theCommitWritesWhatThePreviewGrewAndUndoesExactly(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1181);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
@@ -361,7 +363,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_protect", tickLimit = LIMIT)
     public void treesReachingProtectedColumnsAreSkippedWhole(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1182);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 16, "minecraft:grass_block");
@@ -439,7 +441,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_unloaded", tickLimit = LIMIT)
     public void anUnloadedNeighbourChunkIsNeverLoaded(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1183);
         int x0 = at[0], z0 = at[1];
         int cx0 = x0 >> 4, cz0 = z0 >> 4;
@@ -484,7 +486,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_refusals", tickLimit = LIMIT)
     public void theGrownCellCapAndTheCatalogRefuse(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1184);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
@@ -524,7 +526,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_reroll", tickLimit = LIMIT)
     public void reRollingGrowsOtherTrees(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1185);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
@@ -553,7 +555,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_one", tickLimit = LIMIT)
     public void aOneSpotPreviewPlacesOneTree(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1186);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 16, 16, "minecraft:grass_block");
@@ -597,7 +599,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_mask", tickLimit = LIMIT)
     public void underTheMaskATreeIsPlannedAndCommittedWholeOrNotAtAll(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1189);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 16, "minecraft:grass_block");
@@ -672,7 +674,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_all_masked", tickLimit = LIMIT)
     public void aMaskRulingOutEveryPlacementRefusesTheCommitReadably(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1190);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 16, "minecraft:grass_block");
@@ -706,7 +708,8 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     }
 
     /** Ticks until the player's finished plan waits on the encoder (or fails the test). */
-    private static void planUntilEncoding(ServerScatter scatter, Reply reply, ServerPlayerEntity player) {
+    private static void planUntilEncoding(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, Reply reply,
+                                          ServerPlayerEntity player) {
         for (int i = 0; i < 100_000 && !scatter.encoding(player.getUuid()) && !reply.finished(); i++) scatter.tick();
         check(scatter.encoding(player.getUuid()), "no encoding pending: " + reply.reason + " " + reply.detail);
     }
@@ -719,7 +722,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_encoder", tickLimit = LIMIT)
     public void droppedEncodingsAreCancelledAndShutdownStopsTheEncoder(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1188);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
@@ -755,7 +758,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
             gate.countDown();
         }
         // A new service (a new server, the next GameTest) encodes on a fresh thread of its own.
-        ServerScatter next = new ServerScatter(h.service);
+        var next = new ServerScatter<>(h.service);
         check(!next.encoderRunning(), "the new service shares an encoder");
         Reply fresh = preview(next, h.player, request(area, 6, density, 8L, OAK));
         planNow(next, fresh, h.player);
@@ -772,7 +775,8 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
      * Plans 200 trees tick by tick: {ticks, the longest tick, the 95th-percentile tick, the last tick (the answer, once
      * the payloads were encoded off the server thread), the total}, in nanoseconds.
      */
-    private static long[] plan200(ServerScatter scatter, ServerPlayerEntity player, ScatterArea area, long seed) {
+    private static long[] plan200(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, ServerPlayerEntity player,
+                                  ScatterArea area, long seed) {
         Reply reply = preview(scatter, player, request(area, 6, new ScatterSettings.Density.Count(200), seed, OAK, BIRCH,
                 SPRUCE, FANCY_OAK));
         List<Long> took = new ArrayList<>();
@@ -807,7 +811,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_cost", tickLimit = LIMIT)
     public void twoHundredTreesPlanWithinTheTickBudget(TestContext context) {
         Harness h = new Harness(context);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 1187);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 112, 112, "minecraft:grass_block");

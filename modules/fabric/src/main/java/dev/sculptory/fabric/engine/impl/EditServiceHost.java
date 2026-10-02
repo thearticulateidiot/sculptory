@@ -37,8 +37,13 @@ import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.engine.TinkerService;
+import dev.sculptory.server.engine.impl.AckSink;
+import dev.sculptory.server.engine.impl.EditEvents;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.engine.impl.ServerClipboards;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.library.Library;
 import dev.sculptory.server.net.HistoryView;
 import java.io.IOException;
@@ -109,9 +114,9 @@ public final class EditServiceHost {
     private static volatile boolean hookWarned;
     /** System property that moves the host's history folder (tests). */
     public static final String HISTORY_DIR_PROPERTY = "sculptory.historyDir";
-    private static volatile EngineEditService current;
-    private static volatile ServerClipboards clipboards;
-    private static volatile ServerScatter scatter;
+    private static volatile EngineEditService<ServerPlayerEntity, ServerWorld> current;
+    private static volatile ServerClipboards<ServerPlayerEntity, ServerWorld> clipboards;
+    private static volatile ServerScatter<ServerPlayerEntity, ServerWorld> scatter;
 
     private EditServiceHost() {}
 
@@ -121,8 +126,8 @@ public final class EditServiceHost {
      * @param listeners listeners for undo/redo jobs, e.g. {@code ServerNet::jobListener}
      * @param acks dab acknowledgements, e.g. {@code ServerNet::predictionApplied}
      */
-    public static synchronized void install(Function<ServerPlayerEntity, JobListener> listeners, AckSink acks,
-                                            EditEvents events) {
+    public static synchronized void install(Function<ServerPlayerEntity, JobListener> listeners,
+                                            AckSink<ServerPlayerEntity> acks, EditEvents<ServerPlayerEntity> events) {
         if (installed) throw new IllegalStateException("EditServiceHost is already installed");
         installed = true;
         Objects.requireNonNull(listeners);
@@ -134,14 +139,14 @@ public final class EditServiceHost {
                     CHUNK_SAVE_HOOKS.set(0);
                     OFF_THREAD_HOOKS.set(0);
                     hookWarned = false;
-                    EngineEditService service = new EngineEditService(runtime, listeners, acks, events,
+                    var service = new EngineEditService<>(runtime, listeners, acks, events,
                             openHistory(server, runtime));
-                    ServerClipboards clips = new ServerClipboards(service, new Library(
-                            ServerClipboards.defaultLibraryRoot(), runtime.config().toLibrarySettings()),
+                    var clips = new ServerClipboards<>(service, new Library(
+                            defaultLibraryRoot(), runtime.config().toLibrarySettings()),
                             ServerClipboards.newExecutor(), FabricDataFixHook.get());
                     clips.start();
                     clipboards = clips;
-                    ServerScatter planning = new ServerScatter(service);
+                    var planning = new ServerScatter<>(service);
                     runtime.executor().addLane(planning.lane(), runtime.config().scatter.tickShare);
                     runtime.onReload(config -> runtime.executor().laneShare(planning.lane(), config.scatter.tickShare));
                     scatter = planning;
@@ -149,12 +154,12 @@ public final class EditServiceHost {
                 },
                 () -> LOG.error("Sculptory: the engine did not start; editing is unavailable")));
         ServerTickEvents.END_SERVER_TICK.register(server -> {
-            EngineEditService service = current;
-            if (service != null && service.server() == server) {
+            var service = current;
+            if (service != null && runs(service, server)) {
                 service.tick();
-                ServerScatter planning = scatter;
+                var planning = scatter;
                 if (planning != null) planning.housekeeping();
-                ServerClipboards clips = clipboards;
+                var clips = clipboards;
                 if (clips != null && server.getTicks() % INDEX_FLUSH_TICKS == 0) clips.flushSoon();
             }
         });
@@ -182,9 +187,9 @@ public final class EditServiceHost {
             }
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
-            EngineEditService service = current;
-            if (service != null && service.server() == server) {
-                ServerScatter planning = scatter;
+            var service = current;
+            if (service != null && runs(service, server)) {
+                var planning = scatter;
                 if (planning != null) planning.shutdown();
                 service.shutdown();
                 // Before the game saves the worlds: the history of everything in them is on disk first.
@@ -192,18 +197,23 @@ public final class EditServiceHost {
                     LOG.warn("Sculptory: saving the undo history did not finish within {} s; the last steps may "
                             + "be missing after the restart", HISTORY_CLOSE_MILLIS / 1000);
                 }
-                ServerClipboards clips = clipboards;
+                var clips = clipboards;
                 if (clips != null) clips.shutdown();
             }
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
-            EngineEditService service = current;
-            if (service != null && service.server() == server) {
+            var service = current;
+            if (service != null && runs(service, server)) {
                 current = null;
                 clipboards = null;
                 scatter = null;
             }
         });
+    }
+
+    /** Where the asset library lives: {@code <gameDir>/sculptory/library}. */
+    public static Path defaultLibraryRoot() {
+        return FolderMigration.gameDir().resolve("library");
     }
 
     /**
@@ -235,8 +245,8 @@ public final class EditServiceHost {
      * before each chunk, so a crash can leave up to about 5 s of edits without undo. Warned once per server.
      */
     private static void checkChunkSaveHook(MinecraftServer server) {
-        EngineEditService service = current;
-        if (service == null || service.server() != server || !service.historyService().persistent()) return;
+        var service = current;
+        if (service == null || !runs(service, server) || !service.historyService().persistent()) return;
         if (hookWarned) return;
         if (CHUNK_SAVE_HOOKS.get() == 0) {
             hookWarned = true;
@@ -284,8 +294,8 @@ public final class EditServiceHost {
 
     /** A player joined (the {@code JOIN} hook; server thread): their saved history starts loading. */
     public static void playerJoined(MinecraftServer server, ServerPlayerEntity player) {
-        EngineEditService service = current;
-        if (service == null || service.server() != server || player == null) return;
+        var service = current;
+        if (service == null || !runs(service, server) || player == null) return;
         try {
             service.playerJoined(player.getUuid());
         } catch (RuntimeException | LinkageError e) {
@@ -299,8 +309,8 @@ public final class EditServiceHost {
      */
     public static void beforeChunkSave(ServerWorld world, int cx, int cz) {
         CHUNK_SAVE_HOOKS.incrementAndGet();
-        EngineEditService service = current;
-        if (service == null || world == null || service.server() != world.getServer()) return;
+        var service = current;
+        if (service == null || world == null || !runs(service, world.getServer())) return;
         try {
             if (!service.beforeChunkSave(world, cx, cz)) OFF_THREAD_HOOKS.incrementAndGet();
         } catch (RuntimeException | LinkageError e) {
@@ -314,19 +324,20 @@ public final class EditServiceHost {
 
     /**
      * A player's connection ended (the {@code DISCONNECT} hook; server thread). First their permissions are checked
-     * once more against their jobs in the world they were in ({@link EngineEditService#revalidate(ServerPlayerEntity,
+     * once more against their jobs in the world they were in ({@link EngineEditService#revalidate(Object,
      * boolean)}): a node removed just before leaving is not caught by the periodic re-check afterwards, which only
      * looks at online players. Then the scatter preview ends and the edit service lets go of the player (their jobs
      * that have not started are cancelled). A no-op without a running engine.
      */
     public static void playerLeft(MinecraftServer server, ServerPlayerEntity player) {
-        EngineEditService service = current;
-        if (service == null || service.server() != server || player == null) return;
+        var service = current;
+        if (service == null || !runs(service, server) || player == null) return;
         playerLeft(service, scatter, player);
     }
 
     /** {@link #playerLeft(MinecraftServer, ServerPlayerEntity)} on the given services ({@code planning} may be null). */
-    public static void playerLeft(EngineEditService service, ServerScatter planning, ServerPlayerEntity player) {
+    public static void playerLeft(EngineEditService<ServerPlayerEntity, ServerWorld> service,
+                                  ServerScatter<ServerPlayerEntity, ServerWorld> planning, ServerPlayerEntity player) {
         UUID id = player.getUuid();
         String name = player.getGameProfile().getName();
         // Each step on its own: none may skip the next, nor vanilla's disconnect handling after this hook.
@@ -351,7 +362,7 @@ public final class EditServiceHost {
 
     /**
      * The player's permissions may have changed ({@code PlayerManagerMixin}): cancels their admitted jobs that need a
-     * right they no longer hold ({@link EngineEditService#revalidate(ServerPlayerEntity, boolean)}) and ends their
+     * right they no longer hold ({@link EngineEditService#revalidate(Object, boolean)}) and ends their
      * scatter preview if they may no longer scatter ({@link ServerScatter#revalidate}). A no-op without a running
      * engine. Safe from any thread: off the server thread it hops onto it.
      *
@@ -367,11 +378,11 @@ public final class EditServiceHost {
             server.execute(() -> permissionsChanged(player, allWorlds));
             return;
         }
-        EngineEditService service = current;
-        if (service == null || service.server() != server) return;
+        var service = current;
+        if (service == null || !runs(service, server)) return;
         try {
             service.revalidate(player, allWorlds);
-            ServerScatter planning = scatter;
+            var planning = scatter;
             if (planning != null) planning.revalidate(player);
         } catch (RuntimeException | LinkageError e) {
             LOG.error("Sculptory: re-checking {}'s permissions failed", player.getGameProfile().getName(), e);
@@ -384,14 +395,14 @@ public final class EditServiceHost {
      * {@code ServerPlayerInteractionManagerMixin} to keep vanilla from placing blocks while builder mode is on.
      */
     public static int builderPowers(UUID player) {
-        EngineEditService service = current;
+        var service = current;
         return service == null ? 0 : service.builderPowersOf(player);
     }
 
-    public static Optional<ServerScatter> findScatter(MinecraftServer server) {
-        ServerScatter service = scatter;
-        EngineEditService edits = current;
-        return service != null && edits != null && edits.server() == server ? Optional.of(service) : Optional.empty();
+    public static Optional<ServerScatter<ServerPlayerEntity, ServerWorld>> findScatter(MinecraftServer server) {
+        var service = scatter;
+        var edits = current;
+        return service != null && edits != null && runs(edits, server) ? Optional.of(service) : Optional.empty();
     }
 
     /** A {@link ScatterService} delegating to the running server's; refuses with {@code DISABLED} without one. */
@@ -407,9 +418,9 @@ public final class EditServiceHost {
     }
 
     /** The clipboard service of a running server. */
-    public static Optional<ServerClipboards> findClipboards(MinecraftServer server) {
-        ServerClipboards service = clipboards;
-        return service != null && service.edits().server() == server ? Optional.of(service) : Optional.empty();
+    public static Optional<ServerClipboards<ServerPlayerEntity, ServerWorld>> findClipboards(MinecraftServer server) {
+        var service = clipboards;
+        return service != null && runs(service.edits(), server) ? Optional.of(service) : Optional.empty();
     }
 
     /** A {@link ClipboardService} delegating to the running server's; refuses with {@code DISABLED} without one. */
@@ -418,9 +429,9 @@ public final class EditServiceHost {
     }
 
     /** The service of a running server. */
-    public static Optional<EngineEditService> find(MinecraftServer server) {
-        EngineEditService service = current;
-        return service != null && service.server() == server ? Optional.of(service) : Optional.empty();
+    public static Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> find(MinecraftServer server) {
+        var service = current;
+        return service != null && runs(service, server) ? Optional.of(service) : Optional.empty();
     }
 
     /** An {@link EditService} (and {@link HistoryView}) delegating to the running server's service. */
@@ -435,13 +446,13 @@ public final class EditServiceHost {
 
     /** The running server's client-visible limits, or the defaults. */
     public static Limits limits() {
-        EngineEditService service = current;
+        var service = current;
         return service == null ? Limits.DEFAULTS : service.runtime().config().toLimits();
     }
 
     /** The running server's state space, or {@code null} before it starts. */
     public static StateSpace states() {
-        EngineEditService service = current;
+        var service = current;
         return service == null ? null : service.runtime().states();
     }
 
@@ -451,7 +462,12 @@ public final class EditServiceHost {
                 s.redoLabels());
     }
 
-    private static EngineEditService of(ServerPlayerEntity p) throws EditRejected {
+    /** Whether {@code service} is the engine of {@code server} (its platform is that server's runtime). */
+    private static boolean runs(EngineEditService<ServerPlayerEntity, ServerWorld> service, MinecraftServer server) {
+        return service.runtime() instanceof EngineRuntime runtime && runtime.server() == server;
+    }
+
+    private static EngineEditService<ServerPlayerEntity, ServerWorld> of(ServerPlayerEntity p) throws EditRejected {
         return find(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"));
     }
 
@@ -468,7 +484,7 @@ public final class EditServiceHost {
 
         @Override
         public DabOutcome dabs(ServerPlayerEntity p, int strokeId, int seq, List<Dab> dabs) {
-            Optional<EngineEditService> service = find(p.getServer());
+            var service = find(p.getServer());
             if (service.isPresent()) return service.get().dabs(p, strokeId, seq, dabs);
             int last = dabs == null || dabs.isEmpty() || dabs.get(dabs.size() - 1) == null
                     ? -1 : dabs.get(dabs.size() - 1).index();
@@ -540,7 +556,7 @@ public final class EditServiceHost {
     }
 
     private static final class ClipboardFacade implements ClipboardService<ServerPlayerEntity> {
-        private static ServerClipboards of(ServerPlayerEntity p) throws EditRejected {
+        private static ServerClipboards<ServerPlayerEntity, ServerWorld> of(ServerPlayerEntity p) throws EditRejected {
             return findClipboards(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"));
         }
 

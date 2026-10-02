@@ -2,7 +2,6 @@ package dev.sculptory.fabric;
 
 import dev.sculptory.core.brush.SymmetricStep;
 import dev.sculptory.fabric.command.SculptoryCommands;
-import dev.sculptory.fabric.engine.impl.EditEvents;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.net.ServerNet;
@@ -10,6 +9,7 @@ import dev.sculptory.protocol.v2.ProtocolV2;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.ServerLog;
+import dev.sculptory.server.engine.impl.EditEvents;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import java.util.List;
 import net.fabricmc.api.ModInitializer;
@@ -61,7 +61,7 @@ public final class SculptoryMod implements ModInitializer {
     }
 
     /** Edit-service pushes sent to the player's client. */
-    private static final class NetEditEvents implements EditEvents {
+    private static final class NetEditEvents implements EditEvents<ServerPlayerEntity> {
         @Override
         public void historyChanged(ServerPlayerEntity player, HistorySnapshot snapshot) {
             ServerNet.sendHistoryState(player, EditServiceHost.toHistoryState(snapshot));

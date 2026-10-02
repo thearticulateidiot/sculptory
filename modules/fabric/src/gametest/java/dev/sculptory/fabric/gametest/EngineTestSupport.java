@@ -7,9 +7,9 @@ import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.ComputeContext;
 import dev.sculptory.core.edit.EditProgram;
+import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricStateSpace;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
@@ -47,7 +47,7 @@ final class EngineTestSupport {
         return EngineRuntime.get(context.getWorld().getServer());
     }
 
-    static int handle(FabricStateSpace states, String spec) {
+    static int handle(StateSpace states, String spec) {
         int h = states.parse(spec);
         if (h < 0) throw new GameTestException("Unknown block state " + spec);
         return h;

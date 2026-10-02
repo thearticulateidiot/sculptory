@@ -26,7 +26,6 @@ import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -39,6 +38,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -359,7 +359,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         ((net.minecraft.block.entity.ChestBlockEntity) world.getBlockEntity(pos(x0 + 6, 100, z0 + 4)))
                 .setStack(0, new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND, 5));
         WorldSnapshot sourceContent = capture(world, source);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         BlockPos anchor = source.min();
         Captured<ClipboardService.ClipboardInfo> copied = ClipboardGameTest.copy(clips, h.player, source, anchor);
         BlockPos size = new BlockPos(source.sizeX(), source.sizeY(), source.sizeZ());
@@ -584,7 +584,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         // The copy's box is locked while the job runs: a cut over it is AREA_BUSY.
         Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * (x0 + 20), 0);
         Box copyBox = mirror.imageBox(Symmetry.Image.MIRROR_X, box);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         RecordingListener fill = new RecordingListener();
         run(h, h.player, new OpSpec.Fill(region, pattern, CellMask.ANY, mirror), fill);
         ServerPlayerEntity other = h.addPlayer();

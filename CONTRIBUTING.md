@@ -78,12 +78,13 @@ The code is in four Gradle modules under `modules/`:
   history and its saved format, schematic and NBT reading. Plain Java, tested with JUnit.
 - `protocol`: the client-server network protocol (messages, codecs, the handshake), also free of Minecraft
   imports, with golden wire samples in its tests.
-- `server`: the server side that every platform shares (Fabric now; Paper and NeoForge are planned): the library,
-  config, permission and protection rules, file sanitizing and the engine's job and history services. No Minecraft
-  imports either; it grows as server logic moves out of `fabric`.
-- `fabric`: the mod itself. `src/main` is the Fabric side of the server (the engine host, world access, commands,
-  networking), `src/client` the editor (windows, tools, rendering, the tutorial and the wiki reader), `src/test` the
-  JUnit tests, and `src/gametest` and `src/fidelity` the GameTests.
+- `server`: the server side that every platform shares (Fabric now; Paper and NeoForge are planned): the edit,
+  clipboard and scatter services, the job executor, undo history, the library, config, permission and protection
+  rules and file sanitizing. No Minecraft imports either: it reaches the game through the interfaces in
+  `dev.sculptory.server.platform`, which each platform implements.
+- `fabric`: the mod itself. `src/main` is the Fabric side of the server (the platform those interfaces describe: world
+  access, builder mode, Tinker, commands, networking), `src/client` the editor (windows, tools, rendering, the tutorial
+  and the wiki reader), `src/test` the JUnit tests, and `src/gametest` and `src/fidelity` the GameTests.
 
 The wiki lives in `docs/wiki/` and is bundled into the mod for the in-game reader. Its page ids are frozen
 (`WikiPages`); `scripts/check-wiki.ps1` checks its links, pictures and Markdown subset, and `check` runs the same

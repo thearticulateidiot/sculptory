@@ -12,8 +12,6 @@ import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.scatter.ScatterSource;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -23,6 +21,8 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.engine.impl.ServerClipboards;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.library.PaletteFile;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +31,7 @@ import java.nio.file.Path;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -77,7 +78,7 @@ public final class PaletteGameTest implements FabricGameTest {
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD);
         EditTestSupport.grant(useOnly, Perm.USE);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         String own = "_players/" + builder.getUuid();
 
         EditRejected unknown = refusal(() -> clips.savePalette(builder, "reef.palette.json",
@@ -169,7 +170,7 @@ public final class PaletteGameTest implements FabricGameTest {
                 StandardCharsets.UTF_8);
         Files.writeString(root.resolve("old").resolve("newer.palette.json"),
                 "{\"format\": \"sculptory:palette\", \"version\": 7, \"entries\": 1}", StandardCharsets.UTF_8);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.LoadedPalette> old = new Captured<>();
         Captured<ClipboardService.LoadedPalette> none = new Captured<>();
         Captured<ClipboardService.LoadedPalette> broken = new Captured<>();
@@ -210,8 +211,8 @@ public final class PaletteGameTest implements FabricGameTest {
     public void aLoadedPalettesWaterPlantsPlanUnderWater(TestContext context) {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var clips = ClipTestSupport.clipboards(h, root);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 540);
         int x0 = at[0], z0 = at[1];
         ScatterWaterGameTest.shore(h, x0, z0);
@@ -267,7 +268,7 @@ public final class PaletteGameTest implements FabricGameTest {
         EditTestSupport.grant(alice, Perm.USE, Perm.CLIPBOARD);
         EditTestSupport.grant(bob, Perm.USE, Perm.CLIPBOARD);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         String alices = "_players/" + alice.getUuid();
         String mine = alices + "/mine.palette.json";
         BlockPalette stone = palette("minecraft:stone");
@@ -346,7 +347,7 @@ public final class PaletteGameTest implements FabricGameTest {
         Harness h = new Harness(context);
         ClipboardService<ServerPlayerEntity> host = EditServiceHost.clipboards();
         check(EditServiceHost.findClipboards(context.getWorld().getServer()).isPresent(), "the host runs a library");
-        Path root = ServerClipboards.defaultLibraryRoot();
+        Path root = EditServiceHost.defaultLibraryRoot();
         String folder = "palette-host-" + java.util.UUID.randomUUID().toString().substring(0, 8);
         BlockPalette moss = palette("minecraft:moss_block", "minecraft:seagrass");
         Captured<LibraryChange> made = new Captured<>();

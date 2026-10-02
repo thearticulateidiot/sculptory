@@ -22,7 +22,6 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.clipboard.Clipboard;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.scatter.ScatterPlan;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -33,6 +32,7 @@ import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -41,6 +41,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.block.entity.ChestBlockEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
@@ -87,7 +88,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
     public void scatterPlansInTheExecutorLane(TestContext context) {
         EditExecutor<ServerWorld> executor = executor(context, 0, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         EditExecutor.Lane lane = scatter.lane();
         executor.addLane(lane, 1e-6);
         int[] at = regionCorner(context, 88);
@@ -144,7 +145,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
     public void scatterCommitLeavesACellBuiltWhileItWrites(TestContext context) {
         EditExecutor<ServerWorld> executor = executor(context, 8, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 89);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);
@@ -216,7 +217,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
     public void scatterCommitWaitsForNeighbouringChunks(TestContext context) {
         EditExecutor<ServerWorld> executor = executor(context, 0, 1);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 90);
         int x0 = at[0], z0 = at[1];
         int cx0 = x0 >> 4, cz0 = z0 >> 4;
@@ -274,7 +275,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
     public void scatterReadColumnTicketsAreCapped(TestContext context) {
         EditExecutor<ServerWorld> executor = executor(context, 0, 1);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 93);
         int x0 = at[0], z0 = at[1];
         int cx0 = x0 >> 4, cz0 = z0 >> 4;

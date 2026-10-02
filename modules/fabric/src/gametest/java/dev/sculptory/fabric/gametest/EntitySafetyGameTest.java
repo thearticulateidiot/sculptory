@@ -30,7 +30,6 @@ import dev.sculptory.core.entity.EntityNbt;
 import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -46,6 +45,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -60,6 +60,7 @@ import net.minecraft.entity.vehicle.CommandBlockMinecartEntity;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtDouble;
 import net.minecraft.nbt.NbtList;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
@@ -95,7 +96,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 32);
         loadAndForce(world, all);
         java.nio.file.Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         BlockPos target = new BlockPos(x0 + 4, y0, z0 + 4);
         Box pasted = box(target.x() - 4, y0 - 1, target.z() - 4, target.x() + 10, y0 + 6, target.z() + 10);
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
@@ -289,7 +290,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         Box cutArea = box(x0 + 8, y0, z0, x0 + 10, y0 + 2, z0 + 2);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         RecordingListener paste = new RecordingListener();
         RecordingListener undoPaste = new RecordingListener();
         Captured<ClipboardService.ClipboardInfo> cut = new Captured<>();
@@ -579,7 +580,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         Box source = box(x0, y0, z0, x0 + 3, y0 + 1, z0 + 3);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         RecordingListener move = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         Entity[] fixture = new Entity[2];
@@ -658,7 +659,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         Box source = box(x0, y0, z0, x0 + 3, y0 + 2, z0 + 3);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 16, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> airOnly = new Captured<>();
         context.createTimedTaskRunner()
                 .createAndAdd(() -> ready(world, all))
@@ -696,7 +697,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         Box target = box(x0 + 8, y0 - 1, z0 - 2, x0 + 14, y0 + 3, z0 + 4);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener paste = new RecordingListener();
         context.createTimedTaskRunner()
@@ -744,7 +745,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         Box target = source.offset(8, 0, 0);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener paste = new RecordingListener();
         RecordingListener undo = new RecordingListener();
@@ -796,7 +797,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         Box source = box(x0, y0, z0, x0 + 10, y0 + 1, z0 + 1);
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 16);
         loadAndForce(world, all);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> blocksOnly = new Captured<>();
         context.createTimedTaskRunner()
                 .createAndAdd(() -> ready(world, all))

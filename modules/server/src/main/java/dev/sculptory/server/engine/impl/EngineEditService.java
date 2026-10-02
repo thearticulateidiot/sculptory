@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
@@ -48,16 +48,6 @@ import dev.sculptory.core.region.RegionTooLargeException;
 import dev.sculptory.core.region.Regions;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
-import dev.sculptory.fabric.perm.FabricPermissionService;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricEntities;
-import dev.sculptory.fabric.world.FabricNeighbourShapes;
-import dev.sculptory.fabric.world.FabricTile;
-import dev.sculptory.fabric.world.FabricTileMatcher;
-import dev.sculptory.fabric.world.FabricWorldReader;
-import dev.sculptory.fabric.world.FluidTrails;
-import dev.sculptory.fabric.world.EntityTypeRules;
-import dev.sculptory.fabric.world.WorldChecks;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
@@ -75,22 +65,13 @@ import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.TinkerService;
-import dev.sculptory.server.engine.impl.AssetCache;
-import dev.sculptory.server.engine.impl.BrushWork;
-import dev.sculptory.server.engine.impl.EditExecutor;
-import dev.sculptory.server.engine.impl.EditMasks;
-import dev.sculptory.server.engine.impl.EntityColumns;
-import dev.sculptory.server.engine.impl.EntityJobs;
-import dev.sculptory.server.engine.impl.EntityWork;
-import dev.sculptory.server.engine.impl.HistoryService;
-import dev.sculptory.server.engine.impl.HistorySnapshot;
-import dev.sculptory.server.engine.impl.JobRequest;
-import dev.sculptory.server.engine.impl.PermitSource;
-import dev.sculptory.server.engine.impl.PlayerClipboards;
-import dev.sculptory.server.engine.impl.RecordSink;
-import dev.sculptory.server.engine.impl.ScatterPlans;
 import dev.sculptory.server.library.Library;
 import dev.sculptory.server.library.LibraryPath;
+import dev.sculptory.server.platform.FluidTrailHook;
+import dev.sculptory.server.platform.LiveReader;
+import dev.sculptory.server.platform.PlatformPermissions;
+import dev.sculptory.server.platform.WorldEntities;
+import dev.sculptory.server.platform.WorldWriter;
 import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.SanitizedTile;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -115,17 +96,11 @@ import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import net.fabricmc.fabric.api.util.TriState;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.world.World;
-import net.minecraft.world.border.WorldBorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The server {@link EditService} for one {@link EngineRuntime}, with each player's
+ * The server {@link EditService} for one running engine ({@link EngineHost}), with each player's
  * undo history ({@link HistoryService}) and brush strokes. Server thread only.
  *
  * <p><b>Region ops</b> ({@link #run}) need {@code use} and {@code region}; ops over {@code Limits.maxOpVolume}
@@ -156,7 +131,7 @@ import org.slf4j.LoggerFactory;
  *       loads and protects only the sections the program lists, which hold region cells.</li>
  *   <li><b>Trust:</b> tiles keep their origin. World-captured tiles (copies, moves, stacks) are trusted when the
  *       player could write their source; a bypass player's stack from a protected source runs with captured tiles
- *       untrusted. Tiles read from files are never trusted (operator NBT stripped, see {@code BlockWriter}).</li>
+ *       untrusted. Tiles read from files are never trusted (operator NBT stripped, see {@code WorldWriter}).</li>
  * </ul>
  *
  * <p><b>Scatter commits</b> (M3). {@code ScatterCommit(planId)} needs {@code scatter}; the plan must be the player's
@@ -259,8 +234,11 @@ import org.slf4j.LoggerFactory;
  * (queued ahead of its next dabs) once it grows past {@link #STROKE_COMMIT_BYTES} or a quarter of the per-player cap,
  * whichever is smaller: open records are not counted by the global history cap, so this bounds what they can hold.
  * Empty records push nothing.
+ *
+ * @param <P> the platform's player type
+ * @param <W> the platform's world type
  */
-public final class EngineEditService implements EditService<ServerPlayerEntity>, TinkerService<ServerPlayerEntity> {
+public final class EngineEditService<P, W> implements EditService<P>, TinkerService<P> {
     /** The refusal of a scatter commit whose every placement the mask (changed since the preview) rules out. */
     public static final String MASK_RULES_OUT_SCATTER =
             "the mask rules out every placement (change the mask or preview again)";
@@ -298,31 +276,35 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     public static final int MAX_STACK_COUNT = 256;
     /** Server ticks between re-checks of the permissions of players with admitted jobs ({@link #revalidate}). */
     public static final int PERMISSION_RECHECK_TICKS = 40;
+    /**
+     * The game's horizontal world limit: no block lies farther than {@value} from the origin along x or z
+     * (Minecraft's {@code World.HORIZONTAL_LIMIT}, the same on every platform).
+     */
+    public static final int HORIZONTAL_LIMIT = 30_000_000;
 
     /** A running job, for {@code /sculptory jobs}. */
     public record JobInfo(UUID jobId, UUID owner, String label, long estimatedCells, long done, long total,
                           Phase phase) {}
 
-    private final EngineRuntime runtime;
-    private final MinecraftServer server;
-    private final EditExecutor<ServerWorld> executor;
+    private final EngineHost<P, W> runtime;
+    private final EditExecutor<W> executor;
     /**
      * The global mask of the Move {@link #run} is compiling ({@link MaskSide#SOURCE}),
      * which {@link #compile}'s context gives as its {@code sourceMask()}; {@link BoundMask#ALL} otherwise. Server
      * thread only.
      */
     private BoundMask compileSourceMask = BoundMask.ALL;
-    private final FabricPermissionService permissions;
-    private final Function<ServerPlayerEntity, JobListener> listeners;
-    private final AckSink acks;
-    private final EditEvents events;
+    private final PlatformPermissions<P, W> permissions;
+    private final Function<P, JobListener> listeners;
+    private final AckSink<P> acks;
+    private final EditEvents<P> events;
     private final LongSupplier clock;
     private final HistoryService history;
     /** What fluid written by history steps did since, taken back with their next step. */
-    private final FluidTrails trails;
-    /** Builder mode: placements and breaks in normal creative play. */
-    private final BuilderService builder;
-    /** Held here: {@link FluidTrails} references it weakly. */
+    private final FluidTrailHook<W> trails;
+    /** Builder mode: placements and breaks in normal creative play (the platform's). */
+    private final BuilderMode<P> builder;
+    /** Held here: {@link FluidTrailHook#register} references it weakly. */
     private final Supplier<Set<UUID>> liveEntries = this::liveEntries;
     private final Map<UUID, BrushLane> lanes = new HashMap<>();
     /**
@@ -347,54 +329,53 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     /** The periodic save of open strokes is under way ({@link #tickHistory}). */
     private boolean strokeSaveDue;
     private long lastCreatedMillis;
-    /** Tinker: one block or entity changed in place, one history step. */
-    private final TinkerEdits tinker = new TinkerEdits(this);
+    /** Tinker: one block or entity changed in place, one history step (the platform's). */
+    private final TinkerService<P> tinker;
 
     /**
      * @param listeners the listener for jobs started without one (undo and redo), e.g. {@code ServerNet::jobListener}
      * @param acks where dab batches are acknowledged, e.g. {@code ServerNet::predictionApplied}
      */
-    public EngineEditService(EngineRuntime runtime, Function<ServerPlayerEntity, JobListener> listeners, AckSink acks,
-                             EditEvents events) {
+    public EngineEditService(EngineHost<P, W> runtime, Function<P, JobListener> listeners, AckSink<P> acks,
+                             EditEvents<P> events) {
         this(runtime, listeners, acks, events, null);
     }
 
     /** Saving history through {@code persistence} (null: memory only). */
-    public EngineEditService(EngineRuntime runtime, Function<ServerPlayerEntity, JobListener> listeners, AckSink acks,
-                             EditEvents events, HistoryService.Persistence persistence) {
+    public EngineEditService(EngineHost<P, W> runtime, Function<P, JobListener> listeners, AckSink<P> acks,
+                             EditEvents<P> events, HistoryService.Persistence persistence) {
         this(runtime, runtime.executor(), runtime.config().toHistoryLimits(), listeners, acks, events, System::nanoTime,
                 persistence);
     }
 
     /** With an explicit executor, history caps and clock (tests); history in memory only. */
-    public EngineEditService(EngineRuntime runtime, EditExecutor<ServerWorld> executor, HistoryLimits limits,
-                             Function<ServerPlayerEntity, JobListener> listeners, AckSink acks, EditEvents events,
+    public EngineEditService(EngineHost<P, W> runtime, EditExecutor<W> executor, HistoryLimits limits,
+                             Function<P, JobListener> listeners, AckSink<P> acks, EditEvents<P> events,
                              LongSupplier clock) {
         this(runtime, executor, limits, listeners, acks, events, clock, null);
     }
 
     /** With an explicit executor, history caps, clock and history persistence (null: memory only). */
-    public EngineEditService(EngineRuntime runtime, EditExecutor<ServerWorld> executor, HistoryLimits limits,
-                             Function<ServerPlayerEntity, JobListener> listeners, AckSink acks, EditEvents events,
+    public EngineEditService(EngineHost<P, W> runtime, EditExecutor<W> executor, HistoryLimits limits,
+                             Function<P, JobListener> listeners, AckSink<P> acks, EditEvents<P> events,
                              LongSupplier clock, HistoryService.Persistence persistence) {
         this.runtime = Objects.requireNonNull(runtime);
-        this.server = runtime.server();
         this.executor = Objects.requireNonNull(executor);
         this.permissions = runtime.permissions();
         this.listeners = listeners == null ? p -> JobRequest.NO_LISTENER : listeners;
-        this.acks = acks == null ? AckSink.VANILLA : acks;
-        this.events = events == null ? EditEvents.NONE : events;
+        this.acks = acks == null ? runtime::acknowledge : acks;
+        this.events = events == null ? EditEvents.none() : events;
         this.clock = Objects.requireNonNull(clock);
         this.history = new HistoryService(limits, new HistoryEvents(), persistence);
         this.trails = runtime.fluidTrails();
         trails.register(liveEntries);
         // What an entry's fluid did goes into it (and the journal) when its history is unloaded or the server stops.
         history.trailSource(entry -> {
-            ServerWorld world = worldOf(entry.world());
+            W world = worldOf(entry.world());
             return world == null ? null : trails.drain(world, entry.id());
         });
-        this.builder = new BuilderService(this, runtime::config, permissions, executor, history, trails, runtime.states(),
-                clock);
+        this.builder = runtime.builderMode(this, history, executor, clock);
+        this.tinker = runtime.tinker(this);
     }
 
     /** The config in effect: the runtime's, which {@code /sculptory reload} replaces (checks read it when they run). */
@@ -402,15 +383,12 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         return runtime.config();
     }
 
-    public MinecraftServer server() {
-        return server;
-    }
-
-    public EngineRuntime runtime() {
+    /** The platform this service edits (and the engine it runs). */
+    public EngineHost<P, W> runtime() {
         return runtime;
     }
 
-    public EditExecutor<ServerWorld> executor() {
+    public EditExecutor<W> executor() {
         return executor;
     }
 
@@ -419,13 +397,13 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** The player's history as the client should see it. */
-    public HistorySnapshot history(ServerPlayerEntity player) {
-        return history.snapshot(player.getUuid());
+    public HistorySnapshot history(P player) {
+        return history.snapshot(runtime.id(player));
     }
 
     /**
      * Every entry this service's history holds or will hold: the history's, the running edits' and the open strokes'
-     * records ({@link FluidTrails} forgets the fluid of the others); {@code null} while a saved history is loading.
+     * records ({@link FluidTrailHook} forgets the fluid of the others); {@code null} while a saved history is loading.
      */
     private Set<UUID> liveEntries() {
         Set<UUID> ids = history.liveEntries();
@@ -444,24 +422,24 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     // ================================================================== region ops
 
     @Override
-    public JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l) throws EditRejected {
+    public JobTicket run(P p, OpSpec s, RunOptions o, JobListener l) throws EditRejected {
         return run(p, s, o, l, null);
     }
 
     /**
-     * {@link #run(ServerPlayerEntity, OpSpec, RunOptions, JobListener)} with extra entity work for the job ({@code null}:
+     * {@link #run(Object, OpSpec, RunOptions, JobListener)} with extra entity work for the job ({@code null}:
      * none): a cut's erase removes the entities its copy took, in the same history entry.
      */
-    JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l, EntityWork extraEntities)
+    JobTicket run(P p, OpSpec s, RunOptions o, JobListener l, EntityWork extraEntities)
             throws EditRejected {
         return run(p, s, o, l, extraEntities, false);
     }
 
     /**
-     * {@link #run(ServerPlayerEntity, OpSpec, RunOptions, JobListener, EntityWork)}; with {@code judged} the global mask
+     * {@link #run(Object, OpSpec, RunOptions, JobListener, EntityWork)}; with {@code judged} the global mask
      * was applied by the caller already (a cut erases exactly the cells its copy took), so the op is not masked again.
      */
-    JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l, EntityWork extraEntities, boolean judged)
+    JobTicket run(P p, OpSpec s, RunOptions o, JobListener l, EntityWork extraEntities, boolean judged)
             throws EditRejected {
         checkThread();
         Objects.requireNonNull(s);
@@ -469,7 +447,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         requireEditing();
         require(p, Perm.USE);
         // The player's global mask as the op is admitted; refused while it is refused.
-        BoundMask current = EditMasks.current(p.getUuid());
+        BoundMask current = EditMasks.current(runtime.id(p));
         BoundMask editMask = judged ? BoundMask.ALL : current;
         Perm opNode = switch (s) {
             case OpSpec.Paste paste -> Perm.CLIPBOARD;
@@ -490,8 +468,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             }
         }
         // The open stroke's dabs so far are older than this op: apply them and push them first.
-        commitStroke(p.getUuid());
-        ServerWorld world = p.getServerWorld();
+        commitStroke(runtime.id(p));
+        W world = runtime.world(p);
         long limit = config().limits.maxOpVolume;
         // Whether admitting this op relies on limit.bypass (then the job needs it for as long as it runs).
         boolean bypassed = false;
@@ -501,7 +479,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             // Counted before compiling (and only up to the limit): the region's cells inside the build height, times
             // the symmetric copies. A box's Hollow and Walls are checked on the cells they write, once compiled
             // (cheaply, from the box).
-            long cells = Regions.cellsBetween(region, world.getBottomY(), world.getTopY() - 1, limit);
+            long cells = Regions.cellsBetween(region, runtime.bottomY(world), runtime.topY(world) - 1, limit);
             long total = cells > Long.MAX_VALUE / copyCount ? Long.MAX_VALUE : cells * copyCount;
             // Overlay's layer may reach above the region: its target volume counts it (every copy included).
             if (s instanceof OpSpec.Overlay) total = Math.max(total, OpCompiler.targetVolume(s, null, limit));
@@ -554,7 +532,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
                 if (paste.o().entities() && clipboard.entityCount() > 0) {
                     bypassed |= checkEntities(clipboard.entityTotal(), maxEntities, bypass);
                     untrustedOperatorTiles |= hasUntrustedOperatorEntities(clipboard,
-                            EntityTypeRules.scan(world)::operator);
+                            runtime.entityRules(world)::operator);
                     Box target;
                     try {
                         target = PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(), paste.t(), paste.origin());
@@ -617,7 +595,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
                 }
             }
             case OpSpec.ScatterCommit commit -> {
-                ScatterPlans.Held held = scatterPlans.find(p.getUuid(), commit.planId(), worldId(world), clock.getAsLong())
+                ScatterPlans.Held held = scatterPlans
+                        .find(runtime.id(p), commit.planId(), runtime.worldId(world), clock.getAsLong())
                         .orElseThrow(() -> new EditRejected(RejectReason.INVALID,
                                 "unknown or expired scatter plan (preview again)"));
                 bypassed |= checkVolume(held.plan().totalCells(), limit, bypass);
@@ -636,7 +615,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
                 // as the commit is admitted: one denied cell leaves the whole placement out, never a part of a tree. With the mask and the world unchanged it leaves out nothing.
                 BitSet denied = new BitSet();
                 if (!editMask.acceptsAll()) {
-                    FabricWorldReader live = runtime.reader(world);
+                    LiveReader live = runtime.reader(world);
                     denied = held.plan().denied((x, y, z) -> !live.isLoaded(x >> 4, z >> 4)
                             || editMask.test(x, y, z, live.get(x, y, z), live), runtime.states());
                     maskedPlacements = denied.cardinality();
@@ -675,16 +654,16 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         ConflictCountingProgram skipped = scatter != null ? new ConflictCountingProgram(compiled, maskedPlacements) : null;
         EditProgram program = skipped != null ? skipped : compiled;
         RecordBuilder record = new RecordBuilder();
-        HistoryService.Session session = history.session(p.getUuid());
+        HistoryService.Session session = history.session(runtime.id(p));
         EnumSet<Perm> required = EnumSet.of(Perm.USE, opNode);
         if (options.physics()) required.add(Perm.PHYSICS);
         if (bypassed) required.add(Perm.LIMIT_BYPASS);
-        TrackedJob job = new TrackedJob(p.getUuid(), p.getGameProfile().getName(), label != null ? label : program.label(),
-                l, skipped, record, worldId(world), session, null, required);
+        TrackedJob job = new TrackedJob(runtime.id(p), runtime.name(p), label != null ? label : program.label(),
+                l, skipped, record, runtime.worldId(world), session, null, required);
         // Saved section by section as the job writes, once it is admitted (history.editStarted below).
         job.openRecord = history.record(session, job.worldId, job.label, this::createdMillis, record);
         // Fluid the job writes is marked as the entry's: what it does later is taken back with the entry's undo.
-        JobRequest<ServerWorld> request = JobRequest.forPlayer(runtime, p, program, options, job,
+        JobRequest<W> request = JobRequest.forPlayer(runtime, p, program, options, job,
                 trails.marking(history.sink(record, job.openRecord), world, record.id()))
                 .withEntities(entityWork);
         if (!trustSource) {
@@ -701,7 +680,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         job.freeze(List.of(record.id()));
         job.admitted(ticket);
         // A committed plan is spent: the job holds what it writes.
-        if (s instanceof OpSpec.ScatterCommit commit) scatterPlans.consume(p.getUuid(), commit.planId());
+        if (s instanceof OpSpec.ScatterCommit commit) scatterPlans.consume(runtime.id(p), commit.planId());
         return ticket;
     }
 
@@ -713,14 +692,15 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     private boolean hasUntrustedOperatorTiles(Clipboard clipboard) {
         StateSpace states = runtime.states();
         return clipboard.anyTile((state, tile) -> state >= 0 && (states.flags(state) & StateFlags.OPERATOR_NBT) != 0
-                && !(tile instanceof SanitizedTile) && !FabricTile.isServerCaptured(tile));
+                && !(tile instanceof SanitizedTile) && !runtime.serverCaptured(tile));
     }
 
     /**
      * Whether the clipboard holds an entity whose operator-only data a player without the right would lose: untrusted
-     * data of which it or any of its passengers is of an operator-only type ({@link EntityTypeRules#operator}).
+     * data of which it or any of its passengers is of an operator-only type
+     * ({@link dev.sculptory.server.platform.EntityRules#operator}).
      */
-    static boolean hasUntrustedOperatorEntities(Clipboard clipboard, Predicate<String> operatorType) {
+    public static boolean hasUntrustedOperatorEntities(Clipboard clipboard, Predicate<String> operatorType) {
         // Found when the clipboard was made (off the server thread): nothing is decoded here.
         for (String type : clipboard.untrustedEntityTypes()) {
             if (operatorType.test(type)) return true;
@@ -732,19 +712,24 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * The entities (passengers included) a move or stack of {@code region} takes along now ({@code UNLOADED} when the
      * entities of a chunk they could be in are not loaded: an edit must not miss entities it cannot see).
      */
-    private static long takenEntities(ServerWorld world, Region region, EntityFilter filter) throws EditRejected {
+    private long takenEntities(W world, Region region, EntityFilter filter) throws EditRejected {
+        return takenEntities(runtime.entities(world), region, filter);
+    }
+
+    private static <E> long takenEntities(WorldEntities<E> entities, Region region, EntityFilter filter)
+            throws EditRejected {
         // Only the chunks the region's cells are in (and neighbours near a cell): a sparse selection spanning unloaded
         // chunks inside its bounds is not refused for them.
         Box bounds = region.bounds();
         long[] columns = EntityColumns.of(region, bounds.min().y(), bounds.max().y());
-        String unloaded = FabricEntities.firstUnloaded(world, columns);
+        String unloaded = entities.firstUnloaded(columns);
         if (unloaded != null) {
             throw new EditRejected(RejectReason.UNLOADED, "the entities of chunk " + unloaded + " are not loaded "
                     + "(or set Entities to None)");
         }
         long total = 0;
-        for (net.minecraft.entity.Entity entity : FabricEntities.inRegion(world, region, filter, columns)) {
-            total += FabricEntities.takenCount(entity, filter);
+        for (E entity : entities.inRegion(region, filter, columns)) {
+            total += entities.takenCount(entity, filter);
         }
         return total;
     }
@@ -778,7 +763,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * follow it). {@code INVALID} when it leaves the coordinate range or the build height (the cells that would leave
      * it would be lost).
      */
-    static Box moveDestination(OpSpec.Move move, Box from, ServerWorld world) throws EditRejected {
+    Box moveDestination(OpSpec.Move move, Box from, W world) throws EditRejected {
         BlockPos size = move.t().size(from.sizeX(), from.sizeY(), from.sizeZ());
         Box image = from;
         if (move.t().upsideDown()) {
@@ -793,7 +778,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         long z0 = (long) image.min().z() + move.offset().z();
         long x1 = x0 + size.x() - 1, y1 = y0 + size.y() - 1, z1 = z0 + size.z() - 1;
         if (x0 < Integer.MIN_VALUE || z0 < Integer.MIN_VALUE || x1 > Integer.MAX_VALUE || z1 > Integer.MAX_VALUE
-                || y0 < world.getBottomY() || y1 >= world.getTopY()) {
+                || y0 < runtime.bottomY(world) || y1 >= runtime.topY(world)) {
             throw new EditRejected(RejectReason.INVALID, "the moved box would leave the world");
         }
         return new Box(new BlockPos((int) x0, (int) y0, (int) z0), new BlockPos((int) x1, (int) y1, (int) z1));
@@ -822,8 +807,9 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** Who the player is to the asset library. */
-    public Library.Viewer libraryViewer(ServerPlayerEntity p) {
-        return new Library.Viewer(p.getUuid(), permissions.has(p, Perm.LIBRARY_WRITE), permissions.has(p, Perm.ADMIN));
+    public Library.Viewer libraryViewer(P p) {
+        return new Library.Viewer(runtime.id(p), permissions.has(p, Perm.LIBRARY_WRITE),
+                permissions.has(p, Perm.ADMIN));
     }
 
     /**
@@ -844,10 +830,10 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** A paste source for the player: their own clipboard by id, or a cached library asset they may read. */
-    public Optional<Clipboard> sourceClipboard(ServerPlayerEntity p, SourceRef ref) {
+    public Optional<Clipboard> sourceClipboard(P p, SourceRef ref) {
         checkThread();
         return switch (ref) {
-            case SourceRef.Clipboard c -> clipboards.find(p.getUuid(), c.id()).map(PlayerClipboards.Held::clipboard);
+            case SourceRef.Clipboard c -> clipboards.find(runtime.id(p), c.id()).map(PlayerClipboards.Held::clipboard);
             case SourceRef.Asset a -> assets.get(a.contentHash())
                     .filter(asset -> mayRead(asset.path(), libraryViewer(p)))
                     .map(AssetCache.Asset::clipboard);
@@ -864,7 +850,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      *
      * @return true when the player may write every column of the box (its captured tiles may stay trusted)
      */
-    public boolean requireReadable(ServerPlayerEntity p, ServerWorld world, Box box) throws EditRejected {
+    public boolean requireReadable(P p, W world, Box box) throws EditRejected {
         String denied = firstDenied(p, world, box);
         if (denied == null) return true;
         if (!permissions.has(p, Perm.LIMIT_BYPASS)) {
@@ -874,11 +860,11 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /**
-     * {@link #requireReadable(ServerPlayerEntity, ServerWorld, Box)} for a region's cells inside the build height: a
+     * {@link #requireReadable(Object, Object, Box)} for a region's cells inside the build height: a
      * box by all its columns, any other region by the columns holding its cells ({@link Regions#columns}), so a
      * selection whose bounds cross a protected area its cells stay out of may be read.
      */
-    public boolean requireReadable(ServerPlayerEntity p, ServerWorld world, Region region) throws EditRejected {
+    public boolean requireReadable(P p, W world, Region region) throws EditRejected {
         Box area = inBuildHeight(region.bounds(), world);
         if (region instanceof Region.Cuboid) return requireReadable(p, world, area);
         return requireReadable(p, world, regionColumns(region, area.min().y(), area.max().y()), area);
@@ -915,10 +901,10 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /**
-     * {@link #requireReadable(ServerPlayerEntity, ServerWorld, Box)} for the chunk columns {@code columns}
+     * {@link #requireReadable(Object, Object, Box)} for the chunk columns {@code columns}
      * ({@link Regions#columns}) of cells within {@code bounds}: only those columns must be writable.
      */
-    public boolean requireReadable(ServerPlayerEntity p, ServerWorld world, Long2ObjectMap<long[]> columns, Box bounds)
+    public boolean requireReadable(P p, W world, Long2ObjectMap<long[]> columns, Box bounds)
             throws EditRejected {
         String denied = firstDenied(p, world, columns, bounds);
         if (denied == null) return true;
@@ -932,13 +918,13 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * Requires every column of {@code box} to be writable by the player, whatever their bypass (a move vacates its
      * source and must fill its whole destination).
      */
-    public void requireWritable(ServerPlayerEntity p, ServerWorld world, Box box, String what) throws EditRejected {
+    public void requireWritable(P p, W world, Box box, String what) throws EditRejected {
         String denied = firstDenied(p, world, box);
         if (denied != null) throw new EditRejected(RejectReason.PROTECTED, what + " chunk " + denied + " is protected");
     }
 
-    /** {@link #requireWritable(ServerPlayerEntity, ServerWorld, Box, String)} for the chunk columns {@code columns}. */
-    public void requireWritable(ServerPlayerEntity p, ServerWorld world, Long2ObjectMap<long[]> columns, Box bounds,
+    /** {@link #requireWritable(Object, Object, Box, String)} for the chunk columns {@code columns}. */
+    public void requireWritable(P p, W world, Long2ObjectMap<long[]> columns, Box bounds,
                                 String what) throws EditRejected {
         String denied = firstDenied(p, world, columns, bounds);
         if (denied != null) throw new EditRejected(RejectReason.PROTECTED, what + " chunk " + denied + " is protected");
@@ -967,7 +953,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * over that rectangle is then checked column by column, so an L-shaped set of columns is judged by its own columns
      * whenever the permit service sees the mix (the four-corner sampling of {@code ChunkPermits} may not).
      */
-    private String firstDenied(ServerPlayerEntity p, ServerWorld world, Long2ObjectMap<long[]> columns, Box bounds)
+    private String firstDenied(P p, W world, Long2ObjectMap<long[]> columns, Box bounds)
             throws EditRejected {
         if (columns.size() > executor.settings().maxColumnsPerJob()) {
             throw new EditRejected(RejectReason.TOO_LARGE,
@@ -1011,7 +997,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** The first chunk ("cx,cz") holding a column of {@code box} the player may not modify, or {@code null}. */
-    private String firstDenied(ServerPlayerEntity p, ServerWorld world, Box box) throws EditRejected {
+    private String firstDenied(P p, W world, Box box) throws EditRejected {
         int minCx = box.min().x() >> 4, maxCx = box.max().x() >> 4;
         int minCz = box.min().z() >> 4, maxCz = box.max().z() >> 4;
         long columns = ((long) maxCx - minCx + 1) * ((long) maxCz - minCz + 1);
@@ -1046,8 +1032,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** {@code box} cut to the world's build height ({@code INVALID} when nothing is left). */
-    static Box inBuildHeight(Box box, ServerWorld world) throws EditRejected {
-        int bottom = world.getBottomY(), top = world.getTopY() - 1;
+    Box inBuildHeight(Box box, W world) throws EditRejected {
+        int bottom = runtime.bottomY(world), top = runtime.topY(world) - 1;
         if (box.max().y() < bottom || box.min().y() > top) {
             throw new EditRejected(RejectReason.INVALID, "outside the build height");
         }
@@ -1058,35 +1044,35 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     // ================================================================== undo and redo
 
     @Override
-    public JobTicket undo(ServerPlayerEntity p, ConflictPolicy c) throws EditRejected {
+    public JobTicket undo(P p, ConflictPolicy c) throws EditRejected {
         return undo(p, c, null);
     }
 
     @Override
-    public JobTicket redo(ServerPlayerEntity p, ConflictPolicy c) throws EditRejected {
+    public JobTicket redo(P p, ConflictPolicy c) throws EditRejected {
         return redo(p, c, null);
     }
 
     /**
-     * {@link #undo(ServerPlayerEntity, ConflictPolicy)} reporting only to {@code listener} (commands): the
+     * {@link #undo(Object, ConflictPolicy)} reporting only to {@code listener} (commands): the
      * provider's (network) listener is not told about a job its client never requested.
      */
-    public JobTicket undo(ServerPlayerEntity p, ConflictPolicy c, JobListener listener) throws EditRejected {
+    public JobTicket undo(P p, ConflictPolicy c, JobListener listener) throws EditRejected {
         return historyJob(p, c, HistoryService.Op.UNDO, listener);
     }
 
-    /** {@link #redo(ServerPlayerEntity, ConflictPolicy)} reporting only to {@code listener} (commands). */
-    public JobTicket redo(ServerPlayerEntity p, ConflictPolicy c, JobListener listener) throws EditRejected {
+    /** {@link #redo(Object, ConflictPolicy)} reporting only to {@code listener} (commands). */
+    public JobTicket redo(P p, ConflictPolicy c, JobListener listener) throws EditRejected {
         return historyJob(p, c, HistoryService.Op.REDO, listener);
     }
 
-    private JobTicket historyJob(ServerPlayerEntity p, ConflictPolicy policy, HistoryService.Op op,
+    private JobTicket historyJob(P p, ConflictPolicy policy, HistoryService.Op op,
                                  JobListener listener) throws EditRejected {
         checkThread();
         Objects.requireNonNull(policy);
         requireEditing();
         require(p, Perm.USE);
-        UUID owner = p.getUuid();
+        UUID owner = runtime.id(p);
         commitStroke(owner);
         HistoryService.Session session = history.session(owner);
         if (session.loading()) throw new EditRejected(RejectReason.QUEUE_FULL, "your history is still loading");
@@ -1094,7 +1080,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         if (session.editsRunning() > 0) throw new EditRejected(RejectReason.QUEUE_FULL, "a job is still running");
         HistoryEntry entry = history.candidate(session, op)
                 .orElseThrow(() -> new EditRejected(RejectReason.HISTORY_EMPTY));
-        ServerWorld world = worldOf(entry.world());
+        W world = worldOf(entry.world());
         if (world == null) throw new EditRejected(RejectReason.INVALID, "world " + entry.world() + " is not loaded");
         // What the entry's fluid did since its last step (flowed out, turned grass under it to dirt) is taken back too:
         // the step runs over the entry with that trail folded in, which replaces the entry once the step is admitted.
@@ -1122,23 +1108,31 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** An admitted undo, redo or overwrite job and its tracker. */
-    private record HistoryJob(TrackedJob tracked, JobTicket ticket) {}
+    private final class HistoryJob {
+        final TrackedJob tracked;
+        final JobTicket ticket;
+
+        HistoryJob(TrackedJob tracked, JobTicket ticket) {
+            this.tracked = tracked;
+            this.ticket = ticket;
+        }
+    }
 
     /** Builds and submits the undo or redo job of {@code entry} (throws what the executor refuses). */
-    private HistoryJob historyStep(ServerPlayerEntity p, HistoryService.Session session, ServerWorld world,
+    private HistoryJob historyStep(P p, HistoryService.Session session, W world,
                                    HistoryEntry entry, HistoryService.Op op, ConflictPolicy policy, JobListener listener)
             throws EditRejected {
         // Contents are compared as the game holds them (a chest filled since the step is kept like a changed block).
-        TileMatcher tiles = new FabricTileMatcher(world.getRegistryManager(), runtime.states());
+        TileMatcher tiles = runtime.tileMatcher(world);
         EditProgram base = op == HistoryService.Op.UNDO ? HistoryPrograms.undo(entry, policy, tiles)
                 : HistoryPrograms.redo(entry, policy, tiles);
         ConflictCountingProgram program = new ConflictCountingProgram(base);
         JobListener downstream = listener != null ? listener : listeners.apply(p);
-        TrackedJob job = new TrackedJob(p.getUuid(), p.getGameProfile().getName(), program.label(), downstream, program,
+        TrackedJob job = new TrackedJob(runtime.id(p), runtime.name(p), program.label(), downstream, program,
                 null, entry.world(), session, op, EnumSet.of(Perm.USE));
         // Fluid the step puts where there was none (a drain's water an undo puts back) is followed as the entry's.
         UUID id = entry.id();
-        JobRequest<ServerWorld> request = JobRequest.forPlayer(runtime, p, program, new RunOptions(false, policy), job,
+        JobRequest<W> request = JobRequest.forPlayer(runtime, p, program, new RunOptions(false, policy), job,
                 trails.stepMarking(RecordSink.NONE, world, (x, y, z) -> id));
         if (request.world() != world) {
             Box bounds = program.bounds();
@@ -1155,7 +1149,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     @Override
-    public JobTicket historyOverwrite(ServerPlayerEntity p, boolean redo, int steps) throws EditRejected {
+    public JobTicket historyOverwrite(P p, boolean redo, int steps) throws EditRejected {
         return historyOverwrite(p, redo, steps, null);
     }
 
@@ -1169,12 +1163,12 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * spans worlds ({@link HistoryService#overwriteRefusal}). Chunk permits, the world border, the executor's budgets
      * and cancelling apply as to any job; its events go to the listener like an undo's.
      */
-    public JobTicket historyOverwrite(ServerPlayerEntity p, boolean redo, int steps, JobListener listener)
+    public JobTicket historyOverwrite(P p, boolean redo, int steps, JobListener listener)
             throws EditRejected {
         checkThread();
         requireEditing();
         require(p, Perm.USE);
-        UUID owner = p.getUuid();
+        UUID owner = runtime.id(p);
         commitStroke(owner);
         HistoryService.Session session = history.session(owner);
         if (session.loading()) throw new EditRejected(RejectReason.QUEUE_FULL, "your history is still loading");
@@ -1185,7 +1179,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         if (refusal != null) throw new EditRejected(RejectReason.INVALID, refusal, EditRejected.HISTORY_RUN);
         HistoryService.Run run = session.run().orElseThrow();
         String worldId = run.entries().get(0).world();
-        ServerWorld world = worldOf(worldId);
+        W world = worldOf(worldId);
         if (world == null) throw new EditRejected(RejectReason.INVALID, "world " + worldId + " is not loaded");
         // What the entries' fluid did since goes into them as it would for their next step:
         // an Undo anyway's entries are undone, so toward after (the redo takes it back); a Redo anyway's are done, so
@@ -1220,12 +1214,12 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** Builds and submits Undo anyway (or Redo anyway) of {@code run} (throws what the executor refuses). */
-    private HistoryJob overwriteJob(ServerPlayerEntity p, HistoryService.Session session, ServerWorld world,
+    private HistoryJob overwriteJob(P p, HistoryService.Session session, W world,
                                     String worldId, List<HistoryEntry> run, HistoryService.Op op, boolean redo,
                                     JobListener listener) throws EditRejected {
         EditProgram program = HistoryPrograms.reapply(run, redo);
         JobListener downstream = listener != null ? listener : listeners.apply(p);
-        TrackedJob job = new TrackedJob(p.getUuid(), p.getGameProfile().getName(), program.label(), downstream, null,
+        TrackedJob job = new TrackedJob(runtime.id(p), runtime.name(p), program.label(), downstream, null,
                 null, worldId, session, op, EnumSet.of(Perm.USE));
         job.overwrite = true;
         // A cell belongs to the entry whose target it gets: the last of the run that records it (HistoryPrograms).
@@ -1235,7 +1229,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             }
             return null;
         });
-        JobRequest<ServerWorld> request = JobRequest.forPlayer(runtime, p, program,
+        JobRequest<W> request = JobRequest.forPlayer(runtime, p, program,
                 new RunOptions(false, ConflictPolicy.OVERWRITE), job, marks);
         if (request.world() != world) {
             Box bounds = program.bounds();
@@ -1255,28 +1249,28 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
 
     /** See {@link TinkerService#block} and {@link TinkerEdits}. */
     @Override
-    public void block(ServerPlayerEntity player, BlockPos pos, int expected, int target,
+    public void block(P player, BlockPos pos, int expected, int target,
                       dev.sculptory.core.tinker.SignText sign) throws EditRejected {
         tinker.block(player, pos, expected, target, sign);
     }
 
     /** See {@link TinkerService#entity} and {@link TinkerEdits}. */
     @Override
-    public dev.sculptory.core.tinker.EntityView entity(ServerPlayerEntity player, UUID id,
+    public dev.sculptory.core.tinker.EntityView entity(P player, UUID id,
                                                           List<dev.sculptory.core.tinker.EntityEdit> edits)
             throws EditRejected {
         return tinker.entity(player, id, edits);
     }
 
     @Override
-    public boolean cancel(ServerPlayerEntity p, UUID jobId) {
+    public boolean cancel(P p, UUID jobId) {
         checkThread();
-        return jobId != null && executor.cancel(p.getUuid(), jobId);
+        return jobId != null && executor.cancel(runtime.id(p), jobId);
     }
 
     /** Cancels all of the player's jobs; returns how many were cancelled. */
-    public int cancelAll(ServerPlayerEntity p) {
-        return cancelAll(p.getUuid());
+    public int cancelAll(P p) {
+        return cancelAll(runtime.id(p));
     }
 
     /**
@@ -1316,7 +1310,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     // ================================================================== strokes
 
     @Override
-    public void beginStroke(ServerPlayerEntity p, int strokeId, BrushSpec spec) throws EditRejected {
+    public void beginStroke(P p, int strokeId, BrushSpec spec) throws EditRejected {
         checkThread();
         Objects.requireNonNull(spec);
         requireEditing();
@@ -1340,8 +1334,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         } catch (IllegalArgumentException | IndexOutOfBoundsException e) {
             throw new EditRejected(RejectReason.INVALID, "brush mask: " + e.getMessage());
         }
-        BoundMask strokeMask = EditMasks.current(p.getUuid());
-        ServerWorld world = p.getServerWorld();
+        BoundMask strokeMask = EditMasks.current(runtime.id(p));
+        W world = runtime.world(p);
         if (spec.clip() != null && !insideWorld(spec.clip(), world)) {
             throw new EditRejected(RejectReason.INVALID, "clip box outside the world: " + spec.clip());
         }
@@ -1351,25 +1345,25 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         }
         BrushLane lane = lane(p);
         if (lane.stroke != null) closeStroke(lane);
-        lane.stroke = new StrokeSession(strokeId, spec, world, worldId(world), history.session(p.getUuid()),
+        lane.stroke = new StrokeSession(strokeId, spec, world, runtime.worldId(world), history.session(runtime.id(p)),
                 runtime.reader(world),
                 runtime.writer(world, WriteOptions.DEFAULT).watchVanillaWrites(executor.clientSync(world)),
                 clock.getAsLong(), shapeCells, strokeMask);
     }
 
     @Override
-    public void predicted(ServerPlayerEntity p) {
+    public void predicted(P p) {
         checkThread();
-        executor.predicted(p.getUuid());
+        executor.predicted(runtime.id(p));
     }
 
     @Override
-    public DabOutcome dabs(ServerPlayerEntity p, int strokeId, int seq, List<Dab> dabs) {
+    public DabOutcome dabs(P p, int strokeId, int seq, List<Dab> dabs) {
         checkThread();
         // The client predicted these dabs before sending them, accepted or not: bulk writes near this player go out
         // as per-block updates for a while (ClientSync).
         predicted(p);
-        BrushLane lane = lanes.get(p.getUuid());
+        BrushLane lane = lanes.get(runtime.id(p));
         StrokeSession stroke = lane == null ? null : lane.stroke;
         int lastIndex = dabs == null || dabs.isEmpty() || dabs.get(dabs.size() - 1) == null
                 ? (stroke == null ? -1 : stroke.lastIndex) : dabs.get(dabs.size() - 1).index();
@@ -1391,9 +1385,9 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     @Override
-    public void endStroke(ServerPlayerEntity p, int strokeId) {
+    public void endStroke(P p, int strokeId) {
         checkThread();
-        BrushLane lane = lanes.get(p.getUuid());
+        BrushLane lane = lanes.get(runtime.id(p));
         if (lane == null || lane.stroke == null || lane.stroke.strokeId != strokeId) return;
         closeStroke(lane);
     }
@@ -1429,7 +1423,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         return commits;
     }
 
-    private static int pendingUnits(BrushLane lane) {
+    private int pendingUnits(BrushLane lane) {
         int units = 0;
         for (LaneWork work : lane.pending) {
             if (work instanceof DabWork dab) units += dab.units;
@@ -1446,34 +1440,34 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     // ================================================================== builder mode
 
     @Override
-    public void builderPowers(ServerPlayerEntity p, int powers) {
+    public void builderPowers(P p, int powers) {
         checkThread();
         builder.powers(p, powers);
     }
 
     @Override
-    public BuilderOutcome builderPlace(ServerPlayerEntity p, C2S.BuilderPlace place) {
+    public BuilderOutcome builderPlace(P p, C2S.BuilderPlace place) {
         checkThread();
         return builder.place(p, Objects.requireNonNull(place));
     }
 
     @Override
-    public BuilderOutcome builderBreak(ServerPlayerEntity p, C2S.BuilderBreak breaks) {
+    public BuilderOutcome builderBreak(P p, C2S.BuilderBreak breaks) {
         checkThread();
         return builder.breakBlocks(p, Objects.requireNonNull(breaks));
     }
 
     @Override
-    public void builderDragEnd(ServerPlayerEntity p, int dragId) {
+    public void builderDragEnd(P p, int dragId) {
         checkThread();
         builder.dragEnd(p, dragId);
     }
 
-    /** Jump and Through: decided and carried out by {@link NavigateService}. */
+    /** Jump and Through: decided and carried out by the platform ({@link EngineHost#navigate}). */
     @Override
-    public S2C.NavigateResult navigate(ServerPlayerEntity p, C2S.Navigate m) {
+    public S2C.NavigateResult navigate(P p, C2S.Navigate m) {
         checkThread();
-        return NavigateService.navigate(runtime, p, m);
+        return runtime.navigate(p, m);
     }
 
     /** The builder powers the player last reported (0 when none or unknown). */
@@ -1486,9 +1480,9 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         return builder.dragOpen(player);
     }
 
-    /** Whether {@code pos} lies within the player's builder reach (tests). */
-    public boolean builderReaches(ServerPlayerEntity p, net.minecraft.util.math.BlockPos pos) {
-        return builder.withinReach(p, pos);
+    /** Whether block (x, y, z) lies within the player's builder reach (tests). */
+    public boolean builderReaches(P p, int x, int y, int z) {
+        return builder.withinReach(p, x, y, z);
     }
 
     // ================================================================== lifecycle
@@ -1596,16 +1590,16 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * {@code HistoryService.BARRIER_WAIT_NANOS}), so after a crash the chunk on disk is never newer than its history.
      * That includes what edited fluid did there since: each entry's trail in
      * this column is folded into the entry and journaled, when its history is loaded and no step of its player runs
-     * (else it waits in memory, and {@code FluidTrails.chunkSaved} flags the chunk to be saved again, so a later save
-     * folds it). A no-op without saved history; off the server thread (a mod saving
+     * (else it waits in memory, and the platform flags the chunk to be saved again, so a later save folds it). A no-op
+     * without saved history; off the server thread (a mod saving
      * chunks elsewhere) it does nothing and returns false, which the caller counts.
      *
      * @return false when called off the server thread
      */
-    public boolean beforeChunkSave(ServerWorld world, int cx, int cz) {
-        if (!server.isOnThread()) return false;
+    public boolean beforeChunkSave(W world, int cx, int cz) {
+        if (!runtime.isOnThread()) return false;
         if (!history.persistent()) return true;
-        String id = worldId(world);
+        String id = runtime.worldId(world);
         Set<UUID> touched = new java.util.HashSet<>(history.saveOpen(id, cx, cz));
         touched.addAll(saveOpenStrokes(id, cx, cz, true));
         touched.addAll(trails.drainColumn(world, cx, cz, history::foldTrail));
@@ -1623,11 +1617,11 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
 
     /**
      * Re-checks the player's rights against all their admitted jobs, in every world (op and deop): see
-     * {@link #revalidate(ServerPlayerEntity, boolean)}.
+     * {@link #revalidate(Object, boolean)}.
      *
      * @return how many jobs were cancelled now
      */
-    public int revalidate(ServerPlayerEntity p) {
+    public int revalidate(P p) {
         return revalidate(p, true);
     }
 
@@ -1650,27 +1644,27 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      *     into another world must not cancel what they started where they held it
      * @return how many jobs were cancelled now
      */
-    public int revalidate(ServerPlayerEntity p, boolean allWorlds) {
+    public int revalidate(P p, boolean allWorlds) {
         checkThread();
-        UUID owner = p.getUuid();
+        UUID owner = runtime.id(p);
         builder.permissionsChanged(p);
-        String here = worldId(p.getServerWorld());
+        String here = runtime.worldId(runtime.world(p));
         List<TrackedJob> lost = new ArrayList<>();
-        Map<Perm, TriState> nodes = new EnumMap<>(Perm.class);
-        TriState[] operatorNbt = {null};
+        Map<Perm, Boolean> denied = new EnumMap<>(Perm.class);
+        Boolean[] operatorNbtDenied = {null};
         for (TrackedJob job : jobs.values()) {
             if (!job.owner.equals(owner) || job.revoked || job.jobId == null) continue;
             if (!allWorlds && !job.worldId.equals(here)) continue;
             boolean missing = false;
             for (Perm node : job.required) {
-                if (nodes.computeIfAbsent(node, n -> permissions.check(p, n)) == TriState.FALSE) {
+                if (denied.computeIfAbsent(node, n -> permissions.denied(p, n))) {
                     missing = true;
                     break;
                 }
             }
             if (!missing && job.operatorNbt) {
-                if (operatorNbt[0] == null) operatorNbt[0] = permissions.operatorNbt(p);
-                missing = operatorNbt[0] == TriState.FALSE;
+                if (operatorNbtDenied[0] == null) operatorNbtDenied[0] = permissions.operatorNbtDenied(p);
+                missing = operatorNbtDenied[0];
             }
             if (missing) lost.add(job);
         }
@@ -1681,14 +1675,14 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             if (executor.cancel(owner, job.jobId)) {
                 cancelled++;
                 LOG.info("Sculptory: cancelled job {} ({}) of {}: a permission it needs was removed",
-                        job.jobId, job.label, p.getGameProfile().getName());
+                        job.jobId, job.label, runtime.name(p));
             }
         }
         return cancelled;
     }
 
     /**
-     * {@link #revalidate(ServerPlayerEntity, boolean)} (this world only) for every online owner of an admitted job.
+     * {@link #revalidate(Object, boolean)} (this world only) for every online owner of an admitted job.
      * Anything unexpected is logged and cancels nothing: the server tick must go on.
      */
     private void recheckJobOwners() {
@@ -1696,13 +1690,13 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         Set<UUID> owners = new LinkedHashSet<>();
         for (TrackedJob job : jobs.values()) owners.add(job.owner);
         for (UUID owner : owners) {
-            ServerPlayerEntity online = server.getPlayerManager().getPlayer(owner);
+            P online = runtime.online(owner);
             if (online == null) continue;
             try {
                 revalidate(online, false);
             } catch (RuntimeException | LinkageError e) {
                 LOG.error("Sculptory: re-checking {}'s permissions failed; their jobs go on",
-                        online.getGameProfile().getName(), e);
+                        runtime.name(online), e);
             }
         }
     }
@@ -1783,10 +1777,10 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * Per player: the open stroke, closed strokes whose record is still to be committed, and admitted brush work (dabs,
      * commits) in the order the executor's brush lane runs it.
      */
-    static final class BrushLane {
+    final class BrushLane {
         final UUID owner;
         /** The latest entity of the player, for acknowledgements. */
-        ServerPlayerEntity player;
+        P player;
         StrokeSession stroke;
         /** Closed strokes whose record a queued {@link CommitWork} will push. */
         final List<StrokeSession> closing = new ArrayList<>();
@@ -1794,23 +1788,23 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         /** The player left; the lane is forgotten once its work is done ({@link #tick}), unless they come back. */
         boolean left;
 
-        BrushLane(ServerPlayerEntity player) {
-            this.owner = player.getUuid();
+        BrushLane(P player) {
+            this.owner = runtime.id(player);
             this.player = player;
         }
     }
 
     /** One stroke. */
-    static final class StrokeSession {
+    final class StrokeSession {
         final int strokeId;
         final BrushSpec spec;
         /** The tool's kernel under the global mask read at StrokeBegin. */
         final BrushKernel kernel;
-        final ServerWorld world;
+        final W world;
         final String worldId;
         final HistoryService.Session history;
-        final FabricWorldReader reader;
-        final BlockWriter writer;
+        final LiveReader reader;
+        final WorldWriter writer;
         final StrokeState state = new StrokeState();
         /**
          * The Shape brush: the cells one placement reads ({@link ShapeStamp#cellCount}, the same for every copy, the
@@ -1836,8 +1830,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         /** The global mask read at StrokeBegin ({@link BoundMask#ALL}: off). */
         final BoundMask mask;
 
-        StrokeSession(int strokeId, BrushSpec spec, ServerWorld world, String worldId, HistoryService.Session history,
-                      FabricWorldReader reader, BlockWriter writer, long now, long shapeCells, BoundMask mask) {
+        StrokeSession(int strokeId, BrushSpec spec, W world, String worldId, HistoryService.Session history,
+                      LiveReader reader, WorldWriter writer, long now, long shapeCells, BoundMask mask) {
             this.strokeId = strokeId;
             this.spec = spec;
             this.mask = mask;
@@ -1853,7 +1847,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** One admitted {@code Dabs} message: acknowledged once all its dabs ran or were dropped. */
-    static final class DabBatch {
+    final class DabBatch {
         final BrushLane lane;
         final StrokeSession stroke;
         final int seq;
@@ -1877,7 +1871,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * A player's brush work, queued both on the executor's brush lane and in {@link BrushLane#pending}, in the same
      * order. {@link #flush} runs the pending work whole at once, after which the lane finds it done and skips it.
      */
-    abstract static class LaneWork implements BrushWork {
+    abstract class LaneWork implements BrushWork {
         final BrushLane lane;
         boolean done;
 
@@ -1950,7 +1944,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** A Shape step being written in parts: the parts left, and the writer of the whole step. */
-    static final class ShapeRun {
+    final class ShapeRun {
         final ShapeStep step;
         final DabWriter writer;
         final SymmetricStep symmetric;
@@ -2022,7 +2016,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         }
     }
 
-    private RejectReason admission(ServerPlayerEntity p, BrushLane lane, StrokeSession stroke, int strokeId, int seq,
+    private RejectReason admission(P p, BrushLane lane, StrokeSession stroke, int strokeId, int seq,
                                    List<Dab> dabs) {
         if (!config().editingEnabled) return RejectReason.DISABLED;
         if (stroke == null || stroke.strokeId != strokeId || stroke.closed) return RejectReason.INVALID;
@@ -2042,7 +2036,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             }
             units += units(stroke, dab, images);
         }
-        if (p.getServerWorld() != stroke.world) return RejectReason.INVALID;
+        if (runtime.world(p) != stroke.world) return RejectReason.INVALID;
         if (!permissions.has(p, Perm.USE) || !permissions.has(p, Perm.BRUSH)) return RejectReason.NO_PERMISSION;
         int queued = pendingUnits(lane);
         // One step larger than the cap goes through when nothing of the player's is queued (the client waits for it).
@@ -2060,7 +2054,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         }
         for (Dab dab : dabs) {
             for (Box box : stepBoxes(stroke, dab, SymmetricStep.of(stroke.spec, dab, stroke.reader))) {
-                if (executor.isLockedFor(stroke.world, box, p.getUuid())) return RejectReason.AREA_BUSY;
+                if (executor.isLockedFor(stroke.world, box, runtime.id(p))) return RejectReason.AREA_BUSY;
             }
         }
         return null;
@@ -2070,7 +2064,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * A dab's cost in the player's queue: its copies for the terrain brushes; for the Shape brush its placements (a dab
      * on the rotation centre still places four shapes) in work units of {@link ShapeStamp#WORK_UNIT_CELLS} cells.
      */
-    private static int units(StrokeSession stroke, Dab dab, List<Dab> copies) {
+    private int units(StrokeSession stroke, Dab dab, List<Dab> copies) {
         if (stroke.spec.tool() != BrushTool.SHAPE) return copies.size();
         return ShapeStamp.units(ShapeStamp.placements(stroke.spec, dab).size(), stroke.shapeCells);
     }
@@ -2142,7 +2136,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         } catch (RuntimeException e) {
             LOG.error("Sculptory: acknowledging dab batch {} failed", batch.seq, e);
         }
-        ServerPlayerEntity online = server.getPlayerManager().getPlayer(batch.lane.owner);
+        P online = runtime.online(batch.lane.owner);
         if (online == null) return;
         try {
             events.dabsApplied(online, batch.stroke.strokeId, batch.lastIndex);
@@ -2171,7 +2165,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      */
     private boolean applyDab(BrushLane lane, StrokeSession stroke, DabWork work, long deadline) {
         // The latest entity is fine after a respawn or disconnect: permissions and protection go by profile.
-        ServerPlayerEntity player = lane.player;
+        P player = lane.player;
         Dab dab = work.dab;
         if (work.shapeRun == null) {
             // An admitted dab stops only on a definite no: a permissions mod that fails (throws) stops nothing admitted.
@@ -2189,7 +2183,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             // Against the world before this step: what the kernel reads, and what the client predicted from.
             SymmetricStep step = SymmetricStep.of(stroke.spec, dab, stroke.reader);
             for (Box box : stepBoxes(stroke, dab, step)) {
-                if (executor.isLockedFor(stroke.world, box, player.getUuid())) {
+                if (executor.isLockedFor(stroke.world, box, runtime.id(player))) {
                     reject(lane, stroke, dab, RejectReason.AREA_BUSY);
                     return true;
                 }
@@ -2224,7 +2218,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
                     reject(lane, stroke, dab, RejectReason.UNLOADED);
                     break;
                 }
-                if (executor.isLockedFor(stroke.world, area, player.getUuid())) {
+                if (executor.isLockedFor(stroke.world, area, runtime.id(player))) {
                     reject(lane, stroke, dab, RejectReason.AREA_BUSY);
                     break;
                 }
@@ -2254,8 +2248,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** Whether the player definitely lost {@code use} or {@code brush} (a failing permissions mod is not a no). */
-    private boolean deniedBrush(ServerPlayerEntity player) {
-        return permissions.check(player, Perm.USE) == TriState.FALSE || permissions.check(player, Perm.BRUSH) == TriState.FALSE;
+    private boolean deniedBrush(P player) {
+        return permissions.denied(player, Perm.USE) || permissions.denied(player, Perm.BRUSH);
     }
 
     /** After a step (or what of it was written): refused {@code PROTECTED} when protection kept every cell of it. */
@@ -2271,9 +2265,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      */
     private final class DabWriter implements CellSink {
         final StrokeSession stroke;
-        final ServerPlayerEntity player;
+        final P player;
         final List<Box> boxes;
-        final WorldBorder border;
         long permitColumn = Long.MIN_VALUE;
         ChunkPermit permit;
         int written;
@@ -2281,11 +2274,10 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         /** Parts of a Shape step written so far. */
         int parts;
 
-        DabWriter(StrokeSession stroke, ServerPlayerEntity player, List<Box> boxes) {
+        DabWriter(StrokeSession stroke, P player, List<Box> boxes) {
             this.stroke = stroke;
             this.player = player;
             this.boxes = boxes;
-            this.border = stroke.world.getWorldBorder();
         }
 
         /** Before each part of a Shape step: permits are asked afresh (protection may have changed since the last). */
@@ -2302,7 +2294,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         /** {@code tile}: the block entity the cell keeps (a state pattern changed a property of the same block), or null. */
         @Override
         public void set(int x, int y, int z, int handle, BlockEntityData tile) {
-            if (!permitFor(x >> 4, z >> 4).allows(x, z) || !WorldChecks.insideBorder(border, x, z)) {
+            if (!permitFor(x >> 4, z >> 4).allows(x, z) || !runtime.insideBorder(stroke.world, x, z)) {
                 denied++;
                 return;
             }
@@ -2359,7 +2351,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     private void reject(BrushLane lane, StrokeSession stroke, Dab dab, RejectReason reason) {
         if (stroke.rejected != null) return;
         stroke.rejected = reason;
-        ServerPlayerEntity player = server.getPlayerManager().getPlayer(lane.owner);
+        P player = runtime.online(lane.owner);
         if (player == null) return;
         try {
             events.dabRejected(player, stroke.strokeId, dab.index(), reason);
@@ -2375,7 +2367,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     private void reportNoGround(BrushLane lane, StrokeSession stroke, Dab dab, int copies) {
         if (stroke.noGroundReported) return;
         stroke.noGroundReported = true;
-        ServerPlayerEntity player = server.getPlayerManager().getPlayer(lane.owner);
+        P player = runtime.online(lane.owner);
         if (player == null) return;
         try {
             events.symmetryNoGround(player, stroke.strokeId, dab.index(), copies);
@@ -2420,7 +2412,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * lane's work, so a retry a moment later goes ahead. The player's open builder-mode drag becomes its entry first
      * ({@link BuilderService#commitDrag}).
      */
-    void commitStroke(UUID player) throws EditRejected {
+    public void commitStroke(UUID player) throws EditRejected {
         builder.commitDrag(player);
         BrushLane lane = lanes.get(player);
         if (lane == null) return;
@@ -2464,7 +2456,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * with the history so it stays loaded until they are pushed. Without, nothing of theirs is pushed.
      */
     private void leave(BrushLane lane, boolean keep) {
-        for (LaneWork work : lane.pending.toArray(new LaneWork[0])) {
+        for (LaneWork work : new ArrayList<>(lane.pending)) {
             if (work instanceof DabWork dab) {
                 dropDab(dab);
             } else if (!keep) {
@@ -2568,7 +2560,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * Whether building the stroke's record at once is cheap: at most {@value #SMALL_RECORD_SECTIONS} sections left to
      * prepare ({@link RecordBuilder#unpreparedSections}).
      */
-    private static boolean cheapRecord(StrokeSession stroke) {
+    private boolean cheapRecord(StrokeSession stroke) {
         return stroke.record.unpreparedSections() <= SMALL_RECORD_SECTIONS;
     }
 
@@ -2588,8 +2580,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
                 label, record, createdMillis()));
     }
 
-    private BrushLane lane(ServerPlayerEntity p) {
-        BrushLane lane = lanes.computeIfAbsent(p.getUuid(), id -> new BrushLane(p));
+    private BrushLane lane(P p) {
+        BrushLane lane = lanes.computeIfAbsent(runtime.id(p), id -> new BrushLane(p));
         lane.player = p;
         return lane;
     }
@@ -2599,8 +2591,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * ({@link #shapeBoxes}); for a terrain brush each copy's {@link #dabBox} (a copy's chunks do not depend on the height
      * it stands at).
      */
-    static List<Box> areas(StrokeSession stroke, Dab dab) {
-        int bottom = stroke.world.getBottomY(), top = stroke.world.getTopY();
+    List<Box> areas(StrokeSession stroke, Dab dab) {
+        int bottom = runtime.bottomY(stroke.world), top = runtime.topY(stroke.world);
         if (stroke.spec.tool() == BrushTool.SHAPE) return shapeBoxes(stroke.spec, bottom, top, dab);
         List<Box> boxes = new ArrayList<>();
         for (Dab copy : stroke.spec.symmetry().copies(dab)) boxes.add(dabBox(stroke.spec, bottom, top, copy));
@@ -2624,8 +2616,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** The boxes a step's writer asks chunk permits for: each placement's box, or each located dab's {@link #dabBox}. */
-    private static List<Box> writeBoxes(StrokeSession stroke, Dab dab, SymmetricStep step) {
-        int bottom = stroke.world.getBottomY(), top = stroke.world.getTopY();
+    private List<Box> writeBoxes(StrokeSession stroke, Dab dab, SymmetricStep step) {
+        int bottom = runtime.bottomY(stroke.world), top = runtime.topY(stroke.world);
         if (stroke.spec.tool() == BrushTool.SHAPE) return shapeBoxes(stroke.spec, bottom, top, dab);
         List<Box> boxes = new ArrayList<>(step.dabs().size());
         for (Dab placed : step.dabs()) boxes.add(dabBox(stroke.spec, bottom, top, placed));
@@ -2661,8 +2653,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
      * looks for a surface at its own point); a copy that found no ground has only its column, and a lock anywhere in a
      * searched column (129 blocks tall) refuses the dab {@code AREA_BUSY}, even where the copy's own area is free.
      */
-    static List<Box> stepBoxes(StrokeSession stroke, Dab dab, SymmetricStep step) {
-        return stepBoxes(stroke.spec, stroke.world.getBottomY(), stroke.world.getTopY(), dab, step);
+    List<Box> stepBoxes(StrokeSession stroke, Dab dab, SymmetricStep step) {
+        return stepBoxes(stroke.spec, runtime.bottomY(stroke.world), runtime.topY(stroke.world), dab, step);
     }
 
     /** {@link #stepBoxes} for a brush of {@code spec} in a world of y {@code [bottomY, topYExclusive)}. */
@@ -2676,7 +2668,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         return boxes;
     }
 
-    private static boolean loaded(FabricWorldReader reader, Box box) {
+    private static boolean loaded(LiveReader reader, Box box) {
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
                 if (!reader.isLoaded(cx, cz)) return false;
@@ -2686,20 +2678,20 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /**
-     * Whether a brush's clip box lies within the world: horizontally within {@link World#HORIZONTAL_LIMIT} and
+     * Whether a brush's clip box lies within the world: horizontally within {@link #HORIZONTAL_LIMIT} and
      * vertically within the build height. The clip only narrows what a stroke writes (permissions, protection and
      * the border still apply per cell), so this refuses nonsense rather than guarding a write.
      */
-    static boolean insideWorld(Box clip, ServerWorld world) {
-        int limit = World.HORIZONTAL_LIMIT;
+    boolean insideWorld(Box clip, W world) {
+        int limit = HORIZONTAL_LIMIT;
         return Math.abs((long) clip.min().x()) <= limit && Math.abs((long) clip.max().x()) <= limit
                 && Math.abs((long) clip.min().z()) <= limit && Math.abs((long) clip.max().z()) <= limit
-                && clip.min().y() >= world.getBottomY() && clip.max().y() < world.getTopY();
+                && clip.min().y() >= runtime.bottomY(world) && clip.max().y() < runtime.topY(world);
     }
 
-    /** Whether a symmetry centre lies within {@link World#HORIZONTAL_LIMIT} (always without symmetry). */
-    static boolean insideWorld(Symmetry symmetry) {
-        long limit = 2L * World.HORIZONTAL_LIMIT;
+    /** Whether a symmetry centre lies within {@link #HORIZONTAL_LIMIT} (always without symmetry). */
+    public static boolean insideWorld(Symmetry symmetry) {
+        long limit = 2L * HORIZONTAL_LIMIT;
         return Math.abs((long) symmetry.x2()) <= limit && Math.abs((long) symmetry.z2()) <= limit;
     }
 
@@ -2717,9 +2709,9 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         return null;
     }
 
-    /** Whether a dab's block lies within {@link World#HORIZONTAL_LIMIT}. */
+    /** Whether a dab's block lies within {@link #HORIZONTAL_LIMIT}. */
     private static boolean insideWorld(Dab dab) {
-        return Math.abs(dab.blockX()) <= World.HORIZONTAL_LIMIT && Math.abs(dab.blockZ()) <= World.HORIZONTAL_LIMIT;
+        return Math.abs(dab.blockX()) <= HORIZONTAL_LIMIT && Math.abs(dab.blockZ()) <= HORIZONTAL_LIMIT;
     }
 
     private static boolean validMaterial(Pattern material, StateSpace states) {
@@ -2766,7 +2758,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         HistoryService.OpenRecord openRecord;
         /** The owner's connection when the job was admitted ({@link #connection}). */
         final long connection;
-        /** Entries whose fluid is held still while this undo, redo or overwrite runs ({@link FluidTrails#freeze}). */
+        /** Entries whose fluid is held still while this undo, redo or overwrite runs ({@link FluidTrailHook#freeze}). */
         List<UUID> frozen = List.of();
         /** Cancelled by {@link #revalidate} (a node was removed): not cancelled or logged again. */
         boolean revoked;
@@ -2849,7 +2841,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             if (op == null && conflicts != null && conflicts.conflicts() > 0) {
                 // A scatter commit skipped placements whose cells were built on since the preview. Told only to the
                 // connection that committed it (after a reconnect the new client never saw this job).
-                ServerPlayerEntity online = server.getPlayerManager().getPlayer(owner);
+                P online = runtime.online(owner);
                 if (online != null && isConnection(owner, connection)) {
                     try {
                         events.scatterSkipped(online, conflicts.conflicts());
@@ -2880,7 +2872,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     private final class HistoryEvents implements HistoryService.Listener {
         @Override
         public void changed(UUID player) {
-            ServerPlayerEntity online = server.getPlayerManager().getPlayer(player);
+            P online = runtime.online(player);
             if (online == null) return;
             try {
                 events.historyChanged(online, history.snapshot(player));
@@ -2891,7 +2883,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
 
         @Override
         public void evicted(UUID player, int steps, boolean includesNewest) {
-            ServerPlayerEntity online = server.getPlayerManager().getPlayer(player);
+            P online = runtime.online(player);
             if (online == null) return;
             try {
                 events.historyEvicted(online, steps, includesNewest);
@@ -2920,20 +2912,20 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         }
     }
 
-    /** {@code INVALID} unless {@code box} lies horizontally within {@link World#HORIZONTAL_LIMIT}. */
+    /** {@code INVALID} unless {@code box} lies horizontally within {@link #HORIZONTAL_LIMIT}. */
     static void requireInsideWorld(Box box, String what) throws EditRejected {
-        int limit = World.HORIZONTAL_LIMIT;
+        int limit = HORIZONTAL_LIMIT;
         if (box.min().x() < -limit || box.max().x() > limit || box.min().z() < -limit || box.max().z() > limit) {
             throw new EditRejected(RejectReason.INVALID, what + " lies beyond the world limit: " + box);
         }
     }
 
-    private EditProgram compile(OpSpec spec, List<OpSymmetry.Copy> copies, ServerWorld world, SourceBlocks pasteSource,
+    private EditProgram compile(OpSpec spec, List<OpSymmetry.Copy> copies, W world, SourceBlocks pasteSource,
                                 MultiPaste scatter, long maxCells, boolean bypass) throws EditRejected {
         BoundMask sourceMask = compileSourceMask;
         StateSpace states = runtime.states();
-        int bottom = world.getBottomY();
-        int top = world.getTopY();
+        int bottom = runtime.bottomY(world);
+        int top = runtime.topY(world);
         CompileContext context = new CompileContext() {
             @Override
             public long maxCells() {
@@ -2986,7 +2978,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
             /** Update blocks: vanilla's neighbour updates over the live world, without physics. */
             @Override
             public NeighbourShapes neighbourShapes() {
-                return spec instanceof OpSpec.UpdateBlocks ? new FabricNeighbourShapes(world, runtime.states()) : null;
+                return spec instanceof OpSpec.UpdateBlocks ? runtime.neighbourShapes(world) : null;
             }
         };
         try {
@@ -3000,31 +2992,29 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         }
     }
 
-    private ServerWorld worldOf(String id) {
-        for (ServerWorld world : server.getWorlds()) {
-            if (worldId(world).equals(id)) return world;
+    private W worldOf(String id) {
+        for (W world : runtime.worlds()) {
+            if (runtime.worldId(world).equals(id)) return world;
         }
         return null;
-    }
-
-    static String worldId(ServerWorld world) {
-        return world.getRegistryKey().getValue().toString();
     }
 
     private void requireEditing() throws EditRejected {
         if (!config().editingEnabled) throw new EditRejected(RejectReason.DISABLED);
     }
 
-    private void require(ServerPlayerEntity p, Perm node) throws EditRejected {
+    private void require(P p, Perm node) throws EditRejected {
         if (!permissions.has(p, node)) throw new EditRejected(RejectReason.NO_PERMISSION, node.node());
     }
 
     private void checkThread() {
-        if (!server.isOnThread()) throw new IllegalStateException("EngineEditService must be used on the server thread");
+        if (!runtime.isOnThread()) {
+            throw new IllegalStateException("EngineEditService must be used on the server thread");
+        }
     }
 
     /** Wall-clock creation time, strictly increasing, so "oldest" (global eviction) follows push order. */
-    long createdMillis() {
+    public long createdMillis() {
         lastCreatedMillis = Math.max(System.currentTimeMillis(), lastCreatedMillis + 1);
         return lastCreatedMillis;
     }
@@ -3041,7 +3031,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
     }
 
     /** "1 block", "1,284 blocks". */
-    static String blocks(long n) {
+    public static String blocks(long n) {
         return count(n, "block");
     }
 

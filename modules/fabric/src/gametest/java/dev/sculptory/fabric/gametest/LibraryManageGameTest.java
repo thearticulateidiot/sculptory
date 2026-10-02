@@ -18,7 +18,6 @@ import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.schem.SchematicCodec;
 import dev.sculptory.core.schem.SchematicMetadata;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -29,6 +28,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.library.Library;
 import dev.sculptory.server.library.LibraryPath;
 import java.io.ByteArrayOutputStream;
@@ -98,7 +98,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         put(root, "shared/tree.schem", stone);
         put(root, mine + "/mine.schem", stone);
         put(root, writers + "/w.schem", stone);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
 
         // Refused up front, before any file work.
         check(refusal(() -> clips.createFolder(builder, "shared2", new Captured<>())).reason() == RejectReason.NO_PERMISSION,
@@ -170,7 +170,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         Path sandbox = root.getParent();
         put(root, "ok/fine.schem", schem(h, "minecraft:stone"));
         Files.createDirectories(sandbox.resolve("outside"));
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         List<String> badFiles = List.of("../evil.schem", "../../evil.schem", "ok/../../evil.schem", "/evil.schem",
                 "//server/share/evil.schem", "C:/evil.schem", "C:evil.schem", "c:\\evil.schem", "ok\\evil.schem",
                 "CON.schem", "ok/nul.schem", ".hidden.schem", ".trash/x.schem", "ok//b.schem", "evil.txt", "evil",
@@ -229,7 +229,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         byte[] gold = schem(h, "minecraft:gold_block");
         String hash = Sha256.digest(gold).hex();
         put(root, "trees/oak.schem", gold);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.Listing> listed = new Captured<>();
         Captured<ClipboardService.Outbound> firstPreview = new Captured<>();
         Captured<LibraryChange> renamed = new Captured<>();
@@ -298,7 +298,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         put(root, "a/dirt.schem", dirt);
         ServerPlayerEntity other = h.addPlayer(true);
         Files.createDirectories(root.resolve("empty"));
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<LibraryChange> onto = new Captured<>();
         Captured<LibraryChange> fullFolder = new Captured<>();
         Captured<LibraryChange> deleted = new Captured<>();
@@ -365,7 +365,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         EditTestSupport.grant(other, Perm.USE, Perm.CLIPBOARD);
         EditTestSupport.grant(useOnly, Perm.USE);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         String own = "_players/" + owner.getUuid() + "/x.schem";
         LibraryChange intoOwn = new LibraryChange(false, "shared/x.schem", own);
         LibraryChange outOfOwn = new LibraryChange(false, own, "shared/x.schem");
@@ -395,7 +395,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         byte[] stone = schem(h, "minecraft:stone");
         String hash = Sha256.digest(stone).hex();
         put(root, "a/x.schem", stone);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.Listing> listed = new Captured<>();
         Captured<ClipboardService.Outbound> preview = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> load = new Captured<>();
@@ -432,7 +432,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         byte[] stone = schem(h, "minecraft:stone");
         put(root, "race/one.schem", stone);
         put(root, "race/two.schem", stone);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<LibraryChange> renameA = new Captured<>();
         Captured<LibraryChange> renameB = new Captured<>();
         Captured<LibraryChange> rename = new Captured<>();

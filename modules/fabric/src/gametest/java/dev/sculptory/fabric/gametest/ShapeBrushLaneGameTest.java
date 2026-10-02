@@ -27,7 +27,6 @@ import dev.sculptory.core.history.store.HistoryStore;
 import dev.sculptory.core.history.store.StorageIo;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.FabricHistoryCodec;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
@@ -44,6 +43,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.impl.BrushWork;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.platform.WriteOptions;
@@ -95,7 +95,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         final Harness h;
         final Path dir;
         final EditExecutor<ServerWorld> executor;
-        final EngineEditService service;
+        final EngineEditService<ServerPlayerEntity, ServerWorld> service;
 
         Saved(Harness h, Path dir, EditExecutor<ServerWorld> executor) {
             this.h = h;
@@ -108,7 +108,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             } catch (IOException e) {
                 throw new GameTestException("the history store did not open: " + e);
             }
-            this.service = new EngineEditService(h.runtime, executor, h.runtime.config().toHistoryLimits(),
+            this.service = new EngineEditService<>(h.runtime, executor, h.runtime.config().toHistoryLimits(),
                     p -> JobRequest.NO_LISTENER, h.acks, h.events, System::nanoTime,
                     new HistoryService.Persistence(store, 1L << 40, 0, System::currentTimeMillis));
         }

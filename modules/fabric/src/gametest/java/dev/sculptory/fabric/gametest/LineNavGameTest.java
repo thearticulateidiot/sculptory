@@ -26,7 +26,6 @@ import dev.sculptory.core.path.PathSpec;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.engine.impl.NavigateService;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -42,6 +41,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.List;
@@ -116,7 +116,7 @@ public final class LineNavGameTest implements FabricGameTest {
                                      OpLabel label, String labelPrefix) {
         WorldSnapshot before = capture(h.world, area);
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         try {
             clips.beginGeneratedUpload(h.player, source.bounds(), source.cells(), payload.length).completed(payload, uploaded);

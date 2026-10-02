@@ -15,7 +15,6 @@ import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.HistoryLimits;
 import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -30,6 +29,7 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
@@ -336,7 +336,7 @@ public final class EditServiceGameTest implements FabricGameTest {
     public void debugCommandsFillUndoRedo(TestContext context) {
         Harness h = new Harness(context);
         ServerWorld world = h.world;
-        EngineEditService host = EditServiceHost.find(world.getServer())
+        var host = EditServiceHost.find(world.getServer())
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
         int[] at = regionCorner(context, 23);
         Box region = box(at[0], 112, at[1], at[0] + 7, 119, at[1] + 7);

@@ -28,7 +28,6 @@ import dev.sculptory.core.schem.SchematicFormat;
 import dev.sculptory.core.schem.SchematicMetadata;
 import dev.sculptory.core.schem.StructureCodec;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -42,6 +41,7 @@ import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -59,6 +59,7 @@ import net.minecraft.block.entity.CommandBlockBlockEntity;
 import net.minecraft.nbt.NbtHelper;
 import net.minecraft.nbt.NbtSizeTracker;
 import net.minecraft.registry.Registries;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.structure.StructurePlacementData;
 import net.minecraft.structure.StructureTemplate;
@@ -120,7 +121,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, source);
         WorldSnapshot targetBefore = capture(world, target);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, source.min().offset(1, 0, 2));
         Captured<ClipboardService.Outbound> exported = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
@@ -191,7 +192,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
         Box wide = box(at[0], 100, at[1], at[0] + 48, 100, at[1]);
         loadAndForce(world, wide);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, wide, wide.min());
         Captured<ClipboardService.Outbound> structure = new Captured<>();
         Captured<ClipboardService.Outbound> litematic = new Captured<>();
@@ -236,7 +237,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
         ByteArrayOutputStream vanillaFile = new ByteArrayOutputStream();
         net.minecraft.nbt.NbtIo.writeCompressed(saved.writeNbt(new net.minecraft.nbt.NbtCompound()), vanillaFile);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, source.min());
         Captured<ClipboardService.Outbound> exported = new Captured<>();
@@ -334,7 +335,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
         writer.write(x0 + 3, y0, z0 + 1, h.state("minecraft:glass"), null);
         WorldSnapshot before = capture(world, area);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         RecordingListener undo = new RecordingListener();
@@ -388,7 +389,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
         loadAndForce(world, source);
         decorate(h, world, source);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, source.min().offset(1, 0, 2));
         List<String> paths = List.of("tests/house.schem", "tests/house.litematic", "tests/house.nbt");
         List<Captured<ClipboardService.Saved>> saves = new ArrayList<>();
@@ -440,7 +441,8 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
     }
 
     /** Takes the answer of the last save in {@code saves} (if any), then starts the next one. */
-    private static void nextSave(Harness h, ServerClipboards clips, java.util.UUID clipboardId, List<String> paths,
+    private static void nextSave(Harness h, ServerClipboards<ServerPlayerEntity, ServerWorld> clips,
+                                 java.util.UUID clipboardId, List<String> paths,
                                  List<Captured<ClipboardService.Saved>> saves) {
         if (!saves.isEmpty()) saves.get(saves.size() - 1).get("save " + paths.get(saves.size() - 1));
         if (saves.size() == paths.size()) return;
@@ -450,7 +452,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
     }
 
     /** Takes the answer of the last load in {@code loads}, then starts the next one (loads replace the clipboard). */
-    private static void nextLoad(Harness h, ServerClipboards clips, List<String> paths,
+    private static void nextLoad(Harness h, ServerClipboards<ServerPlayerEntity, ServerWorld> clips, List<String> paths,
                                  List<Captured<ClipboardService.ClipboardInfo>> loads, List<Clipboard> loaded) {
         if (loaded.size() == loads.size()) return;
         loads.get(loads.size() - 1).get("load " + paths.get(loads.size() - 1));

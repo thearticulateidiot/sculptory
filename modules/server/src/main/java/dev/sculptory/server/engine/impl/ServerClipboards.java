@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.engine.impl;
+package dev.sculptory.server.engine.impl;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
@@ -38,12 +38,6 @@ import dev.sculptory.core.schem.SchematicReport;
 import dev.sculptory.core.schem.StructureCodec;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
-import dev.sculptory.fabric.config.FolderMigration;
-import dev.sculptory.fabric.perm.FabricPermissionService;
-import dev.sculptory.fabric.world.FabricEntities;
-import dev.sculptory.fabric.world.FabricTile;
-import dev.sculptory.fabric.world.FabricWorldReader;
-import dev.sculptory.fabric.world.EntityTypeRules;
 import dev.sculptory.protocol.v2.AssetAccess;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
@@ -55,19 +49,17 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
-import dev.sculptory.server.engine.impl.AssetCache;
-import dev.sculptory.server.engine.impl.EditMasks;
-import dev.sculptory.server.engine.impl.EntityColumns;
-import dev.sculptory.server.engine.impl.EntityJobs;
-import dev.sculptory.server.engine.impl.EntityWork;
-import dev.sculptory.server.engine.impl.PlayerClipboards;
-import dev.sculptory.server.engine.impl.RequestSlots;
 import dev.sculptory.server.library.Library;
 import dev.sculptory.server.library.LibraryException;
 import dev.sculptory.server.library.LibraryPath;
 import dev.sculptory.server.library.LibraryPathException;
 import dev.sculptory.server.library.PaletteFile;
 import dev.sculptory.server.net.PreviewPayload;
+import dev.sculptory.server.platform.EntityRules;
+import dev.sculptory.server.platform.LiveReader;
+import dev.sculptory.server.platform.PlatformPermissions;
+import dev.sculptory.server.platform.Profile;
+import dev.sculptory.server.platform.WorldEntities;
 import dev.sculptory.server.schem.EntitySanitizer;
 import dev.sculptory.server.schem.FileEntities;
 import dev.sculptory.server.schem.TileSanitizer;
@@ -76,7 +68,6 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -94,10 +85,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.LongConsumer;
-import net.minecraft.entity.Entity;
-import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -161,8 +148,11 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Messages sent to the client never carry exception text that may contain server paths: unexpected errors are
  * logged and answered with a generic detail.
+ *
+ * @param <P> the platform's player type
+ * @param <W> the platform's world type
  */
-public final class ServerClipboards implements ClipboardService<ServerPlayerEntity> {
+public final class ServerClipboards<P, W> implements ClipboardService<P> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Largest preview payload sent. */
     public static final long MAX_PREVIEW_BYTES = 32L << 20;
@@ -205,10 +195,9 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      */
     static final long MAX_ENTITY_BYTES = 32L << 20;
 
-    private final EngineEditService edits;
-    private final EngineRuntime runtime;
-    private final MinecraftServer server;
-    private final FabricPermissionService permissions;
+    private final EngineEditService<P, W> edits;
+    private final EngineHost<P, W> runtime;
+    private final PlatformPermissions<P, W> permissions;
     private final Library library;
     private final ExecutorService io;
     private final DataFixHook fixes;
@@ -216,10 +205,9 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     /** Set by {@link #shutdown()}: finished work only releases its leases. */
     private volatile boolean closing;
 
-    public ServerClipboards(EngineEditService edits, Library library, ExecutorService io, DataFixHook fixes) {
+    public ServerClipboards(EngineEditService<P, W> edits, Library library, ExecutorService io, DataFixHook fixes) {
         this.edits = Objects.requireNonNull(edits);
         this.runtime = edits.runtime();
-        this.server = edits.server();
         this.permissions = runtime.permissions();
         this.library = Objects.requireNonNull(library);
         this.io = Objects.requireNonNull(io);
@@ -230,11 +218,6 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     /** The config in effect: the runtime's, which {@code /sculptory reload} replaces (checks read it when they run). */
     private SculptoryConfig config() {
         return runtime.config();
-    }
-
-    /** {@code <gameDir>/sculptory/library}. */
-    public static Path defaultLibraryRoot() {
-        return FolderMigration.gameDir().resolve("library");
     }
 
     /**
@@ -258,7 +241,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         return library;
     }
 
-    public EngineEditService edits() {
+    public EngineEditService<P, W> edits() {
         return edits;
     }
 
@@ -312,7 +295,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     // ================================================================== copy
 
     @Override
-    public JobTicket copy(ServerPlayerEntity p, Region region, BlockPos origin, boolean cut, CellMask mask,
+    public JobTicket copy(P p, Region region, BlockPos origin, boolean cut, CellMask mask,
                           EntityFilter entities, JobListener cutListener, Reply<ClipboardInfo> callerReply)
             throws EditRejected {
         checkThread();
@@ -325,9 +308,9 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         if (cut) require(p, Perm.REGION);
         boolean bypass = permissions.has(p, Perm.LIMIT_BYPASS);
         EngineEditService.admitRegion(region, bypass);
-        UUID owner = p.getUuid();
-        ServerWorld world = p.getServerWorld();
-        Box area = EngineEditService.inBuildHeight(region.bounds(), world);
+        UUID owner = runtime.id(p);
+        W world = runtime.world(p);
+        Box area = edits.inBuildHeight(region.bounds(), world);
         long max = config().limits.maxClipboardVolume;
         if (area.volume() > max && !bypass) throw new EditRejected(RejectReason.TOO_LARGE, area.volume() + " > " + max + " blocks");
         try {
@@ -352,7 +335,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         long[] sections = box ? null : edits.regionSections(region, area.min().y(), area.max().y());
         Long2ObjectOpenHashMap<long[]> columns = box ? null : edits.regionColumns(region, area.min().y(), area.max().y());
         boolean trusted = box ? edits.requireReadable(p, world, area) : edits.requireReadable(p, world, columns, area);
-        FabricWorldReader reader = runtime.reader(world);
+        LiveReader reader = runtime.reader(world);
         if (box) {
             for (int cx = area.min().x() >> 4; cx <= area.max().x() >> 4; cx++) {
                 for (int cz = area.min().z() >> 4; cz <= area.max().z() >> 4; cz++) {
@@ -374,7 +357,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         long[] entityColumns = entities == EntityFilter.NONE ? null
                 : EntityColumns.of(region, area.min().y(), area.max().y());
         if (entityColumns != null) {
-            String unloaded = FabricEntities.firstUnloaded(world, entityColumns);
+            String unloaded = runtime.entities(world).firstUnloaded(entityColumns);
             if (unloaded != null) {
                 throw new EditRejected(RejectReason.UNLOADED, "the entities of chunk " + unloaded + " are not loaded");
             }
@@ -398,7 +381,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
                 SectionBuffer section = new SectionBuffer();
                 reader.copySection(BlockBuffer.keyX(key), BlockBuffer.keyY(key), BlockBuffer.keyZ(key), section);
                 // A bypass copy of an area the player could not write: its tiles are not theirs to vouch for.
-                if (!trusted) section.forEachTile((i, tile) -> section.setTile(i, untrusted(tile)));
+                if (!trusted) section.forEachTile((i, tile) -> section.setTile(i, runtime.untrusted(tile)));
                 snapshot.put(key, section);
             };
             if (box) {
@@ -407,19 +390,21 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
                 for (long key : sections) capture.accept(key);
             }
             // A mask reading neighbours reads those around the region too: the loaded sections next to it.
-            if (global.reach() > 0) captureHalo(snapshot, reader, world, capture);
+            if (global.reach() > 0) {
+                captureHalo(snapshot, reader, runtime.bottomSection(world), runtime.topSection(world), capture);
+            }
         } catch (EditRejected | RuntimeException e) {
             lease.release();
             throw e;
         }
-        WorldReader view = new SnapshotReader(states, world.getBottomY(), world.getTopY(), snapshot);
+        WorldReader view = new SnapshotReader(states, runtime.bottomY(world), runtime.topY(world), snapshot);
         CellPredicate masked = global.acceptsAll() ? predicate
                 : (x, y, z, before) -> predicate.test(x, y, z, before) && global.test(x, y, z, before, view);
         // A cut under a mask that reads neighbours decides its cells once, here, over the snapshot: the clipboard takes
         // them and the erase removes exactly them (judged again later, a neighbour could read otherwise).
         CellSet decided = cut && global.reach() > 0 ? acceptedCells(region, area, view, masked) : null;
         CellPredicate cells = decided == null ? masked : (x, y, z, before) -> decided.contains(x, y, z);
-        String source = (cut ? "cut " : "copy ") + EngineEditService.worldId(world);
+        String source = (cut ? "cut " : "copy ") + runtime.worldId(world);
         AtomicBoolean abandoned = new AtomicBoolean();
         offThread(lease, () -> {
                     Clipboard blocks = Clipboard.copyOf(view, region, area, origin, cells, source);
@@ -465,10 +450,9 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * Adds to {@code snapshot} the sections around it (all 26 neighbours) that are inside the build height and in a loaded
      * chunk, for a global mask that reads neighbours; the snapshot reader then counts only the chunks it holds as loaded.
      */
-    private static void captureHalo(Long2ObjectOpenHashMap<SectionBuffer> snapshot, FabricWorldReader reader,
-                                    ServerWorld world, LongConsumer capture) {
+    private static void captureHalo(Long2ObjectOpenHashMap<SectionBuffer> snapshot, LiveReader reader, int bottom,
+                                    int top, LongConsumer capture) {
         LongOpenHashSet halo = new LongOpenHashSet();
-        int bottom = world.getBottomSectionCoord(), top = world.getTopSectionCoord();
         for (long key : snapshot.keySet().toLongArray()) {
             int sx = BlockBuffer.keyX(key), sy = BlockBuffer.keyY(key), sz = BlockBuffer.keyZ(key);
             for (int dx = -1; dx <= 1; dx++) {
@@ -489,37 +473,45 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * Reads what a copy of {@code region} takes of its entities (looking in the chunk {@code columns} of
      * {@link EntityColumns#of(Region, int, int)}): those whose block is in the region, inside {@code area} (the region
      * clipped to the build height; positions are relative to its corner, the clipboard's) and passes the copy's mask
-     * (tested on the block the entity belongs to, {@link FabricEntities#cell}). Returns their snapshots, and
+     * (tested on the block the entity belongs to, {@link WorldEntities#cell}). Returns their snapshots, and
      * for a cut also their states and UUIDs (its erase removes them). {@code TOO_LARGE} past
      * {@code entities.maxPerClipboard} entities, passengers counted (with {@code limit.bypass}, past
      * {@value #MAX_BYPASS_ENTITIES}), or past {@value #MAX_ENTITY_BYTES} bytes of entity data for anyone: the snapshots
      * are made in this tick.
      */
-    private void takeEntities(ServerPlayerEntity p, ServerWorld world, Region region, long[] columns, Box area,
+    private void takeEntities(P p, W world, Region region, long[] columns, Box area,
                               EntityFilter filter, CellPredicate mask, boolean trusted, boolean cut,
                               List<EntitySnapshot> taken, List<EntityState> states, List<UUID> ids) throws EditRejected {
         if (filter == EntityFilter.NONE) return;
-        FabricWorldReader reader = runtime.reader(world);
-        List<Entity> found = new ArrayList<>();
+        takeEntities(runtime.entities(world), p, world, region, columns, area, filter, mask, trusted, cut, taken,
+                states, ids);
+    }
+
+    private <E> void takeEntities(WorldEntities<E> entities, P p, W world, Region region, long[] columns, Box area,
+                                  EntityFilter filter, CellPredicate mask, boolean trusted, boolean cut,
+                                  List<EntitySnapshot> taken, List<EntityState> states, List<UUID> ids)
+            throws EditRejected {
+        LiveReader reader = runtime.reader(world);
+        List<E> found = new ArrayList<>();
         long total = 0;
-        for (Entity entity : FabricEntities.inRegion(world, region, filter, columns)) {
-            net.minecraft.util.math.BlockPos cell = FabricEntities.cell(entity);
-            int x = cell.getX(), y = cell.getY(), z = cell.getZ();
+        for (E entity : entities.inRegion(region, filter, columns)) {
+            BlockPos cell = entities.cell(entity);
+            int x = cell.x(), y = cell.y(), z = cell.z();
             if (!area.contains(x, y, z) || !mask.test(x, y, z, reader.get(x, y, z))) continue;
             found.add(entity);
-            total += FabricEntities.takenCount(entity, filter);
+            total += entities.takenCount(entity, filter);
         }
         long max = permissions.has(p, Perm.LIMIT_BYPASS) ? MAX_BYPASS_ENTITIES : config().entities.maxPerClipboard;
         if (total > max) {
             throw new EditRejected(RejectReason.TOO_LARGE, total + " entities > " + max + " (or set Entities to None)");
         }
         long bytes = 0;
-        for (Entity entity : found) {
+        for (E entity : found) {
             EntitySnapshot snapshot;
             try {
-                snapshot = FabricEntities.snapshot(entity, filter, area.min(), trusted);
+                snapshot = entities.snapshot(entity, filter, area.min(), trusted);
             } catch (IllegalArgumentException e) {
-                throw new EditRejected(RejectReason.TOO_LARGE, "a " + FabricEntities.typeId(entity)
+                throw new EditRejected(RejectReason.TOO_LARGE, "a " + entities.typeId(entity)
                         + " holds too much data to copy");
             }
             if (snapshot == null) continue;
@@ -530,10 +522,10 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
             }
             taken.add(snapshot);
             if (!cut) continue;
-            EntityState state = FabricEntities.state(entity, filter);
+            EntityState state = entities.state(entity, filter);
             if (state != null) {
                 states.add(state);
-                ids.add(entity.getUuid());
+                ids.add(entities.id(entity));
             }
         }
     }
@@ -541,21 +533,21 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     // ================================================================== previews and export
 
     @Override
-    public void preview(ServerPlayerEntity p, SourceRef source, Reply<Outbound> callerReply) throws EditRejected {
+    public void preview(P p, SourceRef source, Reply<Outbound> callerReply) throws EditRejected {
         checkThread();
         Objects.requireNonNull(source);
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
         switch (source) {
             case SourceRef.Clipboard ref -> {
-                PlayerClipboards.Held held = edits.clipboards().find(p.getUuid(), ref.id())
+                PlayerClipboards.Held held = edits.clipboards().find(runtime.id(p), ref.id())
                         .orElseThrow(() -> new EditRejected(RejectReason.INVALID, "unknown clipboard"));
                 Clipboard clipboard = held.clipboard();
                 TreeMap<String, String> meta = new TreeMap<>();
                 meta.put("format", PreviewPayload.FORMAT_NAME);
                 meta.put("clipboardId", held.id().toString());
                 meta.put("contentHash", clipboard.contentHash().hex());
-                offThread(slots.acquire(p.getUuid(), false, false), () -> previewPayload(clipboard),
+                offThread(slots.acquire(runtime.id(p), false, false), () -> previewPayload(clipboard),
                         payload -> reply.done(new Outbound(StreamKind.CLIPBOARD_PREVIEW, payload, meta)), reply::failed);
             }
             case SourceRef.Asset ref -> {
@@ -564,13 +556,13 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
                 var cached = edits.assets().get(hash).filter(asset -> library.mayRead(asset.path(), viewer));
                 if (cached.isPresent()) {
                     AssetCache.Asset asset = cached.get();
-                    offThread(slots.acquire(p.getUuid(), false, false), () -> previewPayload(asset.clipboard()),
+                    offThread(slots.acquire(runtime.id(p), false, false), () -> previewPayload(asset.clipboard()),
                             payload -> reply.done(assetPreview(asset, payload, List.of())), reply::failed);
                     return;
                 }
                 SchematicCodec.Limits limits = importLimits(p);
                 long seen = edits.assets().version(); // a library change while this runs makes its path stale
-                offThread(slots.acquire(p.getUuid(), true, false), () -> {
+                offThread(slots.acquire(runtime.id(p), true, false), () -> {
                             LibraryPath path = library.find(hash, viewer)
                                     .orElseThrow(() -> new EditRejected(RejectReason.INVALID, "unknown asset " + hash));
                             Library.FileData data = library.read(path, viewer);
@@ -602,8 +594,8 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         return new Outbound(StreamKind.ASSET_PREVIEW, payload, meta, notices);
     }
 
-    private static byte[] previewPayload(Clipboard clipboard) throws EditRejected {
-        byte[] payload = PreviewPayload.encode(clipboard, FabricEntities::size);
+    private byte[] previewPayload(Clipboard clipboard) throws EditRejected {
+        byte[] payload = PreviewPayload.encode(clipboard, runtime::entitySize);
         if (payload.length > MAX_PREVIEW_BYTES) {
             throw new EditRejected(RejectReason.TOO_LARGE, "preview of " + payload.length + " bytes");
         }
@@ -611,7 +603,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     }
 
     @Override
-    public void export(ServerPlayerEntity p, UUID clipboardId, SchematicFormat format, Reply<Outbound> callerReply)
+    public void export(P p, UUID clipboardId, SchematicFormat format, Reply<Outbound> callerReply)
             throws EditRejected {
         checkThread();
         Objects.requireNonNull(clipboardId);
@@ -619,20 +611,20 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
         require(p, Perm.SCHEMATIC_EXPORT);
-        PlayerClipboards.Held held = edits.clipboards().find(p.getUuid(), clipboardId)
+        PlayerClipboards.Held held = edits.clipboards().find(runtime.id(p), clipboardId)
                 .orElseThrow(() -> new EditRejected(RejectReason.INVALID, "unknown clipboard"));
         Clipboard clipboard = held.clipboard();
         requireStorableBox(p, clipboard, format);
         boolean sanitize = !permissions.mayWriteOperatorNbt(p);
-        EntityTypeRules rules = EntityTypeRules.scan(p.getServerWorld());
-        SchematicMetadata metadata = metadata(p, "clipboard", clipboard);
+        EntityRules rules = runtime.entityRules(runtime.world(p));
+        SchematicMetadata metadata = metadata(runtime.name(p), "clipboard", clipboard);
         TreeMap<String, String> meta = new TreeMap<>();
         meta.put("clipboardId", held.id().toString());
         meta.put("fileName", "clipboard" + format.extension());
         meta.put("format", format.name());
         meta.put("dataVersion", Integer.toString(fixes.targetDataVersion()));
         meta.put("contentHash", clipboard.contentHash().hex());
-        offThread(slots.acquire(p.getUuid(), false, false), () -> {
+        offThread(slots.acquire(runtime.id(p), false, false), () -> {
                     Leaving clean = leaving(clipboard, sanitize, rules);
                     byte[] bytes = encode(format, clean.clipboard(), metadata);
                     if (bytes.length > MAX_EXPORT_BYTES) {
@@ -646,7 +638,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     // ================================================================== uploads
 
     @Override
-    public Upload beginUpload(ServerPlayerEntity p, String fileName, long totalBytes) throws EditRejected {
+    public Upload beginUpload(P p, String fileName, long totalBytes) throws EditRejected {
         checkThread();
         requireBasics(p);
         require(p, Perm.SCHEMATIC_IMPORT);
@@ -654,8 +646,8 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         if (totalBytes < 1) throw new EditRejected(RejectReason.INVALID, "empty upload");
         if (totalBytes > max) throw new EditRejected(RejectReason.TOO_LARGE, totalBytes + " > " + max + " bytes");
         // Reserved now, so a transfer is never wasted on a refusal for being busy once it arrives.
-        RequestSlots.Lease lease = slots.acquire(p.getUuid(), true, false);
-        long connection = edits.connection(p.getUuid());
+        RequestSlots.Lease lease = slots.acquire(runtime.id(p), true, false);
+        long connection = edits.connection(runtime.id(p));
         String source = "upload:" + clip(fileName == null ? "" : fileName, 64);
         return new Upload() {
             /** The lease went to the executor (which releases it) or was released: nothing left to do. */
@@ -709,7 +701,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     // ================================================================== selection uploads (regions)
 
     @Override
-    public SelectionUpload beginSelectionUpload(ServerPlayerEntity p, Sha256 hash, Box bounds, long cells,
+    public SelectionUpload beginSelectionUpload(P p, Sha256 hash, Box bounds, long cells,
                                                 long totalBytes) throws EditRejected {
         checkThread();
         Objects.requireNonNull(hash);
@@ -725,7 +717,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         long maxBytes = Math.min(limits.maxCompressedBytes(), config().limits.maxUploadBytes);
         if (totalBytes > maxBytes) throw new EditRejected(RejectReason.TOO_LARGE, totalBytes + " > " + maxBytes + " bytes");
         // A request slot, not the clipboard slot: a selection may go up while a copy is being made.
-        RequestSlots.Lease lease = slots.acquire(p.getUuid(), false, false);
+        RequestSlots.Lease lease = slots.acquire(runtime.id(p), false, false);
         long storeBytes = config().limits.maxSelectionStoreBytes;
         long totalStoreBytes = config().limits.maxSelectionStoreBytesTotal;
         return new SelectionUpload() {
@@ -786,7 +778,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         return CellSet.Limits.of(config().limits.maxSelectionCells, config().limits.maxSelectionSections);
     }
 
-    private void requireSelectionUpload(ServerPlayerEntity p) throws EditRejected {
+    private void requireSelectionUpload(P p) throws EditRejected {
         if (!config().editingEnabled) throw new EditRejected(RejectReason.DISABLED);
         require(p, Perm.USE);
         // A selection serves region ops and copies: either right will do.
@@ -823,7 +815,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * the answer, as for a {@code .schem} upload. The nodes are checked again when the payload has arrived.
      */
     @Override
-    public Upload beginGeneratedUpload(ServerPlayerEntity p, Box bounds, long cells, long totalBytes) throws EditRejected {
+    public Upload beginGeneratedUpload(P p, Box bounds, long cells, long totalBytes) throws EditRejected {
         checkThread();
         Objects.requireNonNull(bounds);
         requireGenerate(p);
@@ -836,8 +828,8 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         if (cells > maxCells) throw new EditRejected(RejectReason.TOO_LARGE, cells + " > " + maxCells + " blocks");
         long maxBytes = config().limits.maxUploadBytes;
         if (totalBytes > maxBytes) throw new EditRejected(RejectReason.TOO_LARGE, totalBytes + " > " + maxBytes + " bytes");
-        RequestSlots.Lease lease = slots.acquire(p.getUuid(), true, false);
-        long connection = edits.connection(p.getUuid());
+        RequestSlots.Lease lease = slots.acquire(runtime.id(p), true, false);
+        long connection = edits.connection(runtime.id(p));
         return new Upload() {
             private boolean handedOff;
 
@@ -931,7 +923,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * this one, with the entries' real paths, never writable).
      */
     @Override
-    public void list(ServerPlayerEntity p, String folder, Reply<Listing> callerReply) throws EditRejected {
+    public void list(P p, String folder, Reply<Listing> callerReply) throws EditRejected {
         checkThread();
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
@@ -940,7 +932,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         LibraryPath path = shared ? null : folderPath(folder);
         if (!shared && !Library.mayReadArea(path, viewer)) throw new EditRejected(RejectReason.NO_PERMISSION, "not your folder");
         boolean writable = !shared && Library.mayChangeIn(path, viewer);
-        offThread(slots.acquire(p.getUuid(), false, false),
+        offThread(slots.acquire(runtime.id(p), false, false),
                 () -> shared ? library.sharedWithMe(viewer) : library.list(path, viewer),
                 listing -> {
                     List<S2C.LibraryListing.Entry> entries = new ArrayList<>(listing.entries().size());
@@ -965,7 +957,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * take the new path.
      */
     @Override
-    public void move(ServerPlayerEntity p, boolean folder, String from, String to, Reply<LibraryChange> callerReply)
+    public void move(P p, boolean folder, String from, String to, Reply<LibraryChange> callerReply)
             throws EditRejected {
         checkThread();
         var reply = once(Objects.requireNonNull(callerReply));
@@ -986,7 +978,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
             throw new EditRejected(RejectReason.INVALID, "folders are renamed in place, not moved");
         }
         AssetAccess before = library.restricted(source) ? library.accessOf(source) : null; // open: the area rule
-        RequestSlots.Lease lease = slots.acquire(p.getUuid(), false, true);
+        RequestSlots.Lease lease = slots.acquire(runtime.id(p), false, true);
         evictRestrictedUnder(source);
         offThread(lease, () -> {
                     library.move(source, target, viewer);
@@ -1016,7 +1008,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * {@link #move}. Loaded assets from that file are dropped.
      */
     @Override
-    public void delete(ServerPlayerEntity p, boolean folder, String path, Reply<LibraryChange> callerReply)
+    public void delete(P p, boolean folder, String path, Reply<LibraryChange> callerReply)
             throws EditRejected {
         checkThread();
         var reply = once(Objects.requireNonNull(callerReply));
@@ -1025,7 +1017,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         Library.Viewer viewer = edits.libraryViewer(p);
         allowChange(target, viewer);
         AssetAccess before = library.restricted(target) ? library.accessOf(target) : null; // open: the area rule
-        RequestSlots.Lease lease = slots.acquire(p.getUuid(), false, true);
+        RequestSlots.Lease lease = slots.acquire(runtime.id(p), false, true);
         evictRestrictedUnder(target);
         offThread(lease, () -> {
                     library.delete(target, viewer);
@@ -1041,14 +1033,14 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
 
     /** Creates a folder ({@link Library#createFolder}); rights as for {@link #move}. */
     @Override
-    public void createFolder(ServerPlayerEntity p, String path, Reply<LibraryChange> callerReply) throws EditRejected {
+    public void createFolder(P p, String path, Reply<LibraryChange> callerReply) throws EditRejected {
         checkThread();
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
         LibraryPath folder = folderPath(path);
         Library.Viewer viewer = edits.libraryViewer(p);
         allowChange(folder, viewer);
-        offThread(slots.acquire(p.getUuid(), false, true), () -> {
+        offThread(slots.acquire(runtime.id(p), false, true), () -> {
                     library.createFolder(folder, viewer);
                     return new LibraryChange(true, "", folder.toString());
                 },
@@ -1060,7 +1052,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * a path in a player folder that is not theirs (and they are no admin) becomes {@code ""}.
      */
     @Override
-    public Optional<LibraryChange> shownTo(ServerPlayerEntity p, LibraryChange change) {
+    public Optional<LibraryChange> shownTo(P p, LibraryChange change) {
         if (!config().editingEnabled || !permissions.has(p, Perm.USE) || !permissions.has(p, Perm.CLIPBOARD)) {
             return Optional.empty();
         }
@@ -1086,14 +1078,15 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
 
     /** Who may load the file; only who may change that may ask ({@link Library#access}). */
     @Override
-    public void access(ServerPlayerEntity p, String path, Reply<AssetAccess> callerReply) throws EditRejected {
+    public void access(P p, String path, Reply<AssetAccess> callerReply) throws EditRejected {
         checkThread();
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
         LibraryPath file = anyFilePath(path);
         Library.Viewer viewer = edits.libraryViewer(p);
         allowAccessChange(file, viewer);
-        offThread(slots.acquire(p.getUuid(), false, false), () -> library.access(file, viewer), reply::done, reply::failed);
+        offThread(slots.acquire(runtime.id(p), false, false), () -> library.access(file, viewer), reply::done,
+                reply::failed);
     }
 
     /**
@@ -1105,7 +1098,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * held scatter plan if it used the file, as after a deletion.
      */
     @Override
-    public void setAccess(ServerPlayerEntity p, String path, AssetAccess access, Reply<AccessChange> callerReply)
+    public void setAccess(P p, String path, AssetAccess access, Reply<AccessChange> callerReply)
             throws EditRejected {
         checkThread();
         Objects.requireNonNull(access);
@@ -1120,9 +1113,9 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
             if (grantee.uuid() != null) {
                 // The name stored and shown is the server's, never the client's: the online player's now, else the
                 // cache's later; only when neither knows the UUID does the sent name stand, and then it must be one.
-                ServerPlayerEntity online = server.getPlayerManager().getPlayer(grantee.uuid());
+                P online = runtime.online(grantee.uuid());
                 if (online != null) {
-                    resolved.add(new AssetAccess.Grantee(grantee.uuid(), online.getGameProfile().getName()));
+                    resolved.add(new AssetAccess.Grantee(grantee.uuid(), runtime.name(online)));
                 } else if (PLAYER_NAME.matcher(grantee.name()).matches()) {
                     resolved.add(grantee);
                 } else {
@@ -1133,14 +1126,14 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
             if (!PLAYER_NAME.matcher(grantee.name()).matches()) {
                 throw new EditRejected(RejectReason.INVALID, "not a player name: " + clip(grantee.name(), 64));
             }
-            ServerPlayerEntity online = server.getPlayerManager().getPlayer(grantee.name());
+            P online = runtime.online(grantee.name());
             if (online != null) {
-                resolved.add(new AssetAccess.Grantee(online.getUuid(), online.getGameProfile().getName()));
+                resolved.add(new AssetAccess.Grantee(runtime.id(online), runtime.name(online)));
             } else {
                 unresolved.add(grantee);
             }
         }
-        offThread(slots.acquire(p.getUuid(), false, true), () -> {
+        offThread(slots.acquire(runtime.id(p), false, true), () -> {
                     List<AssetAccess.Grantee> players = new ArrayList<>(resolved.size() + unresolved.size());
                     for (AssetAccess.Grantee grantee : resolved) players.add(knownName(grantee));
                     for (AssetAccess.Grantee grantee : unresolved) players.add(lookUp(grantee.name()));
@@ -1175,22 +1168,19 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * alone, no lookup), else under the validated name sent.
      */
     private AssetAccess.Grantee knownName(AssetAccess.Grantee grantee) {
-        net.minecraft.util.UserCache cache = server.getUserCache();
-        Optional<com.mojang.authlib.GameProfile> profile = cache == null ? Optional.empty() : cache.getByUuid(grantee.uuid());
-        String known = profile.map(com.mojang.authlib.GameProfile::getName).orElse(null);
+        String known = runtime.knownProfile(grantee.uuid()).map(Profile::name).orElse(null);
         return known == null || known.isEmpty() || known.equals(grantee.name()) ? grantee
                 : new AssetAccess.Grantee(grantee.uuid(), known);
     }
 
     /** A player by name through the server's user cache (off the server thread); unknown is {@code INVALID}. */
     private AssetAccess.Grantee lookUp(String name) throws EditRejected {
-        net.minecraft.util.UserCache cache = server.getUserCache();
-        Optional<com.mojang.authlib.GameProfile> profile = cache == null ? Optional.empty() : cache.findByName(name);
-        if (profile.isEmpty() || profile.get().getId() == null) {
+        Optional<Profile> profile = runtime.lookUpProfile(name);
+        if (profile.isEmpty() || profile.get().id() == null) {
             throw new EditRejected(RejectReason.INVALID, "unknown player: " + name);
         }
-        String known = profile.get().getName();
-        return new AssetAccess.Grantee(profile.get().getId(), known == null || known.isEmpty() ? name : known);
+        String known = profile.get().name();
+        return new AssetAccess.Grantee(profile.get().id(), known == null || known.isEmpty() ? name : known);
     }
 
     /**
@@ -1199,7 +1189,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      */
     private void endPlansOfRevoked(LibraryPath file, AccessChange change) {
         for (UUID owner : edits.scatterPlans().ownersUsing(file)) {
-            ServerPlayerEntity other = server.getPlayerManager().getPlayer(owner);
+            P other = runtime.online(owner);
             boolean keeps = other != null && Library.readableUnder(file, change.after(), edits.libraryViewer(other));
             if (!keeps) edits.scatterPlans().dropIfUses(owner, file);
         }
@@ -1211,7 +1201,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * {@code clipboard}, or while editing is off).
      */
     @Override
-    public Optional<LibraryChange> shownAccessChange(ServerPlayerEntity p, AccessChange change) {
+    public Optional<LibraryChange> shownAccessChange(P p, AccessChange change) {
         if (!config().editingEnabled || !permissions.has(p, Perm.USE) || !permissions.has(p, Perm.CLIPBOARD)) {
             return Optional.empty();
         }
@@ -1259,7 +1249,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     }
 
     @Override
-    public void load(ServerPlayerEntity p, String path, Reply<ClipboardInfo> callerReply) throws EditRejected {
+    public void load(P p, String path, Reply<ClipboardInfo> callerReply) throws EditRejected {
         checkThread();
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
@@ -1267,9 +1257,9 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         Library.Viewer viewer = edits.libraryViewer(p);
         requireReadable(file, viewer);
         SchematicCodec.Limits limits = importLimits(p);
-        long connection = edits.connection(p.getUuid());
+        long connection = edits.connection(runtime.id(p));
         long seen = edits.assets().version(); // a library change while this runs makes its path stale
-        offThread(slots.acquire(p.getUuid(), true, false), () -> {
+        offThread(slots.acquire(runtime.id(p), true, false), () -> {
                     Library.FileData data = library.read(file, viewer);
                     Parsed parsed = parse(data.bytes(), limits);
                     library.remember(file, data.sha256(), info(parsed.clipboard(), parsed.schematic().metadata()));
@@ -1287,12 +1277,12 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
     private record LoadedFile(String sha256, Parsed parsed) {}
 
     @Override
-    public void save(ServerPlayerEntity p, UUID clipboardId, String path, Reply<Saved> callerReply) throws EditRejected {
+    public void save(P p, UUID clipboardId, String path, Reply<Saved> callerReply) throws EditRejected {
         checkThread();
         Objects.requireNonNull(clipboardId);
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
-        PlayerClipboards.Held held = edits.clipboards().find(p.getUuid(), clipboardId)
+        PlayerClipboards.Held held = edits.clipboards().find(runtime.id(p), clipboardId)
                 .orElseThrow(() -> new EditRejected(RejectReason.INVALID, "unknown clipboard"));
         LibraryPath requested = filePath(path);
         Library.Viewer viewer = edits.libraryViewer(p);
@@ -1302,10 +1292,10 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         Clipboard clipboard = held.clipboard();
         requireStorableBox(p, clipboard, target.format());
         boolean sanitize = !permissions.mayWriteOperatorNbt(p);
-        EntityTypeRules rules = EntityTypeRules.scan(p.getServerWorld());
-        SchematicMetadata metadata = metadata(p, target.stem(), clipboard);
+        EntityRules rules = runtime.entityRules(runtime.world(p));
+        SchematicMetadata metadata = metadata(runtime.name(p), target.stem(), clipboard);
         SchematicFormat format = target.format();
-        offThread(slots.acquire(p.getUuid(), false, true), () -> {
+        offThread(slots.acquire(runtime.id(p), false, true), () -> {
                     Leaving clean = leaving(clipboard, sanitize, rules);
                     byte[] bytes = encode(format, clean.clipboard(), metadata);
                     String sha = library.write(target, bytes, viewer, info(clean.clipboard(), metadata));
@@ -1333,7 +1323,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * {@code INVALID} naming it. Takes the player's save slot.
      */
     @Override
-    public void savePalette(ServerPlayerEntity p, String path, BlockPalette palette, Reply<LibraryChange> callerReply)
+    public void savePalette(P p, String path, BlockPalette palette, Reply<LibraryChange> callerReply)
             throws EditRejected {
         checkThread();
         Objects.requireNonNull(palette);
@@ -1350,7 +1340,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         } catch (PaletteFile.PaletteFormatException e) {
             throw new EditRejected(RejectReason.INVALID, "palette " + requested.name() + ": " + e.getMessage());
         }
-        offThread(slots.acquire(p.getUuid(), false, true), () -> {
+        offThread(slots.acquire(runtime.id(p), false, true), () -> {
                     library.write(target, bytes, viewer, null);
                     return new LibraryChange(false, "", target.toString());
                 },
@@ -1364,7 +1354,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * unknown ones left out and counted; {@code INVALID} when none is left).
      */
     @Override
-    public void loadPalette(ServerPlayerEntity p, String path, Reply<LoadedPalette> callerReply) throws EditRejected {
+    public void loadPalette(P p, String path, Reply<LoadedPalette> callerReply) throws EditRejected {
         checkThread();
         var reply = once(Objects.requireNonNull(callerReply));
         requireBasics(p);
@@ -1372,7 +1362,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         Library.Viewer viewer = edits.libraryViewer(p);
         requireReadable(file, viewer);
         StateSpace states = runtime.states();
-        offThread(slots.acquire(p.getUuid(), false, false), () -> {
+        offThread(slots.acquire(runtime.id(p), false, false), () -> {
                     Library.FileData data = library.read(file, viewer);
                     PaletteFile.Loaded loaded;
                     try {
@@ -1387,25 +1377,19 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
 
     // ================================================================== helpers
 
-    /** A server-captured tile as untrusted content (a copy); other tiles are untrusted already. */
-    static BlockEntityData untrusted(BlockEntityData tile) {
-        return tile instanceof FabricTile captured && captured.serverCaptured()
-                ? FabricTile.of(captured.typeId(), captured.copyNbt()) : tile;
-    }
-
     /**
      * Installs a finished clipboard for a player still online on the connection that asked for it
      * ({@code connection}, {@link EngineEditService#connection}) and answers with its info. A clipboard finished after
      * the player left, even if they have reconnected since, is dropped: it would replace the new connection's clipboard
      * with one its client never asked for.
      */
-    private void install(ServerPlayerEntity p, long connection, Clipboard clipboard, List<S2C.Notice> notices,
+    private void install(P p, long connection, Clipboard clipboard, List<S2C.Notice> notices,
                          Reply<ClipboardInfo> reply) {
-        if (server.getPlayerManager().getPlayer(p.getUuid()) == null || !edits.isConnection(p.getUuid(), connection)) {
+        if (runtime.online(runtime.id(p)) == null || !edits.isConnection(runtime.id(p), connection)) {
             reply.failed(RejectReason.INVALID, "the player left");
             return;
         }
-        PlayerClipboards.Held held = edits.clipboards().install(p.getUuid(), clipboard);
+        PlayerClipboards.Held held = edits.clipboards().install(runtime.id(p), clipboard);
         reply.done(new ClipboardInfo(held.id(), clipboard.size(), clipboard.anchor(), clipboard.cellCount(),
                 clipboard.estimatedBytes(), (int) Math.min(Integer.MAX_VALUE, clipboard.entityTotal()), notices));
     }
@@ -1418,14 +1402,15 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * Entities of types this game does not know, never places (players, items, projectiles, primed TNT, withers...) or
      * will not summon are left out, as roots or passengers ({@link FileEntities}), and counted with the entities the
      * file could not give; operator-only entity data is removed for everyone ({@link EntitySanitizer}). Both follow
-     * {@link EntityTypeRules#current()}, which fails closed (every entity left out) before the server's scan.
+     * the platform's {@link EngineHost#entityRules() entity type rules}, which fail closed (every entity left out) before
+     * the server has learned the types.
      */
     private Parsed parse(byte[] bytes, SchematicCodec.Limits limits) throws IOException {
         Schematic schematic = SchematicFiles.read(new ByteArrayInputStream(bytes), runtime.states(), limits, fixes);
         TileSanitizer.Result clean = TileSanitizer.sanitize(schematic.clipboard());
-        EntityTypeRules rules = EntityTypeRules.current();
+        EntityRules rules = runtime.entityRules();
         FileEntities.Result allowed = FileEntities.clean(clean.clipboard(),
-                type -> rules.never(type) || !FabricEntities.knownType(type), rules::hanging);
+                type -> rules.never(type) || !runtime.knownEntityType(type), rules::hanging);
         EntitySanitizer.Result entities = EntitySanitizer.sanitize(allowed.clipboard(), rules::operator);
         List<S2C.Notice> notices = new ArrayList<>(notices(schematic, allowed.skipped()));
         notices.addAll(sanitizeNotices(clean, NOTICE_IMPORT_OPERATOR_NBT));
@@ -1440,7 +1425,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * {@code clipboard} as it may leave the server with its player: with operator-only block-entity and entity data
      * removed when {@code sanitize} (players without the operator-NBT right), as it is otherwise.
      */
-    static Leaving leaving(Clipboard clipboard, boolean sanitize, EntityTypeRules rules) {
+    static Leaving leaving(Clipboard clipboard, boolean sanitize, EntityRules rules) {
         if (!sanitize) return new Leaving(clipboard, List.of());
         TileSanitizer.Result tiles = TileSanitizer.sanitize(clipboard);
         EntitySanitizer.Result entities = EntitySanitizer.sanitize(tiles.clipboard(), rules::operator);
@@ -1489,7 +1474,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         }
     }
 
-    private void requireStorableBox(ServerPlayerEntity p, Clipboard clipboard, SchematicFormat format) throws EditRejected {
+    private void requireStorableBox(P p, Clipboard clipboard, SchematicFormat format) throws EditRejected {
         requireStorableBox(clipboard, format, config().limits.maxClipboardVolume, permissions.has(p, Perm.LIMIT_BYPASS));
     }
 
@@ -1522,9 +1507,9 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
      * 32 MiB in all) with the player's volume limit: {@code maxClipboardVolume}, or only the NBT caps with
      * {@code limit.bypass}. Used for uploads and for every library file, since players write the library too.
      */
-    private SchematicCodec.Limits importLimits(ServerPlayerEntity p) {
+    private SchematicCodec.Limits importLimits(P p) {
         // Asked on the server thread before every parse: the entity rules the parse follows are known by then.
-        EntityTypeRules.scan(p.getServerWorld());
+        runtime.entityRules(runtime.world(p));
         boolean bypass = permissions.has(p, Perm.LIMIT_BYPASS);
         long max = bypass ? Long.MAX_VALUE : config().limits.maxClipboardVolume;
         SchematicCodec.Limits untrusted = SchematicCodec.Limits.untrustedUpload();
@@ -1534,8 +1519,8 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
                 untrusted.maxTileBytes(), untrusted.maxTotalTileBytes(), entities);
     }
 
-    private static SchematicMetadata metadata(ServerPlayerEntity p, String name, Clipboard clipboard) {
-        return new SchematicMetadata(name, p.getGameProfile().getName(), System.currentTimeMillis(), List.of(),
+    private static SchematicMetadata metadata(String author, String name, Clipboard clipboard) {
+        return new SchematicMetadata(name, author, System.currentTimeMillis(), List.of(),
                 new AssetInfo(List.of(), clipboard.anchor(), AssetInfo.ALL_ROTATIONS, 1));
     }
 
@@ -1618,24 +1603,26 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         }
     }
 
-    private void requireBasics(ServerPlayerEntity p) throws EditRejected {
+    private void requireBasics(P p) throws EditRejected {
         if (!config().editingEnabled) throw new EditRejected(RejectReason.DISABLED);
         require(p, Perm.USE);
         require(p, Perm.CLIPBOARD);
     }
 
     /** What a generated upload needs: {@link #requireBasics} and {@code region}, as a Fill of those blocks would. */
-    private void requireGenerate(ServerPlayerEntity p) throws EditRejected {
+    private void requireGenerate(P p) throws EditRejected {
         requireBasics(p);
         require(p, Perm.REGION);
     }
 
-    private void require(ServerPlayerEntity p, Perm node) throws EditRejected {
+    private void require(P p, Perm node) throws EditRejected {
         if (!permissions.has(p, node)) throw new EditRejected(RejectReason.NO_PERMISSION, node.node());
     }
 
     private void checkThread() {
-        if (!server.isOnThread()) throw new IllegalStateException("ServerClipboards must be used on the server thread");
+        if (!runtime.isOnThread()) {
+            throw new IllegalStateException("ServerClipboards must be used on the server thread");
+        }
     }
 
     private static String clip(String text, int max) {
@@ -1713,7 +1700,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
             lease.release();
             return;
         }
-        server.execute(() -> {
+        runtime.execute(() -> {
             lease.release();
             if (closing) return;
             try {

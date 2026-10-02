@@ -27,8 +27,10 @@ import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.impl.BuilderMode;
 import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -71,8 +73,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Builder mode on the server: the placements and breaks a player makes in
- * normal creative play with a power on, carried out through the engine. Server thread only; owned by
- * {@link EngineEditService}.
+ * normal creative play with a power on, carried out through the engine ({@link EngineRuntime#builderMode}). Server
+ * thread only; owned by {@link EngineEditService}.
  *
  * <p><b>Who may.</b> Every action needs editing enabled, {@code sculptory.use} and {@code sculptory.builder}, and
  * Creative mode. The target (the clicked block, or the empty cell Place in air aims at, and every cell a drag breaks)
@@ -105,7 +107,7 @@ import org.slf4j.LoggerFactory;
  * reach as far; it is removed as soon as they may not (checked every tick for the game mode and the modifier, every
  * {@value #RECHECK_TICKS} ticks and on op changes for the nodes), and when they leave.
  */
-final class BuilderService {
+final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Added to the reach in the distance check, as vanilla adds to its own. */
     static final double REACH_MARGIN = 1.0;
@@ -116,7 +118,8 @@ final class BuilderService {
     /** Server ticks between re-checks of the nodes of players holding Long reach. */
     static final int RECHECK_TICKS = 40;
 
-    private final EngineEditService edits;
+    private final EngineEditService<ServerPlayerEntity, ServerWorld> edits;
+    private final EngineRuntime runtime;
     private final MinecraftServer server;
     /** The config in effect ({@code /sculptory reload} replaces it): read whenever a check runs. */
     private final Supplier<SculptoryConfig> configs;
@@ -167,23 +170,24 @@ final class BuilderService {
         }
     }
 
-    BuilderService(EngineEditService edits, Supplier<SculptoryConfig> configs, FabricPermissionService permissions,
-                   EditExecutor<ServerWorld> executor, HistoryService history, FluidTrails trails, StateSpace states,
-                   LongSupplier clock) {
+    BuilderService(EngineEditService<ServerPlayerEntity, ServerWorld> edits, EngineRuntime runtime,
+                   EditExecutor<ServerWorld> executor, HistoryService history, LongSupplier clock) {
         this.edits = Objects.requireNonNull(edits);
-        this.server = edits.server();
-        this.configs = Objects.requireNonNull(configs);
-        this.permissions = Objects.requireNonNull(permissions);
+        this.runtime = Objects.requireNonNull(runtime);
+        this.server = runtime.server();
+        this.configs = runtime::config;
+        this.permissions = runtime.permissions();
         this.executor = Objects.requireNonNull(executor);
         this.history = Objects.requireNonNull(history);
-        this.trails = Objects.requireNonNull(trails);
-        this.states = Objects.requireNonNull(states);
+        this.trails = runtime.fluidTrails();
+        this.states = runtime.states();
         this.clock = Objects.requireNonNull(clock);
     }
 
     // ================================================================== powers and Long reach
 
-    void powers(ServerPlayerEntity p, int powers) {
+    @Override
+    public void powers(ServerPlayerEntity p, int powers) {
         if (!BuilderPower.valid(powers)) return;
         PlayerState state = state(p);
         state.powers = powers;
@@ -192,13 +196,15 @@ final class BuilderService {
     }
 
     /** The powers the player last reported (0 when none or unknown). */
-    int powersOf(UUID player) {
+    @Override
+    public int powersOf(UUID player) {
         PlayerState state = players.get(player);
         return state == null ? 0 : state.powers;
     }
 
     /** Re-reads whether the player may use builder mode (op changes) and applies it to Long reach at once. */
-    void permissionsChanged(ServerPlayerEntity p) {
+    @Override
+    public void permissionsChanged(ServerPlayerEntity p) {
         PlayerState state = players.get(p.getUuid());
         if (state == null) return;
         state.allowed = mayUse(p);
@@ -228,7 +234,8 @@ final class BuilderService {
 
     // ================================================================== placing
 
-    BuilderOutcome place(ServerPlayerEntity p, C2S.BuilderPlace m) {
+    @Override
+    public BuilderOutcome place(ServerPlayerEntity p, C2S.BuilderPlace m) {
         Refusal gate = gate(p);
         if (gate != null) return BuilderOutcome.refused(gate, "");
         BoundMask mask = mask(p);
@@ -308,7 +315,7 @@ final class BuilderService {
         int changed = record(world, record, changes, keepShape).changed();
         if (changed > 0) {
             String label = replace ? "Replace" : "Place";
-            push(history.session(p.getUuid()), EngineEditService.worldId(world), label, record);
+            push(history.session(p.getUuid()), runtime.worldId(world), label, record);
         }
         if (failure != null) return new BuilderOutcome(Refusal.FAILED, failure.toString(), changed, skipped);
         return BuilderOutcome.done(changed, skipped);
@@ -316,7 +323,8 @@ final class BuilderService {
 
     // ================================================================== breaking
 
-    BuilderOutcome breakBlocks(ServerPlayerEntity p, C2S.BuilderBreak m) {
+    @Override
+    public BuilderOutcome breakBlocks(ServerPlayerEntity p, C2S.BuilderBreak m) {
         UUID owner = p.getUuid();
         Refusal gate = gate(p);
         if (gate != null) {
@@ -360,7 +368,7 @@ final class BuilderService {
         }
         if (drag == null) {
             HistoryService.Session session = history.session(owner);
-            String worldId = EngineEditService.worldId(world);
+            String worldId = runtime.worldId(world);
             String label = BuilderPower.BULLDOZER.in(m.powers()) ? "Bulldozer" : "Break";
             drag = new Drag(m.dragId(), world, worldId, session, label, clock.getAsLong());
             drag.open = history.record(session, worldId, label, edits::createdMillis, drag.record);
@@ -431,7 +439,8 @@ final class BuilderService {
         return BuilderOutcome.done(changed, skipped);
     }
 
-    void dragEnd(ServerPlayerEntity p, int dragId) {
+    @Override
+    public void dragEnd(ServerPlayerEntity p, int dragId) {
         PlayerState state = players.get(p.getUuid());
         if (state == null || state.drag == null || state.drag.dragId != dragId) return;
         closeDrag(p.getUuid(), true);
@@ -476,19 +485,22 @@ final class BuilderService {
     }
 
     /** {@link #closeDrag} for the player's drag, before an editor edit, undo or redo (history order). */
-    void commitDrag(UUID owner) {
+    @Override
+    public void commitDrag(UUID owner) {
         closeDrag(owner, true);
     }
 
     /** The entries open drags are building, which {@link FluidTrails} must not forget. */
-    void liveEntries(Set<UUID> ids) {
+    @Override
+    public void liveEntries(Set<UUID> ids) {
         for (PlayerState state : players.values()) {
             if (state.drag != null) ids.add(state.drag.record.id());
         }
     }
 
     /** The player's open drag, if any (tests). */
-    boolean dragOpen(UUID owner) {
+    @Override
+    public boolean dragOpen(UUID owner) {
         PlayerState state = players.get(owner);
         return state != null && state.drag != null;
     }
@@ -532,7 +544,7 @@ final class BuilderService {
      */
     private Blocked masked(BoundMask mask, ServerWorld world, List<Change> changes) {
         if (mask.acceptsAll() || changes.isEmpty()) return null;
-        EditMasks.BeforeView before = new EditMasks.BeforeView(edits.runtime().reader(world));
+        EditMasks.BeforeView before = new EditMasks.BeforeView(runtime.reader(world));
         for (Change change : changes) before.remember(change.pos().getX(), change.pos().getY(), change.pos().getZ(), change.before());
         for (Change change : changes) {
             BlockPos pos = change.pos();
@@ -544,7 +556,7 @@ final class BuilderService {
     /** The cells to break (targets and their copies) the global mask rejects, judged against the world as it is now. */
     private Set<BlockPos> rejectedTargets(BoundMask mask, ServerWorld world, List<List<BuilderPlacement.Copy>> targets) {
         if (mask.acceptsAll()) return Set.of();
-        FabricWorldReader reader = edits.runtime().reader(world);
+        FabricWorldReader reader = runtime.reader(world);
         Set<BlockPos> rejected = new HashSet<>();
         for (List<BuilderPlacement.Copy> copies : targets) {
             for (BuilderPlacement.Copy copy : copies) {
@@ -636,6 +648,11 @@ final class BuilderService {
         if (!permissions.has(p, Perm.USE) || !permissions.has(p, Perm.BUILDER)) return Refusal.NO_PERMISSION;
         if (!p.isCreative()) return Refusal.NOT_CREATIVE;
         return null;
+    }
+
+    @Override
+    public boolean withinReach(ServerPlayerEntity p, int x, int y, int z) {
+        return withinReach(p, new BlockPos(x, y, z));
     }
 
     /** Whether {@code pos}'s block lies within the builder reach of the player's eyes (the vanilla test, farther). */
@@ -738,7 +755,8 @@ final class BuilderService {
      * Per server tick: ends drags idle for {@value #DRAG_IDLE_SECONDS} s, and keeps Long reach matching the game mode
      * (every tick) and the nodes (every {@value #RECHECK_TICKS} ticks).
      */
-    void tick() {
+    @Override
+    public void tick() {
         long now = clock.getAsLong();
         boolean recheck = ++ticksSinceRecheck >= RECHECK_TICKS;
         if (recheck) ticksSinceRecheck = 0;
@@ -761,7 +779,8 @@ final class BuilderService {
     }
 
     /** The player left: their drag becomes an entry ({@code keep}: history is saved) and Long reach goes. */
-    void playerLeft(UUID owner, boolean keep) {
+    @Override
+    public void playerLeft(UUID owner, boolean keep) {
         closeDrag(owner, keep);
         players.remove(owner);
         ServerPlayerEntity player = server.getPlayerManager().getPlayer(owner);
@@ -772,7 +791,8 @@ final class BuilderService {
     }
 
     /** Server stop: open drags become entries when history is saved. */
-    void shutdown(boolean keep) {
+    @Override
+    public void shutdown(boolean keep) {
         for (UUID owner : List.copyOf(players.keySet())) closeDrag(owner, keep);
         players.clear();
     }

@@ -14,7 +14,6 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.fabric.SculptoryMod;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.net.ServerNet;
 import dev.sculptory.protocol.v2.Handshake;
@@ -27,6 +26,7 @@ import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import java.util.List;
 import java.util.Locale;
@@ -121,7 +121,7 @@ public final class SculptoryCommands {
     private static int fill(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerCommandSource source = context.getSource();
         ServerPlayerEntity player = source.getPlayerOrThrow();
-        Optional<EngineEditService> service = service(source);
+        Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service = service(source);
         if (service.isEmpty()) return 0;
         BlockPos from = BlockPosArgumentType.getBlockPos(context, "from");
         BlockPos to = BlockPosArgumentType.getBlockPos(context, "to");
@@ -143,7 +143,7 @@ public final class SculptoryCommands {
     private static int undoRedo(CommandContext<ServerCommandSource> context, boolean undo) throws CommandSyntaxException {
         ServerCommandSource source = context.getSource();
         ServerPlayerEntity player = source.getPlayerOrThrow();
-        Optional<EngineEditService> service = service(source);
+        Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service = service(source);
         if (service.isEmpty()) return 0;
         String what = undo ? "Undo" : "Redo";
         JobListener feedback = feedback(source.getServer(), player, what);
@@ -162,7 +162,7 @@ public final class SculptoryCommands {
     private static int history(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerCommandSource source = context.getSource();
         ServerPlayerEntity player = userOrThrow(source);
-        Optional<EngineEditService> service = service(source);
+        Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service = service(source);
         if (service.isEmpty()) return 0;
         HistorySnapshot snapshot = service.get().history(player);
         StringBuilder text = new StringBuilder("History (").append(kib(snapshot.bytes())).append(" KiB")
@@ -178,7 +178,7 @@ public final class SculptoryCommands {
     private static int jobs(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
         ServerCommandSource source = context.getSource();
         ServerPlayerEntity player = userOrThrow(source);
-        Optional<EngineEditService> service = service(source);
+        Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service = service(source);
         if (service.isEmpty()) return 0;
         List<EngineEditService.JobInfo> jobs = service.get().jobs(player.getUuid());
         EditExecutor<ServerWorld> executor = service.get().executor();
@@ -289,7 +289,7 @@ public final class SculptoryCommands {
         // own jobs needs nothing more, like the protocol's CancelJob.
         ServerPlayerEntity player = source.getPlayerOrThrow();
         requireSelfOrAdmin(source, player);
-        Optional<EngineEditService> service = service(source);
+        Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service = service(source);
         if (service.isEmpty()) return 0;
         int cancelled = service.get().cancelAll(player);
         source.sendFeedback(() -> Text.literal("Cancelled " + cancelled + (cancelled == 1 ? " job" : " jobs")), false);
@@ -323,7 +323,7 @@ public final class SculptoryCommands {
         boolean allowed = actor == null ? source.hasPermissionLevel(4) : EngineRuntime.find(source.getServer())
                 .map(runtime -> runtime.permissions().has(actor, Perm.ADMIN)).orElse(false);
         if (!allowed) throw NEEDS_ADMIN.create();
-        Optional<EngineEditService> service = service(source);
+        Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service = service(source);
         if (service.isEmpty()) return 0;
         String name = StringArgumentType.getString(context, "player");
         UUID target = playerId(source.getServer(), service.get(), name).orElseThrow(UNKNOWN_PLAYER::create);
@@ -337,7 +337,8 @@ public final class SculptoryCommands {
      * A player's UUID from the name of an online player, the owner name recorded on an admitted job (a player who left),
      * or a UUID. Never asks the profile cache, which may call Mojang's servers and block the server thread.
      */
-    static Optional<UUID> playerId(MinecraftServer server, EngineEditService service, String text) {
+    static Optional<UUID> playerId(MinecraftServer server, EngineEditService<ServerPlayerEntity, ServerWorld> service,
+                                   String text) {
         ServerPlayerEntity online = server.getPlayerManager().getPlayer(text);
         if (online != null) return Optional.of(online.getUuid());
         Optional<UUID> owner = service.jobOwnerNamed(text);
@@ -362,8 +363,8 @@ public final class SculptoryCommands {
         return player;
     }
 
-    private static Optional<EngineEditService> service(ServerCommandSource source) {
-        Optional<EngineEditService> service = EditServiceHost.find(source.getServer());
+    private static Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service(ServerCommandSource source) {
+        Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> service = EditServiceHost.find(source.getServer());
         if (service.isEmpty()) source.sendError(Text.literal("The Sculptory engine is not running"));
         return service;
     }

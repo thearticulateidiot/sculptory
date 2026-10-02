@@ -30,9 +30,6 @@ import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
-import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -50,7 +47,10 @@ import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.engine.impl.ServerClipboards;
+import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -322,8 +322,8 @@ public final class MultiplayerGameTest implements FabricGameTest {
         EditExecutor<ServerWorld> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var clips = ClipTestSupport.clipboards(h, root);
+        var scatter = new ServerScatter<>(h.service);
         MinecraftServer server = h.world.getServer();
         ServerPlayerEntity nobody = h.addPlayer(false);
         ServerPlayerEntity levelOne = h.addPlayer(false);
@@ -504,7 +504,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         checkSame(before, capture(world, region), "after undoing the cut-short fill");
 
         // A preview in flight: ended at once by the permission hook, or by the next sweep.
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int sx = x + 256;
         Box floor = ScatterGameTest.floor(h, sx, z, 16, 16);
         SourceRef log = ScatterGameTest.block(h, builder, "minecraft:oak_log");
@@ -546,9 +546,9 @@ public final class MultiplayerGameTest implements FabricGameTest {
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
     public void deopCancelsThePlayersJobsAtOnce(TestContext context) {
         MinecraftServer server = context.getWorld().getServer();
-        EngineEditService host = EditServiceHost.find(server)
+        var host = EditServiceHost.find(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
-        ServerScatter hostScatter = EditServiceHost.findScatter(server)
+        var hostScatter = EditServiceHost.findScatter(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the scatter service"));
         ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
         UUID id = player.getUuid();
@@ -655,7 +655,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         Harness h = new Harness(context, null, System::nanoTime, executor);
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.SCATTER);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 130);
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 15, 127, z + 15);
@@ -805,7 +805,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer(false);
         EditTestSupport.grant(bob, Perm.USE, Perm.REGION);
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 136);
         int x = at[0], z = at[1];
         Box aliceBox = box(x, 112, z, x + 31, 127, z + 15);
@@ -899,7 +899,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
     public void anAdminCancelsAnotherPlayersJobs(TestContext context) {
         MinecraftServer server = context.getWorld().getServer();
         ServerWorld world = context.getWorld();
-        EngineEditService host = EditServiceHost.find(server)
+        var host = EditServiceHost.find(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
         String name = "bs" + UUID.randomUUID().toString().substring(0, 8);
         ServerPlayerEntity target = EditTestSupport.namedMockPlayer(context, name);
@@ -1032,7 +1032,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
     public void deopStopsARunningJobThroughTheMixin(TestContext context) {
         MinecraftServer server = context.getWorld().getServer();
-        EngineEditService host = EditServiceHost.find(server)
+        var host = EditServiceHost.find(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
         ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
         OperatorList ops = server.getPlayerManager().getOpList();
@@ -1098,7 +1098,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         MinecraftServer server = context.getWorld().getServer();
         ServerWorld overworld = context.getWorld();
         ServerWorld nether = server.getWorld(net.minecraft.world.World.NETHER);
-        EngineEditService host = EditServiceHost.find(server)
+        var host = EditServiceHost.find(server)
                 .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
         check(nether != null && overworld.getRegistryKey() == net.minecraft.world.World.OVERWORLD, "worlds");
         ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
@@ -1362,7 +1362,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         ServerPlayerEntity bob = h.addPlayer();
         ServerWorld world = h.world;
         Path root = ClipTestSupport.libraryRoot(context);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, root);
+        var clips = ClipTestSupport.clipboards(h, root);
         int[] at = regionCorner(context, 127);
         int x = at[0], z = at[1];
         Box aliceArea = box(x, 112, z, x + 3, 115, z + 3);
@@ -1430,7 +1430,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         ServerPlayerEntity alice = h.player;
         ServerPlayerEntity bob = h.addPlayer();
         UUID aliceId = alice.getUuid();
-        ServerScatter scatter = new ServerScatter(h.service);
+        var scatter = new ServerScatter<>(h.service);
         ServerWorld world = h.world;
         int[] at = regionCorner(context, 128);
         int x = at[0], z = at[1];

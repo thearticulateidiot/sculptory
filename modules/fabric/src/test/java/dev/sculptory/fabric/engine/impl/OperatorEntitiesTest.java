@@ -12,6 +12,7 @@ import dev.sculptory.core.nbt.NbtList;
 import dev.sculptory.core.nbt.NbtTag;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.fabric.world.EntityTypeRules;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;

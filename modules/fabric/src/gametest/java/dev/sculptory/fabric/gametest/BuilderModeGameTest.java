@@ -821,8 +821,9 @@ public final class BuilderModeGameTest implements FabricGameTest {
             check(range(player) == base, "left: " + range(player));
             // The reach check itself: 64 blocks and the margin.
             stand(player, 0, 0, 0f);
-            check(h.service.builderReaches(player, pos(64, 100, 0)), "64 blocks away");
-            check(!h.service.builderReaches(player, pos(66, 100, 0)), "66 blocks away");
+            BlockPos near = pos(64, 100, 0), far = pos(66, 100, 0);
+            check(h.service.builderReaches(player, near.getX(), near.getY(), near.getZ()), "64 blocks away");
+            check(!h.service.builderReaches(player, far.getX(), far.getY(), far.getZ()), "66 blocks away");
         } finally {
             cleanup(h, extra, null);
         }

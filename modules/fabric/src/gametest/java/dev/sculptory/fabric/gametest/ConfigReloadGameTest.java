@@ -14,9 +14,6 @@ import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryLimits;
 import dev.sculptory.fabric.SculptoryMod;
-import dev.sculptory.fabric.engine.impl.AckSink;
-import dev.sculptory.fabric.engine.impl.EditEvents;
-import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.EditTestSupport.CapturedOutput;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
@@ -29,6 +26,8 @@ import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditEvents;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.JobRequest;
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -44,6 +43,7 @@ import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
@@ -83,8 +83,8 @@ public final class ConfigReloadGameTest implements FabricGameTest {
         first.limits.maxOpVolume = 100_000;
         write(file, first);
         EngineRuntime runtime = new EngineRuntime(server, SculptoryConfig.read(file).config());
-        EngineEditService service = new EngineEditService(runtime, runtime.executor(), runtime.config().toHistoryLimits(),
-                p -> JobRequest.NO_LISTENER, AckSink.VANILLA, EditEvents.NONE, System::nanoTime);
+        var service = new EngineEditService<>(runtime, runtime.executor(), runtime.config().toHistoryLimits(),
+                p -> JobRequest.NO_LISTENER, EngineRuntime.VANILLA_ACKS, EditEvents.none(), System::nanoTime);
         int[] at = regionCorner(context, 970);
         // Chunk-aligned: 2 × 2 columns.
         Box area = box(at[0], 100, at[1], at[0] + 31, 115, at[1] + 31);
@@ -254,8 +254,8 @@ public final class ConfigReloadGameTest implements FabricGameTest {
         return new OpSpec.Fill(box, new Pattern.Single(h.state("minecraft:stone")), CellMask.ANY);
     }
 
-    private static void fill(EngineEditService service, Harness h, ServerPlayerEntity player, Box box,
-                             RecordingListener listener) {
+    private static void fill(EngineEditService<ServerPlayerEntity, ServerWorld> service, Harness h,
+                             ServerPlayerEntity player, Box box, RecordingListener listener) {
         try {
             service.run(player, fillOp(h, box), RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
@@ -307,7 +307,8 @@ public final class ConfigReloadGameTest implements FabricGameTest {
         }
     }
 
-    private static void cleanUp(Harness h, EngineRuntime runtime, EngineEditService service, Box area, Path dir) {
+    private static void cleanUp(Harness h, EngineRuntime runtime,
+                                EngineEditService<ServerPlayerEntity, ServerWorld> service, Box area, Path dir) {
         runtime.executor().shutdown();
         service.shutdown();
         runtime.fluidTrails().close();

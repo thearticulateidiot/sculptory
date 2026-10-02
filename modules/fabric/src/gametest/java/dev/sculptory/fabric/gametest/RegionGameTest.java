@@ -24,7 +24,6 @@ import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -49,6 +48,7 @@ import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
 import dev.sculptory.server.platform.WriteOptions;
@@ -369,7 +369,7 @@ public final class RegionGameTest implements FabricGameTest {
         Region.Cells region = new Region.Cells(set);
         Box bounds = set.bounds();
         WorldSnapshot original = capture(world, area);
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> cut = new Captured<>();
         RecordingListener paste = new RecordingListener(), erase = new RecordingListener(), undo = new RecordingListener();
@@ -459,7 +459,7 @@ public final class RegionGameTest implements FabricGameTest {
         CellSet ring = ringBuilder.build();
         Region.Cells ringRegion = new Region.Cells(ring);
         Region.Cells reaching = new Region.Cells(ring.union(CellSet.builder().add(x0 + 20, 101, z0 + 20).build()));
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Pattern air = new Pattern.Single(raw(h, "minecraft:air"));
         int stone = raw(h, "minecraft:stone");
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
@@ -562,7 +562,7 @@ public final class RegionGameTest implements FabricGameTest {
         Region.Uploaded reference = new Region.Uploaded(set.hash(), set.bounds(), set.size());
         WorldSnapshot original = capture(world, area);
         int stone = raw(h, "minecraft:stone");
-        ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
 
         // The services refuse what the network layer did not resolve, and shapes too large to count.
         check(refusal(() -> h.service.run(h.player, new OpSpec.Erase(reference, CellMask.ANY), RunOptions.DEFAULT, null))

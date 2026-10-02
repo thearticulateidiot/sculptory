@@ -112,10 +112,13 @@ sourceSets {
 def devHarnessPackages = ['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/fabric/client/editor/${it}/**".toString() }
 tasks.named('jar') { exclude devHarnessPackages }
 
-// DedicatedServerClassesTest scans the common/server output (what a dedicated server loads) for client-only references;
+// DedicatedServerClassesTest scans the common/server output and the shared server module (what a dedicated server
+// loads) for client-only references;
 // DevHarnessClassesTest scans the client output for references to the dev harnesses the jar leaves out (above).
 tasks.named('test') {
-    systemProperty 'sculptory.mainClassDirs', sourceSets.main.output.classesDirs.asPath
+    def serverClasses = project(':server').sourceSets.main.output.classesDirs
+    dependsOn ':server:classes'
+    systemProperty 'sculptory.mainClassDirs', (sourceSets.main.output.classesDirs + serverClasses).asPath
     systemProperty 'sculptory.mainResourceDir', sourceSets.main.output.resourcesDir.absolutePath
     systemProperty 'sculptory.clientClassDirs', sourceSets.client.output.classesDirs.asPath
     systemProperty 'sculptory.devHarnessPackages', devHarnessPackages.join(',')
