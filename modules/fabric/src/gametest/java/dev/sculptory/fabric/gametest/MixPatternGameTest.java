@@ -44,6 +44,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.library.PaletteFile;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -75,7 +76,7 @@ public final class MixPatternGameTest implements FabricGameTest {
      */
     private static void slopes(Harness h, int x0, int z0, int w, int d) {
         StrokeGameTest.terrain(h, x0, z0, w, d);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), grass = h.state("minecraft:grass_block");
         for (int dx = 20; dx <= 44; dx++) {
             int top = 110 + Math.min(12, dx - 20);

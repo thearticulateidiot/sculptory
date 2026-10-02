@@ -42,6 +42,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.List;
 import java.util.UUID;
@@ -69,7 +70,7 @@ public final class LineNavGameTest implements FabricGameTest {
 
     /** Stone from y {@code from} to {@code to} over the area's columns. */
     private static void ground(Harness h, Box area, int from, int to) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = area.min().x(); x <= area.max().x(); x++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
@@ -198,7 +199,7 @@ public final class LineNavGameTest implements FabricGameTest {
     /** A floor at y 100 over the area, a pillar to y 104 at (8, 8), a wall at x 20 from y 101 to 108. */
     private static void course(Harness h, Box area, int x0, int z0) {
         ground(h, area, 99, 100);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int y = 101; y <= 104; y++) writer.write(x0 + 8, y, z0 + 8, stone, null);
         for (int z = z0; z <= z0 + 31; z++) {
@@ -276,7 +277,7 @@ public final class LineNavGameTest implements FabricGameTest {
         Box area = box(x0, 96, z0, x0 + 31, 112, z0 + 31);
         loadAndForce(h.world, area);
         course(h, area, x0, z0);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         writer.write(x0 + 8, 105, z0 + 8, h.state("minecraft:lava"), null);
         C2S.Navigate ontoPillar = new C2S.Navigate(1, NavigateMode.JUMP, new BlockPos(x0 + 4, 100, z0 + 4), Facing.UP,
                 0f, -1f, 0f);

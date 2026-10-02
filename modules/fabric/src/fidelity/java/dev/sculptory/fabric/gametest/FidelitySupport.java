@@ -10,6 +10,7 @@ import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.IntStream;
@@ -125,7 +126,7 @@ final class FidelitySupport {
 
     /** Writes the build with its minimum corner at (x, y, z) and fills its block entities. */
     static void build(Harness h, ServerWorld world, int x, int y, int z) {
-        BlockWriter writer = h.runtime.writer(world, new BlockWriter.Options(false, true));
+        BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         for (int dx = 0; dx < SIZE; dx++) {
             for (int dz = 0; dz < SIZE; dz++) writer.write(x + dx, y, z + dz, h.state(floor(dx, dz)), null);
         }

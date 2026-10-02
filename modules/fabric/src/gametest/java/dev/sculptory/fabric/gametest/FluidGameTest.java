@@ -35,6 +35,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.Locale;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -209,7 +210,7 @@ public final class FluidGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, FLOOR - 2, z0, x0 + 19, FLOOR + 8, z0 + 19);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         basin(h, writer, x0, z0);
         writer.write(x0 + 5, FLOOR + 2, z0 + 5, h.state("minecraft:oak_stairs[facing=north]"), null);
         writer.write(x0 + 6, FLOOR + 2, z0 + 6, h.state("minecraft:oak_stairs[facing=south,waterlogged=true]"), null);
@@ -274,7 +275,7 @@ public final class FluidGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, FLOOR - 2, z0, x0 + 19, FLOOR + 8, z0 + 19);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         basin(h, writer, x0, z0);
         int water = h.state("minecraft:water[level=0]");
         for (int x = x0 + 1; x <= x0 + 18; x++) {
@@ -349,7 +350,7 @@ public final class FluidGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, FLOOR - 2, z0, x0 + 31, FLOOR + 12, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = x0; x <= x0 + 31; x++) {
             for (int z = z0; z <= z0 + 31; z++) {
@@ -408,7 +409,7 @@ public final class FluidGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, FLOOR - 2, z0, x0 + 31, FLOOR + 4, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = x0; x <= x0 + 31; x++) {
             for (int z = z0; z <= z0 + 31; z++) writer.write(x, FLOOR, z, stone, null);

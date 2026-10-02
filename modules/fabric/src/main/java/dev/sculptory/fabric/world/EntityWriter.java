@@ -7,6 +7,8 @@ import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.nbt.NbtIo;
 import dev.sculptory.core.transform.Transform;
+import dev.sculptory.server.platform.EntityPlacer;
+import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.EntitySanitizer;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -59,18 +61,15 @@ import org.slf4j.LoggerFactory;
  * them is taken. <b>Removing</b> ({@link #remove}) discards an entity and the passengers named in its recorded data; other
  * riders (players always) are only dismounted.
  */
-public final class EntityWriter {
+public final class EntityWriter implements EntityPlacer<Entity> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static final int MAX_LOGGED_FAILURES = 5;
 
-    /** What a placement or restore did: the spawned root entity, or none ({@code refused}: by the caller's guard). */
-    public record Spawn(Entity entity, boolean refused) {
-        static final Spawn FAILED = new Spawn(null, false);
-        static final Spawn REFUSED = new Spawn(null, true);
-    }
+    private static final Spawn<Entity> FAILED = new Spawn<>(null, false);
+    private static final Spawn<Entity> REFUSED = new Spawn<>(null, true);
 
     private final ServerWorld world;
-    private final BlockWriter.Options options;
+    private final WriteOptions options;
     private final EntityTypeRules rules;
     private long placed;
     private long removed;
@@ -83,7 +82,7 @@ public final class EntityWriter {
      *     everyone when {@code trustCapturedTiles})
      * @param rules which types are operator-only and which are never placed ({@link EntityTypeRules})
      */
-    public EntityWriter(ServerWorld world, BlockWriter.Options options, EntityTypeRules rules) {
+    public EntityWriter(ServerWorld world, WriteOptions options, EntityTypeRules rules) {
         this.world = Objects.requireNonNull(world);
         this.options = Objects.requireNonNull(options);
         this.rules = Objects.requireNonNull(rules);
@@ -94,15 +93,18 @@ public final class EntityWriter {
     }
 
     /** Entities placed or put back. */
+    @Override
     public long placed() {
         return placed;
     }
 
+    @Override
     public long removed() {
         return removed;
     }
 
     /** Entities whose operator-only data was left out. */
+    @Override
     public long stripped() {
         return stripped;
     }
@@ -111,6 +113,7 @@ public final class EntityWriter {
      * Entities that could not be placed: an unknown type, bad data, a UUID in use, a type that is never placed, more
      * passengers than allowed, or a placement history could not record (taken back at once).
      */
+    @Override
     public long failures() {
         return failures;
     }
@@ -127,7 +130,9 @@ public final class EntityWriter {
      * Places a clipboard entity at {@code where} (its position after {@code t}), turned by {@code t}, with new UUIDs,
      * if {@code allowed} accepts it as it would be spawned.
      */
-    public Spawn place(EntitySnapshot entity, EntityPlacement.Placed where, Transform t, Predicate<Entity> allowed) {
+    @Override
+    public Spawn<Entity> place(EntitySnapshot entity, EntityPlacement.Placed where, Transform t,
+                               Predicate<Entity> allowed) {
         dev.sculptory.core.nbt.NbtCompound data;
         try {
             data = EntityNbt.decode(entity.nbt());
@@ -159,7 +164,7 @@ public final class EntityWriter {
             return failed(entity.typeId(), "its data does not convert: " + e.getMessage());
         }
         Entity root = load(nbt, entity.typeId());
-        if (root == null) return Spawn.FAILED;
+        if (root == null) return FAILED;
         if (FabricEntities.kind(root) == FabricEntities.Kind.NEVER) {
             return failed(entity.typeId(), "entities of its kind are never placed");
         }
@@ -185,17 +190,18 @@ public final class EntityWriter {
             Entity vehicle = rider.getVehicle();
             if (vehicle != null) vehicle.updatePassengerPosition(rider);
         }
-        if (!allowed.test(root)) return Spawn.REFUSED;
+        if (!allowed.test(root)) return REFUSED;
         if (!world.spawnNewEntityAndPassengers(root)) return failed(entity.typeId(), "one of its UUIDs is in use");
         placed++;
-        return new Spawn(root, false);
+        return new Spawn<>(root, false);
     }
 
     /**
      * Puts a recorded entity back as it was, with its UUIDs (undo, redo), if {@code allowed} accepts it as it would be
      * spawned.
      */
-    public Spawn restore(EntityState state, Predicate<Entity> allowed) {
+    @Override
+    public Spawn<Entity> restore(EntityState state, Predicate<Entity> allowed) {
         NbtCompound nbt;
         try {
             nbt = FabricEntities.compound(state.nbt());
@@ -206,17 +212,18 @@ public final class EntityWriter {
             return failed(state.typeId(), "it carries more than " + EntityNbt.MAX_RIDERS + " passengers");
         }
         Entity root = load(nbt, state.typeId());
-        if (root == null) return Spawn.FAILED;
-        if (!allowed.test(root)) return Spawn.REFUSED;
+        if (root == null) return FAILED;
+        if (!allowed.test(root)) return REFUSED;
         if (!world.spawnNewEntityAndPassengers(root)) return failed(state.typeId(), "one of its UUIDs is in use");
         placed++;
-        return new Spawn(root, false);
+        return new Spawn<>(root, false);
     }
 
     /**
      * Takes back an entity this writer just spawned (with everything riding it) because it cannot be recorded, so no
      * edit leaves an entity undo does not know about; it counts as a failure.
      */
+    @Override
     public void takeBack(Entity root) {
         for (Entity rider : root.getPassengersDeep()) {
             if (!rider.isPlayer()) rider.discard();
@@ -244,6 +251,7 @@ public final class EntityWriter {
      * Removes {@code root} and the passengers (at any depth) whose UUIDs {@code recorded} names (what a step took along or
      * placed with it); other riders, players always, are dismounted and stay.
      */
+    @Override
     public void remove(Entity root, EntityState recorded) {
         Set<UUID> along = recorded == null ? Set.of() : riderIds(recorded);
         List<Entity> riders = new ArrayList<>();
@@ -341,10 +349,10 @@ public final class EntityWriter {
         }
     }
 
-    private Spawn failed(String typeId, String why) {
+    private Spawn<Entity> failed(String typeId, String why) {
         if (failures++ < MAX_LOGGED_FAILURES) {
             LOG.warn("Sculptory could not place a {} ({}); it is left out", typeId, why);
         }
-        return Spawn.FAILED;
+        return FAILED;
     }
 }

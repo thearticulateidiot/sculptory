@@ -47,6 +47,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.AssetCache;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -584,7 +585,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 84);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 96, 96);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int i = 0; i < 96; i += 5) writer.write(x0 + i, FLOOR_Y + 1, z0 + (i * 11) % 96, h.state("minecraft:oak_log[axis=y]"), null);
         Clipboard.Builder bush = Clipboard.builder(h.runtime.states(), new BlockPos(3, 2, 3)).anchor(new BlockPos(1, 0, 1));
         for (int x = 0; x < 3; x++) {
@@ -670,7 +671,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         check(plan.placements().size() > 5, "only " + plan.placements().size() + " placements");
         BlockPos anchor = plan.placements().get(0).anchor();
         net.minecraft.util.math.BlockPos chest = pos(anchor.x(), anchor.y(), anchor.z());
-        h.runtime.writer(h.world, BlockWriter.Options.DEFAULT).write(chest.getX(), chest.getY(), chest.getZ(),
+        h.runtime.writer(h.world, WriteOptions.DEFAULT).write(chest.getX(), chest.getY(), chest.getZ(),
                 h.state("minecraft:chest[facing=north,type=single,waterlogged=false]"), null);
         ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 3));
         RecordingListener job = ScatterGameTest.commit(h, h.player, reply.get("preview").planId());

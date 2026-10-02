@@ -43,6 +43,7 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.engine.impl.AssetCache;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -80,7 +81,7 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
 
     /** Grass blocks over the west half ([x0, x0 + 16)) of a 32-wide stone floor; the east half stays stone. */
     static void grassWestHalf(Harness h, int x0, int z0, int d) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int grass = h.state("minecraft:grass_block[snowy=false]");
         for (int x = x0; x < x0 + 16; x++) {
             for (int z = z0; z < z0 + d; z++) writer.write(x, FLOOR_Y, z, grass, null);
@@ -448,7 +449,7 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);
         grassWestHalf(h, x0, z0, 16);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int plants = 0;
         for (int x = x0; x < x0 + 16; x++) {
             for (int z = z0; z < z0 + 16; z++) {
@@ -518,7 +519,7 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 16);
         grassWestHalf(h, x0, z0, 16);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt");
         int water = h.state("minecraft:water[level=0]"), seagrass = h.state("minecraft:seagrass");
         int kelp = h.state("minecraft:kelp[age=25]"); // fully grown: it does not grow into the snapshot

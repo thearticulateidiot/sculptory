@@ -39,6 +39,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -188,7 +189,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 118, z0 + 63);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 63, 101, z0 + 63));
         WorldSnapshot original = capture(world, area);
         Region.Shape cone = new Region.Shape(box(x0 + 4, 100, z0 + 6, x0 + 19, 112, z0 + 17), ShapeKind.CONE, Facing.EAST);
@@ -298,7 +299,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 15);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 31, 101, z0 + 15));
         WorldSnapshot original = capture(world, area);
         int east = h.state("minecraft:oak_stairs[facing=east]"), west = h.state("minecraft:oak_stairs[facing=west]");
@@ -350,7 +351,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 112, z0 + 63);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         Box source = box(x0 + 2, 100, z0 + 2, x0 + 6, 102, z0 + 4);
         paint(h, writer, source);
         writer.write(x0 + 2, 101, z0 + 2, h.state("minecraft:oak_stairs[facing=east]"), null);
@@ -454,7 +455,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 116, z0 + 47);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 63, 102, z0 + 47));
         writer.write(x0 + 5, 103, z0 + 5, h.state("minecraft:oak_stairs[facing=east]"), null);
         WorldSnapshot original = capture(world, area);
@@ -558,7 +559,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 110, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 63, 101, z0 + 31));
         WorldSnapshot original = capture(world, area);
         int stone = h.state("minecraft:stone");
@@ -643,7 +644,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 112, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 63, 103, z0 + 31));
         WorldSnapshot original = capture(world, area);
         int air = h.state("minecraft:air");
@@ -688,10 +689,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 112, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 63, 103, z0 + 15));
         net.minecraft.util.math.BlockPos command = pos(x0 + 33, 101, z0 + 5);
-        h.runtime.writer(world, new BlockWriter.Options(false, true))
+        h.runtime.writer(world, new WriteOptions(false, true))
                 .write(command.getX(), command.getY(), command.getZ(), h.state("minecraft:command_block"), null);
         ((net.minecraft.block.entity.CommandBlockBlockEntity) world.getBlockEntity(command)).getCommandExecutor().setCommand("op me");
         Box box = box(x0 + 2, 101, z0 + 2, x0 + 9, 103, z0 + 9);

@@ -46,6 +46,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -320,7 +321,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                 .createAndAdd(once(() -> {
                     check(undoPaste.result.skippedConflicts() == 0, "undo " + undoPaste.result);
                     check(entitiesIn(world, pasteArea).isEmpty(), "the undo left " + entitiesIn(world, pasteArea));
-                    BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+                    BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
                     for (int x = x0 + 8; x <= x0 + 10; x++) {
                         for (int z = z0; z <= z0 + 2; z++) writer.write(x, y0, z, h.state("minecraft:stone"), null);
                     }
@@ -663,7 +664,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                 .createAndAdd(() -> ready(world, all))
                 .createAndAdd(once(() -> {
                     decorate(h, x0, y0, z0);
-                    h.runtime.writer(world, BlockWriter.Options.DEFAULT).write(x0 + 1, y0 + 1, z0 + 3,
+                    h.runtime.writer(world, WriteOptions.DEFAULT).write(x0 + 1, y0 + 1, z0 + 3,
                             h.state("minecraft:glass"), null); // the armor stand's block
                     try {
                         clips.copy(h.player, new Region.Cuboid(source), source.min(), false,
@@ -751,7 +752,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
         context.createTimedTaskRunner()
                 .createAndAdd(() -> ready(world, all))
                 .createAndAdd(once(() -> {
-                    BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+                    BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
                     for (int x = x0 - 1; x <= x0 + 11; x++) {
                         for (int z = z0 - 1; z <= z0 + 3; z++) writer.write(x, y0 - 1, z, h.state("minecraft:stone"), null);
                     }

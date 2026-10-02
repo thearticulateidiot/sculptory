@@ -29,6 +29,7 @@ import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.ScatterService;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -80,7 +81,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
      */
     static Box shore(Harness h, int x0, int z0) {
         Box all = floor(h, x0, z0, 32, 16);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int grass = h.state("minecraft:grass_block[snowy=false]"), dirt = h.state("minecraft:dirt");
         int stone = h.state("minecraft:stone"), water = h.state("minecraft:water[level=0]");
         for (int x = x0; x < x0 + 32; x++) {
@@ -390,7 +391,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 153);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int sand = h.state("minecraft:sand"), stone = h.state("minecraft:stone");
         for (int x = x0; x < x0 + 16; x++) {
             for (int z = z0; z < z0 + 16; z++) {

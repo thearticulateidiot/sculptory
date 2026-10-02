@@ -12,6 +12,7 @@ import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -42,7 +43,7 @@ public final class WorldReaderGameTest implements FabricGameTest {
         // (singular palette), block entity, and 100 states (hash-map palette).
         Box region = box(x0, 96, z0, x0 + 7 * 16 - 1, 111, z0 + 15);
         loadAndForce(world, region);
-        BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         int stone = handle(runtime, "minecraft:stone");
         List<Integer> many = new ArrayList<>();
         for (BlockState state : Block.STATE_IDS) {
@@ -111,7 +112,7 @@ public final class WorldReaderGameTest implements FabricGameTest {
         // Sections 5 to 7 (y 80..127) of five chunks side by side, each chunk's storage of another kind.
         Box region = box(x0, 80, z0, x0 + 5 * 16 - 1, 127, z0 + 15);
         loadAndForce(world, region);
-        BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         int stone = handle(runtime, "minecraft:stone");
         List<Integer> many = new ArrayList<>();
         for (BlockState state : Block.STATE_IDS) {

@@ -32,6 +32,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -423,7 +424,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
      * hanging under it (y 125) and a dent in its underside, and further east a stalactite, a bump and a dent.
      */
     static void wallAndOverhang(Harness h, int x0, int z0) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt"), air = h.state("minecraft:air");
         for (int x = x0 + 44; x <= x0 + 50; x++) {
             for (int z = z0 + 20; z <= z0 + 60; z++) {
@@ -493,7 +494,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
 
     /** A pond (sand bed at 103, water to 107), short grass and tall grass on some columns. */
     static void decorate(Harness h, int x0, int z0) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int water = h.state("minecraft:water"), air = h.state("minecraft:air"), sand = h.state("minecraft:sand");
         for (int x = x0 + 20; x <= x0 + 26; x++) {
             for (int z = z0 + 18; z <= z0 + 24; z++) {

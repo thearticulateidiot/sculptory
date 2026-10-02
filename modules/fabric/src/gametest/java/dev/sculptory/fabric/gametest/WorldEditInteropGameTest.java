@@ -23,6 +23,7 @@ import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -78,7 +79,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         Box source = box(at[0], 100, at[1], at[0] + 5, 102, at[1] + 4);
         Box all = box(at[0], 100, at[1], at[0] + 15, 102, at[1] + 15);
         loadAndForce(world, all);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         String[] specs = {"minecraft:stone", "minecraft:oak_stairs[facing=east,half=top]", "minecraft:oak_log[axis=x]",
                 "minecraft:glass_pane[north=true,east=true]", "minecraft:white_wool"};
         for (int x = 0; x < 6; x++) {

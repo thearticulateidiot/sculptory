@@ -1,16 +1,29 @@
 package dev.sculptory.fabric.engine.impl;
 
+import com.mojang.authlib.GameProfile;
 import dev.sculptory.core.Box;
+import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.edit.EditProgram;
+import dev.sculptory.core.scatter.FeatureCatalog;
+import dev.sculptory.core.scatter.ScatterPlanner;
 import dev.sculptory.core.state.ModdedFacingFallback;
 import dev.sculptory.core.state.VerticalFlip;
 import dev.sculptory.fabric.config.FolderMigration;
 import dev.sculptory.fabric.perm.FabricPermissionService;
 import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.fabric.world.ClientSync;
 import dev.sculptory.fabric.world.EntityTypeRules;
+import dev.sculptory.fabric.world.FabricEntities;
+import dev.sculptory.fabric.world.FabricNeighbourShapes;
 import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.fabric.world.FabricTile;
+import dev.sculptory.fabric.world.FabricTileMatcher;
+import dev.sculptory.fabric.world.FabricWorldEntities;
 import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.fabric.world.FeatureGrower;
 import dev.sculptory.fabric.world.FluidTrails;
+import dev.sculptory.fabric.world.Relighter;
+import dev.sculptory.fabric.world.WorldChecks;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.EditRejected;
@@ -18,18 +31,26 @@ import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.RecordSink;
+import dev.sculptory.server.platform.BorderBounds;
+import dev.sculptory.server.platform.Platform;
+import dev.sculptory.server.platform.Profile;
+import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.UserCache;
+import net.minecraft.world.border.WorldBorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,8 +58,10 @@ import org.slf4j.LoggerFactory;
  * The per-server engine: config, state space, permissions and the executor, created at {@code SERVER_STARTING}
  * and shut down at {@code SERVER_STOPPING}. {@link #install()} registers the lifecycle hooks once per JVM and is
  * idempotent; the mod initializer calls it (the GameTest mod calls it too, so tests run before that wiring).
+ *
+ * <p>It is also the Fabric {@link Platform}: the game as the shared engine sees it, over this {@link MinecraftServer}.
  */
-public final class EngineRuntime {
+public final class EngineRuntime implements Platform<ServerPlayerEntity, ServerWorld> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static boolean installed;
     private static volatile EngineRuntime current;
@@ -184,15 +207,18 @@ public final class EngineRuntime {
         return new Reload(file, null, applied, needRestart, adjustments);
     }
 
+    @Override
     public FabricStateSpace states() {
         return states;
     }
 
+    @Override
     public FabricPermissionService permissions() {
         return permissions;
     }
 
     /** What fluid written by history steps did since ({@link FluidTrails}). */
+    @Override
     public FluidTrails fluidTrails() {
         return fluidTrails;
     }
@@ -201,12 +227,234 @@ public final class EngineRuntime {
         return executor;
     }
 
+    @Override
     public FabricWorldReader reader(ServerWorld world) {
         return new FabricWorldReader(world, states);
     }
 
-    public BlockWriter writer(ServerWorld world, BlockWriter.Options options) {
+    @Override
+    public BlockWriter writer(ServerWorld world, WriteOptions options) {
         return new BlockWriter(world, states, options);
+    }
+
+    // ================================================================== the platform
+
+    @Override
+    public boolean isOnThread() {
+        return server.isOnThread();
+    }
+
+    @Override
+    public void execute(Runnable task) {
+        server.execute(task);
+    }
+
+    @Override
+    public int ticks() {
+        return server.getTicks();
+    }
+
+    @Override
+    public UUID id(ServerPlayerEntity player) {
+        return player.getUuid();
+    }
+
+    @Override
+    public String name(ServerPlayerEntity player) {
+        return player.getGameProfile().getName();
+    }
+
+    @Override
+    public ServerWorld world(ServerPlayerEntity player) {
+        return player.getServerWorld();
+    }
+
+    @Override
+    public ServerPlayerEntity online(UUID id) {
+        return server.getPlayerManager().getPlayer(id);
+    }
+
+    @Override
+    public ServerPlayerEntity online(String name) {
+        return server.getPlayerManager().getPlayer(name);
+    }
+
+    /** The server's user cache only ({@code UserCache.getByUuid}). */
+    @Override
+    public Optional<Profile> knownProfile(UUID id) {
+        UserCache cache = server.getUserCache();
+        return cache == null ? Optional.empty() : cache.getByUuid(id).map(EngineRuntime::profile);
+    }
+
+    /** {@code UserCache.findByName}: the cache, else Mojang's session service. */
+    @Override
+    public Optional<Profile> lookUpProfile(String name) {
+        UserCache cache = server.getUserCache();
+        return cache == null ? Optional.empty() : cache.findByName(name).map(EngineRuntime::profile);
+    }
+
+    private static Profile profile(GameProfile profile) {
+        return new Profile(profile.getId(), profile.getName());
+    }
+
+    /** {@link AckSink#VANILLA}: {@code networkHandler.updateSequence}. */
+    @Override
+    public void acknowledge(ServerPlayerEntity player, int sequence) {
+        AckSink.VANILLA.ack(player, sequence);
+    }
+
+    @Override
+    public Iterable<ServerWorld> worlds() {
+        return server.getWorlds();
+    }
+
+    @Override
+    public String worldId(ServerWorld world) {
+        return EngineEditService.worldId(world);
+    }
+
+    /** The world's registry key. */
+    @Override
+    public Object worldKey(ServerWorld world) {
+        return world.getRegistryKey();
+    }
+
+    @Override
+    public boolean exists(ServerWorld world) {
+        return server.getWorld(world.getRegistryKey()) == world;
+    }
+
+    @Override
+    public int bottomY(ServerWorld world) {
+        return world.getBottomY();
+    }
+
+    @Override
+    public int topY(ServerWorld world) {
+        return world.getTopY();
+    }
+
+    @Override
+    public int bottomSection(ServerWorld world) {
+        return world.getBottomSectionCoord();
+    }
+
+    @Override
+    public int topSection(ServerWorld world) {
+        return world.getTopSectionCoord();
+    }
+
+    @Override
+    public boolean inBuildLimit(ServerWorld world, int x, int y, int z) {
+        return WorldChecks.inBuildLimit(world, x, y, z);
+    }
+
+    @Override
+    public boolean intersectsBuildLimit(ServerWorld world, Box box) {
+        return WorldChecks.intersectsBuildLimit(world, box);
+    }
+
+    @Override
+    public boolean chunkLoaded(ServerWorld world, int cx, int cz) {
+        return WorldChecks.isChunkLoaded(world, cx, cz);
+    }
+
+    @Override
+    public boolean insideBorder(ServerWorld world, int x, int z) {
+        return WorldChecks.insideBorder(world.getWorldBorder(), x, z);
+    }
+
+    @Override
+    public BorderBounds border(ServerWorld world) {
+        WorldBorder border = world.getWorldBorder();
+        return new BorderBounds(border.getBoundWest(), border.getBoundEast(), border.getBoundNorth(),
+                border.getBoundSouth());
+    }
+
+    /** A {@link ClientSync}. */
+    @Override
+    public ClientSync clientUpdates(ServerWorld world, Predicate<UUID> predicting) {
+        Objects.requireNonNull(predicting);
+        return new ClientSync(world, player -> predicting.test(player.getUuid()));
+    }
+
+    @Override
+    public int relightSection(ServerWorld world, int sx, int sy, int sz) {
+        return Relighter.relightSection(world, sx, sy, sz);
+    }
+
+    @Override
+    public FabricTileMatcher tileMatcher(ServerWorld world) {
+        return new FabricTileMatcher(world.getRegistryManager(), states);
+    }
+
+    @Override
+    public FabricNeighbourShapes neighbourShapes(ServerWorld world) {
+        return new FabricNeighbourShapes(world, states);
+    }
+
+    @Override
+    public FabricWorldEntities entities(ServerWorld world) {
+        return new FabricWorldEntities(world);
+    }
+
+    /** {@link EntityTypeRules#scan}. */
+    @Override
+    public EntityTypeRules entityRules(ServerWorld world) {
+        return EntityTypeRules.scan(world);
+    }
+
+    /** {@link EntityTypeRules#current}. */
+    @Override
+    public EntityTypeRules entityRules() {
+        return EntityTypeRules.current();
+    }
+
+    @Override
+    public boolean knownEntityType(String typeId) {
+        return FabricEntities.knownType(typeId);
+    }
+
+    @Override
+    public float[] entitySize(String typeId) {
+        return FabricEntities.size(typeId);
+    }
+
+    /** {@link FabricTile#isServerCaptured}. */
+    @Override
+    public boolean serverCaptured(BlockEntityData tile) {
+        return FabricTile.isServerCaptured(tile);
+    }
+
+    @Override
+    public BlockEntityData untrusted(BlockEntityData tile) {
+        return ServerClipboards.untrusted(tile);
+    }
+
+    /** A {@link FeatureGrower}. */
+    @Override
+    public FeatureGrower featureGrower(ServerWorld world, List<FeatureCatalog.FeatureDef> features, boolean survive) {
+        return new FeatureGrower(world, states, features, survive);
+    }
+
+    @Override
+    public int featureReach(FeatureCatalog.FeatureDef feature) {
+        return FeatureGrower.reach(feature);
+    }
+
+    @Override
+    public int featureAbove(FeatureCatalog.FeatureDef feature) {
+        return FeatureGrower.above(feature);
+    }
+
+    @Override
+    public int featureBelow() {
+        return FeatureGrower.SPAN_DOWN;
+    }
+
+    @Override
+    public ScatterPlanner.SurvivalCheck survivalCheck(ServerWorld world, int[] blockStates) {
+        return ServerScatter.survivalCheck(states, world, blockStates);
     }
 
     /**
@@ -225,7 +473,7 @@ public final class EngineRuntime {
         ServerWorld world = player.getServerWorld();
         Box bounds = program.bounds();
         PermitSource permits = PermitSource.forPlayer(permissions, player, world, bounds);
-        BlockWriter.Options write = new BlockWriter.Options(options.physics(), permissions.mayWriteOperatorNbt(player));
+        WriteOptions write = new WriteOptions(options.physics(), permissions.mayWriteOperatorNbt(player));
         return new JobRequest(player.getUuid(), world, program, write, permits,
                 permissions.has(player, Perm.EDIT_UNLOADED), ThreadLocalRandom.current().nextLong(), listener, records);
     }

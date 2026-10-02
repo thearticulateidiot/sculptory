@@ -34,6 +34,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.impl.HistoryService;
+import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.TileSanitizer;
 import java.util.List;
 import java.util.UUID;
@@ -71,7 +72,7 @@ public final class HistoryContentsGameTest implements FabricGameTest {
     private static Box ground(Harness h, int x, int z) {
         Box region = box(x, 96, z, x + 15, 104, z + 15);
         loadAndForce(h.world, region);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int dirt = h.state("minecraft:dirt"), air = h.state("minecraft:air");
         for (int y = 96; y <= 104; y++) {
             for (int dz = 0; dz < 16; dz++) {
@@ -343,7 +344,7 @@ public final class HistoryContentsGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 606);
         int x = at[0], z = at[1];
         Box region = ground(h, x, z);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         BlockPos emptied = pos(x + 3, 101, z + 3);
         BlockPos kept = pos(x + 6, 101, z + 3);
         for (BlockPos chest : List.of(emptied, kept)) {

@@ -28,12 +28,12 @@ import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
 import dev.sculptory.fabric.gametest.ScatterGameTest.Reply;
-import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.WorldChecks;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.UnloadedPolicy;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.block.Block;
@@ -165,7 +165,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
         check(h.world.getBlockState(chest).isAir(), "the crown cell is already written");
         boolean started = h.world.getBlockState(pos(anchor.x(), anchor.y(), anchor.z())).isOf(Blocks.OAK_LOG);
         check(!find(h.world, area, FLOOR_Y + 1, Blocks.OAK_LOG).isEmpty(), "no trunk written in the first tick");
-        h.runtime.writer(h.world, BlockWriter.Options.DEFAULT).write(chest.getX(), chest.getY(), chest.getZ(),
+        h.runtime.writer(h.world, WriteOptions.DEFAULT).write(chest.getX(), chest.getY(), chest.getZ(),
                 h.state("minecraft:chest[facing=north,type=single,waterlogged=false]"), null);
         ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 3));
         before.states[before.index(chest.getX(), chest.getY(), chest.getZ())] = Block.getRawIdFromState(

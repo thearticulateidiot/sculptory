@@ -30,6 +30,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.block.BlockState;
@@ -92,7 +93,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
     /** Air over {@code area}, then a stone floor at {@link #FLOOR}, its chunks and those around loaded. */
     private static BlockWriter prepare(Harness h, Box area) {
         loadAndForce(h.world, around(area));
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int air = h.state("minecraft:air"), stone = h.state("minecraft:stone");
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
@@ -604,7 +605,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
         runner.createAndAdd(() -> {
             if (!update) {
                 // Hilly terrain: stone up to a height between 100 and 160 in each column.
-                BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+                BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
                 int stone = h.state("minecraft:stone"), grass = h.state("minecraft:grass_block");
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
                     for (int z = area.min().z(); z <= area.max().z(); z++) {

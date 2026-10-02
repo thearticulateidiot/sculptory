@@ -46,6 +46,7 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -119,7 +120,7 @@ public final class FluidRestartGameTest implements FabricGameTest {
 
     /** Puts {@code snapshot}'s states back (physics off, no scheduled ticks): the world as a chunk save left it. */
     static void restore(Harness h, WorldSnapshot snapshot) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         Box box = snapshot.box;
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {

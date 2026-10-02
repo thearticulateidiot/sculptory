@@ -42,6 +42,7 @@ import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -329,7 +330,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
         NbtIo.writeGzip(bytes, "", file);
         // A marker between the regions, where the file has no cells.
         int x0 = at[0] + 2, y0 = 101, z0 = at[1] + 1;
-        BlockWriter writer = h.runtime.writer(world, new BlockWriter.Options(false, true));
+        BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         writer.write(x0 + 3, y0, z0 + 1, h.state("minecraft:glass"), null);
         WorldSnapshot before = capture(world, area);
         Path root = ClipTestSupport.libraryRoot(context);

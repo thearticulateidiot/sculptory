@@ -46,6 +46,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.impl.BrushWork;
 import dev.sculptory.server.engine.impl.HistoryService;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -205,7 +206,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
 
     /** Fills {@code box} with stone and glass in a checkerboard: a mix placed over it changes cells both ways. */
     private static void checkerboard(Harness h, Box box) {
-        BlockWriter writer = h.runtime.writer(h.world, new BlockWriter.Options(false, true));
+        BlockWriter writer = h.runtime.writer(h.world, new WriteOptions(false, true));
         int stone = h.state("minecraft:stone"), glass = h.state("minecraft:glass");
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {

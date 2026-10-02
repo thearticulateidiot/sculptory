@@ -43,6 +43,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.net.ServerDispatcher;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -291,7 +292,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
 
     /** Writes {@link #TURN_BUILD} with its minimum corner at (x, y, z) and fills the pot and the skillet. */
     static void build(Harness h, ServerWorld world, int x, int y, int z) {
-        BlockWriter writer = h.runtime.writer(world, new BlockWriter.Options(false, true));
+        BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         for (String[] cell : TURN_BUILD) {
             String[] xz = cell[0].split(",");
             writer.write(x + Integer.parseInt(xz[0]), y, z + Integer.parseInt(xz[1]), h.state(cell[1]), null);

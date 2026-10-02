@@ -33,6 +33,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -106,7 +107,7 @@ public final class FlipGameTest implements FabricGameTest {
 
     /** Writes {@link #SHOWCASE} with its minimum corner at {@code min}. */
     static void build(Harness h, BlockPos min) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (String[] cell : SHOWCASE) {
             String[] xyz = cell[0].split(",");
             writer.write(min.x() + Integer.parseInt(xyz[0]), min.y() + Integer.parseInt(xyz[1]),
@@ -397,7 +398,7 @@ public final class FlipGameTest implements FabricGameTest {
         loadAndForce(world, all);
         build(h, source.min());
         // Something already there where the copies land: Only air leaves it alone.
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int gold = h.state("minecraft:gold_block");
         for (int x = x0 + 12; x <= x0 + 42; x += 3) writer.write(x, y0 + 2, z0 + 1, gold, null);
         WorldSnapshot before = capture(world, source);
@@ -658,7 +659,7 @@ public final class FlipGameTest implements FabricGameTest {
      */
     private static List<Entity> entityFixture(Harness h, int x0, int y0, int z0) {
         ServerWorld world = h.world;
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = x0; x <= x0 + 3; x++) {
             for (int z = z0; z <= z0 + 3; z++) writer.write(x, y0, z, stone, null);

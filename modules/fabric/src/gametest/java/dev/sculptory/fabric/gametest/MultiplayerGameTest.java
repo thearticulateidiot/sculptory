@@ -51,6 +51,7 @@ import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
@@ -182,7 +183,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         Box bobBox = box(x + 16, 112, z, x + 31, 127, z + 15);
         Box overlap = box(x + 16, 112, z, x + 23, 127, z + 15);
         loadAndForce(world, region);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int dx = 0; dx < 32; dx += 3) writer.write(x + dx, 112 + dx % 16, z + dx % 16, h.state("minecraft:dirt"), null);
         WorldSnapshot original = capture(world, region);
         int stone = h.state("minecraft:stone"), gold = h.state("minecraft:gold_block");
@@ -611,7 +612,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 31, 127, z + 15);
         loadAndForce(world, region);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int dx = 0; dx < 32; dx += 5) writer.write(x + dx, 112 + dx % 16, z + 3, h.state("minecraft:dirt"), null);
         WorldSnapshot before = capture(world, region);
         RecordingListener fill = new RecordingListener();
@@ -1276,7 +1277,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         Box chunkB = box(x + 16, 100, z, x + 31, 110, z + 15);
         Box loaded = box(x - 16, 90, z - 16, x + 47, 130, z + 31);
         loadAndForce(world, loaded);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int dx = 0; dx < 32; dx++) {
             for (int dz = 0; dz < 16; dz++) writer.write(x + dx, 100, z + dz, stone, null);
@@ -1368,7 +1369,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         Box bobArea = box(x + 16, 112, z, x + 21, 113, z + 5);
         Box all = box(x, 112, z, x + 31, 115, z + 15);
         loadAndForce(world, all);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(writer, aliceArea, h.state("minecraft:stone"));
         paint(writer, bobArea, h.state("minecraft:gold_block"));
         Captured<ClipboardService.ClipboardInfo> aliceCopy = ClipboardGameTest.copy(clips, alice, aliceArea, aliceArea.min());

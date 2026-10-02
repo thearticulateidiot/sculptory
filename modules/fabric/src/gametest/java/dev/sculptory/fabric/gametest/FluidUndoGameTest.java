@@ -37,6 +37,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -90,7 +91,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
     static Box terrain(Harness h, int x0, int z0, String ground) {
         Box area = box(x0, FLOOR - 3, z0, x0 + SIDE - 1, FLOOR + 8, z0 + SIDE - 1);
         loadAndForce(h.world, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), air = h.state("minecraft:air"), top = h.state(ground);
         for (int x = x0; x < x0 + SIDE; x++) {
             for (int z = z0; z < z0 + SIDE; z++) {
@@ -511,7 +512,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1], zc = z0 + 24;
         Box area = terrain(h, x0, z0, "minecraft:stone");
         CellSet.Builder cells = CellSet.builder();
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int x = x0 + 20; x <= x0 + 27; x++) {
             writer.write(x, FLOOR + 1, zc, h.state("minecraft:oak_slab[type=bottom]"), null);
             cells.add(x, FLOOR + 1, zc);

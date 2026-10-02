@@ -49,6 +49,7 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
@@ -400,7 +401,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
 
     /** Stone, then two layers of dirt, grass at {@code top} and air above, in every cell of {@code region}. */
     private static void ground(Harness h, Box region, int top) {
-        BlockWriter writer = h.runtime.writer(h.world, new BlockWriter.Options(false, true));
+        BlockWriter writer = h.runtime.writer(h.world, new WriteOptions(false, true));
         int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt");
         int grass = h.state("minecraft:grass_block"), air = h.state("minecraft:air");
         for (int y = region.min().y(); y <= region.max().y(); y++) {
@@ -463,7 +464,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             ServerPlayerEntity carol = h.addPlayer(false);
             EditTestSupport.grant(carol, Perm.USE, Perm.REGION);
             s.area(box(x, 96, z, x + 31, 111, z + 15), 100);
-            BlockWriter writer = h.runtime.writer(h.world, new BlockWriter.Options(false, true));
+            BlockWriter writer = h.runtime.writer(h.world, new WriteOptions(false, true));
             BlockPos sign = pos(x + 2, 101, z + 2);
             writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign"), null);
             ((SignBlockEntity) h.world.getBlockEntity(sign))
@@ -689,7 +690,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             first.stop();
 
             // The first chunk column as an older save left it.
-            BlockWriter writer = h.runtime.writer(h.world, new BlockWriter.Options(false, true));
+            BlockWriter writer = h.runtime.writer(h.world, new WriteOptions(false, true));
             for (int y = 100; y <= 101; y++) {
                 for (int zz = z; zz <= z + 15; zz++) {
                     for (int xx = x; xx <= x + 15; xx++) writer.write(xx, y, zz, original.get(xx, y, zz), null);

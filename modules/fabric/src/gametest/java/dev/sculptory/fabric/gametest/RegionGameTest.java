@@ -51,6 +51,7 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
@@ -183,7 +184,7 @@ public final class RegionGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 121, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 31, 101, z0 + 31));
         chest(h, writer, pos(x0 + 14, 108, z0 + 12));
         WorldSnapshot original = capture(world, area);
@@ -251,7 +252,7 @@ public final class RegionGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 47, 125, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0 + 2, 100, z0 + 2, x0 + 17, 105, z0 + 15));
         net.minecraft.util.math.BlockPos chestAt = pos(x0 + 2, 101, z0 + 9);
         chest(h, writer, chestAt);
@@ -361,7 +362,7 @@ public final class RegionGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 47, 110, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0 + 2, 100, z0 + 2, x0 + 17, 105, z0 + 15));
         paint(h, writer, box(x0 + 24, 100, z0 + 2, x0 + 39, 105, z0 + 15));
         CellSet set = selection(x0, z0);
@@ -447,7 +448,7 @@ public final class RegionGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 47, 115, z0 + 47);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0 + 8, 100, z0 + 8, x0 + 39, 101, z0 + 39));
         CellSet.Builder ringBuilder = CellSet.builder();
         for (int i = 10; i <= 37; i++) {
@@ -555,7 +556,7 @@ public final class RegionGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 110, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0 + 2, 100, z0 + 2, x0 + 17, 105, z0 + 15));
         CellSet set = selection(x0, z0);
         Region.Uploaded reference = new Region.Uploaded(set.hash(), set.bounds(), set.size());

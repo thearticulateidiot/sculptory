@@ -2,6 +2,7 @@ package dev.sculptory.fabric.world;
 
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
+import dev.sculptory.server.platform.ClientUpdates;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -64,7 +65,7 @@ import org.slf4j.LoggerFactory;
  * <p>Only the cells' final states are sent, read when flushing, so it does not matter how often a cell was written. A
  * column whose packets fail to build falls back to vanilla's block updates.
  */
-public final class ClientSync {
+public final class ClientSync implements ClientUpdates {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
 
     /** Changed cells in one column from which the column is resent whole (one section's worth). */
@@ -157,6 +158,7 @@ public final class ClientSync {
      * The next {@link #flush} sends the columns of these sections however recently they were resent (the job that
      * wrote them has ended, so its last cells go out now).
      */
+    @Override
     public void flushNext(long[] sectionKeys) {
         for (long key : sectionKeys) flushNext.add(ChunkPos.toLong(BlockBuffer.keyX(key), BlockBuffer.keyZ(key)));
     }
@@ -204,6 +206,7 @@ public final class ClientSync {
      * @param tick a counter that grows by one per server tick
      * @param force send every column now (server stop)
      */
+    @Override
     public void flush(long tick, boolean force) {
         if (!lastResend.isEmpty()) lastResend.values().removeIf(at -> tick - at >= RESEND_INTERVAL_TICKS);
         sendLight(tick);

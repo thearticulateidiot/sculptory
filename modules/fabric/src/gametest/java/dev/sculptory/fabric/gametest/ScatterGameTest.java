@@ -53,6 +53,7 @@ import dev.sculptory.server.engine.impl.ScatterPlans;
 import dev.sculptory.server.library.LibraryPath;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -120,7 +121,7 @@ public final class ScatterGameTest implements FabricGameTest {
     static Box floor(Harness h, int x0, int z0, int w, int d) {
         Box all = box(x0 - 16, FLOOR_Y - 4, z0 - 16, x0 + w + 15, FLOOR_Y + 30, z0 + d + 15);
         loadAndForce(h.world, all);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = x0; x < x0 + w; x++) {
             for (int z = z0; z < z0 + d; z++) writer.write(x, FLOOR_Y, z, stone, null);
@@ -319,7 +320,7 @@ public final class ScatterGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 48, 48);
         // A few blocks already there: short grass is replaced, a log blocks a placement.
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int i = 0; i < 48; i += 3) writer.write(x0 + i, FLOOR_Y + 1, z0 + (i * 7) % 48, h.state("minecraft:short_grass"), null);
         writer.write(x0 + 20, FLOOR_Y + 1, z0 + 20, h.state("minecraft:oak_log[axis=y]"), null);
         Clipboard.Builder tree = Clipboard.builder(h.runtime.states(), new BlockPos(3, 4, 3)).anchor(new BlockPos(1, 0, 1));
@@ -514,7 +515,7 @@ public final class ScatterGameTest implements FabricGameTest {
         int cx0 = x0 >> 4, cz0 = z0 >> 4;
         Box loaded = box(x0, FLOOR_Y, z0, x0 + 15, FLOOR_Y, z0 + 15);
         loadAndForce(h.world, loaded);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int x = x0; x < x0 + 16; x++) {
             for (int z = z0; z < z0 + 16; z++) writer.write(x, FLOOR_Y, z, h.state("minecraft:stone"), null);
         }
@@ -593,7 +594,7 @@ public final class ScatterGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 76);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int water = h.state("minecraft:water[level=0]");
         for (int x = x0; x < x0 + 16; x++) {
             for (int z = z0; z < z0 + 32; z++) writer.write(x, FLOOR_Y + 1, z, water, null);

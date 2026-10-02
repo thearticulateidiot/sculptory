@@ -3,6 +3,7 @@ package dev.sculptory.fabric.world;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.world.WorldReader;
+import dev.sculptory.server.platform.LiveReader;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
@@ -27,7 +28,7 @@ import net.minecraft.world.chunk.WorldChunk;
  * <p>The last {@link WorldChunk} is cached so per-cell reads resolve each chunk once; call {@link #invalidate()}
  * when chunks may have unloaded (the executor does so at the start of every slice).
  */
-public final class FabricWorldReader implements WorldReader {
+public final class FabricWorldReader implements LiveReader {
     private final ServerWorld world;
     private final FabricStateSpace states;
     private final RegistryWrapper.WrapperLookup registries;
@@ -224,6 +225,7 @@ public final class FabricWorldReader implements WorldReader {
     }
 
     /** Drops the cached chunk and palettes. */
+    @Override
     public void invalidate() {
         cachedPos = Long.MIN_VALUE;
         cachedChunk = null;

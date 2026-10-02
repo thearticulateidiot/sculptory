@@ -1,11 +1,11 @@
 package dev.sculptory.fabric.engine.impl;
 
 import dev.sculptory.core.edit.EditProgram;
-import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.impl.RecordSink;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.Objects;
 import java.util.UUID;
 import net.minecraft.server.world.ServerWorld;
@@ -20,7 +20,7 @@ import net.minecraft.server.world.ServerWorld;
  * @param records receives every changed cell (and entity); the history integration passes a {@code RecordBuilder}
  * @param entities the job's entity work, or {@code null} for none
  */
-public record JobRequest(UUID owner, ServerWorld world, EditProgram program, BlockWriter.Options writeOptions,
+public record JobRequest(UUID owner, ServerWorld world, EditProgram program, WriteOptions writeOptions,
                          PermitSource permits, boolean mayLoadChunks, long seed, JobListener listener,
                          RecordSink records, EntityWork entities) {
     /** Owner of jobs started by the server itself (tests, admin tools). */
@@ -45,14 +45,14 @@ public record JobRequest(UUID owner, ServerWorld world, EditProgram program, Blo
     }
 
     /** A job without entity work. */
-    public JobRequest(UUID owner, ServerWorld world, EditProgram program, BlockWriter.Options writeOptions,
+    public JobRequest(UUID owner, ServerWorld world, EditProgram program, WriteOptions writeOptions,
                       PermitSource permits, boolean mayLoadChunks, long seed, JobListener listener, RecordSink records) {
         this(owner, world, program, writeOptions, permits, mayLoadChunks, seed, listener, records, null);
     }
 
     /** A server-owned job: physics off, no protection, may load chunks, no history. */
     public static JobRequest system(ServerWorld world, EditProgram program, JobListener listener) {
-        return new JobRequest(SYSTEM_OWNER, world, program, BlockWriter.Options.DEFAULT, PermitSource.ALLOW_ALL,
+        return new JobRequest(SYSTEM_OWNER, world, program, WriteOptions.DEFAULT, PermitSource.ALLOW_ALL,
                 true, 0L, listener, RecordSink.NONE);
     }
 
@@ -66,7 +66,7 @@ public record JobRequest(UUID owner, ServerWorld world, EditProgram program, Blo
                 entities);
     }
 
-    public JobRequest withWriteOptions(BlockWriter.Options options) {
+    public JobRequest withWriteOptions(WriteOptions options) {
         return new JobRequest(owner, world, program, options, permits, mayLoadChunks, seed, listener, records,
                 entities);
     }

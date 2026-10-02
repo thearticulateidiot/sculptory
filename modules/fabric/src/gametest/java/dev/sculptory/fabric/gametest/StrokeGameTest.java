@@ -35,6 +35,7 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -119,7 +120,7 @@ public final class StrokeGameTest implements FabricGameTest {
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
         loadAndForce(world, area);
         terrain(h, x0, z0, 48, 48);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         // A pond, plants, a stair and a chest (structures the brushes must leave alone).
         for (int x = x0 + 20; x <= x0 + 26; x++) {
             for (int z = z0 + 20; z <= z0 + 25; z++) {
@@ -445,7 +446,7 @@ public final class StrokeGameTest implements FabricGameTest {
 
     /** Stone from y {@value #BASE} with a grass top at 104-110 varying across the area. */
     static void terrain(Harness h, int x0, int z0, int w, int d) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), grass = h.state("minecraft:grass_block");
         for (int dx = 0; dx < w; dx++) {
             for (int dz = 0; dz < d; dz++) {

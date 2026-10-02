@@ -51,6 +51,7 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -107,7 +108,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     }
 
     static void paint(Harness h, int x0, int z0, int w, int d, String top) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int state = h.state(top);
         for (int x = x0; x < x0 + w; x++) {
             for (int z = z0; z < z0 + d; z++) writer.write(x, FLOOR_Y, z, state, null);
@@ -148,7 +149,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 16, 16, "minecraft:grass_block");
         // Ground under the floor (the test world is void below it): an ice spike's base and mangrove roots stop there.
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int x = x0 - 4; x < x0 + 20; x++) {
             for (int z = z0 - 4; z < z0 + 20; z++) {
                 for (int y = FLOOR_Y - 3; y < FLOOR_Y; y++) writer.write(x, y, z, h.state("minecraft:stone"), null);

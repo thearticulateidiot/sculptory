@@ -33,6 +33,8 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.RecordSink;
+import dev.sculptory.server.platform.EntityPlacer;
+import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.TileSanitizer;
 import java.io.IOException;
 import java.util.ArrayList;
@@ -179,7 +181,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         service.commitStroke(player.getUuid());
         RecordBuilder builder = new RecordBuilder();
         RecordSink sink = service.runtime().fluidTrails().marking(RecordSink.into(builder), world, builder.id());
-        BlockWriter writer = service.runtime().writer(world, new BlockWriter.Options(false, operatorNbt));
+        BlockWriter writer = service.runtime().writer(world, new WriteOptions(false, operatorNbt));
         final int want = expected;
         writer.write(pos.getX(), pos.getY(), pos.getZ(), target, tile, sink, (state, liveTile) -> state == want);
         if (partnerPos != null) {
@@ -310,10 +312,10 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         };
 
         service.commitStroke(player.getUuid());
-        EntityWriter writer = new EntityWriter(world, new BlockWriter.Options(false,
+        EntityWriter writer = new EntityWriter(world, new WriteOptions(false,
                 permissions.mayWriteOperatorNbt(player)), rules);
         writer.remove(entity, before);
-        EntityWriter.Spawn spawn = writer.restore(target, allowed);
+        EntityPlacer.Spawn<Entity> spawn = writer.restore(target, allowed);
         Entity placed = spawn.entity();
         String refusal = null;
         RejectReason reason = RejectReason.INVALID;
@@ -334,7 +336,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
                 placed.discard();
             }
             // The entity as it was, with its UUID: nothing changed.
-            EntityWriter.Spawn back = writer.restore(before, e -> true);
+            EntityPlacer.Spawn<Entity> back = writer.restore(before, e -> true);
             if (back.entity() == null) {
                 LOG.error("Sculptory: a {} ({}) could not be put back after a refused Tinker edit", typeId, id);
             }

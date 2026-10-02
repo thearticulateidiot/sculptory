@@ -41,6 +41,7 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.impl.HistoryService;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -286,7 +287,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 63, 143, z + 63); // 32 sections
         loadAndForce(h.world, region);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int dx = 0; dx < 64; dx += 5) writer.write(x + dx, 112 + dx % 30, z + dx, h.state("minecraft:dirt"), null);
         WorldSnapshot original = capture(h.world, region);
         fillBy(h, executor, alice, region, "minecraft:stone");
@@ -402,7 +403,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         int x = at[0], z = at[1];
         Box region = box(x, 99, z, x + 31, 111, z + 15);
         loadAndForce(h.world, region);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         MultiplayerGameTest.paint(writer, box(x, 100, z, x + 31, 100, z + 15), h.state("minecraft:stone"));
         fillBy(h, executor, alice, box(x, 105, z, x + 15, 105, z + 15), "minecraft:glass");
         fillBy(h, executor, bob, box(x + 3, 105, z + 3, x + 3, 105, z + 3), "minecraft:emerald_block");
@@ -541,7 +542,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         loadAndForce(h.world, region);
         BlockPos source = pos(x + 2, 101, z + 2);
         BlockPos target = pos(x + 12, 101, z + 2);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         writer.write(source.getX(), source.getY(), source.getZ(), h.state("minecraft:chest[facing=east]"), null);
         ((ChestBlockEntity) h.world.getBlockEntity(source)).setStack(0, new ItemStack(Items.DIAMOND, 5));
         RecordingListener move = new RecordingListener();
@@ -675,7 +676,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         /** Dirt ground and a chest of 5 diamonds, then remembers the region. */
         private void ground() {
             loadAndForce(h.world, region);
-            BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+            BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
             int dirt = h.state("minecraft:dirt");
             for (int dx = 0; dx < 32; dx++) {
                 for (int dz = 0; dz < 16; dz++) writer.write(x + dx, 100, z + dz, dirt, null);
@@ -710,7 +711,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
             fillBy(h, executor, bob, cell(20, 110, 5), "minecraft:emerald_block");  // A and B
             fillBy(h, executor, bob, cell(28, 110, 5), "minecraft:emerald_block");  // B only
             BlockPos chest = at(2, 101, 2);
-            BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+            BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
             writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:barrel[facing=up]"), null);
             ((LootableContainerBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.APPLE, 9));
         }
@@ -718,7 +719,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         /** Bob replaces what stands at the chest's cell with a chest of his own (same state, other contents). */
         private void ownChest(net.minecraft.item.Item item) {
             BlockPos chest = at(2, 101, 2);
-            BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+            BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
             writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
             ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(3, new ItemStack(item, 7));
         }

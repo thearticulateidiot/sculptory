@@ -57,6 +57,7 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.engine.impl.EntityColumns;
 import dev.sculptory.server.engine.impl.PlayerClipboards;
 import dev.sculptory.server.engine.impl.RequestSlots;
 import dev.sculptory.server.library.Library;
@@ -369,7 +370,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
         // Entities are read with the blocks: all of them or none, never a part. Only
         // the chunks the region's cells are in (and their neighbours near a cell) count, never every chunk of its bounds.
         long[] entityColumns = entities == EntityFilter.NONE ? null
-                : FabricEntities.entityColumns(region, area.min().y(), area.max().y());
+                : EntityColumns.of(region, area.min().y(), area.max().y());
         if (entityColumns != null) {
             String unloaded = FabricEntities.firstUnloaded(world, entityColumns);
             if (unloaded != null) {
@@ -484,7 +485,7 @@ public final class ServerClipboards implements ClipboardService<ServerPlayerEnti
 
     /**
      * Reads what a copy of {@code region} takes of its entities (looking in the chunk {@code columns} of
-     * {@link FabricEntities#entityColumns}): those whose block is in the region, inside {@code area} (the region
+     * {@link EntityColumns#of(Region, int, int)}): those whose block is in the region, inside {@code area} (the region
      * clipped to the build height; positions are relative to its corner, the clipboard's) and passes the copy's mask
      * (tested on the block the entity belongs to, {@link FabricEntities#cell}). Returns their snapshots, and
      * for a cut also their states and UUIDs (its erase removes them). {@code TOO_LARGE} past

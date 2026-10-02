@@ -30,6 +30,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -175,7 +176,7 @@ public final class BrushMaskGameTest implements FabricGameTest {
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 64, 64);
         pond(h, x0 + 34, z0 + 28, x0 + 40, z0 + 34);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int snowy = h.state("minecraft:grass_block[snowy=true]");
         for (int x = x0 + 20; x <= x0 + 44; x += 2) {
             for (int z = z0 + 20; z <= z0 + 44; z += 3) {
@@ -300,7 +301,7 @@ public final class BrushMaskGameTest implements FabricGameTest {
 
     /** Water from the stone floor (y 101) up to y 106 over the box's columns, air above to y 115. */
     private static void pond(Harness h, int xa, int za, int xb, int zb) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int water = h.state("minecraft:water"), air = h.state("minecraft:air"), sand = h.state("minecraft:sand");
         for (int x = xa; x <= xb; x++) {
             for (int z = za; z <= zb; z++) {

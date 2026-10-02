@@ -32,6 +32,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -117,7 +118,7 @@ public final class EntityRegionGameTest implements FabricGameTest {
         context.createTimedTaskRunner()
                 .createAndAdd(() -> ready(world, all))
                 .createAndAdd(once(() -> {
-                    BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+                    BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
                     for (int x = x0; x <= x0 + 11; x++) {
                         for (int z = z0; z <= z0 + 11; z++) writer.write(x, y0, z, h.state("minecraft:stone"), null);
                     }

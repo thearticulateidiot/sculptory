@@ -19,6 +19,7 @@ import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.impl.ColumnPlan;
 import dev.sculptory.server.engine.impl.ProgressThrottle;
 import dev.sculptory.server.engine.impl.TicketWindow;
+import dev.sculptory.server.platform.WorldWriter;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -83,7 +84,7 @@ final class BulkJob {
     private final int topSection;
     private final int air;
     /** Asks the program about each cell's live content; {@link #guardKey}/{@link #guardIndex} name the cell. */
-    private final BlockWriter.Guard guard;
+    private final WorldWriter.Guard guard;
     private long guardKey;
     private int guardIndex;
 

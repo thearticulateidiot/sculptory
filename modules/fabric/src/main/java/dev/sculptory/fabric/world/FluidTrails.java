@@ -7,6 +7,7 @@ import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.server.engine.impl.RecordSink;
+import dev.sculptory.server.platform.FluidTrailHook;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -87,7 +88,7 @@ import org.slf4j.LoggerFactory;
  * Trails and wakes are in memory only (a trail is folded into its entry when the game saves its chunks). Entries no
  * history holds any more are forgotten every {@value #SWEEP_TICKS} ticks ({@link #register}).
  */
-public final class FluidTrails {
+public final class FluidTrails implements FluidTrailHook<ServerWorld> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** How often entries no history holds any more lose their marks and trails, in server ticks. */
     public static final int SWEEP_TICKS = 1200;
@@ -344,6 +345,7 @@ public final class FluidTrails {
      * {@code sink}, also marking the cells it records whose new state holds a fluid with {@code owner} (the entry the
      * job's writes belong to).
      */
+    @Override
     public RecordSink marking(RecordSink sink, ServerWorld world, UUID owner) {
         Objects.requireNonNull(sink);
         Objects.requireNonNull(world);
@@ -378,16 +380,11 @@ public final class FluidTrails {
      * whether it did. (The write went through {@code World.setBlockState}, whose hook already cleared the cell's old
      * mark.)
      */
+    @Override
     public boolean wrote(ServerWorld world, int x, int y, int z, int after, UUID owner) {
         if (!followed(after)) return false;
         mark(worlds.computeIfAbsent(world, k -> new WorldTrails()), x, y, z, owner);
         return true;
-    }
-
-    /** The entry a history step's write of cell (x, y, z) belongs to, or {@code null} for none. */
-    @FunctionalInterface
-    public interface CellOwner {
-        UUID at(int x, int y, int z);
     }
 
     /**
@@ -396,6 +393,7 @@ public final class FluidTrails {
      * ice it froze into, a redo puts back). Fluid written over fluid (a player's stream restored to its own level) is
      * left unmarked: it is not the entry's.
      */
+    @Override
     public RecordSink stepMarking(RecordSink sink, ServerWorld world, CellOwner owner) {
         Objects.requireNonNull(sink);
         Objects.requireNonNull(world);
@@ -444,6 +442,7 @@ public final class FluidTrails {
      * as a record (first state before, last state after; unchanged cells dropped), or {@code null} when nothing: the
      * entry's next step takes it. The trail starts afresh (its cap counts from here).
      */
+    @Override
     public EditRecord take(ServerWorld world, UUID owner) {
         WorldTrails w = worlds.get(world);
         if (w == null) return null;
@@ -462,6 +461,7 @@ public final class FluidTrails {
      * as {@link #take} does, to be folded into the entry between steps (its history is unloaded, the server stops). The
      * trail stays, counting what was folded against its cap.
      */
+    @Override
     public EditRecord drain(ServerWorld world, UUID owner) {
         WorldTrails w = worlds.get(world);
         Trail trail = w == null ? null : w.trails.get(owner);
@@ -482,6 +482,7 @@ public final class FluidTrails {
      *
      * @return the players whose entries were folded into
      */
+    @Override
     public Set<UUID> drainColumn(ServerWorld world, int cx, int cz, BiFunction<UUID, EditRecord, UUID> fold) {
         WorldTrails w = worlds.get(world);
         if (w == null || w.trails.isEmpty()) return Set.of();
@@ -518,6 +519,7 @@ public final class FluidTrails {
      * fluid did since, so each cell keeps its first state and its last, and the cap goes on counting what was folded
      * into the entry before the take. Does nothing for {@code null}.
      */
+    @Override
     public void giveBack(ServerWorld world, UUID owner, EditRecord taken) {
         if (taken == null || taken.before().isEmpty()) return;
         WorldTrails w = worlds.computeIfAbsent(world, k -> new WorldTrails());
@@ -543,10 +545,12 @@ public final class FluidTrails {
      * Holds {@code owner}'s fluid still until {@link #thaw}: while one of its steps writes (its edit's job or open
      * stroke, an undo or redo of it), fluid ticks attributed to it are put off and random ticks skipped.
      */
+    @Override
     public void freeze(UUID owner) {
         frozen.add(Objects.requireNonNull(owner));
     }
 
+    @Override
     public void thaw(UUID owner) {
         frozen.remove(owner);
     }
@@ -562,6 +566,7 @@ public final class FluidTrails {
      * tell (a saved history still loading): then nothing is forgotten. Holders are referenced weakly: the caller keeps
      * the supplier.
      */
+    @Override
     public void register(Supplier<Set<UUID>> entries) {
         holders.add(new WeakReference<>(Objects.requireNonNull(entries)));
     }

@@ -31,6 +31,7 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -65,7 +66,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         int x = at[0], z = at[1];
         Box region = box(x, 100, z, x + 49, 139, z + 49);
         loadAndForce(world, region);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int dx = 0; dx < 50; dx++) {
             for (int dz = 0; dz < 50; dz++) writer.write(x + dx, 100, z + dz, h.state("minecraft:dirt"), null);
         }
@@ -164,7 +165,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 13);
         Box region = box(at[0], 112, at[1], at[0] + 15, 119, at[1] + 15);
         loadAndForce(world, region);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         BlockPos chest = pos(at[0] + 5, 113, at[1] + 5);
         int chestState = h.state("minecraft:chest[facing=south]");
         writer.write(chest.getX(), chest.getY(), chest.getZ(), chestState, null);
@@ -341,7 +342,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         Box region = box(at[0], 112, at[1], at[0] + 7, 119, at[1] + 7);
         Box big = box(at[0] + 32, 112, at[1], at[0] + 95, 143, at[1] + 63);
         loadAndForce(world, box(at[0], 112, at[1], at[0] + 95, 143, at[1] + 63));
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int i = 0; i < 8; i++) writer.write(at[0] + i, 112 + i, at[1] + 7 - i, h.state("minecraft:dirt"), null);
         WorldSnapshot before = capture(world, region);
         WorldSnapshot bigBefore = capture(world, big);
@@ -538,7 +539,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 26);
         Box region = box(at[0], 112, at[1], at[0] + 7, 119, at[1] + 7);
         loadAndForce(world, region);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         BlockPos sign = pos(at[0] + 3, 113, at[1] + 3);
         writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign"), null);
         ((SignBlockEntity) world.getBlockEntity(sign)).setText(
@@ -622,7 +623,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 17);
         Box region = box(at[0], 112, at[1], at[0] + 63, 143, at[1] + 63); // 32 sections
         loadAndForce(world, region);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int dx = 0; dx < 64; dx += 3) {
             for (int dz = 0; dz < 64; dz += 2) writer.write(at[0] + dx, 112 + (dx + dz) % 30, at[1] + dz, h.state("minecraft:dirt"), null);
         }
@@ -702,7 +703,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         runUntilFinished(executor, fill, "the fill");
         check(fill.result.outcome() == JobOutcome.COMPLETED && fill.result.changed() == 256, "fill " + fill.result);
         WorldSnapshot filled = capture(h.world, around);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int goldState = h.state("minecraft:gold_block"), diamondState = h.state("minecraft:diamond_block");
         BlockPos gold = pos(x + 15, 100, z + 15); // written last
         BlockPos diamond = pos(x + 14, 100, z + 15);

@@ -36,6 +36,8 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EntityColumns;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -87,7 +89,7 @@ public final class EntitiesGameTest implements FabricGameTest {
      */
     static List<Entity> decorate(Harness h, int x0, int y0, int z0) {
         ServerWorld world = h.world;
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int x = x0; x <= x0 + 3; x++) {
             for (int y = y0; y <= y0 + 2; y++) writer.write(x, y, z0, h.state("minecraft:stone"), null);
             for (int z = z0 + 1; z <= z0 + 3; z++) writer.write(x, y0, z, h.state("minecraft:stone"), null);
@@ -135,7 +137,7 @@ public final class EntitiesGameTest implements FabricGameTest {
 
     /** The entities (players never) belonging to {@code area} as the server decides it: by {@link FabricEntities#cell}. */
     static List<Entity> entitiesIn(ServerWorld world, Box area) {
-        int margin = FabricEntities.MARGIN + 1;
+        int margin = EntityColumns.MARGIN + 1;
         net.minecraft.util.math.Box box = new net.minecraft.util.math.Box(area.min().x() - margin,
                 area.min().y() - margin, area.min().z() - margin, area.max().x() + 1 + margin,
                 area.max().y() + 1 + margin, area.max().z() + 1 + margin);
@@ -640,7 +642,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         context.createTimedTaskRunner()
                 .createAndAdd(() -> ready(world, all))
                 .createAndAdd(once(() -> {
-                    BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+                    BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
                     for (int x = x0; x <= x0 + 5; x++) {
                         for (int z = z0; z <= z0 + 5; z++) writer.write(x, y0, z, h.state("minecraft:stone"), null);
                     }

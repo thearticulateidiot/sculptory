@@ -31,6 +31,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -524,7 +525,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         StrokeGameTest.terrain(h, x0, z0, 48, 48);
         // The dabs at x0 + 8 .. 11 mirror (around x0 + 24) onto x0 + 39 .. 36: the pillar covers them, not the rest of
         // the copies' footprints (x0 + 33 .. 42, z0 + 17 .. 23).
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = x0 + 32; x <= x0 + 39; x++) {
             for (int z = z0 + 18; z <= z0 + 22; z++) {
@@ -772,7 +773,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
 
     /** Raises every column of the box by {@code by(x)} blocks: stone up to a new grass top. */
     private static void heighten(Harness h, int xa, int za, int xb, int zb, java.util.function.IntUnaryOperator by) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), grass = h.state("minecraft:grass_block");
         for (int x = xa; x <= xb; x++) {
             for (int z = za; z <= zb; z++) {
@@ -837,7 +838,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
 
     /** Water from a sand floor (y 101) up to y 106 over the box's columns, air above to y 115. */
     private static void pond(Harness h, int xa, int za, int xb, int zb) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int water = h.state("minecraft:water"), air = h.state("minecraft:air"), sand = h.state("minecraft:sand");
         for (int x = xa; x <= xb; x++) {
             for (int z = za; z <= zb; z++) {

@@ -6,8 +6,8 @@ import dev.sculptory.protocol.v2.PermissionMask;
 import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.Perm;
-import dev.sculptory.server.engine.PermissionService;
 import dev.sculptory.server.perm.ChunkPermits;
+import dev.sculptory.server.platform.PlatformPermissions;
 import java.util.EnumSet;
 import java.util.Map;
 import java.util.Objects;
@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  * requests are refused {@code NO_PERMISSION}); {@link #check} reports it as unknown instead, so re-checks of work
  * already admitted can leave that work alone. Failures are logged at most once a minute per player.
  */
-public final class FabricPermissionService implements PermissionService<ServerPlayerEntity, ServerWorld> {
+public final class FabricPermissionService implements PlatformPermissions<ServerPlayerEntity, ServerWorld> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Failed permission checks are logged at most this often per player. */
     static final long FAILURE_LOG_INTERVAL_NANOS = 60_000_000_000L;
@@ -76,6 +76,12 @@ public final class FabricPermissionService implements PermissionService<ServerPl
         }
     }
 
+    /** Whether {@link #check} says {@code FALSE}: a definite no (a failing permissions backend is none). */
+    @Override
+    public boolean denied(ServerPlayerEntity p, Perm node) {
+        return check(p, node) == TriState.FALSE;
+    }
+
     private void logFailure(ServerPlayerEntity p, Perm node, Throwable e) {
         long now = System.nanoTime();
         UUID id = p.getUuid();
@@ -99,6 +105,7 @@ public final class FabricPermissionService implements PermissionService<ServerPl
     }
 
     /** Whether operator-only block-entity NBT is kept for this player. */
+    @Override
     public boolean mayWriteOperatorNbt(ServerPlayerEntity p) {
         return operatorNbt(p) == TriState.TRUE;
     }
@@ -106,6 +113,12 @@ public final class FabricPermissionService implements PermissionService<ServerPl
     /** {@link #mayWriteOperatorNbt} as a {@link #check}: {@code DEFAULT} when the permissions backend failed. */
     public TriState operatorNbt(ServerPlayerEntity p) {
         return p.isCreativeLevelTwoOp() ? TriState.TRUE : check(p, Perm.NBT_OPERATOR);
+    }
+
+    /** Whether {@link #operatorNbt} says {@code FALSE}. */
+    @Override
+    public boolean operatorNbtDenied(ServerPlayerEntity p) {
+        return operatorNbt(p) == TriState.FALSE;
     }
 
     /** Corner rule plus a sample at the column nearest world spawn, so small spawn protection is not missed. */

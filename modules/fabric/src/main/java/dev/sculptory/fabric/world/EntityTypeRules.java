@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.world;
 
 import dev.sculptory.core.entity.EntityNbt;
+import dev.sculptory.server.platform.EntityRules;
 import java.util.Set;
 import java.util.TreeSet;
 import net.minecraft.entity.Entity;
@@ -29,7 +30,7 @@ import org.slf4j.LoggerFactory;
  * so nothing from a file slips through unchecked. Type ids are compared as the game reads them when it loads an entity
  * ({@link EntityNbt#loadedId}).
  */
-public final class EntityTypeRules {
+public final class EntityTypeRules implements EntityRules {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Vanilla's operator-only types, kept whatever a scan finds. */
     public static final Set<String> VANILLA_OPERATOR = Set.of("minecraft:command_block_minecart",
@@ -110,16 +111,19 @@ public final class EntityTypeRules {
     }
 
     /** Whether only operators may write this type's data (every type before the scan). */
+    @Override
     public boolean operator(String typeId) {
         return !ready || operator.contains(EntityNbt.loadedId(typeId));
     }
 
     /** Whether entities of this type are never placed from a clipboard or file (every type before the scan). */
+    @Override
     public boolean never(String typeId) {
         return !ready || never.contains(EntityNbt.loadedId(typeId));
     }
 
     /** Whether this type hangs on a block (its {@code TileX/Y/Z} count); none before the scan. */
+    @Override
     public boolean hanging(String typeId) {
         return ready && hanging.contains(EntityNbt.loadedId(typeId));
     }

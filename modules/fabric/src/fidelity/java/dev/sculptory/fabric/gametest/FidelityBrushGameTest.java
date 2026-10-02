@@ -30,6 +30,7 @@ import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.DabOutcome;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -63,7 +64,7 @@ public final class FidelityBrushGameTest implements FabricGameTest {
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
         loadAndForce(world, area);
         terrain(h, x0, z0, 48, 48);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int cabbages = h.state("farmersdelight:cabbages[age=5]");
         int wildCabbages = h.state("farmersdelight:wild_cabbages");
         int farmland = h.state("farmersdelight:rich_soil_farmland[moisture=7]");
@@ -260,7 +261,7 @@ public final class FidelityBrushGameTest implements FabricGameTest {
      * Chipped planks.
      */
     private static void terrain(Harness h, int x0, int z0, int w, int d) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("chipped:angry_mossy_stone_bricks");
         int[] tops = {h.state("farmersdelight:rich_soil"), h.state("farmersdelight:rich_soil_farmland[moisture=7]"),
             h.state("chipped:boxed_oak_planks"), h.state("farmersdelight:rich_soil")};

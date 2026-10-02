@@ -46,6 +46,7 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
+import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -70,7 +71,7 @@ public final class GenerateGameTest implements FabricGameTest {
 
     /** Stone from y 100 to 103 over the area's columns. */
     private static void ground(Harness h, Box area) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = area.min().x(); x <= area.max().x(); x++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {

@@ -14,6 +14,8 @@ import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.world.EntityWriter;
 import dev.sculptory.fabric.world.FabricEntities;
 import dev.sculptory.server.engine.impl.ColumnPlan;
+import dev.sculptory.server.engine.impl.EntityColumns;
+import dev.sculptory.server.platform.EntityPlacer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import java.util.ArrayList;
@@ -86,7 +88,8 @@ final class EntityJobs {
         }
 
         private void place(Placement placement, Context ctx) {
-            EntityWriter.Spawn spawn = ctx.writer.place(placement.entity(), placement.where(), transform, ctx::mayPlace);
+            EntityPlacer.Spawn<Entity> spawn = ctx.writer.place(placement.entity(), placement.where(), transform,
+                    ctx::mayPlace);
             if (spawn.refused()) {
                 ctx.protectedEntities++;
                 return;
@@ -181,7 +184,7 @@ final class EntityJobs {
             LongLinkedOpenHashSet out = new LongLinkedOpenHashSet(beforeColumns());
             for (Region target : targets) {
                 Box b = target.bounds();
-                for (long column : FabricEntities.entityColumns(target, b.min().y(), b.max().y())) out.add(column);
+                for (long column : EntityColumns.of(target, b.min().y(), b.max().y())) out.add(column);
             }
             return out.toLongArray();
         }
@@ -189,7 +192,7 @@ final class EntityJobs {
         @Override
         public long[] beforeColumns() {
             Box b = region.bounds();
-            return FabricEntities.entityColumns(region, b.min().y(), b.max().y());
+            return EntityColumns.of(region, b.min().y(), b.max().y());
         }
 
         @Override
@@ -423,7 +426,7 @@ final class EntityJobs {
                     ctx.conflicts++; // something took its UUID meanwhile
                     return;
                 }
-                EntityWriter.Spawn spawn = ctx.writer.restore(step.target(), ctx::mayPlace);
+                EntityPlacer.Spawn<Entity> spawn = ctx.writer.restore(step.target(), ctx::mayPlace);
                 if (spawn.refused()) {
                     ctx.protectedEntities++;
                 } else if (spawn.entity() == null) {

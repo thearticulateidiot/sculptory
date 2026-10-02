@@ -78,6 +78,7 @@ import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.AssetCache;
 import dev.sculptory.server.engine.impl.BrushWork;
 import dev.sculptory.server.engine.impl.EditMasks;
+import dev.sculptory.server.engine.impl.EntityColumns;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.engine.impl.PlayerClipboards;
@@ -85,6 +86,7 @@ import dev.sculptory.server.engine.impl.RecordSink;
 import dev.sculptory.server.engine.impl.ScatterPlans;
 import dev.sculptory.server.library.Library;
 import dev.sculptory.server.library.LibraryPath;
+import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.SanitizedTile;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -682,8 +684,8 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
                 .withEntities(entityWork);
         if (!trustSource) {
             // Tiles captured from a source the player could not write are not theirs to vouch for.
-            BlockWriter.Options w = request.writeOptions();
-            request = request.withWriteOptions(new BlockWriter.Options(w.physics(), w.allowOperatorNbt(), false));
+            WriteOptions w = request.writeOptions();
+            request = request.withWriteOptions(new WriteOptions(w.physics(), w.allowOperatorNbt(), false));
         }
         // A job keeping operator-only NBT of untrusted tiles may do so only while the player may. (Fills write no
         // tiles; a move's tiles are world-captured from columns it must be able to write, so they are trusted.)
@@ -729,7 +731,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         // Only the chunks the region's cells are in (and neighbours near a cell): a sparse selection spanning unloaded
         // chunks inside its bounds is not refused for them.
         Box bounds = region.bounds();
-        long[] columns = FabricEntities.entityColumns(region, bounds.min().y(), bounds.max().y());
+        long[] columns = EntityColumns.of(region, bounds.min().y(), bounds.max().y());
         String unloaded = FabricEntities.firstUnloaded(world, columns);
         if (unloaded != null) {
             throw new EditRejected(RejectReason.UNLOADED, "the entities of chunk " + unloaded + " are not loaded "
@@ -1345,7 +1347,7 @@ public final class EngineEditService implements EditService<ServerPlayerEntity>,
         if (lane.stroke != null) closeStroke(lane);
         lane.stroke = new StrokeSession(strokeId, spec, world, worldId(world), history.session(p.getUuid()),
                 runtime.reader(world),
-                runtime.writer(world, BlockWriter.Options.DEFAULT).watchVanillaWrites(executor.clientSync(world)),
+                runtime.writer(world, WriteOptions.DEFAULT).watchVanillaWrites(executor.clientSync(world)),
                 clock.getAsLong(), shapeCells, strokeMask);
     }
 

@@ -24,6 +24,7 @@ import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -71,7 +72,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
 
     /** Varied blocks (so every column really changes) and a few signs with text, written directly. */
     private static List<BlockPos> terrainWithSigns(Harness h, Box region) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int dirt = h.state("minecraft:dirt"), planks = h.state("minecraft:oak_planks");
         for (int x = region.min().x(); x <= region.max().x(); x++) {
             for (int z = region.min().z(); z <= region.max().z(); z++) {
@@ -674,7 +675,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
             view.accept(packet);
         });
         ClientSync sync = h.runtime.executor().clientSync(h.world);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT).syncThrough(sync);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT).syncThrough(sync);
         int stone = h.state("minecraft:stone");
         long[] resentBefore = new long[1];
         int[] sentinelAt = {-1};

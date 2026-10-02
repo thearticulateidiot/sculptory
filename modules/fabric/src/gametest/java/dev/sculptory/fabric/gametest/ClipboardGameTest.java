@@ -40,6 +40,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -183,7 +184,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         int spacing = 12;
         Box all = box(x0 - 8, y0, z0 - 8, x0 + spacing * (transforms.size() + 1) + 8, y0 + 3, z0 + 13);
         loadAndForce(world, all);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (String[] cell : SHOWCASE) {
             String[] xyz = cell[0].split(",");
             writer.write(x0 + Integer.parseInt(xyz[0]), y0 + Integer.parseInt(xyz[1]), z0 + Integer.parseInt(xyz[2]),
@@ -320,7 +321,7 @@ public final class ClipboardGameTest implements FabricGameTest {
 
     /** Stone, planks, a chest with items, a sign, a furnace and a command block with a command. */
     static void decorate(Harness h, ServerWorld world, Box box) {
-        BlockWriter writer = h.runtime.writer(world, new BlockWriter.Options(false, true));
+        BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         int x = box.min().x(), y = box.min().y(), z = box.min().z();
         for (int dx = 0; dx < box.sizeX(); dx++) {
             for (int dz = 0; dz < box.sizeZ(); dz++) {
@@ -411,7 +412,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         Box union = box(at[0], 100, at[1], at[0] + 12, 105, at[1] + 11);
         loadAndForce(world, union);
         decorate(h, world, source);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         for (int i = 0; i < 10; i++) writer.write(at[0] + i, 102 + (i % 3), at[1] + 9 - i, h.state("minecraft:gold_block"), null);
         WorldSnapshot sourceBefore = capture(world, source);
         WorldSnapshot unionBefore = capture(world, union);
@@ -581,7 +582,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         Box all = box(x0 - 16, 100, z0, x0 + 15, 103, z0 + 31);
         loadAndForce(world, all);
         net.minecraft.util.math.BlockPos command = pos(x0 + 13, 101, z0 + 5);
-        h.runtime.writer(world, new BlockWriter.Options(false, true))
+        h.runtime.writer(world, new WriteOptions(false, true))
                 .write(command.getX(), command.getY(), command.getZ(), h.state("minecraft:command_block"), null);
         ((CommandBlockBlockEntity) world.getBlockEntity(command)).getCommandExecutor().setCommand("op me");
         Box source = box(x0 + 8, 100, z0 + 2, x0 + 15, 102, z0 + 9);
@@ -658,7 +659,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         Box spanning = box(x0 + 8, 100, z0 + 2, x0 + 23, 103, z0 + 9);        // chunks A and B
         Box all = box(x0, 100, z0, x0 + 31, 110, z0 + 15);
         loadAndForce(world, all);
-        BlockWriter writer = h.runtime.writer(world, new BlockWriter.Options(false, true));
+        BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         writer.write(x0 + 20, 101, z0 + 5, h.state("minecraft:command_block"), null);
         ((CommandBlockBlockEntity) world.getBlockEntity(pos(x0 + 20, 101, z0 + 5))).getCommandExecutor().setCommand("op me");
         ServerClipboards clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));

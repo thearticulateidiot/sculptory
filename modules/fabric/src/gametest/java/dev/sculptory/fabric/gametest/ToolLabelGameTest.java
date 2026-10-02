@@ -34,6 +34,7 @@ import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.engine.ScatterService;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -60,7 +61,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 98, z0, x0 + 15, 112, z0 + 15);
         loadAndForce(h.world, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), water = h.state("minecraft:water[level=0]"), air = h.state("minecraft:air");
         for (int x = x0; x <= x0 + 15; x++) {
             for (int z = z0; z <= z0 + 15; z++) {

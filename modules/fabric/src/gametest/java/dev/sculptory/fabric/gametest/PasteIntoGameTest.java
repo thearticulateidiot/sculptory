@@ -30,6 +30,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
@@ -176,7 +177,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         Box source = box(x0 + 2, 100, z0 + 2, x0 + 7, 102, z0 + 6);
         paint(h, writer, source);
         Box landing = box(x0 + 16, 100, z0 + 8, x0 + 21, 102, z0 + 12);
@@ -241,7 +242,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         Box source = box(x0 + 2, 100, z0 + 2, x0 + 7, 102, z0 + 6);
         paint(h, writer, source);
         mixed(h, writer, box(x0 + 12, 100, z0 + 4, x0 + 25, 103, z0 + 16));
@@ -298,7 +299,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 31);
         loadAndForce(world, area);
-        BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         Box source = box(x0 + 2, 100, z0 + 2, x0 + 7, 102, z0 + 6);
         paint(h, writer, source);
         mixed(h, writer, box(x0 + 5, 100, z0 + 8, x0 + 25, 103, z0 + 20));

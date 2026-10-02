@@ -15,6 +15,7 @@ import dev.sculptory.fabric.world.EditScope;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import dev.sculptory.fabric.world.FabricTile;
 import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -70,7 +71,7 @@ public final class WriterGameTest implements FabricGameTest {
             "minecraft:seagrass",
             "minecraft:tall_seagrass[half=lower]",
         };
-        BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         FabricWorldReader reader = runtime.reader(world);
         List<BlockPos> positions = new ArrayList<>();
         int[] handles = new int[specs.length];
@@ -149,7 +150,7 @@ public final class WriterGameTest implements FabricGameTest {
         furnaceEntity.setStack(0, new ItemStack(Items.IRON_ORE, 3));
         furnaceEntity.setStack(1, new ItemStack(Items.COAL, 2));
 
-        BlockWriter writer = runtime.writer(world, new BlockWriter.Options(false, true));
+        BlockWriter writer = runtime.writer(world, new WriteOptions(false, true));
         for (BlockPos source : List.of(chest, sign, banner, furnace)) {
             BlockEntityData captured = reader.tile(source.getX(), source.getY(), source.getZ());
             check(captured instanceof FabricTile, "no tile captured at " + source.toShortString());
@@ -189,7 +190,7 @@ public final class WriterGameTest implements FabricGameTest {
         check((states.flags(signHandle) & StateFlags.OPERATOR_NBT) != 0, "oak_sign should be OPERATOR_NBT");
         BlockEntityData signTile = reader.tile(sign.getX(), sign.getY(), sign.getZ());
         check(FabricTile.isServerCaptured(signTile), "reader tiles should be server-captured");
-        BlockWriter nonOp = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter nonOp = runtime.writer(world, WriteOptions.DEFAULT);
         BlockPos trusted = context.getAbsolutePos(new BlockPos(3, 4, 5));
         check(nonOp.write(trusted.getX(), trusted.getY(), trusted.getZ(), signHandle, signTile) != null
                 && signText(world, trusted).equals("Builder"), "captured sign NBT was stripped for a non-op");
@@ -198,7 +199,7 @@ public final class WriterGameTest implements FabricGameTest {
         BlockEntityData applied = nonOp.write(stripped.getX(), stripped.getY(), stripped.getZ(), signHandle, foreign);
         check(applied == null && nonOp.strippedNbt() == 1, "foreign operator NBT was not stripped");
         check(signText(world, stripped).isEmpty(), "stripped sign has text");
-        BlockWriter distrusting = runtime.writer(world, new BlockWriter.Options(false, false, false));
+        BlockWriter distrusting = runtime.writer(world, new WriteOptions(false, false, false));
         BlockPos distrusted = context.getAbsolutePos(new BlockPos(1, 4, 5));
         distrusting.write(distrusted.getX(), distrusted.getY(), distrusted.getZ(), signHandle, signTile);
         check(distrusting.strippedNbt() == 1 && signText(world, distrusted).isEmpty(),
@@ -226,7 +227,7 @@ public final class WriterGameTest implements FabricGameTest {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
         FabricStateSpace states = runtime.states();
-        BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         BlockPos sand = context.getAbsolutePos(new BlockPos(1, 4, 1));
         BlockPos torch = context.getAbsolutePos(new BlockPos(3, 4, 3));
         BlockPos water = context.getAbsolutePos(new BlockPos(5, 4, 5));
@@ -271,7 +272,7 @@ public final class WriterGameTest implements FabricGameTest {
         BlockPos torch = context.getAbsolutePos(new BlockPos(6, 4, 1));
         world.setBlockState(torch.down(), Blocks.STONE.getDefaultState());
         world.setBlockState(torch, Blocks.TORCH.getDefaultState());
-        BlockWriter writer = runtime.writer(world, new BlockWriter.Options(true, false));
+        BlockWriter writer = runtime.writer(world, new WriteOptions(true, false));
         writer.write(torch.getX(), torch.getY() - 1, torch.getZ(), states.air(), null);
         writer.write(sand.getX(), sand.getY(), sand.getZ(), handle(states, "minecraft:sand"), null);
         writer.write(water.getX(), water.getY(), water.getZ(), handle(states, "minecraft:water[level=0]"), null);
@@ -282,7 +283,7 @@ public final class WriterGameTest implements FabricGameTest {
             check(world.getBlockState(context.getAbsolutePos(new BlockPos(1, 1, 1))).isOf(Blocks.SAND), "sand did not land");
             check(world.getFluidState(cup).isOf(Fluids.WATER) || world.getFluidState(cup).isOf(Fluids.FLOWING_WATER),
                     "water did not flow with physics on");
-            BlockWriter cleanup = runtime.writer(world, BlockWriter.Options.DEFAULT);
+            BlockWriter cleanup = runtime.writer(world, WriteOptions.DEFAULT);
             cleanup.write(water.getX(), water.getY(), water.getZ(), states.air(), null);
             cleanup.write(cup.getX(), cup.getY(), cup.getZ(), states.air(), null);
             context.complete();
@@ -305,9 +306,9 @@ public final class WriterGameTest implements FabricGameTest {
         ((LecternBlockEntity) world.getBlockEntity(lectern)).setBook(new ItemStack(Items.WRITABLE_BOOK));
 
         int air = runtime.states().air();
-        runtime.writer(world, BlockWriter.Options.DEFAULT).write(off.getX(), off.getY(), off.getZ(), air, null);
-        runtime.writer(world, BlockWriter.Options.DEFAULT).write(lectern.getX(), lectern.getY(), lectern.getZ(), air, null);
-        runtime.writer(world, new BlockWriter.Options(true, false)).write(on.getX(), on.getY(), on.getZ(), air, null);
+        runtime.writer(world, WriteOptions.DEFAULT).write(off.getX(), off.getY(), off.getZ(), air, null);
+        runtime.writer(world, WriteOptions.DEFAULT).write(lectern.getX(), lectern.getY(), lectern.getZ(), air, null);
+        runtime.writer(world, new WriteOptions(true, false)).write(on.getX(), on.getY(), on.getZ(), air, null);
         context.runAtTick(5, () -> {
             for (BlockPos pos : List.of(off, on, lectern)) check(world.getBlockState(pos).isAir(), "not removed");
             check(context.getEntities(EntityType.ITEM).isEmpty(),
@@ -345,7 +346,7 @@ public final class WriterGameTest implements FabricGameTest {
         check(context.getEntities(EntityType.ITEM).isEmpty(), "onStateReplaced dropped items inside an EditScope");
         check(world.getBlockEntity(chest) instanceof ChestBlockEntity c && !c.isEmpty(), "chest block entity lost");
 
-        BlockWriter cleanup = runtime(context).writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter cleanup = runtime(context).writer(world, WriteOptions.DEFAULT);
         cleanup.write(chest.getX(), chest.getY(), chest.getZ(), runtime(context).states().air(), null);
         cleanup.write(sand.getX(), sand.getY(), sand.getZ(), runtime(context).states().air(), null);
         check(context.getEntities(EntityType.ITEM).isEmpty(), "cleanup dropped items");
@@ -382,7 +383,7 @@ public final class WriterGameTest implements FabricGameTest {
         world.updateComparators(lectern, Blocks.LECTERN);
         context.runAtTick(8, () -> {
             check(world.getBlockState(comparator).get(ComparatorBlock.POWERED), "setup: comparator does not read the lectern");
-            BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+            BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
             writer.write(lectern.getX(), lectern.getY(), lectern.getZ(), runtime.states().air(), null);
             writer.clearTicksAtWrittenCells();
             check(!world.getBlockTickScheduler().isQueued(comparator, Blocks.COMPARATOR), "comparator was updated");
@@ -400,7 +401,7 @@ public final class WriterGameTest implements FabricGameTest {
         EngineRuntime runtime = runtime(context);
         ServerWorld world = context.getWorld();
         FabricWorldReader reader = runtime.reader(world);
-        BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         for (Block block : List.of(Blocks.SCULK_CATALYST, Blocks.SCULK_SENSOR)) {
             int row = block == Blocks.SCULK_CATALYST ? 1 : 5;
             BlockPos source = context.getAbsolutePos(new BlockPos(1, 1, row));
@@ -433,7 +434,7 @@ public final class WriterGameTest implements FabricGameTest {
         int chestHandle = states.handle(world.getBlockState(chest));
 
         EngineTestSupport.MapSink sink = new EngineTestSupport.MapSink();
-        BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         CountDownLatch held = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
         Thread holder = new Thread(() -> {
@@ -461,7 +462,7 @@ public final class WriterGameTest implements FabricGameTest {
         check(rec != null && sink.size() == 1, "the failed write was not recorded");
         check(rec.before() == chestHandle && rec.beforeTile() != null, "record lost the chest");
         // Restoring the record brings back the contents, whatever the failed write left behind.
-        runtime.writer(world, BlockWriter.Options.DEFAULT)
+        runtime.writer(world, WriteOptions.DEFAULT)
                 .write(chest.getX(), chest.getY(), chest.getZ(), rec.before(), rec.beforeTile());
         check(world.getBlockEntity(chest) instanceof ChestBlockEntity c && c.getStack(0).getCount() == 7,
                 "chest contents lost");

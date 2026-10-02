@@ -50,6 +50,7 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.net.PreviewPayload;
+import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.SanitizedTile;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -309,7 +310,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         loadAndForce(world, region);
         // A command block in the world, which the builder may copy (no protection here): world copies stay trusted.
         net.minecraft.util.math.BlockPos worldBlock = pos(at[0] + 10, 100, at[1] + 2);
-        h.runtime.writer(world, new dev.sculptory.fabric.world.BlockWriter.Options(false, true))
+        h.runtime.writer(world, new dev.sculptory.server.platform.WriteOptions(false, true))
                 .write(worldBlock.getX(), worldBlock.getY(), worldBlock.getZ(), h.state("minecraft:command_block[facing=up]"), null);
         ((CommandBlockBlockEntity) world.getBlockEntity(worldBlock)).getCommandExecutor().setCommand("say trusted");
         Path root = ClipTestSupport.libraryRoot(context);
@@ -450,7 +451,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, target);
         // A command block with its default block entity, to compare against.
         net.minecraft.util.math.BlockPos reference = pos(at[0] + 2, 100, at[1] + 5);
-        h.runtime.writer(world, BlockWriter.Options.DEFAULT).write(reference.getX(), reference.getY(), reference.getZ(),
+        h.runtime.writer(world, WriteOptions.DEFAULT).write(reference.getX(), reference.getY(), reference.getZ(),
                 command, null);
         Path root = ClipTestSupport.libraryRoot(context);
         ServerClipboards clips = ClipTestSupport.clipboards(h, root);
@@ -464,7 +465,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                     check(info.notices().equals(List.of(operatorNotice(0, n))), "notices " + info.notices());
                     Clipboard held = h.service.clipboards().get(builder.getUuid()).orElseThrow().clipboard();
                     // The writer itself: each sanitized tile is refused by type, none is stripped.
-                    BlockWriter writer = h.runtime.writer(world, BlockWriter.Options.DEFAULT);
+                    BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
                     for (int i = 0; i < n; i++) {
                         BlockEntityData tile = held.tile(i, 0, 0);
                         check(tile instanceof SanitizedTile, "tile " + i + " is " + tile);

@@ -7,6 +7,7 @@ import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.nbt.NbtLimits;
 import dev.sculptory.core.region.Region;
+import dev.sculptory.server.engine.impl.EntityColumns;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -60,13 +61,13 @@ import net.minecraft.util.math.ChunkPos;
  * checks for protection), else the block holding its position. Only root entities (riding
  * nothing) are taken; their passengers ride along when the filter takes them (recursively, at most
  * {@link EntityNbt#MAX_RIDERS}), and the others stay where they are. An entity's position lies within
- * {@value #MARGIN} blocks of its cell, so looking {@value #MARGIN} blocks around a region finds them all.
+ * {@value #MARGIN} blocks of its cell ({@link EntityColumns}), so looking {@value #MARGIN} blocks around a region finds
+ * them all.
  */
 public final class FabricEntities {
-    /** How far (blocks) an entity's position may lie from the block it belongs to (a large painting's centre). */
-    public static final int MARGIN = 2;
     /** Largest entity NBT read back from bytes (a passenger chain of full chest boats is far below it). */
     static final long MAX_NBT_BYTES = EntityState.MAX_NBT_BYTES;
+    private static final int MARGIN = EntityColumns.MARGIN;
 
     private FabricEntities() {}
 
@@ -123,23 +124,6 @@ public final class FabricEntities {
         return region.contains(cell.getX(), cell.getY(), cell.getZ());
     }
 
-    /**
-     * The chunk columns whose entities can belong to a region of these bounds (their chunks hold positions within
-     * {@link #MARGIN} of the bounds), packed like {@code ChunkPos.toLong}, x fastest.
-     */
-    public static long[] columns(Box bounds) {
-        int cx0 = (bounds.min().x() - MARGIN) >> 4, cx1 = (bounds.max().x() + MARGIN) >> 4;
-        int cz0 = (bounds.min().z() - MARGIN) >> 4, cz1 = (bounds.max().z() + MARGIN) >> 4;
-        long count = ((long) cx1 - cx0 + 1) * ((long) cz1 - cz0 + 1);
-        if (count > Integer.MAX_VALUE - 16) throw new IllegalArgumentException("Too many chunk columns");
-        long[] out = new long[(int) count];
-        int n = 0;
-        for (int cz = cz0; cz <= cz1; cz++) {
-            for (int cx = cx0; cx <= cx1; cx++) out[n++] = ChunkPos.toLong(cx, cz);
-        }
-        return out;
-    }
-
     /** Whether chunk (cx, cz) is loaded with its entities (vanilla loads entities after the chunk). */
     public static boolean loaded(ServerWorld world, int cx, int cz) {
         return WorldChecks.isChunkLoaded(world, cx, cz) && world.isChunkLoaded(ChunkPos.toLong(cx, cz));
@@ -150,7 +134,7 @@ public final class FabricEntities {
      * {@code null} when every one is: an edit must not miss entities it cannot see.
      */
     public static String firstUnloaded(ServerWorld world, Box bounds) {
-        return firstUnloaded(world, columns(bounds));
+        return firstUnloaded(world, EntityColumns.of(bounds));
     }
 
     /** {@link #firstUnloaded(ServerWorld, Box)} over packed chunk {@code columns}. */
@@ -163,56 +147,9 @@ public final class FabricEntities {
     }
 
     /**
-     * The chunk columns whose entities can belong to {@code region} (cells with y in {@code [minY, maxY]}), packed like
-     * {@code ChunkPos.toLong}: for a box, {@link #columns(Box) every column of its bounds} with the margin; for a shape or
-     * a cell set, only the chunks holding its cells, and a neighbouring chunk only where a cell lies within
-     * {@link #MARGIN} blocks of the edge between them (an entity belonging to that cell may be stored there). A sparse
-     * selection spanning unloaded chunks inside its bounds then needs only its own chunks loaded.
-     *
-     * @throws IllegalStateException for an unresolved {@code Region.Uploaded}
-     */
-    public static long[] entityColumns(Region region, int minY, int maxY) {
-        if (region instanceof Region.Cuboid cuboid) return columns(cuboid.box()); // columns only: heights do not matter
-        it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet out = new it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet();
-        var cells = dev.sculptory.core.region.Regions.columns(region, minY, maxY);
-        long[] chunks = cells.keySet().toLongArray();
-        java.util.Arrays.sort(chunks);
-        for (long chunk : chunks) {
-            int cx = dev.sculptory.core.region.Regions.columnX(chunk);
-            int cz = dev.sculptory.core.region.Regions.columnZ(chunk);
-            long[] bits = cells.get(chunk);
-            boolean west = false, east = false, north = false, south = false;
-            boolean northWest = false, northEast = false, southWest = false, southEast = false;
-            for (int i = 0; i < 256; i++) {
-                if ((bits[i >>> 6] & (1L << i)) == 0) continue;
-                int x = i & 15, z = i >>> 4;
-                boolean w = x < MARGIN, e = x >= 16 - MARGIN, n = z < MARGIN, s = z >= 16 - MARGIN;
-                west |= w;
-                east |= e;
-                north |= n;
-                south |= s;
-                northWest |= w && n;
-                northEast |= e && n;
-                southWest |= w && s;
-                southEast |= e && s;
-            }
-            out.add(ChunkPos.toLong(cx, cz));
-            if (west) out.add(ChunkPos.toLong(cx - 1, cz));
-            if (east) out.add(ChunkPos.toLong(cx + 1, cz));
-            if (north) out.add(ChunkPos.toLong(cx, cz - 1));
-            if (south) out.add(ChunkPos.toLong(cx, cz + 1));
-            if (northWest) out.add(ChunkPos.toLong(cx - 1, cz - 1));
-            if (northEast) out.add(ChunkPos.toLong(cx + 1, cz - 1));
-            if (southWest) out.add(ChunkPos.toLong(cx - 1, cz + 1));
-            if (southEast) out.add(ChunkPos.toLong(cx + 1, cz + 1));
-        }
-        return out.toLongArray();
-    }
-
-    /**
      * The root entities {@code filter} takes whose cell is in {@code region}, among the loaded ones, looking only in the
-     * chunk {@code columns} (as {@link #entityColumns} gives them, which hold every entity that can belong to the
-     * region), in a stable order (by UUID).
+     * chunk {@code columns} (as {@link EntityColumns#of(Region, int, int)} gives them, which hold every entity that can
+     * belong to the region), in a stable order (by UUID).
      */
     public static List<Entity> inRegion(ServerWorld world, Region region, EntityFilter filter, long[] columns) {
         if (filter == EntityFilter.NONE) return List.of();
@@ -226,8 +163,8 @@ public final class FabricEntities {
 
     /**
      * The root entities {@code filter} takes whose cell is in {@code region}, among those stored in chunk (cx, cz) (by
-     * their position): each entity is stored in exactly one chunk, so going through a region's {@link #entityColumns}
-     * finds each once.
+     * their position): each entity is stored in exactly one chunk, so going through a region's
+     * {@link EntityColumns#of(Region, int, int) entity columns} finds each once.
      */
     public static List<Entity> inRegion(ServerWorld world, Region region, EntityFilter filter, int cx, int cz) {
         if (filter == EntityFilter.NONE) return List.of();

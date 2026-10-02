@@ -5,6 +5,9 @@ import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.server.engine.impl.RecordSink;
+import dev.sculptory.server.platform.ClientUpdates;
+import dev.sculptory.server.platform.WorldWriter;
+import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.SanitizedTile;
 import dev.sculptory.server.schem.TileSanitizer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
@@ -66,30 +69,13 @@ import org.slf4j.LoggerFactory;
  * <p>The target chunk must be loaded; {@code World.setBlockState} would otherwise load it synchronously.
  * Instances keep per-job counters and are not thread-safe.
  */
-public final class BlockWriter {
+public final class BlockWriter implements WorldWriter {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static final int MAX_LOGGED_FAILURES = 5;
 
-    /**
-     * @param physics run vanilla block updates (needs {@code sculptory.physics})
-     * @param allowOperatorNbt keep any NBT on {@link StateFlags#OPERATOR_NBT} states (creative level-2 op or
-     *     {@code sculptory.nbt.operator})
-     * @param trustCapturedTiles keep operator-only NBT of {@link FabricTile#serverCaptured() server-captured} tiles
-     *     for everyone (history, move, stack); pass {@code false} where even world-captured content must be
-     *     treated as foreign
-     */
-    public record Options(boolean physics, boolean allowOperatorNbt, boolean trustCapturedTiles) {
-        public static final Options DEFAULT = new Options(false, false, true);
-
-        /** Trusts server-captured tiles. */
-        public Options(boolean physics, boolean allowOperatorNbt) {
-            this(physics, allowOperatorNbt, true);
-        }
-    }
-
     private final ServerWorld world;
     private final FabricStateSpace states;
-    private final Options options;
+    private final WriteOptions options;
     private final RegistryWrapper.WrapperLookup registries;
     /** Physics-off writes not yet passed to {@link #clearTicksAtWrittenCells()}: section key → 4096-bit set. */
     private final Long2ObjectOpenHashMap<long[]> writtenCells = new Long2ObjectOpenHashMap<>();
@@ -105,7 +91,7 @@ public final class BlockWriter {
     private long tileFailures;
     private String firstTileFailure;
 
-    public BlockWriter(ServerWorld world, FabricStateSpace states, Options options) {
+    public BlockWriter(ServerWorld world, FabricStateSpace states, WriteOptions options) {
         this.world = Objects.requireNonNull(world);
         this.states = Objects.requireNonNull(states);
         this.options = Objects.requireNonNull(options);
@@ -116,7 +102,7 @@ public final class BlockWriter {
         return world;
     }
 
-    public Options options() {
+    public WriteOptions options() {
         return options;
     }
 
@@ -125,10 +111,11 @@ public final class BlockWriter {
      * marking each cell for vanilla's block updates at once. The caller must {@link ClientSync#flush flush} it. Physics-on
      * writes always use vanilla's updates. Returns this writer.
      */
-    public BlockWriter syncThrough(ClientSync sync) {
-        if (sync != null && sync.world() != world) throw new IllegalArgumentException("ClientSync of another world");
-        this.clientSync = sync;
-        this.vanillaWatch = sync;
+    @Override
+    public BlockWriter syncThrough(ClientUpdates sync) {
+        ClientSync own = ownSync(sync);
+        this.clientSync = own;
+        this.vanillaWatch = own;
         return this;
     }
 
@@ -137,10 +124,19 @@ public final class BlockWriter {
      * so light follow-ups near it wait for the light engine to process it (brush strokes; {@link #syncThrough} does this
      * for physics-on writes too). Returns this writer.
      */
-    public BlockWriter watchVanillaWrites(ClientSync sync) {
-        if (sync != null && sync.world() != world) throw new IllegalArgumentException("ClientSync of another world");
-        this.vanillaWatch = sync;
+    @Override
+    public BlockWriter watchVanillaWrites(ClientUpdates sync) {
+        this.vanillaWatch = ownSync(sync);
         return this;
+    }
+
+    /** {@code sync} as this world's {@link ClientSync} (the only kind this platform makes), or {@code null}. */
+    private ClientSync ownSync(ClientUpdates sync) {
+        if (sync == null) return null;
+        if (!(sync instanceof ClientSync own) || own.world() != world) {
+            throw new IllegalArgumentException("ClientSync of another world");
+        }
+        return own;
     }
 
     /**
@@ -166,17 +162,9 @@ public final class BlockWriter {
      *
      * @return true when the cell was written (and recorded)
      */
+    @Override
     public boolean write(int x, int y, int z, int handle, BlockEntityData tile, RecordSink sink) {
         return write(x, y, z, handle, tile, sink, null);
-    }
-
-    /**
-     * Decides from a cell's live state and block entity (captured, or {@code null} for none), read right before a
-     * recorded write, whether the write may replace it.
-     */
-    @FunctionalInterface
-    public interface Guard {
-        boolean mayReplace(int liveState, BlockEntityData liveTile);
     }
 
     /**
@@ -186,6 +174,7 @@ public final class BlockWriter {
      *
      * @return true when the cell was written (and recorded)
      */
+    @Override
     public boolean write(int x, int y, int z, int handle, BlockEntityData tile, RecordSink sink, Guard guard) {
         Objects.requireNonNull(sink);
         if (y < world.getBottomY() || y >= world.getTopY()) return false;
@@ -223,6 +212,7 @@ public final class BlockWriter {
      * Removes scheduled block and fluid ticks at exactly the cells written with physics off since the last call.
      * Ticks at cells this writer skipped are kept.
      */
+    @Override
     public void clearTicksAtWrittenCells() {
         if (writtenCells.isEmpty()) return;
         LongOpenHashSet columns = new LongOpenHashSet();
@@ -262,6 +252,7 @@ public final class BlockWriter {
     }
 
     /** Cells written and recorded by the recorded {@code write}, including one whose write threw. */
+    @Override
     public long changed() {
         return changed;
     }
@@ -272,16 +263,19 @@ public final class BlockWriter {
     }
 
     /** Tiles removed because their state needs operator rights. */
+    @Override
     public long strippedNbt() {
         return strippedNbt;
     }
 
     /** Tiles that could not be loaded (the block kept its default block entity). */
+    @Override
     public long tileFailures() {
         return tileFailures;
     }
 
     /** A description of the first tile failure, or {@code null}. */
+    @Override
     public String firstTileFailure() {
         return firstTileFailure;
     }

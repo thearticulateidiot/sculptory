@@ -32,6 +32,7 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -202,7 +203,7 @@ public final class TinkerGameTest implements FabricGameTest {
     }
 
     private static void clear(Harness h, Box area) {
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int air = h.state("minecraft:air");
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
@@ -226,7 +227,7 @@ public final class TinkerGameTest implements FabricGameTest {
         Box area = box(x0, FLOOR, z0, x0 + 7, FLOOR + 2, z0 + 3);
         loadAndForce(h.world, area);
         clear(h, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int x = x0; x <= x0 + 7; x++) {
             for (int z = z0; z <= z0 + 3; z++) writer.write(x, FLOOR, z, h.state("minecraft:stone"), null);
         }
@@ -280,7 +281,7 @@ public final class TinkerGameTest implements FabricGameTest {
         Box area = box(x0, FLOOR, z0, x0 + 7, FLOOR + 3, z0 + 3);
         loadAndForce(h.world, area);
         clear(h, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         writer.write(x0, FLOOR + 1, z0, h.state("minecraft:oak_door[facing=north,half=lower,open=false]"), null);
         writer.write(x0, FLOOR + 2, z0, h.state("minecraft:oak_door[facing=north,half=upper,open=false]"), null);
         String[] row = {"minecraft:oak_stairs[facing=north]", "minecraft:oak_stairs[facing=east,half=top]",
@@ -344,7 +345,7 @@ public final class TinkerGameTest implements FabricGameTest {
         Box area = box(x0, FLOOR, z0, x0 + 7, FLOOR + 2, z0 + 3);
         loadAndForce(h.world, area);
         clear(h, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         String stairs = "minecraft:oak_stairs[facing=north]";
         String outer = "minecraft:oak_stairs[facing=north,shape=outer_right]";
         for (int i = 0; i < 5; i++) writer.write(x0 + 2 + i, FLOOR + 1, z0 + 2, h.state(stairs), null);
@@ -399,7 +400,7 @@ public final class TinkerGameTest implements FabricGameTest {
         Box area = box(x0, FLOOR, z0, x0 + 3, FLOOR + 2, z0 + 3);
         loadAndForce(h.world, area);
         clear(h, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         String sign = "minecraft:oak_sign[rotation=0]";
         Supplier<SignBlockEntity> live = () -> (SignBlockEntity) h.world.getBlockEntity(pos(x0 + 1, FLOOR + 1, z0 + 1));
         writer.write(x0 + 1, FLOOR + 1, z0 + 1, h.state(sign), null);
@@ -472,7 +473,7 @@ public final class TinkerGameTest implements FabricGameTest {
         Box area = box(x0, FLOOR, z0, x0 + 7, FLOOR + 4, z0 + 7);
         loadAndForce(h.world, area);
         clear(h, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         String stairs = "minecraft:oak_stairs[facing=north]";
         String outer = "minecraft:oak_stairs[facing=north,shape=outer_left]";
         writer.write(x0 + 1, FLOOR + 1, z0 + 1, h.state(stairs), null);
@@ -574,7 +575,7 @@ public final class TinkerGameTest implements FabricGameTest {
         loadAndForce(h.world, area);
         clear(h, area);
         String stairs = "minecraft:oak_stairs[facing=north]";
-        h.runtime.writer(h.world, BlockWriter.Options.DEFAULT).write(x0 + 1, FLOOR + 1, z0 + 1, h.state(stairs), null);
+        h.runtime.writer(h.world, WriteOptions.DEFAULT).write(x0 + 1, FLOOR + 1, z0 + 1, h.state(stairs), null);
         ArmorStandEntity stand = new ArmorStandEntity(h.world, x0 + 1.5, FLOOR + 1, z0 + 2.5);
         check(h.world.spawnEntity(stand), "fixture stand");
         RecordingListener fill = new RecordingListener();
@@ -698,7 +699,7 @@ public final class TinkerGameTest implements FabricGameTest {
         Box area = box(x0, FLOOR, z0, x0 + 7, FLOOR + 5, z0 + 5);
         loadAndForce(h.world, area);
         clear(h, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int x = x0; x <= x0 + 7; x++) {
             for (int y = FLOOR; y <= FLOOR + 4; y++) writer.write(x, y, z0, h.state("minecraft:stone"), null);
         }

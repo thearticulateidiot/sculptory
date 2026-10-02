@@ -72,6 +72,7 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditMasks;
 import dev.sculptory.server.net.NetSession;
 import dev.sculptory.server.net.ServerDispatcher;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -205,7 +206,7 @@ public final class MaskGameTest implements FabricGameTest {
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 108, z0, x0 + 31, 136, z0 + 15);
         loadAndForce(h.world, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), gold = h.state("minecraft:gold_block"), glass = h.state("minecraft:glass");
         for (int x = x0; x <= x0 + 31; x++) {
             for (int z = z0; z <= z0 + 15; z++) writer.write(x, 111, z, stone, null);
@@ -250,7 +251,7 @@ public final class MaskGameTest implements FabricGameTest {
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 99, z0, x0 + 15, 106, z0 + 15);
         loadAndForce(h.world, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int dirt = h.state("minecraft:dirt"), planks = h.state("minecraft:oak_planks");
         for (int x = x0; x <= x0 + 7; x++) {
             for (int z = z0; z <= z0 + 7; z++) {
@@ -299,7 +300,7 @@ public final class MaskGameTest implements FabricGameTest {
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 99, z0, x0 + 31, 104, z0 + 15);
         loadAndForce(h.world, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt"), sand = h.state("minecraft:sand");
         int air = h.state("minecraft:air");
         for (int x = 0; x < 8; x++) {
@@ -353,7 +354,7 @@ public final class MaskGameTest implements FabricGameTest {
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 99, z0, x0 + 31, 104, z0 + 15);
         loadAndForce(h.world, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt"), air = h.state("minecraft:air");
         int stones = 0;
         for (int x = 0; x < 8; x++) {
@@ -436,7 +437,7 @@ public final class MaskGameTest implements FabricGameTest {
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 98, z0, x0 + 20, 104, z0 + 20);
         loadAndForce(h.world, area);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt"), air = h.state("minecraft:air");
         for (int x = x0; x <= x0 + 20; x++) {
             for (int z = z0; z <= z0 + 20; z++) {
@@ -690,7 +691,7 @@ public final class MaskGameTest implements FabricGameTest {
         int[] corner = regionCorner(context, 1107);
         int x0 = corner[0], z0 = corner[1];
         Box all = ScatterGameTest.floor(h, x0, z0, 32, 32);
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int dirt = h.state("minecraft:dirt");
         for (int x = x0; x < x0 + 16; x++) {
             for (int z = z0; z < z0 + 32; z++) writer.write(x, ScatterGameTest.FLOOR_Y, z, dirt, null);
@@ -799,7 +800,7 @@ public final class MaskGameTest implements FabricGameTest {
         loadAndForce(h.world, area);
         int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt");
         int glass = h.state("minecraft:glass"), planks = h.state("minecraft:oak_planks");
-        BlockWriter writer = h.runtime.writer(h.world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         for (int x = x0; x <= x0 + 15; x++) {
             for (int z = z0; z <= z0 + 15; z++) writer.write(x, 100, z, x < x0 + 8 ? stone : dirt, null);
         }

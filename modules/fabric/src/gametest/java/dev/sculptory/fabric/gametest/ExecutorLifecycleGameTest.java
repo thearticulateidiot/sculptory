@@ -34,6 +34,7 @@ import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.impl.BrushWork;
+import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.block.Blocks;
@@ -194,7 +195,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
         Box source = box(at[0], 0, at[1], at[0] + 47, 15, at[1] + 15); // 3 sections along x
         loadChunks(world, box(at[0], 0, at[1], at[0] + 79, 15, at[1] + 15)); // source and shifted target
         int stone = handle(states, "minecraft:stone"), dirt = handle(states, "minecraft:dirt");
-        BlockWriter writer = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         for (int x = source.min().x(); x <= source.max().x(); x++) {
             for (int y = 0; y <= 15; y++) {
                 for (int z = source.min().z(); z <= source.max().z(); z++) {
@@ -337,7 +338,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
         check(rec != null && rec.before() == chestHandle, "recorded before is not the chest: " + rec);
         check(rec.beforeTile() != null, "the chest contents were not recorded");
 
-        sink.undo(runtime.writer(world, BlockWriter.Options.DEFAULT));
+        sink.undo(runtime.writer(world, WriteOptions.DEFAULT));
         check(world.getBlockEntity(chest) instanceof ChestBlockEntity c && c.getStack(0).getCount() == 7,
                 "undo did not restore the chest contents");
         check(world.getEntitiesByType(EntityType.ITEM, net.minecraft.util.math.Box.enclosing(pos(at[0], 0, at[1]),
@@ -375,7 +376,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
         check(world.getFluidTickScheduler().isQueued(skipped, Fluids.WATER),
                 "the protected cell's scheduled fluid tick was cleared");
         check(!world.getFluidTickScheduler().isQueued(written, Fluids.WATER), "a written cell kept its fluid tick");
-        BlockWriter cleanup = runtime.writer(world, BlockWriter.Options.DEFAULT);
+        BlockWriter cleanup = runtime.writer(world, WriteOptions.DEFAULT);
         cleanup.write(skipped.getX(), skipped.getY(), skipped.getZ(), runtime.states().air(), null);
         cleanup.clearTicksAtWrittenCells();
         executor.shutdown();
