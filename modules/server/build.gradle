@@ -1,0 +1,12 @@
+// The server engine shared by every platform (Fabric now, Paper and NeoForge later): no Minecraft imports.
+dependencies {
+    api project(':protocol')
+    // Minecraft and Paper ship these at runtime; don't bundle them.
+    compileOnly "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+    compileOnly "com.google.code.gson:gson:${rootProject.gson_version}"
+    compileOnly "org.slf4j:slf4j-api:${rootProject.slf4j_version}"
+    testImplementation "it.unimi.dsi:fastutil:${rootProject.fastutil_version}"
+    testImplementation "com.google.code.gson:gson:${rootProject.gson_version}"
+    testImplementation "org.slf4j:slf4j-api:${rootProject.slf4j_version}"
+    testImplementation testFixtures(project(':core'))
+}

@@ -2,8 +2,8 @@ package dev.sculptory.fabric.engine.impl;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.ChunkPermit;
 import dev.sculptory.fabric.engine.PermissionService;
+import dev.sculptory.server.engine.ChunkPermit;
 import java.util.Objects;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;

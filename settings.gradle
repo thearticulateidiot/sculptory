@@ -7,7 +7,8 @@ pluginManagement {
 rootProject.name = 'sculptory'
 
 // v1 layout. The old modules were removed; see tag v0-final.
-include 'core', 'protocol', 'fabric'
+include 'core', 'protocol', 'server', 'fabric'
 project(':core').projectDir = file('modules/core')
 project(':protocol').projectDir = file('modules/protocol')
+project(':server').projectDir = file('modules/server')
 project(':fabric').projectDir = file('modules/fabric')

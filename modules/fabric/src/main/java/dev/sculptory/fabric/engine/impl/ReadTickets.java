@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.engine.impl;
 
 import dev.sculptory.core.edit.EditProgram;
+import dev.sculptory.server.engine.impl.TicketWindow;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.Objects;

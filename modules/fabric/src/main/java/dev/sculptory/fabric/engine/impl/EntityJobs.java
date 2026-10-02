@@ -13,6 +13,7 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.world.EntityWriter;
 import dev.sculptory.fabric.world.FabricEntities;
+import dev.sculptory.server.engine.impl.ColumnPlan;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import java.util.ArrayList;

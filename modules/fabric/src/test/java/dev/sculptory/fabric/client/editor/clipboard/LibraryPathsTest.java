@@ -5,8 +5,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.schem.SchematicFormat;
-import dev.sculptory.fabric.library.LibraryPath;
-import dev.sculptory.fabric.library.LibraryPathException;
+import dev.sculptory.server.library.LibraryPath;
+import dev.sculptory.server.library.LibraryPathException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;

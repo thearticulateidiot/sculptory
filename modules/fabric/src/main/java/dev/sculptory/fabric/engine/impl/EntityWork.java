@@ -3,6 +3,8 @@ package dev.sculptory.fabric.engine.impl;
 import dev.sculptory.fabric.world.EntityWriter;
 import dev.sculptory.fabric.world.FabricEntities;
 import dev.sculptory.fabric.world.WorldChecks;
+import dev.sculptory.server.engine.impl.ColumnPlan;
+import dev.sculptory.server.engine.impl.RecordSink;
 import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
 import java.util.List;
 import java.util.Objects;

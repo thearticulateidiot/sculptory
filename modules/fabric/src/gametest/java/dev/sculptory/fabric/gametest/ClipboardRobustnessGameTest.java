@@ -3,12 +3,12 @@ package dev.sculptory.fabric.gametest;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.check;
 
 import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.EditRejected;
-import dev.sculptory.fabric.engine.Perm;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.Perm;
 import java.nio.file.Path;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.network.ServerPlayerEntity;

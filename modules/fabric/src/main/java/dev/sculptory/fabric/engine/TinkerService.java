@@ -5,6 +5,7 @@ import dev.sculptory.core.tinker.EntityEdit;
 import dev.sculptory.core.tinker.EntityView;
 import dev.sculptory.core.tinker.SignText;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.EditRejected;
 import java.util.List;
 import java.util.UUID;
 import net.minecraft.server.network.ServerPlayerEntity;

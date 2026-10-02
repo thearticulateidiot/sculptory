@@ -12,6 +12,8 @@ import dev.sculptory.core.nbt.BlockEntityNbt;
 import dev.sculptory.core.nbt.NbtCompound;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.server.schem.SanitizedTile;
+import dev.sculptory.server.schem.TileSanitizer;
 import java.util.Set;
 import java.util.TreeSet;
 import net.minecraft.Bootstrap;

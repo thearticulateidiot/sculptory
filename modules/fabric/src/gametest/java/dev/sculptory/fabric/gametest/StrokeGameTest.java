@@ -21,9 +21,6 @@ import dev.sculptory.core.brush.StrokeState;
 import dev.sculptory.core.brush.SurfaceMask;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryEntry;
-import dev.sculptory.fabric.engine.DabOutcome;
-import dev.sculptory.fabric.config.UnloadedPolicy;
-import dev.sculptory.fabric.engine.EditRejected;
 import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.engine.impl.EngineEditService;
 import dev.sculptory.fabric.engine.impl.JobRequest;
@@ -35,6 +32,9 @@ import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.config.UnloadedPolicy;
+import dev.sculptory.server.engine.DabOutcome;
+import dev.sculptory.server.engine.EditRejected;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
@@ -358,7 +358,7 @@ public final class StrokeGameTest implements FabricGameTest {
                     check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 2, "second entry");
                     check(h.service.openStroke(h.player.getUuid()).isEmpty(), "stroke still open");
                     h.service.playerLeft(h.player.getUuid());
-                    check(h.history().equals(dev.sculptory.fabric.engine.impl.HistorySnapshot.EMPTY),
+                    check(h.history().equals(dev.sculptory.server.engine.impl.HistorySnapshot.EMPTY),
                             "history kept after leaving");
                     forceChunks(world, area, false);
                     h.close();

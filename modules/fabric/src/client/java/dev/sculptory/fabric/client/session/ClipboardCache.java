@@ -3,7 +3,7 @@ package dev.sculptory.fabric.client.session;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
-import dev.sculptory.fabric.net.PreviewPayload;
+import dev.sculptory.server.net.PreviewPayload;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;

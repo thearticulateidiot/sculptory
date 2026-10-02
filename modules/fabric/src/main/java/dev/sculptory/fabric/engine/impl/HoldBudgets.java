@@ -1,6 +1,6 @@
 package dev.sculptory.fabric.engine.impl;
 
-import dev.sculptory.fabric.config.SculptoryConfig;
+import dev.sculptory.server.config.SculptoryConfig;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;

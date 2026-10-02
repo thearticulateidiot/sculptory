@@ -4,8 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import dev.sculptory.fabric.config.SculptoryConfig;
 import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.server.config.SculptoryConfig;
 import java.nio.file.Path;
 import java.util.List;
 import org.junit.jupiter.api.Test;

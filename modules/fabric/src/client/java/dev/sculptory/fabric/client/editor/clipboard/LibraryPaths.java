@@ -1,8 +1,8 @@
 package dev.sculptory.fabric.client.editor.clipboard;
 
 import dev.sculptory.core.schem.SchematicFormat;
-import dev.sculptory.fabric.library.LibraryPath;
-import dev.sculptory.fabric.library.LibraryPathException;
+import dev.sculptory.server.library.LibraryPath;
+import dev.sculptory.server.library.LibraryPathException;
 import java.util.Optional;
 
 /**

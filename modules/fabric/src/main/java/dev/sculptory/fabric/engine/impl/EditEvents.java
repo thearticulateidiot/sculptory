@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.engine.impl;
 
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.impl.HistorySnapshot;
 import net.minecraft.server.network.ServerPlayerEntity;
 
 /**

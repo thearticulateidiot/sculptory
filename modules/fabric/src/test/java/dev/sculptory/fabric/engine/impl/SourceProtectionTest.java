@@ -6,10 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.ChunkPermit;
-import dev.sculptory.fabric.library.Library;
-import dev.sculptory.fabric.library.LibraryPath;
-import dev.sculptory.fabric.library.LibraryPathException;
+import dev.sculptory.server.engine.ChunkPermit;
+import dev.sculptory.server.library.Library;
+import dev.sculptory.server.library.LibraryPath;
+import dev.sculptory.server.library.LibraryPathException;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 

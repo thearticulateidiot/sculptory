@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.fabric.client.editor.settings.SettingsSchema;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;

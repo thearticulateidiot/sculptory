@@ -92,7 +92,7 @@ import dev.sculptory.fabric.client.tinker.TinkerController;
 import dev.sculptory.fabric.client.util.AtomicFileStore;
 import dev.sculptory.fabric.client.world.ClientBlockChanges;
 import dev.sculptory.fabric.config.FolderMigration;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;

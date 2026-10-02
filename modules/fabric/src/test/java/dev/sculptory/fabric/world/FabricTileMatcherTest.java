@@ -11,7 +11,7 @@ import dev.sculptory.core.nbt.NbtCompound;
 import dev.sculptory.core.nbt.NbtIo;
 import dev.sculptory.core.nbt.NbtList;
 import dev.sculptory.core.nbt.NbtTag;
-import dev.sculptory.fabric.schem.TileSanitizer;
+import dev.sculptory.server.schem.TileSanitizer;
 import java.util.List;
 import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;

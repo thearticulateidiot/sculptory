@@ -6,8 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.testing.FakeStateSpace;
-import dev.sculptory.fabric.engine.EditRejected;
-import dev.sculptory.fabric.engine.Perm;
 import dev.sculptory.fabric.net.ServerDispatcher;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
@@ -19,6 +17,8 @@ import dev.sculptory.protocol.v2.ProtocolException;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
+import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumSet;

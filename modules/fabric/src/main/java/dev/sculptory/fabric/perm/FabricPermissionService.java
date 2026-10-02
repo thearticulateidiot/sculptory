@@ -2,11 +2,12 @@ package dev.sculptory.fabric.perm;
 
 import com.mojang.authlib.GameProfile;
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.config.SculptoryConfig;
-import dev.sculptory.fabric.engine.ChunkPermit;
-import dev.sculptory.fabric.engine.Perm;
 import dev.sculptory.fabric.engine.PermissionService;
 import dev.sculptory.protocol.v2.PermissionMask;
+import dev.sculptory.server.config.SculptoryConfig;
+import dev.sculptory.server.engine.ChunkPermit;
+import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.perm.ChunkPermits;
 import java.util.EnumSet;
 import java.util.Map;
 import java.util.Objects;

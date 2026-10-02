@@ -35,7 +35,7 @@ import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.editor.world.ScreenProjector;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Permissions;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;

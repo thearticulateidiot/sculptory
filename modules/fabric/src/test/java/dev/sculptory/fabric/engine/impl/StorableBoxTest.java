@@ -12,8 +12,8 @@ import dev.sculptory.core.edit.CellPredicate;
 import dev.sculptory.core.schem.SchematicFormat;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
-import dev.sculptory.fabric.engine.EditRejected;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.EditRejected;
 import org.junit.jupiter.api.Test;
 
 /**

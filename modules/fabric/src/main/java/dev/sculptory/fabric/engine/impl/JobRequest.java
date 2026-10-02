@@ -1,10 +1,11 @@
 package dev.sculptory.fabric.engine.impl;
 
 import dev.sculptory.core.edit.EditProgram;
-import dev.sculptory.fabric.engine.JobListener;
-import dev.sculptory.fabric.engine.JobResult;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.Phase;
+import dev.sculptory.server.engine.JobListener;
+import dev.sculptory.server.engine.JobResult;
+import dev.sculptory.server.engine.impl.RecordSink;
 import java.util.Objects;
 import java.util.UUID;
 import net.minecraft.server.world.ServerWorld;

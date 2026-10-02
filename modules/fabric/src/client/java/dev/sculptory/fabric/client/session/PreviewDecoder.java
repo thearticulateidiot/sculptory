@@ -7,7 +7,7 @@ import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
-import dev.sculptory.fabric.net.PreviewPayload;
+import dev.sculptory.server.net.PreviewPayload;
 import java.io.ByteArrayInputStream;
 import java.io.DataInputStream;
 import java.io.EOFException;

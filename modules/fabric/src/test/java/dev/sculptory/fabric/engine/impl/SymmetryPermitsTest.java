@@ -20,8 +20,8 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
-import dev.sculptory.fabric.engine.ChunkPermit;
-import dev.sculptory.fabric.perm.ChunkPermits;
+import dev.sculptory.server.engine.ChunkPermit;
+import dev.sculptory.server.perm.ChunkPermits;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 

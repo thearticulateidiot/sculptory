@@ -22,17 +22,11 @@ import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.schem.AssetInfo;
 import dev.sculptory.fabric.engine.ClipboardService;
-import dev.sculptory.fabric.engine.EditRejected;
-import dev.sculptory.fabric.engine.Perm;
-import dev.sculptory.fabric.engine.RunOptions;
 import dev.sculptory.fabric.engine.ScatterService;
-import dev.sculptory.fabric.engine.impl.AssetCache;
-import dev.sculptory.fabric.engine.impl.ScatterPlans;
 import dev.sculptory.fabric.engine.impl.ServerScatter;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.library.LibraryPath;
 import dev.sculptory.fabric.net.NetSession;
 import dev.sculptory.fabric.net.ServerDispatcher;
 import dev.sculptory.fabric.net.ServerTransport;
@@ -53,6 +47,12 @@ import dev.sculptory.protocol.v2.StreamChunk;
 import dev.sculptory.protocol.v2.StreamEnd;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.protocol.v2.StreamOpen;
+import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.AssetCache;
+import dev.sculptory.server.engine.impl.ScatterPlans;
+import dev.sculptory.server.library.LibraryPath;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -166,7 +166,7 @@ public final class ScatterGameTest implements FabricGameTest {
     static LibraryPath libraryFile(String path) {
         try {
             return LibraryPath.file(path);
-        } catch (dev.sculptory.fabric.library.LibraryPathException e) {
+        } catch (dev.sculptory.server.library.LibraryPathException e) {
             throw new GameTestException("bad library path " + path);
         }
     }

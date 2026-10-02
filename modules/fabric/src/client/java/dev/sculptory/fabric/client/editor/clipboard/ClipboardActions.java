@@ -21,7 +21,7 @@ import dev.sculptory.fabric.client.session.Reply;
 import dev.sculptory.fabric.client.session.SavedAsset;
 import dev.sculptory.fabric.client.session.SessionNotices;
 import dev.sculptory.fabric.client.session.Transfer;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;

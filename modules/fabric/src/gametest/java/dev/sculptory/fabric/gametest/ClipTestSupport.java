@@ -7,9 +7,9 @@ import dev.sculptory.fabric.engine.ClipboardService;
 import dev.sculptory.fabric.engine.impl.ServerClipboards;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
-import dev.sculptory.fabric.library.Library;
 import dev.sculptory.fabric.schem.FabricDataFixHook;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.library.Library;
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -88,7 +88,7 @@ final class ClipTestSupport {
                        byte[] bytes, ClipboardService.Reply<ClipboardService.ClipboardInfo> reply) {
         try {
             clips.beginUpload(player, name, bytes.length).completed(bytes, reply);
-        } catch (dev.sculptory.fabric.engine.EditRejected e) {
+        } catch (dev.sculptory.server.engine.EditRejected e) {
             reply.failed(e.reason(), e.getMessage());
         }
     }

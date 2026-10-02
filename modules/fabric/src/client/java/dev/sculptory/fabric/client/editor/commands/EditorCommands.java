@@ -18,7 +18,7 @@ import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.HistoryOffer;
 import dev.sculptory.fabric.client.session.Notice;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;

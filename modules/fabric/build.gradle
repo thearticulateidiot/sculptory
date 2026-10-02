@@ -87,6 +87,8 @@ dependencies {
     include project(':core')
     implementation project(':protocol')
     include project(':protocol')
+    implementation project(':server')
+    include project(':server')
 
     modImplementation "me.lucko:fabric-permissions-api:${rootProject.permissions_api_version}"
     include "me.lucko:fabric-permissions-api:${rootProject.permissions_api_version}"

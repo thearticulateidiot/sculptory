@@ -6,10 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.ChunkPermit;
 import dev.sculptory.fabric.engine.PermissionService;
-import dev.sculptory.fabric.engine.Perm;
-import dev.sculptory.fabric.perm.ChunkPermits;
+import dev.sculptory.server.engine.ChunkPermit;
+import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.perm.ChunkPermits;
 import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.server.network.ServerPlayerEntity;

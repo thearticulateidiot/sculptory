@@ -1,6 +1,6 @@
 package dev.sculptory.fabric.client.editor.tool;
 
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.util.Objects;
 
 /**

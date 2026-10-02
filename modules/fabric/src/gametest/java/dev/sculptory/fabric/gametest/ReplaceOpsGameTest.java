@@ -19,10 +19,6 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.mask.BlockSet;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.BlockFamilies;
-import dev.sculptory.fabric.engine.EditRejected;
-import dev.sculptory.fabric.engine.JobResult;
-import dev.sculptory.fabric.engine.Perm;
-import dev.sculptory.fabric.engine.RunOptions;
 import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -30,6 +26,10 @@ import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.JobResult;
+import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.RunOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.block.BlockState;
@@ -508,7 +508,7 @@ public final class ReplaceOpsGameTest implements FabricGameTest {
     public void aTightTickBudgetSpreadsUpdateBlocksWithoutChangingIt(TestContext context) {
         EditExecutor tight = new EditExecutor(context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
                 new EditExecutor.Settings(1_000_000L, 0, 0.4, 2, 8, 32, 64,
-                        dev.sculptory.fabric.config.UnloadedPolicy.LOAD, 1024, 16_384));
+                        dev.sculptory.server.config.UnloadedPolicy.LOAD, 1024, 16_384));
         EditExecutor wide = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, tight);
         Harness h2 = new Harness(context, null, System::nanoTime, wide);

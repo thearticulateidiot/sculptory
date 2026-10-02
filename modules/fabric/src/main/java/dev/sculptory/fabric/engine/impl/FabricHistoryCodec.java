@@ -5,9 +5,9 @@ import dev.sculptory.core.buffer.NbtBytes;
 import dev.sculptory.core.history.store.CorruptDataException;
 import dev.sculptory.core.history.store.HistoryCodec;
 import dev.sculptory.core.state.StateSpace;
-import dev.sculptory.fabric.schem.SanitizedTile;
-import dev.sculptory.fabric.schem.TileSanitizer;
 import dev.sculptory.fabric.world.FabricTile;
+import dev.sculptory.server.schem.SanitizedTile;
+import dev.sculptory.server.schem.TileSanitizer;
 import java.io.IOException;
 import java.util.Objects;
 

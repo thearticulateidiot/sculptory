@@ -3,8 +3,8 @@ package dev.sculptory.protocol.v2;
 import java.util.Objects;
 
 /**
- * The player's permission nodes as a bitset. The bit numbering is owned by the platform's permission enum
- * (Fabric: {@code dev.sculptory.fabric.engine.Perm#bit()}); this type only carries the bits.
+ * The player's permission nodes as a bitset. The bit numbering is owned by the server's permission enum
+ * ({@code dev.sculptory.server.engine.Perm#bit()}); this type only carries the bits.
  */
 public record PermissionMask(long bits) {
     public static final PermissionMask NONE = new PermissionMask(0L);

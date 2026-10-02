@@ -72,14 +72,17 @@ By making a contribution to this project, I certify that:
 
 ## Where the code lives
 
-The code is in three Gradle modules under `modules/`:
+The code is in four Gradle modules under `modules/`:
 
 - `core`: the editing engine without Minecraft: regions, masks, brushes, edit programs, scatter planning, undo
   history and its saved format, schematic and NBT reading. Plain Java, tested with JUnit.
 - `protocol`: the client-server network protocol (messages, codecs, the handshake), also free of Minecraft
   imports, with golden wire samples in its tests.
-- `fabric`: the mod itself. `src/main` is the server side (the engine host, permissions, the library, commands,
-  config), `src/client` the editor (windows, tools, rendering, the tutorial and the wiki reader), `src/test` the
+- `server`: the server side that every platform shares (Fabric now; Paper and NeoForge are planned): the library,
+  config, permission and protection rules, file sanitizing and the engine's job and history services. No Minecraft
+  imports either; it grows as server logic moves out of `fabric`.
+- `fabric`: the mod itself. `src/main` is the Fabric side of the server (the engine host, world access, commands,
+  networking), `src/client` the editor (windows, tools, rendering, the tutorial and the wiki reader), `src/test` the
   JUnit tests, and `src/gametest` and `src/fidelity` the GameTests.
 
 The wiki lives in `docs/wiki/` and is bundled into the mod for the in-game reader. Its page ids are frozen
@@ -96,8 +99,8 @@ You need JDK 21. Nothing else needs installing: the Gradle wrapper fetches the r
 
 `check` runs the JUnit tests and the headless Fabric GameTests (vanilla, and mod fidelity with Chipped and Farmer's
 Delight, which it downloads) and must pass before a pull request is merged. GitHub Actions runs it on every push and
-pull request (`.github/workflows/ci.yml`). Logic in `core` and `protocol` gets JUnit tests and stays free of Minecraft
-imports; anything that changes a world gets a GameTest. Changes to world edits, undo and redo, saved formats, the
+pull request (`.github/workflows/ci.yml`). Logic in `core`, `protocol` and `server` gets JUnit tests and stays free
+of Minecraft imports; anything that changes a world gets a GameTest. Changes to world edits, undo and redo, saved formats, the
 network protocol or permissions need tests for the failure cases too (a refused edit, a partial failure, an exact
 undo).
 

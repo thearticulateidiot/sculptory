@@ -8,7 +8,7 @@ import dev.sculptory.core.schem.SchematicCodec;
 import dev.sculptory.core.schem.SchematicMetadata;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.fabric.client.editor.mock.MockStateSpace;
-import dev.sculptory.fabric.library.PaletteFile;
+import dev.sculptory.server.library.PaletteFile;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;

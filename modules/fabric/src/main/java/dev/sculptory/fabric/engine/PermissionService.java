@@ -1,6 +1,8 @@
 package dev.sculptory.fabric.engine;
 
 import dev.sculptory.core.Box;
+import dev.sculptory.server.engine.ChunkPermit;
+import dev.sculptory.server.engine.Perm;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 

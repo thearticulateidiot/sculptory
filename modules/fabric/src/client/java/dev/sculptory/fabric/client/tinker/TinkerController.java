@@ -14,7 +14,7 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Reply;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;

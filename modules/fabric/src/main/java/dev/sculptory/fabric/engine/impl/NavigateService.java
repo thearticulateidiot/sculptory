@@ -2,8 +2,6 @@ package dev.sculptory.fabric.engine.impl;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.nav.Landing;
-import dev.sculptory.fabric.config.SculptoryConfig;
-import dev.sculptory.fabric.engine.Perm;
 import dev.sculptory.fabric.net.ServerNet;
 import dev.sculptory.fabric.perm.FabricPermissionService;
 import dev.sculptory.fabric.world.FabricWorldReader;
@@ -12,6 +10,8 @@ import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.NavigateMode;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
+import dev.sculptory.server.config.SculptoryConfig;
+import dev.sculptory.server.engine.Perm;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;

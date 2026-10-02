@@ -22,9 +22,6 @@ import dev.sculptory.core.tinker.DisplayRotation;
 import dev.sculptory.core.tinker.EntityEdit;
 import dev.sculptory.core.tinker.EntityView;
 import dev.sculptory.core.tinker.SignText;
-import dev.sculptory.fabric.engine.EditRejected;
-import dev.sculptory.fabric.engine.Perm;
-import dev.sculptory.fabric.engine.RunOptions;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
@@ -32,6 +29,9 @@ import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.fabric.world.FabricEntities;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.RunOptions;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -566,7 +566,7 @@ public final class TinkerGameTest implements FabricGameTest {
         dev.sculptory.fabric.engine.impl.EditExecutor executor = new dev.sculptory.fabric.engine.impl.EditExecutor(
                 context.getWorld().getServer(), EngineTestSupport.runtime(context).states(),
                 new dev.sculptory.fabric.engine.impl.EditExecutor.Settings(200_000_000L, 4096, 0.4, 2, 8, 32, 64,
-                        dev.sculptory.fabric.config.UnloadedPolicy.LOAD, 1024, 16_384));
+                        dev.sculptory.server.config.UnloadedPolicy.LOAD, 1024, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 1024);
         int x0 = at[0] + 4, z0 = at[1] + 4;

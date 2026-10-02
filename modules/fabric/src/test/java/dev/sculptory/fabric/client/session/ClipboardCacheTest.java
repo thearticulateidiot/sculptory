@@ -15,7 +15,7 @@ import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
-import dev.sculptory.fabric.net.PreviewPayload;
+import dev.sculptory.server.net.PreviewPayload;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;

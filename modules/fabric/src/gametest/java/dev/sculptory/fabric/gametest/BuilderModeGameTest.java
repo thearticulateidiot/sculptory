@@ -16,9 +16,6 @@ import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.region.Facing;
-import dev.sculptory.fabric.engine.BuilderOutcome;
-import dev.sculptory.fabric.engine.BuilderOutcome.Refusal;
-import dev.sculptory.fabric.engine.EditRejected;
 import dev.sculptory.fabric.engine.impl.EditExecutor;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
@@ -27,6 +24,9 @@ import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.BuilderOutcome.Refusal;
+import dev.sculptory.server.engine.BuilderOutcome;
+import dev.sculptory.server.engine.EditRejected;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.ArrayList;
 import java.util.List;
@@ -351,7 +351,7 @@ public final class BuilderModeGameTest implements FabricGameTest {
             expect(place(h, stranger, r.x + 6, FLOOR, r.z + 2, Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE),
                     Refusal.NO_PERMISSION, "no permission");
             ModePlayer denied = modePlayer(context, extra, true);
-            EditTestSupport.deny(denied, dev.sculptory.fabric.engine.Perm.BUILDER);
+            EditTestSupport.deny(denied, dev.sculptory.server.engine.Perm.BUILDER);
             stand(denied, r.x + 2, r.z + 2, -90f);
             hold(denied, Items.STONE);
             expect(place(h, denied, r.x + 6, FLOOR, r.z + 2, Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE),
@@ -374,7 +374,7 @@ public final class BuilderModeGameTest implements FabricGameTest {
             // Operator blocks stay with level-2 ops: a builder with the nodes but no op level neither places one (Force
             // place or not) nor replaces one.
             ModePlayer plain = modePlayer(context, extra, false);
-            EditTestSupport.grant(plain, dev.sculptory.fabric.engine.Perm.USE, dev.sculptory.fabric.engine.Perm.BUILDER);
+            EditTestSupport.grant(plain, dev.sculptory.server.engine.Perm.USE, dev.sculptory.server.engine.Perm.BUILDER);
             stand(plain, r.x + 2, r.z + 2, -90f);
             hold(plain, Items.COMMAND_BLOCK);
             expect(place(h, plain, r.x + 6, FLOOR, r.z + 2, Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE),
@@ -749,7 +749,7 @@ public final class BuilderModeGameTest implements FabricGameTest {
         try {
             // A builder with the builder node but without region: Tinker refuses, nothing changes.
             ModePlayer builder = modePlayer(context, extra, false);
-            EditTestSupport.grant(builder, dev.sculptory.fabric.engine.Perm.USE, dev.sculptory.fabric.engine.Perm.BUILDER);
+            EditTestSupport.grant(builder, dev.sculptory.server.engine.Perm.USE, dev.sculptory.server.engine.Perm.BUILDER);
             try {
                 h.service.block(builder, cell, straight, outer, null);
                 throw new GameTestException("a builder without region changed a block through Tinker");
@@ -808,7 +808,7 @@ public final class BuilderModeGameTest implements FabricGameTest {
             player.creative = true;
             h.service.tick();
             check(range(player) == 64.0, "creative again: " + range(player));
-            EditTestSupport.deny(player, dev.sculptory.fabric.engine.Perm.BUILDER);
+            EditTestSupport.deny(player, dev.sculptory.server.engine.Perm.BUILDER);
             h.service.revalidate(player, true);
             check(range(player) == base, "denied: " + range(player));
             EditTestSupport.deny(player);

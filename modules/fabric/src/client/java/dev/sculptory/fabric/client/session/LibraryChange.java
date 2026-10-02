@@ -1,7 +1,7 @@
 package dev.sculptory.fabric.client.session;
 
-import dev.sculptory.fabric.library.LibraryPath;
-import dev.sculptory.fabric.library.LibraryPathException;
+import dev.sculptory.server.library.LibraryPath;
+import dev.sculptory.server.library.LibraryPathException;
 import java.util.Objects;
 
 /**

@@ -7,7 +7,7 @@ import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.nbt.NbtIo;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.schem.EntitySanitizer;
+import dev.sculptory.server.schem.EntitySanitizer;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;

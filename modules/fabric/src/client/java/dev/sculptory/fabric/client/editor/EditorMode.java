@@ -4,7 +4,7 @@ import dev.sculptory.fabric.client.editor.tool.DeactivateReason;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.SessionState;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.util.Objects;
 import java.util.Optional;
 

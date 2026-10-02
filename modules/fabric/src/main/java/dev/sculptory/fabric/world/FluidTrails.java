@@ -6,7 +6,7 @@ import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.history.RecordBuilder;
-import dev.sculptory.fabric.engine.impl.RecordSink;
+import dev.sculptory.server.engine.impl.RecordSink;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;

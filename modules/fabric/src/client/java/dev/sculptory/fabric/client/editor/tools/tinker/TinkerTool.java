@@ -27,7 +27,7 @@ import dev.sculptory.fabric.client.editor.tools.select.SelectionActions;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.tinker.TinkerController;
-import dev.sculptory.fabric.engine.Perm;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;

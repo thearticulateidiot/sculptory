@@ -1,8 +1,8 @@
 package dev.sculptory.fabric.client.session;
 
-import dev.sculptory.fabric.engine.Perm;
 import dev.sculptory.protocol.v2.Limits;
 import dev.sculptory.protocol.v2.PermissionMask;
+import dev.sculptory.server.engine.Perm;
 import java.util.Objects;
 
 /** The player's granted nodes and the server limits, from Welcome/PermissionsChanged. */
