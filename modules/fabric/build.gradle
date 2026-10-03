@@ -365,6 +365,12 @@ if (project.hasProperty('gameTestFilter')) {
     }
 }
 
+// The GameTest servers get the heap a GitHub Actions runner gives them by default (a quarter of its 16 GB), on every
+// machine: Java's own default is a quarter of the RAM, so a larger machine would hide a run that no longer fits.
+loom.runs.matching { it.name in ['gameTest', 'fidelityGameTest'] }.configureEach {
+    vmArg '-Xmx4G'
+}
+
 // Optional render mods for Sodium/Iris compatibility checks in the dev client. Off by
 // default: -PbsSodium adds Sodium, -PbsIris adds Iris and the Sodium it needs. modLocalRuntime only, so they are never
 // bundled, published or compiled against. Pinned by Modrinth version id in gradle.properties.

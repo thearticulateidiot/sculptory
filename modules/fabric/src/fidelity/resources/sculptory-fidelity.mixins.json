@@ -3,6 +3,6 @@
   "minVersion": "0.8",
   "package": "dev.sculptory.fabric.gametest.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": ["TestServerFilterMixin"],
+  "mixins": ["TestServerChunkWritesMixin", "TestServerFilterMixin"],
   "injectors": { "defaultRequire": 1 }
 }
