@@ -603,40 +603,55 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
         int[] at = regionCorner(context, 1189);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 16, "minecraft:grass_block");
-        Reply reply;
+        // Where the trees land depends on the seed and on where the test runs, so the setup takes the first seed whose
+        // preview masks a tree and has trees both reaching and clear of the columns the mask grows to (x0 + 10 ..
+        // x0 + 13); with a single seed some test positions had every tree on one side.
+        ScatterService.PlanReady plan = null;
+        ScatterPlan held = null;
+        List<GrownFeature> crossing = new ArrayList<>();
+        long kept = 0;
         try {
             maskOutColumns(h, x0, z0, 14);
-            // Spacing 7 keeps the oak and birch crowns apart: each tree is a cluster of its own.
-            reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 7,
-                    new ScatterSettings.Density.Fraction(0.3), 4L, OAK, BIRCH));
-            planNow(scatter, reply, h.player);
+            for (long seed = 4; seed < 24; seed++) {
+                // Spacing 7 keeps the oak and birch crowns apart: each tree is a cluster of its own.
+                Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 7,
+                        new ScatterSettings.Density.Fraction(0.3), seed, OAK, BIRCH));
+                planNow(scatter, reply, h.player);
+                plan = reply.get("preview " + seed);
+                held = heldPlan(h, h.player);
+                crossing = new ArrayList<>();
+                kept = 0;
+                for (GrownFeature cluster : held.clusters()) {
+                    boolean reaches = false;
+                    for (int i = 0; i < cluster.size(); i++) {
+                        reaches |= cluster.x(i) >= x0 + 10 && cluster.x(i) <= x0 + 17;
+                    }
+                    if (reaches) {
+                        crossing.add(cluster);
+                    } else {
+                        kept += cluster.size();
+                    }
+                }
+                Integer masked = plan.rejectedCounts().get("MASKED");
+                if (masked != null && masked > 0 && !crossing.isEmpty() && crossing.size() < held.clusters().size()) {
+                    break;
+                }
+            }
         } catch (EditRejected e) {
             EditMasks.reset(h.player.getUuid());
             throw new GameTestException("mask refused: " + e.getMessage());
         }
-        ScatterService.PlanReady plan = reply.get("preview");
         Integer maskedCount = plan.rejectedCounts().get("MASKED");
         check(maskedCount != null && maskedCount > 0, "nothing masked: " + plan.rejectedCounts());
-        ScatterPlan held = heldPlan(h, h.player);
         for (GrownFeature cluster : held.clusters()) {
             for (int i = 0; i < cluster.size(); i++) {
                 check(cluster.x(i) < x0 + 14 || cluster.x(i) > x0 + 17, "a planned tree reaches the masked columns");
             }
         }
         // The mask grows after the preview: trees reaching x0 + 10 .. x0 + 13 are now masked.
-        List<GrownFeature> crossing = new ArrayList<>();
-        long kept = 0;
-        for (GrownFeature cluster : held.clusters()) {
-            boolean reaches = false;
-            for (int i = 0; i < cluster.size(); i++) reaches |= cluster.x(i) >= x0 + 10 && cluster.x(i) <= x0 + 17;
-            if (reaches) {
-                crossing.add(cluster);
-            } else {
-                kept += cluster.size();
-            }
-        }
         check(!crossing.isEmpty() && crossing.size() < held.clusters().size(), crossing.size() + " of "
-                + held.clusters().size() + " clusters reach the grown mask");
+                + held.clusters().size() + " clusters reach the grown mask (seeds 4 to 23)");
+        List<GrownFeature> masked = crossing;
         long expected = kept;
         RecordingListener job;
         try {
@@ -651,10 +666,10 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
                 .createAndAdd(() -> {
                     EditMasks.reset(h.player.getUuid());
                     check(job.result.outcome() == JobOutcome.COMPLETED, "commit " + job.result);
-                    check(job.result.skippedConflicts() == crossing.size(), "skipped " + job.result.skippedConflicts()
-                            + " of " + crossing.size() + " masked trees");
+                    check(job.result.skippedConflicts() == masked.size(), "skipped " + job.result.skippedConflicts()
+                            + " of " + masked.size() + " masked trees");
                     check(job.result.changed() == expected, "changed " + job.result.changed() + ", expected " + expected);
-                    for (GrownFeature cluster : crossing) {
+                    for (GrownFeature cluster : masked) {
                         for (int i = 0; i < cluster.size(); i++) {
                             BlockState now = h.world.getBlockState(pos(cluster.x(i), cluster.y(i), cluster.z(i)));
                             check(h.runtime.states().handle(now) == cluster.before(i), "a masked tree was half built");
