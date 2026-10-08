@@ -102,7 +102,7 @@ class BatchSixContractsTest {
     }
 
     @Test
-    void aMultiPasteTakesOneToTwoHundredFiftySixPlacementsAndIsAStubForNow() {
+    void aMultiPasteTakesOneToTwoHundredFiftySixPlacements() {
         OpSpec.PasteMany stamp = stamp(Symmetry.NONE);
         assertThrows(IllegalArgumentException.class, () -> new OpSpec.PasteMany(CLIPBOARD, List.of(),
                 PasteOptions.DEFAULT));
@@ -125,9 +125,8 @@ class BatchSixContractsTest {
             assertEquals(pasteImage.origin(), image.placements().get(i).origin());
             assertEquals(pasteImage.orientation(), image.placements().get(i).orientation());
         }
-        UnsupportedOperationException stub = assertThrows(UnsupportedOperationException.class,
-                () -> OpCompiler.compile(stamp, CONTEXT));
-        assertTrue(stub.getMessage().contains("not implemented"), stub.getMessage());
+        // Compiled by PasteManyProgram (PasteManyTest): a source the context does not hold is refused.
+        assertThrows(IllegalArgumentException.class, () -> OpCompiler.compile(stamp, CONTEXT));
     }
 
     @Test

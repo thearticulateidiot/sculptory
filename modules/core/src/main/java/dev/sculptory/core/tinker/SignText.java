@@ -16,8 +16,7 @@ public record SignText(Side front, Side back) {
     /** Longest line kept, in characters (vanilla's sign packet takes at most this many). */
     public static final int MAX_LINE_CHARS = 384;
     /** The sixteen dye colours in vanilla's order ({@code DyeColor}), as sign NBT names them. */
-    public static final List<String> COLORS = List.of("white", "orange", "magenta", "light_blue", "yellow", "lime",
-            "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green", "red", "black");
+    public static final List<String> COLORS = SignLines.COLORS;
     /** A new sign's text colour. */
     public static final String DEFAULT_COLOR = "black";
 
@@ -34,9 +33,9 @@ public record SignText(Side front, Side back) {
             Objects.requireNonNull(lines);
             if (lines.size() != LINES) throw new IllegalArgumentException("A sign side has " + LINES + " lines");
             List<String> cleaned = new ArrayList<>(LINES);
-            for (String line : lines) cleaned.add(clean(Objects.requireNonNull(line)));
+            for (String line : lines) cleaned.add(SignLines.clean(Objects.requireNonNull(line)));
             lines = List.copyOf(cleaned);
-            if (!COLORS.contains(color)) throw new IllegalArgumentException("Unknown sign colour: " + color);
+            if (!SignLines.COLORS.contains(color)) throw new IllegalArgumentException("Unknown sign colour: " + color);
         }
 
         /** This side with line {@code index} set to {@code text}. */
@@ -55,9 +54,9 @@ public record SignText(Side front, Side back) {
         }
     }
 
-    // Built from fresh sides, not Side.EMPTY: when Side is loaded first its EMPTY is still null while this runs.
-    public static final SignText EMPTY = new SignText(new Side(List.of("", "", "", ""), DEFAULT_COLOR, false),
-            new Side(List.of("", "", "", ""), DEFAULT_COLOR, false));
+    // Side reads nothing of SignText's own initialization (only constants and SignLines), so whichever loads first, this
+    // finds Side.EMPTY made.
+    public static final SignText EMPTY = new SignText(Side.EMPTY, Side.EMPTY);
 
     /** The side {@code front} names. */
     public Side side(boolean front) {
@@ -75,24 +74,6 @@ public record SignText(Side front, Side back) {
      * a player types on a sign.
      */
     public static String clean(String line) {
-        StringBuilder out = new StringBuilder(Math.min(line.length(), MAX_LINE_CHARS));
-        for (int i = 0; i < line.length() && out.length() < MAX_LINE_CHARS; i++) {
-            char c = line.charAt(i);
-            if (c == '§') {
-                i++; // the code's letter goes with it
-                continue;
-            }
-            if (Character.isISOControl(c) || c == '\u007f') continue;
-            if (Character.isHighSurrogate(c)) {
-                if (i + 1 < line.length() && Character.isLowSurrogate(line.charAt(i + 1))) {
-                    if (out.length() + 2 > MAX_LINE_CHARS) break;
-                    out.append(c).append(line.charAt(++i));
-                }
-                continue;
-            }
-            if (Character.isLowSurrogate(c)) continue;
-            out.append(c);
-        }
-        return out.toString();
+        return SignLines.clean(line);
     }
 }

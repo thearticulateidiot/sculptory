@@ -13,7 +13,11 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Pastes a {@link SourceBlocks} with an {@link Orientation} so that its (oriented) anchor cell lands on the origin.
@@ -87,15 +91,60 @@ final class PasteProgram implements ClaimingProgram {
      */
     static PasteProgram compile(OpSpec.Paste op, SourceBlocks source, StateSpace states, RegionProgram.Height height) {
         if (!op.orientation().isExact()) return compileFree(op, source, states, height, null);
+        return compileExact(op, source, states, height, null);
+    }
+
+    /**
+     * The exact path. With {@code scans} (a multi-paste's, per transform, of this source and include-air) a paste the
+     * build height leaves whole reuses its transform's {@link #scan}, so a multi-paste reads its source once per
+     * transform instead of once per placement; null scans as usual.
+     */
+    private static PasteProgram compileExact(OpSpec.Paste op, SourceBlocks source, StateSpace states,
+                                             RegionProgram.Height height, Map<Transform, Scan> scans) {
         Transform t = op.orientation().transform();
         BlockPos size = source.size();
         Box target = CopySupport.pasteTarget(size, source.anchor(), t, op.origin());
         Box bounds = height.clip(target);
         if (bounds == null) throw new IllegalArgumentException("Paste is outside the build height: " + target);
-
-        // One pass over the source: validate states, count the cells that will be considered, and list the target
-        // sections that can receive them (each source section's occupied bounds, transformed).
         LongOpenHashSet sections = new LongOpenHashSet();
+        long counted;
+        if (scans != null && bounds.equals(target)) {
+            Scan scan = scans.computeIfAbsent(t, turn -> scan(source, turn, op.o().includeAir(), states));
+            BlockPos min = target.min();
+            for (Box part : scan.parts()) CopySupport.addSections(part.offset(min.x(), min.y(), min.z()), sections);
+            counted = scan.cells();
+        } else {
+            counted = scan(source, t, op.o().includeAir(), states, target, bounds,
+                    part -> CopySupport.addSections(part, sections));
+        }
+        long[] order = sections.isEmpty() ? NO_SECTIONS : CopySupport.ordered(sections);
+        return new PasteProgram(source, op, states, target, bounds, counted, order, null, null, target.min());
+    }
+
+    /**
+     * What a paste of {@code source} turned by {@code t} lays when nothing is cut by the build height: the cells it
+     * considers, and each source section's occupied bounds transformed, local to the target box (its minimum corner at
+     * the origin).
+     */
+    record Scan(long cells, List<Box> parts) {}
+
+    /** The {@link Scan} of {@code source} under {@code t}. */
+    static Scan scan(SourceBlocks source, Transform t, boolean includeAir, StateSpace states) {
+        BlockPos size = t.size(source.size().x(), source.size().y(), source.size().z());
+        Box local = new Box(BlockPos.ORIGIN, new BlockPos(size.x() - 1, size.y() - 1, size.z() - 1));
+        List<Box> parts = new ArrayList<>();
+        long cells = scan(source, t, includeAir, states, local, local, parts::add);
+        return new Scan(cells, List.copyOf(parts));
+    }
+
+    /**
+     * One pass over the source: validates states, counts the cells that will be considered (present, not air unless
+     * included, landing within {@code bounds}' heights) and hands {@code part} each source section's occupied bounds,
+     * transformed into {@code target}.
+     */
+    private static long scan(SourceBlocks source, Transform t, boolean includeAir, StateSpace states, Box target,
+                             Box bounds, Consumer<Box> part) {
+        BlockPos size = source.size();
         long counted = 0;
         int[] local = new int[7];
         for (long key : source.cells().sortedKeys()) {
@@ -112,7 +161,7 @@ final class PasteProgram implements ClaimingProgram {
                 if (state >= states.size()) {
                     throw new IllegalArgumentException("Paste source state " + state + " is outside the state space");
                 }
-                if (!op.o().includeAir() && StateFlags.has(states.flags(state), StateFlags.AIR)) return;
+                if (!includeAir && StateFlags.has(states.flags(state), StateFlags.AIR)) return;
                 int landing = target.min().y() + t.mapY(y, size.y());
                 if (landing < bounds.min().y() || landing > bounds.max().y()) return;
                 local[0] = Math.min(local[0], x);
@@ -125,11 +174,10 @@ final class PasteProgram implements ClaimingProgram {
             });
             if (local[6] == 0) continue;
             counted += local[6];
-            CopySupport.addSections(CopySupport.transformedPart(target, size, t,
-                    local[0], local[1], local[2], local[3], local[4], local[5]), sections);
+            part.accept(CopySupport.transformedPart(target, size, t, local[0], local[1], local[2], local[3], local[4],
+                    local[5]));
         }
-        long[] order = sections.isEmpty() ? NO_SECTIONS : CopySupport.ordered(sections);
-        return new PasteProgram(source, op, states, target, bounds, counted, order, null, null, target.min());
+        return counted;
     }
 
     /**
@@ -159,8 +207,23 @@ final class PasteProgram implements ClaimingProgram {
                                          dev.sculptory.core.brush.Symmetry symmetry,
                                          dev.sculptory.core.brush.Symmetry.Image image, SourceBlocks source,
                                          StateSpace states, RegionProgram.Height height) {
+        return compilePlacement(src, placement, o, symmetry, image, source, states, height, null);
+    }
+
+    /**
+     * {@link #compilePlacement(SourceRef, OpSpec.PasteMany.Placement, PasteOptions, dev.sculptory.core.brush.Symmetry,
+     * dev.sculptory.core.brush.Symmetry.Image, SourceBlocks, StateSpace, RegionProgram.Height)} sharing {@code scans}
+     * (per transform, see {@link #scan}) between the op's exact placements; null scans each one.
+     */
+    static PasteProgram compilePlacement(SourceRef src, OpSpec.PasteMany.Placement placement, PasteOptions o,
+                                         dev.sculptory.core.brush.Symmetry symmetry,
+                                         dev.sculptory.core.brush.Symmetry.Image image, SourceBlocks source,
+                                         StateSpace states, RegionProgram.Height height, Map<Transform, Scan> scans) {
         OpSpec.Paste original = new OpSpec.Paste(src, placement.origin(), placement.orientation(), o);
-        if (image == dev.sculptory.core.brush.Symmetry.Image.IDENTITY) return compile(original, source, states, height);
+        if (image == dev.sculptory.core.brush.Symmetry.Image.IDENTITY) {
+            return original.orientation().isExact() ? compileExact(original, source, states, height, scans)
+                    : compileFree(original, source, states, height, null);
+        }
         if (!placement.orientation().isExact()) {
             return compileImage(original, new CopyFrame(symmetry, image, states), source, states, height);
         }
@@ -169,8 +232,8 @@ final class PasteProgram implements ClaimingProgram {
         if (x != (int) x || z != (int) z) {
             throw new IllegalArgumentException("A symmetric copy of " + placement.origin() + " leaves the coordinate range");
         }
-        return compile(new OpSpec.Paste(src, new BlockPos((int) x, placement.origin().y(), (int) z),
-                placement.orientation().then(image.transform()), o), source, states, height);
+        return compileExact(new OpSpec.Paste(src, new BlockPos((int) x, placement.origin().y(), (int) z),
+                placement.orientation().then(image.transform()), o), source, states, height, scans);
     }
 
     /** The free path: the result box placed by the anchor, the target sections of each source section's turned bounds. */

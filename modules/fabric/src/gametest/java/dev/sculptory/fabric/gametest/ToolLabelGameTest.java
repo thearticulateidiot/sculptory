@@ -16,6 +16,7 @@ import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.region.Region;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.net.FabricTransport;
@@ -49,7 +50,7 @@ import net.minecraft.test.TestContext;
  * History names per tool: a {@code RunOp} carrying a tool label makes a job and
  * a history entry named after the tool ("Flood · 16 blocks"), one that carries none keeps the op's name ("Fill · …"),
  * and a label that does not fit the op is refused as {@code INVALID} with nothing run. Through the network layer, on a
- * real world. Region slot 1080.
+ * real world (the labels of protocol 6 too: Extrude path, Taper, Sweep, Stamp). Region slot 1080.
  */
 public final class ToolLabelGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
@@ -60,7 +61,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1080);
         int x0 = at[0], z0 = at[1];
-        Box area = box(x0, 98, z0, x0 + 15, 112, z0 + 15);
+        Box area = box(x0, 98, z0, x0 + 15, 120, z0 + 15);
         loadAndForce(h.world, area);
         BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone"), water = h.state("minecraft:water[level=0]"), air = h.state("minecraft:air");
@@ -74,8 +75,10 @@ public final class ToolLabelGameTest implements FabricGameTest {
             for (int z = z0; z < z0 + 4; z++) writer.write(x, 104, z, water, null);
         }
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        // The session takes only so many requests a second: its clock is moved on between the bursts below.
+        long[] clock = {System.nanoTime()};
         ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
-                () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
+                () -> Limits.DEFAULTS, h.runtime::states, () -> clock[0]);
         Transport transport = new Transport(h, h.player);
         NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
@@ -163,6 +166,61 @@ public final class ToolLabelGameTest implements FabricGameTest {
                 .createAndAdd(() -> {
                     finished(transport, 10, "the fill");
                     expected.add(0, "Fill · 16 blocks");
+                    checkLabels(h, expected);
+                    clock[0] += 3_000_000_000L; // three seconds on: the request allowance is full again
+                })
+                // Protocol 6: Extrude along a path, Taper and Sweep are generated pastes; Stamp a multi-paste.
+                .createAndAdd(() -> run(transport, dispatcher, session, 11, paste(clipboard[0], new BlockPos(x0 + 8, 109, z0 + 8)),
+                        OpLabel.PATH_EXTRUDE))
+                .createAndAdd(() -> {}) // one tick for the job to finish
+                .createAndAdd(() -> {
+                    finished(transport, 11, "the path extrusion");
+                    expected.add(0, "Extrude path · 4 blocks");
+                    checkLabels(h, expected);
+                })
+                .createAndAdd(() -> run(transport, dispatcher, session, 12, paste(clipboard[0], new BlockPos(x0 + 8, 111, z0 + 8)),
+                        OpLabel.TAPER))
+                .createAndAdd(() -> {}) // one tick for the job to finish
+                .createAndAdd(() -> {
+                    finished(transport, 12, "the taper");
+                    expected.add(0, "Taper · 4 blocks");
+                    checkLabels(h, expected);
+                })
+                .createAndAdd(() -> run(transport, dispatcher, session, 13, paste(clipboard[0], new BlockPos(x0 + 8, 113, z0 + 8)),
+                        OpLabel.SWEEP))
+                .createAndAdd(() -> {}) // one tick for the job to finish
+                .createAndAdd(() -> {
+                    finished(transport, 13, "the sweep");
+                    expected.add(0, "Sweep · 4 blocks");
+                    checkLabels(h, expected);
+                })
+                .createAndAdd(() -> {
+                    run(transport, dispatcher, session, 14, new OpSpec.PasteMany(new SourceRef.Clipboard(clipboard[0]),
+                            List.of(new OpSpec.PasteMany.Placement(new BlockPos(x0 + 8, 115, z0 + 8), Orientation.IDENTITY),
+                                    new OpSpec.PasteMany.Placement(new BlockPos(x0 + 11, 115, z0 + 8), Orientation.IDENTITY)),
+                            new PasteOptions(true, false, false)), OpLabel.STAMP);
+                })
+                .createAndAdd(() -> {}) // one tick for the job to finish
+                .createAndAdd(() -> {
+                    finished(transport, 14, "the stamp");
+                    expected.add(0, "Stamp · 8 blocks");
+                    checkLabels(h, expected);
+                    clock[0] += 3_000_000_000L; // three seconds on: the request allowance is full again
+                })
+                .createAndAdd(() -> {
+                    // Stamp names only a multi-paste, and a multi-paste takes no other tool's name.
+                    transport.receive(dispatcher, session, new C2S.RunOp(15, paste(clipboard[0], new BlockPos(x0 + 8, 117,
+                            z0 + 8)), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP));
+                    transport.receive(dispatcher, session, new C2S.RunOp(16, new OpSpec.PasteMany(
+                            new SourceRef.Clipboard(clipboard[0]), List.of(new OpSpec.PasteMany.Placement(
+                                    new BlockPos(x0 + 8, 117, z0 + 8), Orientation.IDENTITY)), PasteOptions.DEFAULT), false,
+                            ConflictPolicy.SKIP_CONFLICTS, OpLabel.PATH_EXTRUDE));
+                    for (int reqId : new int[] {15, 16}) {
+                        S2C.JobRejected misfit = transport.sent(S2C.JobRejected.class).stream()
+                                .filter(r -> r.reqId() == reqId).findFirst()
+                                .orElseThrow(() -> new GameTestException(reqId + " not refused: " + transport.sent));
+                        check(misfit.reason() == RejectReason.INVALID, reqId + " refused as " + misfit.reason());
+                    }
                     checkLabels(h, expected);
                     dispatcher.close(session);
                     forceChunks(h.world, area, false);

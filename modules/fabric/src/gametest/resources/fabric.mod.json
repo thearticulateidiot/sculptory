@@ -63,6 +63,7 @@
       "dev.sculptory.fabric.gametest.LineNavGameTest",
       "dev.sculptory.fabric.gametest.ScatterFeatureGameTest",
       "dev.sculptory.fabric.gametest.ContractStubsGameTest",
+      "dev.sculptory.fabric.gametest.ExtrudePathsGameTest",
       "dev.sculptory.fabric.gametest.FreeRotationGameTest"
     ]
   },

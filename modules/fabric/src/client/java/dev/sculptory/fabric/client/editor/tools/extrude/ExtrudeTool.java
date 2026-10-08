@@ -9,6 +9,7 @@ import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.entity.EntityFilter;
+import dev.sculptory.core.generate.FaceCells;
 import dev.sculptory.core.generate.GeneratedSource;
 import dev.sculptory.core.generate.GeneratedTooLargeException;
 import dev.sculptory.core.region.CellSet;
@@ -40,6 +41,8 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.brush.BrushOutlines;
 import dev.sculptory.fabric.client.editor.tools.brush.SymmetryCentre;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
+import dev.sculptory.fabric.client.editor.tools.generate.LineDraft;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.editor.tools.select.SelectSettings;
@@ -74,7 +77,10 @@ import org.slf4j.LoggerFactory;
  * side's outermost layer of blocks, and Alt+drag smears the face along the drag (one {@code OpSpec.Move} leaving air).
  * A ghost shows the layers; the hint counts them; Esc cancels with nothing sent. Every op goes through
  * {@link SelectionActions#runOn}, so the {@code region} permission, the symmetry centre, the server's volume limit and
- * the confirm dialog are the selection ops'. Client thread only.
+ * the confirm dialog are the selection ops'.
+ *
+ * <p>With the Direction setting at Along a path or To a point, a click locks the hovered face instead and the clicks
+ * after it shape what it becomes ({@link ExtrudeAlong}): built as one generated paste. Client thread only.
  */
 public final class ExtrudeTool implements Tool {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
@@ -117,6 +123,11 @@ public final class ExtrudeTool implements Tool {
         /** The clock the face search's time budget is measured with. */
         default long nanoTime() {
             return System.nanoTime();
+        }
+
+        /** Asks the player to confirm a large path or taper build; {@code onConfirm} runs only if they do. */
+        default void confirm(String opNameKey, long blocks, Runnable onConfirm) {
+            onConfirm.run();
         }
 
         /** Services without Minecraft: no ray, default key names, no ghosts, bakes on the caller's thread. */
@@ -202,6 +213,18 @@ public final class ExtrudeTool implements Tool {
         public boolean hitUnloaded() {
             return hitUnloaded;
         }
+
+        /** The face's cells and states as the path and taper kernels take them. */
+        public FaceCells cells() {
+            int n = cells.length;
+            int[] xs = new int[n], ys = new int[n], zs = new int[n];
+            for (int i = 0; i < n; i++) {
+                xs[i] = FaceSelect.cellX(cells[i]);
+                ys[i] = FaceSelect.cellY(cells[i]);
+                zs[i] = FaceSelect.cellZ(cells[i]);
+            }
+            return new FaceCells(side.axis(), side.sign(), xs, ys, zs, states);
+        }
     }
 
     /** A drag in progress. */
@@ -251,6 +274,14 @@ public final class ExtrudeTool implements Tool {
     private boolean toldLimit;
     private boolean toldUnloaded;
     private Drag drag;
+    /** Along a path and To a point: the locked face and its points. */
+    private final ExtrudeAlong along;
+    /**
+     * A click asked to lock a face still being found: lock it once it is, if it is still the one clicked
+     * ({@link #lockKey}); the cursor moving to another block, side or the sky drops the request.
+     */
+    private boolean lockWhenFound;
+    private HoverKey lockKey;
 
     /**
      * @param actions the selection ops' sender, shared with the Select tool: its symmetry centre, confirm dialog and
@@ -259,6 +290,47 @@ public final class ExtrudeTool implements Tool {
     public ExtrudeTool(Services services, SelectionActions actions) {
         this.services = Objects.requireNonNull(services);
         this.actions = Objects.requireNonNull(actions);
+        this.along = new ExtrudeAlong(this::generateServices);
+    }
+
+    /** The tool's services as the generated builds (path and taper) take them. */
+    private GenerateTool.Services generateServices() {
+        return new GenerateTool.Services() {
+            @Override
+            public void showGhosts(List<GhostPlacement> placements) {
+                services.showGhosts(placements);
+            }
+
+            @Override
+            public void releaseGhost(GhostVolume volume) {
+                services.releaseGhost(volume);
+            }
+
+            @Override
+            public Executor background() {
+                return services.background();
+            }
+
+            @Override
+            public String keyLabel(KeyAction action) {
+                return services.keyLabel(action);
+            }
+
+            @Override
+            public void confirm(String opNameKey, long blocks, Runnable onConfirm) {
+                services.confirm(opNameKey, blocks, onConfirm);
+            }
+        };
+    }
+
+    /** The face locked for a path or a taper, if any. */
+    public Optional<Face> lockedFace() {
+        return along.lockedFace();
+    }
+
+    /** The path's points or the tip, and their preview, for the direction set (tests). */
+    public LineDraft draft(ExtrudeSettings.Direction direction) {
+        return along.draft(direction);
     }
 
     /** A tool without Minecraft (tests, the default tool set): no ghosts, no cursor ray, ops confirmed at once. */
@@ -323,6 +395,8 @@ public final class ExtrudeTool implements Tool {
     @Override
     public void deactivate(ToolContext c, DeactivateReason r) {
         endDrag(c);
+        along.deactivate(c);
+        lockWhenFound = false;
         hoverJob = null;
         hoverKey = null;
         hover = null;
@@ -331,6 +405,18 @@ public final class ExtrudeTool implements Tool {
     @Override
     public void onSettingsChanged(ToolContext c, SettingsValues before, SettingsValues after) {
         hoverKey = null; // the face is found again with the new settings (a drag keeps the face it began with)
+        if (before.get(ExtrudeSettings.DIRECTION) != after.get(ExtrudeSettings.DIRECTION)) {
+            // Another direction: a locked face and its points go.
+            along.unlock(c);
+            lockWhenFound = false;
+            endDrag(c);
+        } else {
+            along.changed();
+        }
+    }
+
+    private static ExtrudeSettings.Direction direction(ToolContext c) {
+        return c.settings().get(ExtrudeSettings.DIRECTION);
     }
 
     // ---- Frames ----
@@ -338,6 +424,8 @@ public final class ExtrudeTool implements Tool {
     @Override
     public void frame(ToolContext c, FrameInfo f) {
         cursor = f.cursor();
+        along.frame(c, direction(c));
+        if (along.lockedFace().isPresent()) return;
         if (drag != null) {
             runDragSearch(c);
             pollBake();
@@ -352,6 +440,7 @@ public final class ExtrudeTool implements Tool {
         if (!Objects.equals(key, hoverKey)) {
             hoverKey = key;
             hover = null;
+            lockWhenFound = false; // the face clicked is not the one under the cursor any more
             hoverJob = key == null ? null : new FaceJob(FaceSelect.connected(world(c), key.seed(), key.side(),
                     key.settings().get(ExtrudeSettings.MATCH), key.settings().get(ExtrudeSettings.DIAGONALS),
                     faceLimit(c)));
@@ -361,6 +450,7 @@ public final class ExtrudeTool implements Tool {
             hoverJob = null;
             hover = done.count() == 0 ? null : new Face(done);
             tell(c, done);
+            if (lockWhenFound && Objects.equals(hoverKey, lockKey)) lockFound(c);
         }
     }
 
@@ -391,6 +481,8 @@ public final class ExtrudeTool implements Tool {
     @Override
     public boolean onPointer(ToolContext c, PointerEvent e) {
         cursor = e.cursor();
+        ExtrudeSettings.Direction direction = direction(c);
+        if (direction != ExtrudeSettings.Direction.STRAIGHT) return pointerAlong(c, e, direction);
         return switch (e.kind()) {
             case MOVE -> false;
             case PRESS -> e.button() == PointerEvent.LEFT && press(c, e);
@@ -410,6 +502,35 @@ public final class ExtrudeTool implements Tool {
                 yield true;
             }
         };
+    }
+
+    /**
+     * Along a path or to a point: while no face is locked a press locks the face under the cursor (once found, if it is
+     * still being found); then the clicks are the path's points or the tip.
+     */
+    private boolean pointerAlong(ToolContext c, PointerEvent e, ExtrudeSettings.Direction direction) {
+        if (along.lockedFace().isPresent()) return along.onPointer(c, e, direction);
+        if (e.kind() != PointerEvent.Kind.PRESS || e.button() != PointerEvent.LEFT || cursor.missed()) return false;
+        hover(c); // a press right after a move: the search starts (and small faces finish) now
+        if (hover != null) {
+            along.lock(c, hover);
+        } else if (hoverJob != null) {
+            lockWhenFound = true;
+            lockKey = hoverKey;
+        } else {
+            c.notify(Notice.of(Notice.Level.INFO, NOTHING));
+        }
+        return true;
+    }
+
+    /** The face a click asked to lock was found: it is locked (or, empty, the click finds nothing). */
+    private void lockFound(ToolContext c) {
+        lockWhenFound = false;
+        if (hover != null) {
+            along.lock(c, hover);
+        } else {
+            c.notify(Notice.of(Notice.Level.INFO, NOTHING));
+        }
     }
 
     private boolean press(ToolContext c, PointerEvent e) {
@@ -608,6 +729,14 @@ public final class ExtrudeTool implements Tool {
 
     @Override
     public boolean onAction(ToolContext c, EditorAction a) {
+        ExtrudeSettings.Direction direction = direction(c);
+        if (direction != ExtrudeSettings.Direction.STRAIGHT) {
+            if (a == EditorAction.CANCEL && lockWhenFound) {
+                lockWhenFound = false;
+                return true;
+            }
+            return along.onAction(c, a, direction);
+        }
         switch (a) {
             case CANCEL -> {
                 if (drag == null) return false;
@@ -756,6 +885,10 @@ public final class ExtrudeTool implements Tool {
      */
     @Override
     public void renderWorld(ToolContext c, WorldDraw d) {
+        if (along.lockedFace().isPresent()) {
+            along.renderWorld(d, direction(c));
+            return;
+        }
         Face face = drag != null ? drag.face : hover;
         if (face != null) {
             d.shapeOutlines(List.of(face.region()), FACE_COLOUR, FACE_COLOUR);
@@ -790,7 +923,15 @@ public final class ExtrudeTool implements Tool {
 
     @Override
     public List<KeyHint> hints(ToolContext c) {
+        ExtrudeSettings.Direction direction = direction(c);
+        if (along.lockedFace().isPresent()) return along.hints(direction, this::generateServices);
         List<KeyHint> hints = new ArrayList<>();
+        if (direction != ExtrudeSettings.Direction.STRAIGHT) {
+            hoverHint(hints);
+            hints.add(new KeyHint(CLICK, direction == ExtrudeSettings.Direction.ALONG_PATH
+                    ? "sculptory.hint.extrude.lock_for_path" : "sculptory.hint.extrude.lock_for_tip"));
+            return hints;
+        }
         Symmetry.Mode mode = c.settings().get(ExtrudeSettings.SYMMETRY);
         if (drag != null) {
             if (drag.face == null) {
@@ -813,14 +954,7 @@ public final class ExtrudeTool implements Tool {
             hints.add(new KeyHint("Esc", "sculptory.hint.cancel_drag"));
             return hints;
         }
-        if (hover != null) {
-            hints.add(KeyHint.text(hover.cutAtLimit() ? "sculptory.hint.extrude.face_cut" : "sculptory.hint.extrude.face",
-                    SessionNotices.count(hover.count())));
-        } else if (hoverJob != null) {
-            hints.add(KeyHint.text("sculptory.hint.extrude.finding"));
-        } else {
-            hints.add(KeyHint.text("sculptory.hint.extrude.aim"));
-        }
+        hoverHint(hints);
         hints.add(new KeyHint(CLICK + " drag", "sculptory.hint.extrude.drag"));
         if (c.selectionState().isPresent()) hints.add(new KeyHint("Ctrl+drag", "sculptory.hint.extrude.side"));
         hints.add(new KeyHint("Alt+drag", "sculptory.hint.extrude.smear"));
@@ -831,6 +965,18 @@ public final class ExtrudeTool implements Tool {
             hints.add(new KeyHint(services.keyLabel(KeyAction.SET_SYMMETRY_CENTRE), "sculptory.hint.brush.symmetry_centre"));
         }
         return hints;
+    }
+
+    /** What the cursor's face is: its size, still being found, or none. */
+    private void hoverHint(List<KeyHint> hints) {
+        if (hover != null) {
+            hints.add(KeyHint.text(hover.cutAtLimit() ? "sculptory.hint.extrude.face_cut" : "sculptory.hint.extrude.face",
+                    SessionNotices.count(hover.count())));
+        } else if (hoverJob != null) {
+            hints.add(KeyHint.text("sculptory.hint.extrude.finding"));
+        } else {
+            hints.add(KeyHint.text("sculptory.hint.extrude.aim"));
+        }
     }
 
     private static int smearDistance(int[] offset) {

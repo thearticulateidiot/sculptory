@@ -10,7 +10,7 @@ The library is the server's shared folder of schematics and palettes: trees, hou
 
 1. Press `L` (or **File > Library**).
 2. Open a folder, or type part of a name in **Filter by name…**.
-3. Select an asset and click **Place** (or double-click it): a ghost follows the pointer, and `Enter` places it. **Load** only puts it on your clipboard; **Add to scatter** makes it a [Scatter](scatter.md) variant.
+3. Select an asset and click **Place** (or double-click it): a ghost follows the pointer, and `Enter` places it. **Load** only puts it on your clipboard; **Add to scatter** makes it a [Scatter](scatter.md) variant; **Stamp** copies it on blocks you click with [Generate](generate.md#stamp-copies).
 
 ## Save an asset
 

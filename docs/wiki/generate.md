@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Build faster](home.md#build-faster)
 
-**Generate** (`-`) builds a **road** along points you click, a **roof** over the selection, or a **line** through blocks you click. It shows the result first, and `Enter` builds it as one undo step named **Road**, **Roof** or **Line**. Use it for paths that hug the land, embanked highways, roofs of stairs and slabs that would take an evening by hand, and cables, pipes, arches and beams.
+**Generate** (`-`) builds a **road** along points you click, a **roof** over the selection, a **line** through blocks you click, a **sweep** of the selection along a path, or **stamps** of your clipboard on blocks you click. It shows the result first, and `Enter` builds it as one undo step named **Road**, **Roof**, **Line**, **Sweep** or **Stamp**. Use it for paths that hug the land, embanked highways, roofs of stairs and slabs that would take an evening by hand, cables, pipes, arches and beams, walls with a profile of your own, and rows of lamp posts or trees.
 
 ![Tool Settings for Generate](images/generate-settings.png)
 
@@ -27,6 +27,24 @@
 4. Set the **Thickness** (1–16, `Ctrl+Scroll`) and, from 2 up, the **Profile**: **Round** or **Square**.
 5. Press `Enter` to build. `Esc` clears the points.
 
+## Sweep a profile
+
+1. Build the profile: a slice of the wall, bridge or tunnel you want, usually one block thick, and select it with [Select](select.md).
+2. Press `-` and set **Generate** to **Sweep**.
+3. Click blocks for the path, as for a [line](#draw-a-line). The profile stands on them, its bottom middle on top of each block, and turns to follow the path, staying upright. Tick **Follow slope** to tilt it as the path climbs.
+4. Press `Enter` to build: one undo step named **Sweep**.
+
+A profile thicker than one block repeats along the path: a fence profile three blocks thick with a post in one slice puts a post every three blocks. Stairs and other blocks that face a way turn with the path to the nearest quarter turn. Air in the profile is not swept, and blocks with contents (chests, signs) are left out, with a message.
+
+## Stamp copies
+
+1. Copy something (`Ctrl+C`), or pick a saved build in the [Library](library.md) and click **Stamp**.
+2. Press `-` and set **Generate** to **Stamp** (the Library's **Stamp** button does this for you and sets **Copy** to **Library asset**).
+3. Click blocks: a copy stands on each, as a paste would. The first copy is as you copied it; the others turn with the path through the points, by any angle, as a pasted copy turned in the [Place](place.md) tool does (stairs and other blocks that face a way take the nearest facing). `R` turns every copy a quarter more.
+4. Press `Enter` to build: one undo step named **Stamp**, at most 256 copies at once.
+
+Stamps are pasted by the server from its own copy, so chests keep their contents and entities such as armor stands and item frames come along.
+
 ## Settings
 
 | Setting | What it does |
@@ -44,6 +62,9 @@
 | Path, Sag | The line's shape through its points; how far a hanging span drops at its middle, 0–64 |
 | Thickness, Profile | The line's width across, 1–16; round (a tube) or square (a beam) |
 | Material (Line) | One **Block**, or a weighted **Mix** |
+| Path, Sag (Sweep) | The sweep's path through its points; how far a hanging span drops at its middle |
+| Follow slope | The profile tilts as the path climbs, instead of staying upright |
+| Copy | What Stamp copies: your **Clipboard**, or the **Library asset** picked with the Library's **Stamp** button |
 
 ## Tips
 
@@ -52,6 +73,8 @@
 - Chunks the road crosses that your game hasn't loaded show as red boxes and stop the build: fly closer.
 - A thin **Hanging** line between two towers makes a cable or a rope; a thick **Curve** of stone makes an arch. Blocks are placed as they are: fences and walls in a line don't connect to each other.
 - A line reaching into chunks your game hasn't loaded won't build: fly closer.
+- A sweep needs a selection: the profile is read when you click, so change the selection and the ghost follows.
+- Where two stamped copies overlap, the one clicked later wins.
 - Generate needs the `clipboard` and `region` [permissions](permissions.md).
 - The [Shape brush](shape-brush.md#sweep-a-shape-along-a-line) sweeps any of its shapes along the same kind of line, and can carve with it.
 
@@ -59,4 +82,6 @@
 
 - [Select](select.md)
 - [Place](place.md)
+- [Extrude](extrude.md)
+- [Library](library.md)
 - [Mix patterns](mix-patterns.md)

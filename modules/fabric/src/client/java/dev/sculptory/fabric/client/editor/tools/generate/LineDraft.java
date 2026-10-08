@@ -53,7 +53,7 @@ import org.slf4j.LoggerFactory;
  * nodes. Delete or Backspace removes the selected point, or the last one; Esc stops a drag or a preview being made, then
  * clears the points; Enter builds. The points stay after a build, so the line can be changed and built again.
  *
- * <p><b>Preview.</b> From two points the generator runs off the client thread (it reads no world); a result of an older
+ * <p><b>Preview.</b> Once it has its points (two, for a line) the generator runs off the client thread (it reads no world); a result of an older
  * change is dropped. The ghost shows what the global mask lets through; over {@link GenerateTool#MAX_GHOST_CELLS} the
  * line's bounds are outlined instead. The path is drawn as a line through its samples. Building refuses a line over the
  * cap (the player's clipboard limit), or reaching into chunks this game has not loaded. Client thread only.
@@ -68,6 +68,21 @@ public final class LineDraft {
     public static final String NEEDS_POINTS = "sculptory.notice.line_needs_points";
     public static final String UNLOADED = "sculptory.notice.line_unloaded";
     public static final String NOTHING = "sculptory.notice.line_nothing";
+
+    /**
+     * How many points the line takes: a preview and a build need {@code minPoints} (else {@code needsPointsKey} is
+     * toasted on Enter), and a click past {@code maxPoints} is refused, or, when the line takes one point only, moves
+     * it there.
+     */
+    public record Rules(int minPoints, int maxPoints, String needsPointsKey) {
+        /** Generate's Line and the Shape brush's: two points or more. */
+        public static final Rules LINE = new Rules(PathSpec.MIN_POINTS, PathSpec.MAX_POINTS, NEEDS_POINTS);
+
+        public Rules {
+            Objects.requireNonNull(needsPointsKey);
+            if (minPoints < 1 || maxPoints < minPoints) throw new IllegalArgumentException("Points " + minPoints + "-" + maxPoints);
+        }
+    }
 
     /** The line a host makes of its points, with what to build and how to name it; {@code generate} runs off-thread. */
     public record Setup(PathSpec path, Generator generator, OpLabel label, String opNameKey, String sentKey,
@@ -113,6 +128,7 @@ public final class LineDraft {
 
     private final Supplier<GenerateTool.Services> services;
     private final int colour;
+    private final Rules rules;
     private final PathModel points = new PathModel();
     private final GeneratedCommit commit;
     /** The face the first point was clicked on (the Shape brush's "Clicked face"), or null. */
@@ -128,13 +144,21 @@ public final class LineDraft {
     private boolean buildWhenReady;
 
     /**
+     * A line of {@link Rules#LINE}'s points.
+     *
      * @param services the ghosts, background work, key names and confirmations (read each time: the Shape brush gets
      *     the game's after it is built)
      * @param colour the path's colour
      */
     public LineDraft(Supplier<GenerateTool.Services> services, int colour) {
+        this(services, colour, Rules.LINE);
+    }
+
+    /** A line whose points follow {@code rules}. */
+    public LineDraft(Supplier<GenerateTool.Services> services, int colour, Rules rules) {
         this.services = Objects.requireNonNull(services);
         this.colour = colour;
+        this.rules = Objects.requireNonNull(rules);
         this.commit = new GeneratedCommit(new GenerateTool.Services() {
             @Override
             public void showGhosts(List<GhostPlacement> placements) {
@@ -206,9 +230,14 @@ public final class LineDraft {
                     dragFrom = points.node(index);
                     c.setPointerCapture(true);
                 } else {
-                    if (points.size() >= PathSpec.MAX_POINTS) {
+                    if (points.size() >= rules.maxPoints()) {
+                        if (rules.maxPoints() == 1) {
+                            points.move(0, point); // a line of one point: the click moves it
+                            changed();
+                            return true;
+                        }
                         c.notify(Notice.of(Notice.Level.INFO, "sculptory.notice.line_max_points",
-                                Integer.toString(PathSpec.MAX_POINTS)));
+                                Integer.toString(rules.maxPoints())));
                         return true;
                     }
                     if (points.isEmpty()) firstFace = cursor.face();
@@ -328,7 +357,7 @@ public final class LineDraft {
     }
 
     private Supplier<Built> task(ToolContext c, Host host) {
-        if (points.size() < 2) return null;
+        if (points.size() < rules.minPoints()) return null;
         StateSpace states = GenerateTool.statesOrNull(c);
         if (states == null) return null;
         Setup setup = host.setup(c, points.nodes());
@@ -415,8 +444,8 @@ public final class LineDraft {
     // ---- Building ----
 
     private void build(ToolContext c, Host host) {
-        if (points.size() < 2) {
-            c.notify(Notice.of(Notice.Level.INFO, NEEDS_POINTS));
+        if (points.size() < rules.minPoints()) {
+            c.notify(Notice.of(Notice.Level.INFO, rules.needsPointsKey()));
             return;
         }
         EditorSession session;

@@ -5,6 +5,7 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.Pattern;
+import dev.sculptory.core.generate.FaceCells;
 import dev.sculptory.core.generate.GeneratedSource;
 import dev.sculptory.core.generate.GeneratedTooLargeException;
 import dev.sculptory.core.generate.GroundMap;
@@ -14,9 +15,11 @@ import dev.sculptory.core.generate.RoofKernel;
 import dev.sculptory.core.generate.RoofStates;
 import dev.sculptory.core.generate.StairShapes;
 import dev.sculptory.core.generate.SurfaceReader;
+import dev.sculptory.core.generate.SweepKernel;
 import dev.sculptory.core.generate.UnknownMaterialException;
 import dev.sculptory.core.path.PathKind;
 import dev.sculptory.core.path.PathSpec;
+import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
@@ -83,6 +86,12 @@ import org.slf4j.LoggerFactory;
  * thick, round or square, of a block or a mix ({@link LineKernel}). Ctrl+Scroll changes the thickness; Enter builds it
  * (the paste is named "Line").
  *
+ * <p><b>Sweep</b> (a second {@link LineDraft}). The selection's blocks, read from the client world, are the profile,
+ * swept along the clicked points ({@link SweepKernel}); Enter builds it (named "Sweep").
+ *
+ * <p><b>Stamp</b> ({@link StampDraft}). The clipboard, or the asset picked with the Library's Stamp button, is copied
+ * on each clicked block, turned along the path; Enter sends one multi-paste (named "Stamp"), not a generated upload.
+ *
  * <p><b>Previews</b> run on the background executor: the Path generator first snapshots the ground of the footprint's
  * columns from the client world on the client thread ({@link GroundMap}), the kernel and the ghost bake then run off
  * it; a result of an older change is dropped. A source over {@link #MAX_GHOST_CELLS} shows its bounds as an outline;
@@ -117,6 +126,15 @@ public final class GenerateTool implements Tool {
     public static final String OP_ROOF = "sculptory.op.generate_roof";
     public static final String OP_LINE = "sculptory.op.generate_line";
     public static final String SENT_LINE = "sculptory.notice.generate_line_sent";
+    public static final String OP_SWEEP = "sculptory.op.generate_sweep";
+    public static final String SENT_SWEEP = "sculptory.notice.generate_sweep_sent";
+    public static final String SWEEP_NEEDS_SELECTION = "sculptory.notice.sweep_needs_selection";
+    public static final String SWEEP_TOO_LARGE = "sculptory.notice.sweep_too_large";
+    public static final String SWEEP_UNLOADED = "sculptory.notice.sweep_unloaded";
+    public static final String SWEEP_EMPTY = "sculptory.notice.sweep_empty";
+    public static final String SWEEP_LEFT_OUT = "sculptory.notice.sweep_left_out";
+    /** The largest selection box a Sweep profile is read from. */
+    static final long MAX_PROFILE_BOX = 262_144;
 
     /** What the tool needs from the client. */
     public interface Services {
@@ -212,12 +230,20 @@ public final class GenerateTool implements Tool {
     private GhostVolume ghost;
     /** The selection bounds the roof preview was made for. */
     private Box roofFootprint;
+    /** The selection bounds the sweep's preview was made for. */
+    private Box sweepProfile;
     /** Enter came while the preview was being made: build as soon as it lands. */
     private boolean buildWhenReady;
     /** Builds the road's and the roof's sources. */
     private final GeneratedCommit commit;
     /** The Line's points, preview and build. */
     private final LineDraft line;
+    /** The Sweep's points, preview and build (the profile is the selection). */
+    private final LineDraft sweep;
+    /** The Stamp's points, ghosts and build. */
+    private final StampDraft stamp;
+    /** The count of profile blocks left out the last toast told, so making the preview again does not repeat it. */
+    private long toldLeftOut = -1;
     /** Where the shown ghost is placed: the source's corner, or the masked cells'. */
     private BlockPos ghostOrigin;
     /** The kind the last frame ran with: a change drops the other kind's preview. */
@@ -227,6 +253,23 @@ public final class GenerateTool implements Tool {
         this.services = Objects.requireNonNull(services);
         this.commit = new GeneratedCommit(services);
         this.line = new LineDraft(() -> services, PATH_COLOUR);
+        this.sweep = new LineDraft(() -> services, PATH_COLOUR);
+        this.stamp = new StampDraft(() -> services);
+    }
+
+    /** The Sweep's points and preview (for tests and the HUD). */
+    public LineDraft sweep() {
+        return sweep;
+    }
+
+    /** The Stamp's points (for tests and the HUD). */
+    public StampDraft stamp() {
+        return stamp;
+    }
+
+    /** The Library's Stamp: stamps the asset at {@code path} from now on (when the Stamp source is the Library). */
+    public void useStampAsset(String path, String contentHash) {
+        stamp.useAsset(path, contentHash);
     }
 
     /** The path's nodes (for tests and the HUD). */
@@ -276,6 +319,8 @@ public final class GenerateTool implements Tool {
         dropPreview();
         commit.cancel();
         line.deactivate(c);
+        sweep.deactivate(c);
+        stamp.hide(c);
         context = null;
     }
 
@@ -286,6 +331,8 @@ public final class GenerateTool implements Tool {
         cursor = e.cursor();
         GenerateSettings.Kind kind = c.settings().get(GenerateSettings.KIND);
         if (kind == GenerateSettings.Kind.LINE) return line.onPointer(c, e, WorldCursor::pos);
+        if (kind == GenerateSettings.Kind.SWEEP) return sweep.onPointer(c, e, WorldCursor::pos);
+        if (kind == GenerateSettings.Kind.STAMP) return stamp.onPointer(c, e);
         if (kind != GenerateSettings.Kind.PATH) return false;
         switch (e.kind()) {
             case PRESS -> {
@@ -324,7 +371,7 @@ public final class GenerateTool implements Tool {
     @Override
     public boolean onScroll(ToolContext c, ScrollEvent e) {
         GenerateSettings.Kind kind = c.settings().get(GenerateSettings.KIND);
-        if (e.amount() == 0 || kind == GenerateSettings.Kind.ROOF) return false;
+        if (e.amount() == 0 || (kind != GenerateSettings.Kind.PATH && kind != GenerateSettings.Kind.LINE)) return false;
         if (!Modifiers.control(e.modifiers())) return false;
         int step = (e.amount() > 0 ? 1 : -1) * (Modifiers.shift(e.modifiers()) ? 4 : 1);
         SettingsValues values = c.settings();
@@ -341,7 +388,13 @@ public final class GenerateTool implements Tool {
 
     @Override
     public boolean onAction(ToolContext c, EditorAction a) {
-        if (c.settings().get(GenerateSettings.KIND) == GenerateSettings.Kind.LINE) return line.onAction(c, a, this::lineSetup);
+        GenerateSettings.Kind current = c.settings().get(GenerateSettings.KIND);
+        if (current == GenerateSettings.Kind.LINE) return line.onAction(c, a, this::lineSetup);
+        // Sweep and Stamp take Delete and Backspace even with no point left: they would erase the selection, which is
+        // the Sweep's profile.
+        boolean removal = a == EditorAction.ERASE_SELECTION || a == EditorAction.REMOVE_NODE;
+        if (current == GenerateSettings.Kind.SWEEP) return sweep.onAction(c, a, this::sweepSetup) || removal;
+        if (current == GenerateSettings.Kind.STAMP) return stamp.onAction(c, a) || removal;
         boolean pathMode = c.settings().get(GenerateSettings.KIND) == GenerateSettings.Kind.PATH;
         switch (a) {
             case CANCEL -> {
@@ -399,6 +452,7 @@ public final class GenerateTool implements Tool {
         }
         changed();
         line.changed();
+        sweep.changed();
     }
 
     @Override
@@ -406,17 +460,46 @@ public final class GenerateTool implements Tool {
         cursor = f.cursor();
         GenerateSettings.Kind kind = c.settings().get(GenerateSettings.KIND);
         if (kind != lastKind) {
-            // The Line shows its own ghost: the road's or roof's goes (and comes back when its kind does), and back.
-            if (lastKind == GenerateSettings.Kind.LINE) line.hide(c);
-            else if (kind == GenerateSettings.Kind.LINE && lastKind != null) dropPreview();
+            // The Line, Sweep and Stamp show their own ghosts: the kind left hides its own (the road's or roof's comes
+            // back when its kind does).
+            if (lastKind != null) {
+                switch (lastKind) {
+                    case LINE -> line.hide(c);
+                    case SWEEP -> sweep.hide(c);
+                    case STAMP -> stamp.hide(c);
+                    default -> dropPreview();
+                }
+            }
             if (dragging >= 0) endDrag(c);
             dirty = true;
             lastKind = kind;
         }
-        if (kind == GenerateSettings.Kind.LINE) {
-            line.frame(c, this::lineSetup);
-            commit.poll(c);
-            return;
+        line.pollBuild(c);
+        sweep.pollBuild(c);
+        switch (kind) {
+            case LINE -> {
+                line.frame(c, this::lineSetup);
+                commit.poll(c);
+                return;
+            }
+            case SWEEP -> {
+                // The profile is the selection: a selection changed makes the preview again.
+                Box profile = c.selection().orElse(null);
+                if (!Objects.equals(profile, sweepProfile)) {
+                    sweepProfile = profile;
+                    sweep.changed();
+                }
+                sweep.frame(c, this::sweepSetup);
+                commit.poll(c);
+                return;
+            }
+            case STAMP -> {
+                stamp.frame(c);
+                commit.poll(c);
+                return;
+            }
+            default -> {
+            }
         }
         if (kind == GenerateSettings.Kind.ROOF) {
             Box footprint = c.selection().orElse(null);
@@ -431,7 +514,6 @@ public final class GenerateTool implements Tool {
             pollPreview(); // an executor that runs at once (tests, tiny work) has the result already
         }
         commit.poll(c);
-        line.pollBuild(c);
     }
 
     // ---- Previews ----
@@ -668,6 +750,80 @@ public final class GenerateTool implements Tool {
                 SENT_LINE, new PasteOptions(true, false, false));
     }
 
+    /**
+     * The Sweep of {@code points}: the selection's blocks, read from the client world here (on the client thread, as
+     * the road's ground is) so the kernel runs off it, swept with the settings as they are now. Null after a toast when
+     * there is no selection, it reaches chunks the game has not loaded, or it holds too many blocks; its blocks with
+     * a block entity are left out with a toast.
+     */
+    private LineDraft.Setup sweepSetup(ToolContext c, List<BlockPos> points) {
+        StateSpace states = statesOrNull(c);
+        WorldReader world = worldOrNull(c);
+        if (states == null || world == null) return null;
+        Optional<Region> selection = c.selectionState().map(dev.sculptory.fabric.client.editor.tool.Selection::region);
+        if (selection.isEmpty()) {
+            c.notify(Notice.of(Notice.Level.INFO, SWEEP_NEEDS_SELECTION));
+            return null;
+        }
+        SweepKernel.Profile profile = profile(c, selection.get(), world, states);
+        if (profile == null) return null;
+        long leftOut = 0;
+        for (int state : profile.states()) if (FaceCells.blockEntity(states, state)) leftOut++;
+        if (leftOut > 0 && leftOut != toldLeftOut) {
+            c.notify(Notice.of(Notice.Level.INFO, SWEEP_LEFT_OUT, SessionNotices.count(leftOut)));
+        }
+        toldLeftOut = leftOut;
+        SettingsValues values = c.settings();
+        PathKind kind = values.get(GenerateSettings.SWEEP_PATH);
+        SweepKernel.Spec spec = new SweepKernel.Spec(profile, points, kind,
+                kind == PathKind.HANGING ? values.get(GenerateSettings.SWEEP_SAG) : 0,
+                values.get(GenerateSettings.SWEEP_FOLLOW_SLOPE));
+        int bottom = world.bottomY(), top = world.topYExclusive();
+        return new LineDraft.Setup(spec.path(), cap -> SweepKernel.generate(spec, states, cap, bottom, top).source(),
+                OpLabel.SWEEP, OP_SWEEP, SENT_SWEEP, new PasteOptions(true, false, false));
+    }
+
+    /** The selection's blocks (air left out), or null after a toast when they can't be had. */
+    private static SweepKernel.Profile profile(ToolContext c, Region region, WorldReader world, StateSpace states) {
+        Box bounds = region.bounds();
+        if (bounds.volume() > MAX_PROFILE_BOX) {
+            c.notify(Notice.of(Notice.Level.WARNING, SWEEP_TOO_LARGE, SessionNotices.count(SweepKernel.MAX_PROFILE_CELLS)));
+            return null;
+        }
+        it.unimi.dsi.fastutil.ints.IntArrayList xs = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        it.unimi.dsi.fastutil.ints.IntArrayList ys = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        it.unimi.dsi.fastutil.ints.IntArrayList zs = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        it.unimi.dsi.fastutil.ints.IntArrayList found = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        for (int x = bounds.min().x(); x <= bounds.max().x(); x++) {
+            for (int z = bounds.min().z(); z <= bounds.max().z(); z++) {
+                if (!world.isLoaded(x >> 4, z >> 4)) {
+                    c.notify(Notice.of(Notice.Level.WARNING, SWEEP_UNLOADED));
+                    return null;
+                }
+                for (int y = Math.max(bounds.min().y(), world.bottomY()); y <= bounds.max().y()
+                        && y < world.topYExclusive(); y++) {
+                    if (!region.contains(x, y, z)) continue;
+                    int state = world.get(x, y, z);
+                    if (StateFlags.has(states.flags(state), StateFlags.AIR)) continue;
+                    if (found.size() >= SweepKernel.MAX_PROFILE_CELLS) {
+                        c.notify(Notice.of(Notice.Level.WARNING, SWEEP_TOO_LARGE,
+                                SessionNotices.count(SweepKernel.MAX_PROFILE_CELLS)));
+                        return null;
+                    }
+                    xs.add(x);
+                    ys.add(y);
+                    zs.add(z);
+                    found.add(state);
+                }
+            }
+        }
+        if (found.isEmpty()) {
+            c.notify(Notice.of(Notice.Level.INFO, SWEEP_EMPTY));
+            return null;
+        }
+        return new SweepKernel.Profile(xs.toIntArray(), ys.toIntArray(), zs.toIntArray(), found.toIntArray());
+    }
+
     // ---- Building ----
 
     /** Enter: builds what the preview shows (making the preview first when it is not current). */
@@ -730,9 +886,21 @@ public final class GenerateTool implements Tool {
     @Override
     public void renderWorld(ToolContext c, WorldDraw d) {
         SettingsValues values = c.settings();
-        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.LINE) {
-            line.renderWorld(d, false);
-            return;
+        switch (values.get(GenerateSettings.KIND)) {
+            case LINE -> {
+                line.renderWorld(d, false);
+                return;
+            }
+            case SWEEP -> {
+                sweep.renderWorld(d, false);
+                return;
+            }
+            case STAMP -> {
+                stamp.renderWorld(c, d);
+                return;
+            }
+            default -> {
+            }
         }
         Built built = shown;
         if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.PATH) {
@@ -836,6 +1004,19 @@ public final class GenerateTool implements Tool {
             hints.add(new KeyHint(services.keyLabel(KeyAction.TOOL_SIZE), "sculptory.hint.line.thickness"));
             return hints;
         }
+        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.SWEEP) {
+            if (c.selection().isEmpty()) {
+                hints.add(KeyHint.text("sculptory.hint.sweep.needs_selection"));
+                return hints;
+            }
+            hints.add(KeyHint.text("sculptory.hint.sweep.profile"));
+            hints.addAll(sweep.hints(CLICK, "sculptory.hint.sweep.build"));
+            return hints;
+        }
+        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.STAMP) {
+            hints.addAll(stamp.hints(c, CLICK));
+            return hints;
+        }
         Built built = shown;
         String enter = services.keyLabel(KeyAction.COMMIT);
         if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.ROOF) {
@@ -878,7 +1059,7 @@ public final class GenerateTool implements Tool {
 
     // ---- Helpers ----
 
-    static StateSpace statesOrNull(ToolContext c) {
+    public static StateSpace statesOrNull(ToolContext c) {
         try {
             return c.states();
         } catch (IllegalStateException noSession) {
@@ -886,7 +1067,7 @@ public final class GenerateTool implements Tool {
         }
     }
 
-    static WorldReader worldOrNull(ToolContext c) {
+    public static WorldReader worldOrNull(ToolContext c) {
         try {
             return c.world();
         } catch (IllegalStateException noSession) {

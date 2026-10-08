@@ -250,6 +250,7 @@ public final class MockEditorSession implements EditorSession {
                 }
                 Perm needed = switch (run.op()) {
                     case OpSpec.Paste paste -> Perm.CLIPBOARD;
+                    case OpSpec.PasteMany many -> Perm.CLIPBOARD;
                     case OpSpec.ScatterCommit commit -> Perm.SCATTER;
                     default -> Perm.REGION;
                 };

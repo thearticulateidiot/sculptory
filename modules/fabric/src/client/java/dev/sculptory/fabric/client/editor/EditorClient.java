@@ -52,6 +52,7 @@ import dev.sculptory.fabric.client.editor.tools.brush.TerrainBrushTool;
 import dev.sculptory.fabric.client.editor.tools.extrude.ExtrudeTool;
 import dev.sculptory.fabric.client.editor.tools.fluid.FluidTool;
 import dev.sculptory.fabric.client.editor.tools.tinker.TinkerTool;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTransformPanel;
@@ -303,6 +304,7 @@ public final class EditorClient implements EditorMode.Host {
         final ClipboardActions clipboard;
         final PlaceTool place;
         final ScatterTool scatter;
+        final GenerateTool generate;
         final EditorUi ui;
         final InputRouter router;
         final EditorScreen screen;
@@ -340,9 +342,10 @@ public final class EditorClient implements EditorMode.Host {
             place = new PlaceTool(placeServices(), () -> ctx.session()
                     .map(session -> session.permissions().has(Perm.PHYSICS)).orElse(false), symmetryCentre);
             scatter = new ScatterTool(scatterServices());
+            generate = new GenerateTool(generateServices());
             McBrushServices brushServices = new McBrushServices(client, overlay, keymap, () -> ctx.cursor().ray());
             EditorToolSet.register(ctx.tools(), new SelectTool(actions, selectServices()), brushServices, place, scatter,
-                    ctx::activeBlock, symmetryCentre, new GenerateTool(generateServices()),
+                    ctx::activeBlock, symmetryCentre, generate,
                     new ExtrudeTool(extrudeServices(), actions),
                     new FluidTool(fluidServices(), brushServices, symmetryCentre),
                     new TinkerTool(tinkerServices(), actions, () -> ctx.contextFor(ToolId.TINKER)));
@@ -415,7 +418,10 @@ public final class EditorClient implements EditorMode.Host {
             ui.toolSettings().addPanel(ToolId.PALETTE, palettes.panel(ToolId.PALETTE));
             ui.toolSettings().addPanel(ToolId.SHAPE, palettes.panel(ToolId.SHAPE));
             ui.toolSettings().addPanel(ToolId.PLACE, new PlaceTransformPanel(clipboard, translator));
-            ui.libraryWindow().ifPresent(window -> window.setAddToScatter(this::addToScatter));
+            ui.libraryWindow().ifPresent(window -> {
+                window.setAddToScatter(this::addToScatter);
+                window.setStampTarget(this::stampAsset);
+            });
             router = new InputRouter(ui, controller, controller, look, new MovementForwarder(platform.movementKeys()), keymap);
             screen = new EditorScreen(EditorClient.this);
             // Each UI size has its own arrangement; a version-1 file is the one of the size in use.
@@ -486,6 +492,16 @@ public final class EditorClient implements EditorMode.Host {
             boolean added = scatter.addAsset(path, contentHash);
             if (added && controller.activeScatterTool().isEmpty()) controller.selectTool(ToolId.SCATTER);
             return added;
+        }
+
+        /** The Library's Stamp: Generate stamps the asset (its Stamp kind, from the Library) and that tool comes up. */
+        private boolean stampAsset(String path, String contentHash) {
+            generate.useStampAsset(path, contentHash);
+            ctx.updateSettings(ToolId.GENERATE, ctx.settings(ToolId.GENERATE)
+                    .with(GenerateSettings.KIND, GenerateSettings.Kind.STAMP)
+                    .with(GenerateSettings.STAMP_SOURCE, GenerateSettings.StampSource.LIBRARY));
+            controller.selectTool(ToolId.GENERATE);
+            return true;
         }
 
         private ScatterTool.Services scatterServices() {
@@ -581,6 +597,12 @@ public final class EditorClient implements EditorMode.Host {
 
         private ExtrudeTool.Services extrudeServices() {
             return new ExtrudeTool.Services() {
+                @Override
+                public void confirm(String opNameKey, long blocks, Runnable onConfirm) {
+                    ui().confirm(translator.translate("sculptory.confirm.large_op", translator.translate(opNameKey),
+                            SessionNotices.count(blocks)), onConfirm);
+                }
+
                 @Override
                 public Optional<Ray> cursorRay() {
                     return ctx.cursor().ray();

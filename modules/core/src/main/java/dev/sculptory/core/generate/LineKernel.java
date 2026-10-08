@@ -2,6 +2,7 @@ package dev.sculptory.core.generate;
 
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.path.CellBits;
+import dev.sculptory.core.path.PathFrame;
 import dev.sculptory.core.path.PathKind;
 import dev.sculptory.core.path.PathSample;
 import dev.sculptory.core.path.PathSampler;
@@ -252,17 +253,9 @@ public final class LineKernel {
                 shift(pb, dx, dy, dz);
             }
             // The square frame: u horizontal and square to the segment (x for a vertical one), v square to both.
-            double tx = dx / length, ty = dy / length, tz = dz / length;
-            double ux = -tz, uz = tx;
-            double uLength = StrictMath.sqrt(ux * ux + uz * uz);
-            if (uLength < 1e-9) {
-                ux = 1;
-                uz = 0;
-            } else {
-                ux /= uLength;
-                uz /= uLength;
-            }
-            double vx = ty * uz, vy = tz * ux - tx * uz, vz = -ty * ux;
+            double[] frame = PathFrame.square(dx / length, dy / length, dz / length);
+            double ux = frame[0], uz = frame[2];
+            double vx = frame[3], vy = frame[4], vz = frame[5];
             double reach = profile == Profile.ROUND ? r + 1 : r * StrictMath.sqrt(2) + StrictMath.max(before, after) + 1;
             int x0 = floor(StrictMath.min(pa[0], pb[0]) - reach), x1 = floor(StrictMath.max(pa[0], pb[0]) + reach);
             int y0 = clampY(floor(StrictMath.min(pa[1], pb[1]) - reach));

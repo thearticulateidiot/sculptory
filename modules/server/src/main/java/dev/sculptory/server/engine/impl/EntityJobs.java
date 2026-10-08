@@ -14,7 +14,9 @@ import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.server.platform.EntityPlacer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -144,6 +146,79 @@ public final class EntityJobs {
                 return placements;
             }
         };
+    }
+
+    /**
+     * Several works as one (a multi-paste's placements): each column's work runs the works holding that column in
+     * their order, before the blocks and after them; the columns are their unions, in first-use order.
+     */
+    public static EntityWork all(List<EntityWork> works) {
+        List<EntityWork> list = List.copyOf(works);
+        if (list.size() == 1) return list.get(0);
+        return new EntityWork() {
+            private final Walk before = new Walk();
+            private final Walk after = new Walk();
+
+            @Override
+            public long[] admissionColumns() {
+                LongLinkedOpenHashSet columns = new LongLinkedOpenHashSet();
+                for (EntityWork work : list) columns.addAll(LongArrayList.wrap(work.admissionColumns()));
+                return columns.toLongArray();
+            }
+
+            @Override
+            public long[] beforeColumns() {
+                return before.columns(list, EntityWork::beforeColumns);
+            }
+
+            @Override
+            public <E> boolean before(long column, Context<E> ctx) {
+                return before.walk(list, column, work -> work.before(column, ctx));
+            }
+
+            @Override
+            public long[] afterColumns() {
+                return after.columns(list, EntityWork::afterColumns);
+            }
+
+            @Override
+            public <E> boolean after(long column, Context<E> ctx) {
+                return after.walk(list, column, work -> work.after(column, ctx));
+            }
+        };
+    }
+
+    /** One side (before or after the blocks) of {@link #all}: which work holds which column, and how far a column got. */
+    private static final class Walk {
+        private LongOpenHashSet[] holding;
+        private long column = Long.MIN_VALUE;
+        private boolean started;
+        private int next;
+
+        long[] columns(List<EntityWork> works, Function<EntityWork, long[]> of) {
+            holding = new LongOpenHashSet[works.size()];
+            LongLinkedOpenHashSet all = new LongLinkedOpenHashSet();
+            for (int i = 0; i < works.size(); i++) {
+                long[] own = of.apply(works.get(i));
+                holding[i] = new LongOpenHashSet(own);
+                for (long c : own) all.add(c);
+            }
+            return all.toLongArray();
+        }
+
+        boolean walk(List<EntityWork> works, long column, java.util.function.Predicate<EntityWork> step) {
+            if (!started || this.column != column) {
+                started = true;
+                this.column = column;
+                next = 0;
+            }
+            while (next < works.size()) {
+                if (holding[next].contains(column) && !step.test(works.get(next))) return false;
+                next++;
+            }
+            started = false;
+            return true;
+        }
     }
 
     /** Where a move or stack puts what it took. */

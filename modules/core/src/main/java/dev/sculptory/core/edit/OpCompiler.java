@@ -7,7 +7,9 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.Regions;
 import dev.sculptory.core.state.StateSpace;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -27,6 +29,9 @@ import java.util.Objects;
  *   <li>{@code Paste} reads the {@link CompileContext#source source} content and maps each target cell back
  *       through the inverse transform; states are rotated/mirrored (cached per handle), tiles are copied as they
  *       are. It reads no world sections. See {@code PasteProgram}.</li>
+ *   <li>{@code PasteMany} pastes its source once per placement, each exactly as the matching {@code Paste}, in one
+ *       program; the later placement wins where two overlap, and its volume is the source's present cells times the
+ *       placements. See {@code PasteManyProgram}.</li>
  *   <li>{@code Move} and {@code Stack} list the region's sections in {@link EditProgram#sourceSections()} and read
  *       only that pre-write snapshot, so overlapping sources and destinations are exact; only region cells move or
  *       are copied. A moved region's bounds keep their minimum corner at {@code bounds.min() + offset} after the
@@ -114,10 +119,26 @@ public final class OpCompiler {
             long cells = source.cells().cellCount();
             int pasteCopies = OpSymmetry.copyCount(paste);
             checkBudget(cells > Long.MAX_VALUE / pasteCopies ? Long.MAX_VALUE : cells * pasteCopies, budget);
+        } else if (s instanceof OpSpec.PasteMany many) {
+            source = Objects.requireNonNull(c.source(many.src())).orElseThrow(
+                    () -> new IllegalArgumentException("Unknown paste source: " + many.src()));
+            // As a paste's, once per placement.
+            long cells = product(source.cells().cellCount(), many.placements().size());
+            checkBudget(product(cells, OpSymmetry.copyCount(many)), budget);
         }
         Symmetry symmetry = OpSymmetry.of(s);
         if (copies.isEmpty()) throw new IllegalArgumentException("An op has at least one copy");
         byte[] table = layerTable(s, c, states);
+        if (s instanceof OpSpec.PasteMany many) {
+            // Each copy is the op's own placements under its image (PasteProgram.compilePlacement), sharing one scan of
+            // the source per transform; the original first, so it wins where copies overlap.
+            Map<dev.sculptory.core.transform.Transform, PasteProgram.Scan> scans = new HashMap<>();
+            List<ClaimingProgram> programs = new ArrayList<>(copies.size());
+            for (OpSymmetry.Copy copy : copies) {
+                programs.add(PasteManyProgram.compile(many, copy.image(), symmetry, source, states, height, scans));
+            }
+            return programs.size() == 1 ? programs.get(0) : new SymmetricProgram(programs);
+        }
         if (copies.size() == 1) {
             return compileCopy(copies.get(0).op(), null, c, states, height, sections, source, budget, table);
         }
@@ -231,9 +252,9 @@ public final class OpCompiler {
                     checked(n.middle(), states), n.middleDepth(), checked(n.bottom(), states), states, table, sections, frame);
             case OpSpec.UpdateBlocks update -> new UpdateProgram(update.region(), height, c.neighbourShapes(), states, table,
                     sections);
-            // Contract stubs (protocol 6): ws/extrude-paths compiles a multi-paste through MultiPasteProgram, ws/biomes
-            // the biome fill. The server refuses both before compiling until then.
-            case OpSpec.PasteMany many -> throw new UnsupportedOperationException("PasteMany is not implemented");
+            // Compiled with its copies in compile(), from the op's own placements.
+            case OpSpec.PasteMany many -> PasteManyProgram.compile(many, source, states, height);
+            // Contract stub (protocol 6): ws/biomes compiles the biome fill. The server refuses it before compiling.
             case OpSpec.BiomeFill fill -> throw new UnsupportedOperationException("BiomeFill is not implemented");
         };
     }

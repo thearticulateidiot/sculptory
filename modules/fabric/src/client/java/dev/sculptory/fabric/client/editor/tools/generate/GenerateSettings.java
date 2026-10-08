@@ -26,24 +26,27 @@ import java.util.function.Predicate;
 public final class GenerateSettings {
     /**
      * What the tool generates. Protocol 6 appends Sweep (the selection swept along a path), Stamp (the clipboard or an
-     * asset copied at each clicked point) and Heightmap (a height image over the selection); they are shown but
-     * unavailable ({@link #KIND}) until ws/extrude-paths and ws/heightmap build them. Presets save the name.
+     * asset copied at each clicked point) and Heightmap (a height image over the selection); Heightmap is shown but
+     * unavailable ({@link #KIND}) until ws/heightmap builds it. Presets save the name.
      */
     public enum Kind { PATH, ROOF, LINE, SWEEP, STAMP, HEIGHTMAP }
 
     /** The kinds not built yet, with why they can't be chosen (contract placeholders, protocol 6). */
     private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of(
-            Kind.SWEEP, "sculptory.setting.generate.kind.coming_soon",
-            Kind.STAMP, "sculptory.setting.generate.kind.coming_soon",
             Kind.HEIGHTMAP, "sculptory.setting.generate.kind.coming_soon");
 
     /** What a road is paved with: one block, or a weighted mix. */
     public enum Material { BLOCK, PALETTE }
 
+    /** What Stamp copies: the clipboard, or the asset last picked in the Library with its Stamp button. */
+    public enum StampSource { CLIPBOARD, LIBRARY }
+
     private static final String PREFIX = "sculptory.setting.generate.";
     private static final Predicate<SettingsValues> PATH = values -> values.get(GenerateSettings.KIND) == Kind.PATH;
     private static final Predicate<SettingsValues> ROOF = values -> values.get(GenerateSettings.KIND) == Kind.ROOF;
     private static final Predicate<SettingsValues> LINE = values -> values.get(GenerateSettings.KIND) == Kind.LINE;
+    private static final Predicate<SettingsValues> SWEEP = values -> values.get(GenerateSettings.KIND) == Kind.SWEEP;
+    private static final Predicate<SettingsValues> STAMP = values -> values.get(GenerateSettings.KIND) == Kind.STAMP;
 
     public static final SettingDef.Enum<Kind> KIND = new SettingDef.Enum<>("kind", PREFIX + "kind", Kind.class, Kind.PATH,
             SettingDef.ALWAYS, KINDS_NOT_BUILT);
@@ -122,6 +125,18 @@ public final class GenerateSettings {
             BrushSettings.MAX_PALETTE_ENTRIES,
             values -> LINE.test(values) && values.get(GenerateSettings.LINE_MATERIAL) == Material.PALETTE);
 
+    // Sweep
+    public static final SettingDef.Enum<PathKind> SWEEP_PATH = new SettingDef.Enum<>("sweep.path", PREFIX + "sweep_path",
+            PathKind.class, PathKind.CURVE, SWEEP);
+    public static final SettingDef.Int SWEEP_SAG = new SettingDef.Int("sweep.sag", PREFIX + "sweep_sag", 4, 0,
+            (int) PathSpec.MAX_SAG, null, values -> SWEEP.test(values) && values.get(GenerateSettings.SWEEP_PATH) == PathKind.HANGING);
+    public static final SettingDef.Bool SWEEP_FOLLOW_SLOPE = new SettingDef.Bool("sweep.follow_slope",
+            PREFIX + "sweep_follow_slope", false, SWEEP);
+
+    // Stamp
+    public static final SettingDef.Enum<StampSource> STAMP_SOURCE = new SettingDef.Enum<>("stamp.source",
+            PREFIX + "stamp_source", StampSource.class, StampSource.CLIPBOARD, STAMP);
+
     public static final SettingsSchema SCHEMA = new SettingsSchema(List.of(
             new Section("", List.of(KIND)),
             new Section(PREFIX + "path_section", List.of(WIDTH, MATERIAL, BLOCK, PALETTE, BORDER, BORDER_BLOCK, HEIGHT,
@@ -129,7 +144,9 @@ public final class GenerateSettings {
             new Section(PREFIX + "roof_section", List.of(STYLE, RIDGE, LOW_SIDE, PITCH, OVERHANG, THICKNESS, GABLE_WALLS,
                     INSIDE, STAIRS, SLAB, FULL)),
             new Section(PREFIX + "line_section", List.of(LINE_PATH, LINE_SAG, LINE_THICKNESS, LINE_PROFILE, LINE_MATERIAL,
-                    LINE_BLOCK, LINE_PALETTE))));
+                    LINE_BLOCK, LINE_PALETTE)),
+            new Section(PREFIX + "sweep_section", List.of(SWEEP_PATH, SWEEP_SAG, SWEEP_FOLLOW_SLOPE)),
+            new Section(PREFIX + "stamp_section", List.of(STAMP_SOURCE))));
 
     private GenerateSettings() {}
 

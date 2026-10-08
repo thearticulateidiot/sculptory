@@ -68,6 +68,9 @@ public final class LibraryWindow {
     private final Button addToScatter;
     /** The Scatter tool's Add (path, content hash), once the editor has one. */
     private BiPredicate<String, String> scatterTarget;
+    private final Button stamp;
+    /** Generate's Stamp (path, content hash), once the editor has one. */
+    private BiPredicate<String, String> stampTarget;
     private final Button refreshButton;
     private final LibraryManageBar manage;
     private final Node root;
@@ -120,6 +123,8 @@ public final class LibraryWindow {
         addToScatter = button("sculptory.library.add_to_scatter", "sculptory.library.add_to_scatter.tooltip",
                 this::addSelectedToScatter);
         addToScatter.setVisible(false);
+        stamp = button("sculptory.library.stamp", "sculptory.library.stamp.tooltip", this::stampSelected);
+        stamp.setVisible(false);
         refreshButton = button("sculptory.library.refresh", "sculptory.library.refresh.tooltip", () -> list(folder));
         Button save = button("sculptory.library.save", "sculptory.library.save.tooltip", () -> { });
         save.setOnClick(() -> SaveAssetDialog.open(popups.get(), save.bounds(), tr,
@@ -162,7 +167,7 @@ public final class LibraryWindow {
                 status,
                 transfers.node(),
                 FlowRow.of(grow(place), grow(load), grow(refreshButton)),
-                FlowRow.of(grow(addToScatter)),
+                FlowRow.of(grow(addToScatter), grow(stamp)),
                 manage.node(),
                 FlowRow.of(grow(save)),
                 drop);
@@ -197,6 +202,7 @@ public final class LibraryWindow {
         // A palette is loaded from the Paint, Palette Paint or Scatter tool settings, never into the clipboard.
         load.setEnabled(file && !palette(selected.get()));
         addToScatter.setEnabled(file && LibraryFolder.asset(selected.get().contentHash()).isPresent());
+        stamp.setEnabled(file && !palette(selected.get()) && LibraryFolder.asset(selected.get().contentHash()).isPresent());
         refreshButton.setEnabled(!loading);
         followChanges();
         manage.refresh(writable);
@@ -440,6 +446,21 @@ public final class LibraryWindow {
         if (scatterTarget == null) return;
         list.selectedItem().filter(entry -> !entry.folder())
                 .ifPresent(entry -> scatterTarget.test(entry.path(), entry.contentHash()));
+    }
+
+    /**
+     * Shows the Stamp button, which hands the selected asset (path, content hash) to {@code target} (Generate's Stamp);
+     * {@code target} returns whether it took it.
+     */
+    public void setStampTarget(BiPredicate<String, String> target) {
+        stampTarget = Objects.requireNonNull(target);
+        stamp.setVisible(true);
+    }
+
+    private void stampSelected() {
+        if (stampTarget == null) return;
+        list.selectedItem().filter(entry -> !entry.folder())
+                .ifPresent(entry -> stampTarget.test(entry.path(), entry.contentHash()));
     }
 
     private void loadSelected() {

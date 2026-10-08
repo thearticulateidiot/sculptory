@@ -65,13 +65,13 @@ public final class ContractStubsGameTest implements FabricGameTest {
         SourceRef clipboard = new SourceRef.Clipboard(new UUID(9, 9));
         List<String> undoBefore = h.service.history(h.player).undoLabels();
 
-        // ws/extrude-paths: the multi-paste. ws/biomes: the biome fill and pasted biomes.
+        // ws/biomes: the biome fill and pasted biomes. Free orientations (ws/free-rotation, FreeRotationGameTest) and the
+        // multi-paste, free placements included (ws/extrude-paths, ExtrudePathsGameTest), work.
+        Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * x0 + 7, 0);
+        OpSpec.BiomeFill biomeFill = new OpSpec.BiomeFill(region, "minecraft:desert", true);
         List<OpSpec> ops = List.of(
-                new OpSpec.PasteMany(clipboard, List.of(new OpSpec.PasteMany.Placement(new BlockPos(x0, 101, z0),
-                        Orientation.IDENTITY)), PasteOptions.DEFAULT),
-                new OpSpec.BiomeFill(region, "minecraft:desert", true),
-                new OpSpec.BiomeFill(region, "minecraft:desert", false, new Symmetry(Symmetry.Mode.MIRROR_X,
-                        2 * x0 + 7, 0)),
+                biomeFill,
+                new OpSpec.BiomeFill(region, "minecraft:desert", false, mirror),
                 new OpSpec.Paste(clipboard, new BlockPos(x0, 101, z0), Transform.IDENTITY,
                         PasteOptions.DEFAULT.withBiomes(true)));
         for (OpSpec op : ops) {
@@ -95,12 +95,21 @@ public final class ContractStubsGameTest implements FabricGameTest {
         // The biome node is checked first, as it will be: a player with the brush and region nodes but not biome.
         ServerPlayerEntity builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.BRUSH, Perm.REGION, Perm.CLIPBOARD);
-        EditRejected noFill = refusal(() -> h.service.run(builder, ops.get(1), RunOptions.DEFAULT, null));
+        EditRejected noFill = refusal(() -> h.service.run(builder, biomeFill, RunOptions.DEFAULT, null));
         check(noFill.reason() == RejectReason.NO_PERMISSION, "a fill without the biome node: " + noFill.reason());
         EditRejected noPaint = refusal(() -> h.service.beginStroke(builder, 8, biome));
         check(noPaint.reason() == RejectReason.NO_PERMISSION, "a biome stroke without the biome node: " + noPaint.reason());
-        EditRejected stampNoNode = refusal(() -> h.service.run(h.addPlayer(false), ops.get(0), RunOptions.DEFAULT, null));
+        // The multi-paste needs the clipboard node, checked before its source or placements: use and region are not enough.
+        OpSpec.PasteMany exactStamp = new OpSpec.PasteMany(clipboard, List.of(new OpSpec.PasteMany.Placement(
+                new BlockPos(x0, 101, z0), Orientation.IDENTITY)), PasteOptions.DEFAULT);
+        EditRejected stampNoNode = refusal(() -> h.service.run(h.addPlayer(false), exactStamp, RunOptions.DEFAULT, null));
         check(stampNoNode.reason() == RejectReason.NO_PERMISSION, "a stamp without any node: " + stampNoNode.reason());
+        ServerPlayerEntity noClipboard = h.addPlayer(false);
+        EditTestSupport.grant(noClipboard, Perm.USE, Perm.REGION, Perm.BRUSH);
+        EditRejected stampNoClipboard = refusal(() -> h.service.run(noClipboard, exactStamp, RunOptions.DEFAULT, null));
+        check(stampNoClipboard.reason() == RejectReason.NO_PERMISSION
+                && Perm.CLIPBOARD.node().equals(stampNoClipboard.detail()),
+                "a stamp without the clipboard node: " + stampNoClipboard.reason() + " " + stampNoClipboard.detail());
 
         // Nothing written, nothing held, nothing pushed, no stroke left open.
         check(!h.service.executor().isLocked(h.world, area), "a refusal held the area");

@@ -466,10 +466,9 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             default -> Perm.REGION;
         };
         require(p, opNode);
-        // Contract stubs (protocol 6): ws/extrude-paths (the multi-paste) and ws/biomes (the biome fill and pasted
-        // biomes) remove their refusals here.
-        if (s instanceof OpSpec.PasteMany || s instanceof OpSpec.BiomeFill
-                || (s instanceof OpSpec.Paste paste && paste.o().biomes())) {
+        // Contract stubs (protocol 6): ws/biomes (the biome fill and pasted biomes) removes its refusals here.
+        if (s instanceof OpSpec.BiomeFill || (s instanceof OpSpec.Paste paste && paste.o().biomes())
+                || (s instanceof OpSpec.PasteMany many && many.o().biomes())) {
             throw new EditRejected(RejectReason.INVALID, NOT_IMPLEMENTED);
         }
         Region region = OpRegions.region(s);
@@ -566,6 +565,59 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                     }
                     entityWork = EntityJobs.paste(clipboard.entities(), clipboard.size(), paste.orientation(),
                             target.min());
+                }
+            }
+            case OpSpec.PasteMany many -> {
+                // Generate's Stamp: admitted as its placements' pastes would be, each placement once.
+                if (many.o().physics() && !o.physics()) options = new RunOptions(true, o.conflictPolicy(), o.label());
+                Clipboard clipboard = sourceClipboard(p, many.src()).orElseThrow(() ->
+                        many.src() instanceof SourceRef.Asset
+                                ? new EditRejected(RejectReason.ASSET_NOT_LOADED,
+                                        "asset not loaded on the server (request its preview first)")
+                                : new EditRejected(RejectReason.INVALID, "unknown clipboard"));
+                int placements = many.placements().size();
+                // The source's present cells once per placement and per symmetric copy, before anything is copied.
+                long perCopy = clipboard.cellCount() > Long.MAX_VALUE / placements ? Long.MAX_VALUE
+                        : clipboard.cellCount() * placements;
+                bypassed |= checkVolume(perCopy > Long.MAX_VALUE / copyCount ? Long.MAX_VALUE : perCopy * copyCount,
+                        limit, bypass);
+                List<Box> targets = new ArrayList<>(placements);
+                try {
+                    for (OpSpec.PasteMany.Placement placement : many.placements()) {
+                        targets.add(PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(),
+                                placement.orientation(), placement.origin()));
+                    }
+                    if (copyCount > 1) {
+                        for (OpSymmetry.Copy copy : copies) {
+                            List<OpSpec.PasteMany.Placement> imaged = ((OpSpec.PasteMany) copy.op()).placements();
+                            for (int i = 0; i < placements; i++) {
+                                // A free placement's copy writes the image of the original's box (OpCompiler).
+                                OpSpec.PasteMany.Placement placement = many.placements().get(i);
+                                Box copyTarget = placement.orientation().isExact()
+                                        ? PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(),
+                                                imaged.get(i).orientation(), imaged.get(i).origin())
+                                        : many.symmetry().imageBox(copy.image(), targets.get(i));
+                                requireInsideWorld(copyTarget, "a symmetric copy");
+                            }
+                        }
+                    }
+                } catch (IllegalArgumentException e) {
+                    throw new EditRejected(RejectReason.INVALID, e.getMessage());
+                }
+                untrustedOperatorTiles = hasUntrustedOperatorTiles(clipboard);
+                pasteSource = clipboard.toSource();
+                if (many.o().entities() && clipboard.entityCount() > 0) {
+                    long total = clipboard.entityTotal() > Long.MAX_VALUE / placements ? Long.MAX_VALUE
+                            : clipboard.entityTotal() * placements;
+                    bypassed |= checkEntities(total, maxEntities, bypass);
+                    untrustedOperatorTiles |= hasUntrustedOperatorEntities(clipboard,
+                            runtime.entityRules(world)::operator);
+                    List<EntityWork> works = new ArrayList<>(placements);
+                    for (int i = 0; i < placements; i++) {
+                        works.add(EntityJobs.paste(clipboard.entities(), clipboard.size(),
+                                many.placements().get(i).orientation(), targets.get(i).min()));
+                    }
+                    entityWork = EntityJobs.all(works);
                 }
             }
             case OpSpec.Move move -> {
@@ -3065,8 +3117,9 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
 
             @Override
             public Optional<SourceBlocks> source(SourceRef ref) {
-                return spec instanceof OpSpec.Paste paste && paste.src().equals(ref)
-                        ? Optional.ofNullable(pasteSource) : Optional.empty();
+                boolean pasted = spec instanceof OpSpec.Paste paste && paste.src().equals(ref)
+                        || spec instanceof OpSpec.PasteMany many && many.src().equals(ref);
+                return pasted ? Optional.ofNullable(pasteSource) : Optional.empty();
             }
 
             @Override

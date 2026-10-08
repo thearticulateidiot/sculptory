@@ -553,9 +553,17 @@ class ExtrudeToolTest {
         rig.set(ExtrudeSettings.SIZE, 20_000);
         rig.set(ExtrudeSettings.MAX_LAYERS, 100);
         rig.set(ExtrudeSettings.SYMMETRY, Symmetry.Mode.ROTATE_4);
+        rig.set(ExtrudeSettings.PATH, dev.sculptory.core.path.PathKind.HANGING);
+        rig.set(ExtrudeSettings.SAG, 9);
+        rig.set(ExtrudeSettings.FOLLOW_SLOPE, true);
+        rig.set(ExtrudeSettings.TAPER, dev.sculptory.core.generate.TaperKernel.Curve.BULGE);
+        rig.set(ExtrudeSettings.DIRECTION, ExtrudeSettings.Direction.TO_POINT);
         SettingsValues values = rig.values();
         assertEquals(values, SettingsValues.decode(ExtrudeSettings.SCHEMA, values.encode()));
-        assertEquals(List.of("diagonals", "match", "max_layers", "size", "symmetry"), List.copyOf(values.encode().keySet()));
+        assertEquals(List.of("diagonals", "direction", "follow_slope", "match", "max_layers", "path", "sag", "size",
+                "symmetry", "taper"), List.copyOf(values.encode().keySet()));
+        assertEquals(ExtrudeSettings.Direction.STRAIGHT, SettingsValues.defaults(ExtrudeSettings.SCHEMA)
+                .get(ExtrudeSettings.DIRECTION), "straight, as before");
         SettingsValues defaults = SettingsValues.defaults(ExtrudeSettings.SCHEMA);
         assertEquals(defaults, SettingsValues.decode(ExtrudeSettings.SCHEMA, defaults.encode()));
         assertEquals(4_096, defaults.get(ExtrudeSettings.SIZE));

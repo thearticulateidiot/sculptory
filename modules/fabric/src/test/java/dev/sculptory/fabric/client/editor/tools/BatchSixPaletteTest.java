@@ -94,11 +94,12 @@ class BatchSixPaletteTest {
             assertTrue(lang.has("sculptory.setting.generate.kind." + kind.name().toLowerCase(java.util.Locale.ROOT)),
                     kind.name());
         }
-        assertEquals(List.of(GenerateSettings.Kind.PATH, GenerateSettings.Kind.ROOF, GenerateSettings.Kind.LINE), offered);
+        assertEquals(List.of(GenerateSettings.Kind.PATH, GenerateSettings.Kind.ROOF, GenerateSettings.Kind.LINE,
+                GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP), offered, "Sweep and Stamp are built (ws/extrude-paths)");
         assertEquals(List.of(GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP),
                 List.of(GenerateSettings.Kind.values()).subList(3, 6), "appended, in this order");
-        assertFalse(GenerateSettings.KIND.validate(GenerateSettings.Kind.SWEEP, null).isValid());
-        assertTrue(lang.has(GenerateSettings.KIND.unavailable().get(GenerateSettings.Kind.STAMP)));
+        assertFalse(GenerateSettings.KIND.validate(GenerateSettings.Kind.HEIGHTMAP, null).isValid());
+        assertTrue(lang.has(GenerateSettings.KIND.unavailable().get(GenerateSettings.Kind.HEIGHTMAP)));
     }
 
     @Test
