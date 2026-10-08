@@ -51,6 +51,7 @@ A selection moved by a free angle becomes a block selection of exactly the block
 | Paste into | **Everything**, **Only existing blocks** or **Only air** |
 | Block updates (physics) | Sand falls, water flows (needs the `physics` permission) |
 | Entities | Which entities a move or stack takes along |
+| Biomes | Paste the clipboard's biomes too (off by default; needs the `biome` permission). Move and Stack always carry biomes for a player who has it: see [Biomes](biomes.md) |
 | Symmetry | Repeat the placement on mirrored or turned copies: see [Symmetry](symmetry.md) |
 
 ## Tips

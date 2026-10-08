@@ -342,7 +342,8 @@ public final class EditorClient implements EditorMode.Host {
                     (message, onConfirm) -> ui().confirm(message, onConfirm), translator, seeds::nextLong,
                     symmetryCentre, keymap::display);
             place = new PlaceTool(placeServices(), () -> ctx.session()
-                    .map(session -> session.permissions().has(Perm.PHYSICS)).orElse(false), symmetryCentre);
+                    .map(session -> session.permissions().has(Perm.PHYSICS)).orElse(false), () -> ctx.session()
+                    .map(session -> session.permissions().has(Perm.BIOME)).orElse(false), symmetryCentre);
             scatter = new ScatterTool(scatterServices());
             generate = new GenerateTool(generateServices());
             McBrushServices brushServices = new McBrushServices(client, overlay, keymap, () -> ctx.cursor().ray());
@@ -420,6 +421,8 @@ public final class EditorClient implements EditorMode.Host {
             ui.toolSettings().addPanel(ToolId.PALETTE, palettes.panel(ToolId.PALETTE));
             ui.toolSettings().addPanel(ToolId.SHAPE, palettes.panel(ToolId.SHAPE));
             ui.toolSettings().addPanel(ToolId.PLACE, new PlaceTransformPanel(clipboard, translator));
+            ui.toolSettings().addPanel(ToolId.BIOME, new dev.sculptory.fabric.client.editor.tools.brush.BiomeFillPanel(
+                    actions, () -> ctx.settings(ToolId.BIOME), translator));
             ui.libraryWindow().ifPresent(window -> {
                 window.setAddToScatter(this::addToScatter);
                 window.setStampTarget(this::stampAsset);
@@ -1095,6 +1098,11 @@ public final class EditorClient implements EditorMode.Host {
             } else {
                 overlay.clearSelection();
             }
+            // Biome view (protocol 6): taken again when biomes or chunks arrived or the camera moved.
+            dev.sculptory.fabric.client.editor.biomes.BiomeView biomes = parts.ui.biomeView();
+            Vec3d eye = context.camera().getPos();
+            biomes.update(client.world, eye.x, eye.z, parts.ui.biomeCatalog());
+            overlay.setBiomeTint(biomes.tint().orElse(null));
         } else {
             overlay.clearAll();
         }

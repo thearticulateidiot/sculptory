@@ -53,6 +53,8 @@ public final class OverlayRenderer implements AutoCloseable {
     private @Nullable CellMeshBuffers meshBuffers;
 
     private @Nullable BrushCursor brushCursor;
+    /** Biome view's tint (protocol 6), or null while it is off. */
+    private @Nullable dev.sculptory.fabric.client.editor.biomes.BiomeView.Tint biomeTint;
 
     private boolean gizmoVisible;
     private double gizmoX;
@@ -65,7 +67,7 @@ public final class OverlayRenderer implements AutoCloseable {
         CameraSnapshot snapshot = CameraSnapshot.capture(context, ++frame);
         camera = snapshot;
         updateMesh();
-        if (selection == null && brushCursor == null && !gizmoVisible) {
+        if (selection == null && brushCursor == null && !gizmoVisible && biomeTint == null) {
             return;
         }
         if (lines == null) {
@@ -76,6 +78,7 @@ public final class OverlayRenderer implements AutoCloseable {
         quads.begin(snapshot.cameraX(), snapshot.cameraY(), snapshot.cameraZ());
         boolean exact = selectionRegion != null && !(selectionRegion instanceof Region.Cuboid);
         try {
+            if (biomeTint != null) biomeTint(quads, biomeTint);
             if (brushCursor != null) {
                 BrushCursorRenderer.render(lines, quads, brushCursor);
             }
@@ -98,6 +101,23 @@ public final class OverlayRenderer implements AutoCloseable {
                     offset[2] + selectionOffset[2], SelectionBoxRenderer.CELL_EDGE,
                     SelectionBoxRenderer.CELL_EDGE_SEE_THROUGH);
         }
+    }
+
+    /** Biome view's alpha over the ground (0..255). */
+    static final int BIOME_TINT_ALPHA = 0x70;
+
+    /** Each tinted column's top face in its biome's colour, just above the block. */
+    private static void biomeTint(QuadBatch quads, dev.sculptory.fabric.client.editor.biomes.BiomeView.Tint tint) {
+        for (int i = 0; i < tint.size(); i++) {
+            int x = tint.xs()[i], z = tint.zs()[i];
+            quads.horizontal(x, z, x + 1.0, z + 1.0, tint.ys()[i] + 1.0 + BrushCursorRenderer.TINT_LIFT,
+                    OverlayColors.withAlpha(tint.colors()[i], BIOME_TINT_ALPHA), false);
+        }
+    }
+
+    /** Shows Biome view's tint ({@code null}: none; protocol 6). */
+    public void setBiomeTint(@Nullable dev.sculptory.fabric.client.editor.biomes.BiomeView.Tint tint) {
+        this.biomeTint = tint;
     }
 
     /** Takes a finished selection mesh, or frees the drawn one when the selection no longer has one. */
@@ -186,6 +206,7 @@ public final class OverlayRenderer implements AutoCloseable {
         clearSelection();
         clearBrushCursor();
         clearGizmo();
+        biomeTint = null;
     }
 
     @Override

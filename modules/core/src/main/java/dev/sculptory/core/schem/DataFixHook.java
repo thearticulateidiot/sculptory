@@ -17,6 +17,13 @@ public interface DataFixHook {
     /** The data version content is upgraded to (the running game's, 3955 for 1.21.1). */
     int targetDataVersion();
 
+    /**
+     * Upgrades a biome id (protocol 6; on Fabric {@code TypeReferences.BIOME}). The default changes nothing.
+     */
+    default String fixBiome(String biomeId, int fromDataVersion) {
+        return biomeId;
+    }
+
     /** Upgrades a palette entry ({@code namespace:block[prop=value,...]}). */
     String fixBlockState(String state, int fromDataVersion);
 

@@ -33,6 +33,9 @@ public final class SculptoryClientMod implements ClientModInitializer {
     public void onInitializeClient() {
         SculptoryMod.LOG.info("Sculptory client initializing");
         ClientBlockChanges.install();
+        // Biome view (protocol 6) takes its snapshot again when chunks arrive (biome packets: ClientBiomeDataMixin).
+        net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents.CHUNK_LOAD.register(
+                (world, chunk) -> dev.sculptory.fabric.client.editor.biomes.BiomeView.changed());
         ResentChunks.install();
         // Registered before ClientNet so each join builds the space before the handshake starts.
         ClientStateSpaces states = ClientStateSpaces.install(SculptoryClientMod::buildStateSpace);

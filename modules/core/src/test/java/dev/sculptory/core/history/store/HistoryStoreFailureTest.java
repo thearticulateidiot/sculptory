@@ -151,7 +151,7 @@ class HistoryStoreFailureTest {
         byte[] newer = original.clone();
         newer[5] = 7; // version 7, header checksum now wrong
         byte[] flagged = original.clone();
-        flagged[7] = 2; // version 1 with flag 2 (unknown; flag 1 marks entity records), checksum fixed
+        flagged[7] = 4; // version 1 with flag 4 (unknown; flags 1 and 2 mark entity and biome records), checksum fixed
         CRC32C crc = new CRC32C();
         crc.update(flagged, 0, Journal.HEADER_BYTES - 4);
         Journal.putInt(flagged, Journal.HEADER_BYTES - 4, (int) crc.getValue());

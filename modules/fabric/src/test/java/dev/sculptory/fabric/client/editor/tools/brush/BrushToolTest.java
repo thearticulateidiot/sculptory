@@ -23,6 +23,7 @@ import dev.sculptory.core.brush.SurfaceMask;
 import dev.sculptory.core.brush.SurfacePlane;
 import dev.sculptory.core.brush.SymmetricStep;
 import dev.sculptory.core.brush.Symmetry;
+import dev.sculptory.core.brush.BiomeSpec;
 import dev.sculptory.core.brush.WeatherSpec;
 import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.MixLayout;
@@ -1464,6 +1465,49 @@ class BrushToolTest {
         assertEquals(KeyAction.TOOL_15, KeyAction.toolSlot(15));
         assertEquals(List.of(KeyChord.parse("backslash")), KeyAction.TOOL_15.defaultChords());
         assertEquals("\\", EditorKeymap.defaults().display(KeyAction.TOOL_15));
+    }
+
+    /**
+     * The Biome brush (protocol 6) is slot 17 on the apostrophe, needs the biome node, offers radius, shape, the biome
+     * and 3D (no strength or falloff), sends whole columns by default and the cells in 3D, and is never predicted.
+     */
+    @Test
+    void theBiomeBrushIsSlotSeventeenPaintsColumnsOr3DAndIsNotPredicted() {
+        Rig rig = new Rig(BrushTool.BIOME);
+        BrushSettings settings = rig.tool.settings();
+        assertEquals(BrushSettings.DEFAULT_BIOME, settings.biome.defaultValue());
+        assertFalse(settings.biomeThreeD.defaultValue(), "whole columns by default");
+        assertTrue(settings.schema().defs().containsAll(List.of(settings.radius, settings.shape, settings.biome,
+                settings.biomeThreeD)));
+        assertFalse(SettingsValues.defaults(settings.schema()).isVisible(settings.strength), "a biome is painted or not");
+        assertFalse(SettingsValues.defaults(settings.schema()).isVisible(settings.falloff));
+        assertEquals(new ToolDescriptor(ToolId.BIOME, "sculptory.tool.biome", TerrainBrushTool.BIOME_ICON, Perm.BIOME),
+                rig.tool.descriptor());
+        assertFalse(TerrainBrushTool.flows(BrushTool.BIOME));
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        BrushSpec columns = new BrushSpec(BrushTool.BIOME, 5, 1f, Falloff.SMOOTH, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
+                0, SEED, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null, null,
+                new BiomeSpec(BrushSettings.DEFAULT_BIOME, true));
+        assertEquals(columns, rig.session.begins.get(0).spec());
+        assertFalse(rig.session.begins.get(0).params().predict(), "biomes are not predicted");
+        rig.release(top(0, 0));
+
+        Rig threeD = new Rig(BrushTool.BIOME);
+        threeD.set(threeD.tool.settings().biome, "minecraft:desert");
+        threeD.set(threeD.tool.settings().biomeThreeD, true);
+        threeD.press(top(0, 0), 0);
+        threeD.frame(top(0, 0), 16);
+        assertEquals(new BiomeSpec("minecraft:desert", false), threeD.session.begins.get(0).spec().biome());
+        assertEquals(new BiomeSpec("minecraft:desert", false),
+                BrushSettings.biomeChoice(threeD.ctx.settings(ToolId.BIOME)), "what Fill selection uses");
+
+        ToolRegistry registry = new ToolRegistry();
+        EditorToolSet.register(registry, new PlaceholderTool(new ToolDescriptor(ToolId.SELECT, "sculptory.tool.select",
+                "minecraft:stone", Perm.REGION), "sculptory.hint.select.drag"));
+        TerrainBrushTool biome = assertInstanceOf(TerrainBrushTool.class, registry.slot(17).orElseThrow());
+        assertEquals(BrushTool.BIOME, biome.kind());
+        assertEquals(List.of(KeyChord.parse("apostrophe")), KeyAction.TOOL_17.defaultChords());
     }
 
     /**

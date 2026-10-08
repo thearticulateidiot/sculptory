@@ -24,7 +24,7 @@ import java.util.function.ToIntFunction;
  */
 public sealed interface SettingDef<T> permits SettingDef.Int, SettingDef.Decimal, SettingDef.Bool, SettingDef.Enum,
         SettingDef.Block, SettingDef.BlockList, SettingDef.WeightedBlocks, SettingDef.IntRange, SettingDef.AssetMix,
-        SettingDef.Seed, SettingDef.MaskRules, SettingDef.Heightmap {
+        SettingDef.Seed, SettingDef.MaskRules, SettingDef.Biome, SettingDef.Heightmap {
 
     Predicate<SettingsValues> ALWAYS = values -> true;
 
@@ -268,6 +268,44 @@ public sealed interface SettingDef<T> permits SettingDef.Int, SettingDef.Decimal
         @Override
         public BlockDescriptor decode(String text) {
             return BlockDescriptor.parse(text);
+        }
+    }
+
+    /**
+     * A biome, by its registry id ("minecraft:cherry_grove"; protocol 6, the Biome tool): picked from the biomes the
+     * client knows, mods' and data packs' included. Any well-formed namespaced id is valid here; the server refuses one
+     * its world does not know.
+     */
+    record Biome(String key, String labelKey, String defaultValue, Predicate<SettingsValues> visibleWhen)
+            implements SettingDef<String> {
+        public Biome {
+            checkCommon(key, labelKey, defaultValue, visibleWhen);
+            new dev.sculptory.core.NamespacedId(defaultValue);
+        }
+
+        public Biome(String key, String labelKey, String defaultValue) {
+            this(key, labelKey, defaultValue, ALWAYS);
+        }
+
+        @Override
+        public Validation validate(String value, Limits serverLimits) {
+            return Validation.ok();
+        }
+
+        @Override
+        public String canonical(Object value) {
+            String id = cast(String.class, value);
+            return new dev.sculptory.core.NamespacedId(id).value();
+        }
+
+        @Override
+        public String encode(String value) {
+            return value;
+        }
+
+        @Override
+        public String decode(String text) {
+            return new dev.sculptory.core.NamespacedId(text).value();
         }
     }
 

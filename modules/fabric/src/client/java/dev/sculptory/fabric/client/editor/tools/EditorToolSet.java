@@ -31,13 +31,10 @@ import java.util.function.Supplier;
  * <p>Slots 2-7 and 15 are the {@link TerrainBrushTool}s, slot 8 the {@link PlaceTool}, slot 9 the {@link ScatterTool},
  * slot 10 the {@link ShapeBrushTool}, slot 11 the {@link GenerateTool}, slot 12 the {@link ExtrudeTool}, slot 13 the
  * {@link FluidTool} and slot 14 the {@link TinkerTool}. A tool whose id is in {@link #COMING_SOON} is shown disabled in
- * the palette with its milestone (none at the moment). Slots 16 and 17 are {@link PlaceholderTool}s (selectable, no
- * settings, a hint line saying they are coming, nothing on click) until ws/heightmap and ws/biomes register their
- * tools there.
+ * the palette with its milestone (none at the moment). Slots 16 and 17 are the Heightmap and Biome brushes
+ * ({@link TerrainBrushTool}s of {@link BrushTool#HEIGHTMAP} and {@link BrushTool#BIOME}).
  */
 public final class EditorToolSet {
-    /** What the hint line says while a placeholder is selected. */
-    private static final String PLACEHOLDER_HINT = "sculptory.hint.coming_soon";
     /** Tools shown disabled, with the milestone that brings them. */
     public static final Map<ToolId, String> COMING_SOON = Map.of();
     /** The active block of tool sets built without an editor (tests): stone. */
@@ -144,9 +141,7 @@ public final class EditorToolSet {
                 tinker,
                 new TerrainBrushTool(BrushTool.WEATHER, brushes, centre),
                 new TerrainBrushTool(BrushTool.HEIGHTMAP, brushes, centre),
-                // Contract placeholder (protocol 6): ws/biomes replaces it with its tool.
-                new PlaceholderTool(new ToolDescriptor(ToolId.BIOME, "sculptory.tool.biome", TerrainBrushTool.BIOME_ICON,
-                        Perm.BIOME), PLACEHOLDER_HINT))) {
+                new TerrainBrushTool(BrushTool.BIOME, brushes, centre))) {
             registry.register(tool);
         }
     }

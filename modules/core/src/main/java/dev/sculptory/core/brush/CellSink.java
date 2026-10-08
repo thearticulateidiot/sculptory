@@ -17,6 +17,13 @@ public interface CellSink {
     }
 
     /**
+     * A biome quart written (protocol 6, the Biome brush): quart {@code (qx, qy, qz)} (block coordinates shifted right
+     * by 2) set to {@code biomeId}. Sinks that write biomes override this; by default it is dropped (the client's block
+     * prediction).
+     */
+    default void biome(int qx, int qy, int qz, String biomeId) {}
+
+    /**
      * A cell written over {@code before}, the state it held in the world the step read: kernels that know it pass it on
      * ({@link CellPlan}) for sinks that keep it; by default it is written as {@link #set(int, int, int, int)} writes it.
      */

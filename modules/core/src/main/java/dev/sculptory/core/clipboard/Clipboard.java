@@ -4,6 +4,8 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.Sha256;
+import dev.sculptory.core.biome.BiomeGrid;
+import dev.sculptory.core.biome.BiomeMapping;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
@@ -50,8 +52,14 @@ import java.util.Set;
  *
  * <p><b>Entities</b> ({@link #entities()}) are {@link EntitySnapshot}s in local coordinates, kept in canonical order
  * with key-sorted NBT; they travel with the clipboard through pastes, schematics and the library.
+ *
+ * <p><b>Biomes</b> (protocol 6, {@link #biomes()}): an optional {@link BiomeGrid} over the box, the biomes of the quarts
+ * the copied cells were in. A clipboard holding biomes hashes them after everything else (and after the entities); one
+ * without hashes exactly as before biomes existed.
  */
 public final class Clipboard {
+    /** Most quarts a copy's biome grid may span (it is dense): about 16.8 million, a box of some 1 billion cells. */
+    public static final long MAX_COPY_QUARTS = 1L << 24;
     // The hash domain keeps the pre-rename name on purpose: library and history hashes must stay valid.
     private static final byte[] HASH_MAGIC = "BuilderSuite clipboard v2\0".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] ENTITY_MAGIC = "entities\0".getBytes(StandardCharsets.US_ASCII);
@@ -69,10 +77,15 @@ public final class Clipboard {
     private final long entityTotal;
     /** {@link #untrustedEntityTypes()}, found at the same time. */
     private final Set<String> untrustedEntityTypes;
+    /** The biomes of the copied quarts, or {@code null} (protocol 6). */
+    private final BiomeGrid biomes;
     private final Sha256 contentHash;
 
     private Clipboard(StateSpace states, BlockBuffer blocks, BlockPos size, BlockPos anchor, String source,
-                      Entities entities, Sha256 contentHash) {
+                      Entities entities, BiomeGrid biomes, Sha256 contentHash) {
+        if (biomes != null && !biomes.fits(size)) {
+            throw new IllegalArgumentException(biomes + " does not fit a clipboard of " + size);
+        }
         this.states = states;
         this.blocks = blocks;
         this.size = size;
@@ -82,7 +95,8 @@ public final class Clipboard {
         this.entities = entities.list();
         this.entityTotal = entities.total();
         this.untrustedEntityTypes = entities.untrustedTypes();
-        this.contentHash = contentHash != null ? contentHash : hash(states, blocks, size, anchor, this.entities);
+        this.biomes = biomes;
+        this.contentHash = contentHash != null ? contentHash : hash(states, blocks, size, anchor, this.entities, biomes);
     }
 
     /** A builder for a clipboard of {@code size} cells (each side at least 1) using handles of {@code states}. */
@@ -107,6 +121,32 @@ public final class Clipboard {
      */
     public static Clipboard copyOf(WorldReader world, Region region, Box box, BlockPos origin, CellPredicate mask,
                                    String source) {
+        return copyInto(world, region, box, origin, mask, source).build();
+    }
+
+    /**
+     * {@link #copyOf(WorldReader, Region, Box, BlockPos, CellPredicate, String) copyOf} with {@code entities} and the
+     * biomes {@code biomes} reads for the quarts the copied cells are in (as {@link #withBiomesFrom}; {@code null}: no
+     * biomes), hashed once rather than once per step. A box too large for a biome grid (a sparse selection spanning
+     * millions of blocks) is copied without biomes: compare {@link #biomes()} with what {@code biomes} could read.
+     */
+    public static Clipboard copyOf(WorldReader world, Region region, Box box, BlockPos origin, CellPredicate mask,
+                                   String source, BiomeMapping.QuartReader biomes, List<EntitySnapshot> entities) {
+        Builder builder = copyInto(world, region, box, origin, mask, source);
+        for (EntitySnapshot entity : entities) builder.addEntity(entity);
+        if (biomes != null) {
+            try {
+                builder.biomes(quartGrid(builder.blocks, builder.size, box.min(), biomes));
+            } catch (IllegalArgumentException e) {
+                // More quarts than a grid holds: the blocks are copied, the biomes dropped.
+                builder.biomes(null);
+            }
+        }
+        return builder.build();
+    }
+
+    private static Builder copyInto(WorldReader world, Region region, Box box, BlockPos origin, CellPredicate mask,
+                                    String source) {
         Objects.requireNonNull(world);
         Objects.requireNonNull(region);
         Objects.requireNonNull(box);
@@ -140,7 +180,7 @@ public final class Clipboard {
                 }
             }
         }
-        return builder.build();
+        return builder;
     }
 
     /** The 16-bit mask of local x from {@code from} to {@code to}, each clamped into 0..15 (empty when disjoint). */
@@ -267,12 +307,13 @@ public final class Clipboard {
 
     /** This content with another anchor (the hash changes: the anchor is part of the content). */
     public Clipboard withAnchor(BlockPos newAnchor) {
-        return new Clipboard(states, blocks, size, Objects.requireNonNull(newAnchor), source, entitiesAsMade(), null);
+        return new Clipboard(states, blocks, size, Objects.requireNonNull(newAnchor), source, entitiesAsMade(), biomes,
+                null);
     }
 
     /** This content with another source description (same hash). */
     public Clipboard withSource(String newSource) {
-        return new Clipboard(states, blocks, size, anchor, Objects.requireNonNull(newSource), entitiesAsMade(),
+        return new Clipboard(states, blocks, size, anchor, Objects.requireNonNull(newSource), entitiesAsMade(), biomes,
                 contentHash);
     }
 
@@ -281,7 +322,61 @@ public final class Clipboard {
      * changes unless the entities are the same.
      */
     public Clipboard withEntities(List<EntitySnapshot> newEntities) {
-        return new Clipboard(states, blocks, size, anchor, source, Entities.of(newEntities), null);
+        return new Clipboard(states, blocks, size, anchor, source, Entities.of(newEntities), biomes, null);
+    }
+
+    /**
+     * This content with {@code newBiomes} as its biomes ({@code null}: none); the hash changes unless they are the same.
+     *
+     * @throws IllegalArgumentException if the grid does not fit the box ({@link BiomeGrid#fits})
+     */
+    public Clipboard withBiomes(BiomeGrid newBiomes) {
+        return new Clipboard(states, blocks, size, anchor, source, entitiesAsMade(), newBiomes, null);
+    }
+
+    /**
+     * This content with the biomes of the quarts its present cells were in, read from the world: {@code worldMin} is
+     * where local (0, 0, 0) was ({@code box.min()} of the copy). Quarts {@code reader} cannot read are absent; a
+     * clipboard none of whose quarts could be read gets no biomes.
+     */
+    public Clipboard withBiomesFrom(BlockPos worldMin, BiomeMapping.QuartReader reader) {
+        return withBiomes(quartGrid(blocks, size, worldMin, reader));
+    }
+
+    /** The biomes {@code reader} gives for the quarts the present cells of {@code blocks} are in; null when none. */
+    private static BiomeGrid quartGrid(BlockBuffer blocks, BlockPos size, BlockPos worldMin,
+                                       BiomeMapping.QuartReader reader) {
+        Objects.requireNonNull(reader);
+        BlockPos phase0 = BiomeMapping.phase(worldMin);
+        long count = (long) BiomeGrid.quarts(phase0.x(), size.x()) * BiomeGrid.quarts(phase0.y(), size.y())
+                * BiomeGrid.quarts(phase0.z(), size.z());
+        // The grid is dense: a box of more quarts (a sparse selection spanning millions of blocks) keeps no biomes.
+        if (count > MAX_COPY_QUARTS) throw new IllegalArgumentException("Biome grid of " + count + " quarts");
+        BiomeGrid.Builder grid = BiomeGrid.builder(phase0, size);
+        int qx0 = worldMin.x() >> 2, qy0 = worldMin.y() >> 2, qz0 = worldMin.z() >> 2;
+        BlockPos phase = BiomeMapping.phase(worldMin);
+        BlockPos quarts = grid.quartSize();
+        // Each quart is read once, whether or not it could be.
+        boolean[] asked = new boolean[quarts.x() * quarts.y() * quarts.z()];
+        for (long key : blocks.sortedKeys()) {
+            SectionBuffer section = blocks.section(key);
+            int ox = BlockBuffer.keyX(key) << 4, oy = BlockBuffer.keyY(key) << 4, oz = BlockBuffer.keyZ(key) << 4;
+            section.forEachPresent(i -> {
+                int x = ox + SectionBuffer.localX(i), y = oy + SectionBuffer.localY(i), z = oz + SectionBuffer.localZ(i);
+                int gx = (x + phase.x()) >> 2, gy = (y + phase.y()) >> 2, gz = (z + phase.z()) >> 2;
+                int index = (gy * quarts.z() + gz) * quarts.x() + gx;
+                if (asked[index]) return;
+                asked[index] = true;
+                String id = reader.biome(qx0 + gx, qy0 + gy, qz0 + gz);
+                if (id != null) grid.set(gx, gy, gz, id);
+            });
+        }
+        return grid.build();
+    }
+
+    /** The biomes of the copied quarts, or {@code null} when the clipboard holds none (protocol 6). */
+    public BiomeGrid biomes() {
+        return biomes;
     }
 
     /** The entities, in canonical order (unmodifiable). */
@@ -318,6 +413,7 @@ public final class Clipboard {
     public long estimatedBytes() {
         long bytes = 128 + 2L * source.length() + blocks.estimatedBytes();
         for (EntitySnapshot entity : entities) bytes += entity.estimatedBytes();
+        if (biomes != null) bytes += biomes.estimatedBytes();
         return bytes;
     }
 
@@ -336,6 +432,7 @@ public final class Clipboard {
     public String toString() {
         return "Clipboard[size=" + size.x() + "x" + size.y() + "x" + size.z() + ", anchor=" + anchor
                 + ", cells=" + cellCount + (entities.isEmpty() ? "" : ", entities=" + entities.size())
+                + (biomes == null ? "" : ", biomes=" + biomes.presentCount())
                 + ", hash=" + contentHash.hex().substring(0, 12) + ", source=" + source + "]";
     }
 
@@ -385,7 +482,7 @@ public final class Clipboard {
     }
 
     private static Sha256 hash(StateSpace states, BlockBuffer blocks, BlockPos size, BlockPos anchor,
-                               List<EntitySnapshot> entities) {
+                               List<EntitySnapshot> entities, BiomeGrid biomes) {
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
@@ -466,6 +563,8 @@ public final class Clipboard {
                     out.write(nbt);
                 }
             }
+            // Likewise only clipboards with biomes hash them (protocol 6).
+            if (biomes != null) biomes.hashInto(out);
         } catch (IOException impossible) {
             throw new UncheckedIOException(impossible);
         }
@@ -480,6 +579,7 @@ public final class Clipboard {
         private BlockPos anchor = BlockPos.ORIGIN;
         private String source = "";
         private final List<EntitySnapshot> entities = new ArrayList<>();
+        private BiomeGrid biomes;
         private long lastKey;
         private SectionBuffer lastSection;
 
@@ -540,13 +640,19 @@ public final class Clipboard {
             return this;
         }
 
+        /** The biomes of the clipboard ({@code null}: none; protocol 6); it must fit the box ({@link BiomeGrid#fits}). */
+        public Builder biomes(BiomeGrid grid) {
+            biomes = grid;
+            return this;
+        }
+
         /** Entities added so far. */
         public int entityCount() {
             return entities.size();
         }
 
         public Clipboard build() {
-            return new Clipboard(states, blocks.compact(), size, anchor, source, Entities.of(entities), null);
+            return new Clipboard(states, blocks.compact(), size, anchor, source, Entities.of(entities), biomes, null);
         }
 
         private SectionBuffer section(int x, int y, int z) {

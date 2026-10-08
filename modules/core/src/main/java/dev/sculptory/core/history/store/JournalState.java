@@ -29,6 +29,9 @@ final class JournalState {
     /** An entities record of an entry: where it is, what data version it holds and how many changes. */
     record EntitiesRef(Ref ref, int dataVersion, int changes) {}
 
+    /** A biomes record of an entry (protocol 6): where it is, what data version it holds and how many changes. */
+    record BiomesRef(Ref ref, int dataVersion, int changes) {}
+
     static final class Entry {
         final UUID id;
         final Ref begin;
@@ -39,6 +42,8 @@ final class JournalState {
         final LinkedHashMap<Long, SectionRef> sections = new LinkedHashMap<>();
         /** Every entities record, in file order (a later change of an entity replaces an earlier one when read). */
         final List<EntitiesRef> entities = new ArrayList<>();
+        /** Every biomes record, in file order (a later change of a quart replaces an earlier one when read). */
+        final List<BiomesRef> biomes = new ArrayList<>();
         Ref seal;
         String label;
         long sealedCreated;
@@ -68,20 +73,27 @@ final class JournalState {
             return seal != null ? sealedCreated : created;
         }
 
-        /** Bytes of the entry's live data records: its begin, its latest sections, its entities and its seal. */
+        /**
+         * Bytes of the entry's live data records: its begin, its latest sections, its entities, its biomes and its
+         * seal.
+         */
         long diskBytes() {
             long total = begin.length() + (seal == null ? 0 : seal.length());
             for (SectionRef section : sections.values()) total += section.ref().length();
             for (EntitiesRef batch : entities) total += batch.ref().length();
+            for (BiomesRef batch : biomes) total += batch.ref().length();
             return total;
         }
 
-        /** Whether the entry recorded any cell or entity change (what an interrupted edit is kept for). */
+        /** Whether the entry recorded any cell, entity or biome change (what an interrupted edit is kept for). */
         boolean hasData() {
             for (SectionRef section : sections.values()) {
                 if (section.cells() > 0) return true;
             }
             for (EntitiesRef batch : entities) {
+                if (batch.changes() > 0) return true;
+            }
+            for (BiomesRef batch : biomes) {
                 if (batch.changes() > 0) return true;
             }
             return false;
@@ -116,6 +128,19 @@ final class JournalState {
         return false;
     }
 
+    /** Whether a live entry holds a biomes record (a copy of the file then needs {@link Journal#FLAG_BIOMES}). */
+    boolean holdsBiomes() {
+        for (Entry entry : entries.values()) {
+            if (!entry.biomes.isEmpty()) return true;
+        }
+        return false;
+    }
+
+    /** The header flags a copy of the live entries needs. */
+    int flagsNeeded() {
+        return (holdsEntities() ? Journal.FLAG_ENTITIES : 0) | (holdsBiomes() ? Journal.FLAG_BIOMES : 0);
+    }
+
     /** Applies one record found at {@code ref}. */
     void apply(Journal.Op op, Ref ref) {
         switch (op) {
@@ -143,6 +168,14 @@ final class JournalState {
                     return;
                 }
                 entry.entities.add(new EntitiesRef(ref, batch.dataVersion(), batch.changes()));
+            }
+            case Journal.Biomes batch -> {
+                Entry entry = entries.get(batch.entry());
+                if (entry == null) {
+                    skipped++;
+                    return;
+                }
+                entry.biomes.add(new BiomesRef(ref, batch.dataVersion(), batch.changes()));
             }
             case Journal.Seal seal -> {
                 Entry entry = entries.get(seal.entry());

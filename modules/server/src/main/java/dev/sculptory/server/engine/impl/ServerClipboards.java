@@ -17,6 +17,8 @@ import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.generate.GeneratedSource;
 import dev.sculptory.core.generate.SparseUpload;
 import dev.sculptory.core.generate.SparseUploadException;
+import dev.sculptory.core.biome.QuartSelection;
+import dev.sculptory.core.history.BiomeHistory;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.mask.BoundMask;
 import dev.sculptory.core.nbt.NbtException;
@@ -59,6 +61,7 @@ import dev.sculptory.server.platform.EntityRules;
 import dev.sculptory.server.platform.LiveReader;
 import dev.sculptory.server.platform.PlatformPermissions;
 import dev.sculptory.server.platform.Profile;
+import dev.sculptory.server.platform.WorldBiomes;
 import dev.sculptory.server.platform.WorldEntities;
 import dev.sculptory.server.schem.EntitySanitizer;
 import dev.sculptory.server.schem.FileEntities;
@@ -185,6 +188,10 @@ public final class ServerClipboards<P, W> implements ClipboardService<P> {
     public static final String NOTICE_EXPORT_ENTITY_DATA = NOTICE_PREFIX + "export_entity_data_removed";
     /** A structure file larger than a vanilla structure block loads: its width, height, length and the block's limit. */
     public static final String NOTICE_EXPORT_STRUCTURE_SIZE = NOTICE_PREFIX + "export_structure_too_large";
+    /** A copy with biomes written as a Litematica or structure file, which keep no biomes (protocol 6): the format. */
+    public static final String NOTICE_EXPORT_BIOMES_DROPPED = NOTICE_PREFIX + "export_biomes_dropped";
+    /** A copy whose box is too large for a biome grid (a sparse selection millions of blocks across): kept without biomes. */
+    public static final String NOTICE_COPY_BIOMES_DROPPED = NOTICE_PREFIX + "copy_biomes_dropped";
     /** Scheduled block and fluid updates a file held, which are not imported: their count. */
     public static final String NOTICE_IMPORT_TICKS = NOTICE_PREFIX + "import_ticks_skipped";
     /** Entities (passengers counted) a copy may take with {@code limit.bypass}: as many as a file may hold. */
@@ -369,6 +376,7 @@ public final class ServerClipboards<P, W> implements ClipboardService<P> {
         long connection = edits.connection(owner);
 
         Long2ObjectOpenHashMap<SectionBuffer> snapshot = new Long2ObjectOpenHashMap<>();
+        Long2ObjectOpenHashMap<String> biomeSnapshot = new Long2ObjectOpenHashMap<>();
         List<EntitySnapshot> taken = new ArrayList<>();
         List<EntityState> takenStates = new ArrayList<>();
         List<UUID> takenIds = new ArrayList<>();
@@ -393,6 +401,8 @@ public final class ServerClipboards<P, W> implements ClipboardService<P> {
             if (global.reach() > 0) {
                 captureHalo(snapshot, reader, runtime.bottomSection(world), runtime.topSection(world), capture);
             }
+            // The biomes of the quarts the region touches (protocol 6): the clipboard keeps those its copied cells are in.
+            captureBiomes(world, region, biomeSnapshot);
         } catch (EditRejected | RuntimeException e) {
             lease.release();
             throw e;
@@ -406,12 +416,16 @@ public final class ServerClipboards<P, W> implements ClipboardService<P> {
         CellPredicate cells = decided == null ? masked : (x, y, z, before) -> decided.contains(x, y, z);
         String source = (cut ? "cut " : "copy ") + runtime.worldId(world);
         AtomicBoolean abandoned = new AtomicBoolean();
-        offThread(lease, () -> {
-                    Clipboard blocks = Clipboard.copyOf(view, region, area, origin, cells, source);
-                    return taken.isEmpty() ? blocks : blocks.withEntities(taken);
-                },
+        offThread(lease, () -> Clipboard.copyOf(view, region, area, origin, cells, source,
+                        (qx, qy, qz) -> biomeSnapshot.get(BiomeHistory.key(qx, qy, qz)), taken),
                 clipboard -> {
-                    if (!abandoned.get()) install(p, connection, clipboard, List.of(), reply);
+                    if (abandoned.get()) return;
+                    // Read biomes but none kept: the box was too large for a biome grid (protocol 6).
+                    List<S2C.Notice> notices = !biomeSnapshot.isEmpty() && clipboard.biomes() == null
+                            && clipboard.cellCount() > 0
+                            ? List.of(new S2C.Notice(S2C.Notice.Level.INFO, NOTICE_COPY_BIOMES_DROPPED, List.of()))
+                            : List.of();
+                    install(p, connection, clipboard, notices, reply);
                 },
                 (reason, detail) -> {
                     if (!abandoned.get()) reply.failed(reason, detail);
@@ -431,6 +445,19 @@ public final class ServerClipboards<P, W> implements ClipboardService<P> {
             abandoned.set(true); // the refusal is the answer; the clipboard being built is dropped
             throw e;
         }
+    }
+
+    /**
+     * Reads the biome of every quart {@code region} touches inside the build height into {@code into} (by
+     * {@link BiomeHistory#key}), on the server thread with the copy's snapshot; quarts of chunks not loaded are left out.
+     */
+    private void captureBiomes(W world, Region region, Long2ObjectOpenHashMap<String> into) {
+        WorldBiomes biomes = runtime.biomes(world);
+        QuartSelection.touched(region, false, runtime.bottomY(world), runtime.topY(world)).forEach((qx, qy, qz) -> {
+            if (!biomes.loaded(qx >> 2, qz >> 2)) return;
+            int handle = biomes.get(qx, qy, qz);
+            if (handle >= 0) into.put(BiomeHistory.key(qx, qy, qz), biomes.id(handle));
+        });
     }
 
     /** The cells of {@code region} inside {@code area} that {@code accepts} takes, read from {@code view}. */
@@ -1485,17 +1512,21 @@ public final class ServerClipboards<P, W> implements ClipboardService<P> {
     }
 
     /**
-     * The notices of a clipboard leaving the server in {@code format}: what sanitizing removed and, for a structure file
+     * The notices of a clipboard leaving the server in {@code format}: what sanitizing removed; for a copy with biomes
+     * in a format other than .schem, that its biomes are not kept; and, for a structure file
      * larger than a vanilla structure block loads ({@value StructureCodec#MAX_STRUCTURE_BLOCK_SIDE} per side), a
      * warning that a structure block cannot load it (other tools and {@code /place} can).
      */
     static List<S2C.Notice> withFormatNotices(SchematicFormat format, Leaving clean) {
         BlockPos size = clean.clipboard().size();
         int max = StructureCodec.MAX_STRUCTURE_BLOCK_SIDE;
-        if (format != SchematicFormat.STRUCTURE || (size.x() <= max && size.y() <= max && size.z() <= max)) {
-            return clean.notices();
-        }
         List<S2C.Notice> notices = new ArrayList<>(clean.notices());
+        if (format != SchematicFormat.SPONGE && clean.clipboard().biomes() != null) {
+            notices.add(new S2C.Notice(S2C.Notice.Level.INFO, NOTICE_EXPORT_BIOMES_DROPPED, List.of(format.extension())));
+        }
+        if (format != SchematicFormat.STRUCTURE || (size.x() <= max && size.y() <= max && size.z() <= max)) {
+            return List.copyOf(notices);
+        }
         notices.add(new S2C.Notice(S2C.Notice.Level.WARN, NOTICE_EXPORT_STRUCTURE_SIZE, List.of(
                 Integer.toString(size.x()), Integer.toString(size.y()), Integer.toString(size.z()),
                 Integer.toString(max))));

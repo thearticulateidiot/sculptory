@@ -546,6 +546,16 @@ public final class HistoryService {
             public void entitiesFinished() {
                 saveEntities(record);
             }
+
+            @Override
+            public void biome(int qx, int qy, int qz, String before, String after) {
+                builder.recordBiome(qx, qy, qz, before, after);
+            }
+
+            @Override
+            public void biomesFinished() {
+                saveBiomes(record);
+            }
         };
     }
 
@@ -558,6 +568,17 @@ public final class HistoryService {
         if (!record.builder.hasDirtyEntities()) return;
         begin(record);
         store.entities(record.session.player, record.entry(), record.builder.drainEntities());
+    }
+
+    /**
+     * Journals the biomes of an open record recorded since they were last saved (a job calls this after each chunk
+     * column of biome work, a stroke as it saves its sections).
+     */
+    public void saveBiomes(OpenRecord record) {
+        if (record == null || !persistent() || !open.containsKey(record.entry())) return;
+        if (!record.builder.hasDirtyBiomes()) return;
+        begin(record);
+        store.biomes(record.session.player, record.entry(), record.builder.drainBiomes());
     }
 
     /** Journals one section of an open record if it changed since it was last saved. */
@@ -574,6 +595,7 @@ public final class HistoryService {
             for (long key : record.builder.drainDirty()) journalSection(record, key);
         }
         saveEntities(record);
+        saveBiomes(record);
     }
 
     /** Journals the changed sections of an open record in chunk column (cx, cz). */
@@ -613,6 +635,10 @@ public final class HistoryService {
                 saveEntities(record);
                 players.add(record.session.player);
             }
+            if (record.builder.hasDirtyBiomes()) {
+                saveBiomes(record);
+                players.add(record.session.player);
+            }
         }
         return players;
     }
@@ -648,6 +674,9 @@ public final class HistoryService {
             if (built.builder.hasDirtyEntities()) {
                 store.entities(session.player, entry.id(), built.builder.drainEntities());
             }
+            if (built.builder.hasDirtyBiomes()) {
+                store.biomes(session.player, entry.id(), built.builder.drainBiomes());
+            }
         } else {
             store.begin(session.player, entry.id(), entry.createdMillis(), entry.world(), entry.label());
             BlockBuffer before = entry.record().before();
@@ -658,6 +687,7 @@ public final class HistoryService {
                 }
             }
             store.entities(session.player, entry.id(), entry.record().entities());
+            store.biomes(session.player, entry.id(), entry.record().biomes());
         }
         store.seal(session.player, entry.id(), entry.label(), entry.createdMillis(), bytes);
     }
@@ -1500,7 +1530,8 @@ public final class HistoryService {
             }
             snapshotted.add(record);
             dev.sculptory.core.history.EditRecord now =
-                    new dev.sculptory.core.history.EditRecord(before, after, record.builder.entityChanges());
+                    new dev.sculptory.core.history.EditRecord(before, after, record.builder.entityChanges(),
+                            record.builder.biomeChanges());
             if (now.isEmpty()) continue;
             openEntries.add(new HistoryStore.SnapshotEntry(record.entry(), record.world, record.label, record.created, 0,
                     now));
@@ -1510,6 +1541,7 @@ public final class HistoryService {
             // The rewrite holds each open record as it is now; later changes are journaled after it as usual.
             record.builder.drainDirty();
             record.builder.drainEntities();
+            record.builder.drainBiomes();
             record.begun = hasCells(openEntries, record.entry());
         }
     }

@@ -183,7 +183,9 @@ class PlaceToolTest {
             finished++;
         }
     };
-    private final PlaceTool tool = new PlaceTool(services, () -> physicsAllowed);
+    private boolean biomesAllowed;
+    private final PlaceTool tool = new PlaceTool(services, () -> physicsAllowed, () -> biomesAllowed,
+            new dev.sculptory.fabric.client.editor.tools.brush.SymmetryCentre());
     private ToolContext view;
     private long now = 1_000 * MS;
 
@@ -366,6 +368,28 @@ class PlaceToolTest {
         run = assertInstanceOf(ToolAction.RunOp.class, session.sent().get(session.sent().size() - 1));
         assertEquals(new PasteOptions(true, false), ((OpSpec.Paste) run.op()).o(), "physics only with the permission");
         assertFalse(run.physics());
+    }
+
+    @Test
+    void biomesNeedTheBiomePermissionLikePhysics() {
+        ClipboardCache.Entry entry = clipboardWithPreview(new BlockPos(3, 1, 3));
+        SettingsValues values = view.settings();
+        assertFalse(values.isVisible(tool.settings().biomes()), "hidden without the biome permission");
+        biomesAllowed = true;
+        assertTrue(values.isVisible(tool.settings().biomes()));
+        view.updateSettings(values.with(tool.settings().biomes(), true));
+
+        tool.request(new PlaceTool.Request.Paste(new SourceRef.Clipboard(entry.clipboardId()), "c", Transform.IDENTITY));
+        frameAt(0, 63, 0);
+        action(EditorAction.COMMIT, 0);
+        ToolAction.RunOp run = assertInstanceOf(ToolAction.RunOp.class, session.sent().get(session.sent().size() - 1));
+        assertTrue(((OpSpec.Paste) run.op()).o().biomes());
+
+        // A ticked toggle left over from before the node was taken away is not sent.
+        session.setPermissions(without(Perm.BIOME));
+        action(EditorAction.COMMIT, 0);
+        run = assertInstanceOf(ToolAction.RunOp.class, session.sent().get(session.sent().size() - 1));
+        assertFalse(((OpSpec.Paste) run.op()).o().biomes(), "biomes only with the permission");
     }
 
     @Test
@@ -1202,7 +1226,7 @@ class PlaceToolTest {
     void pasteIntoReachesThePasteMoveAndStackOps() {
         assertEquals(PasteOptions.Into.EVERYTHING, view.settings().get(tool.settings().into()));
         assertEquals(List.of(tool.settings().includeAir(), tool.settings().into(), tool.settings().physics(),
-                tool.settings().entities()), tool.settings().schema().sections().get(0).settings());
+                tool.settings().entities(), tool.settings().biomes()), tool.settings().schema().sections().get(0).settings());
         into(PasteOptions.Into.EXISTING);
         ClipboardCache.Entry entry = clipboardWithPreview(new BlockPos(3, 1, 3));
         tool.request(new PlaceTool.Request.Paste(new SourceRef.Clipboard(entry.clipboardId()), "c", Transform.IDENTITY));

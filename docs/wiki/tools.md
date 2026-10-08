@@ -22,6 +22,7 @@ The palette at the bottom of the screen holds the tools. Press a tool's key or c
 | `]` | [Tinker](tinker.md) | Change a block's properties or text, or an entity, in place | `region` |
 | `\` | [Weather](weather.md) | Erode, fill in, roughen or melt the surface | `brush` |
 | `;` | [Heightmap](heightmap.md) | Stamp or paint a height picture: hills, craters, ridges | `brush` |
+| `'` | [Biome](biomes.md) | Paint biomes, or fill the selection with one | `biome` |
 
 "Needs" is the [permission](permissions.md) node besides `use`. A tool you may not use is greyed out and its tooltip names the node. In singleplayer you have them all.
 

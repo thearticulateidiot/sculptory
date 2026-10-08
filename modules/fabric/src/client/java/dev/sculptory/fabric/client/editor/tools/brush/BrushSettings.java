@@ -55,6 +55,8 @@ public final class BrushSettings {
     public static final double STRENGTH_STEP = 0.05;
 
     private static final String PREFIX = "sculptory.setting.brush.";
+    /** The Biome brush's first biome. */
+    public static final String DEFAULT_BIOME = "minecraft:cherry_grove";
     /** The legacy mask keys are never shown. */
     private static final Predicate<SettingsValues> HIDDEN = values -> false;
 
@@ -68,6 +70,13 @@ public final class BrushSettings {
     public final SettingDef.Enum<SculptMode> mode;
     /** The Weather brush only, otherwise {@code null}: what it does (Erode, Fill in, Roughen, Melt). */
     public final SettingDef.Enum<WeatherSpec.Mode> weatherMode;
+    /** The Biome brush only (protocol 6), otherwise {@code null}: the biome painted. */
+    public final SettingDef.Biome biome;
+    /**
+     * The Biome brush only, otherwise {@code null}: "3D", off by default (whole columns, judged at their surface); on, only
+     * the quarts inside the brush's ball or cube.
+     */
+    public final SettingDef.Bool biomeThreeD;
     /**
      * The Heightmap brush only, otherwise {@code null}: the picture it stamps, Raise or Lower, the stamp's height in
      * blocks (1-{@value HeightmapSpec#MAX_HEIGHT_BLOCKS}) and its turn in degrees, clockwise seen from above (R and Shift+R
@@ -114,9 +123,13 @@ public final class BrushSettings {
         Predicate<SettingsValues> shown = stamping ? HIDDEN : SettingDef.ALWAYS;
         radius = new SettingDef.Int("radius", PREFIX + "radius", painting ? 4 : stamping ? 12 : 5, 1, 32, Limits::maxBrushRadius,
                 SettingDef.ALWAYS);
-        strength = new SettingDef.Decimal("strength", PREFIX + "strength", defaultStrength(tool), 0, 1, STRENGTH_STEP, shown);
+        // A biome is painted or not, and a height picture is its own brush: neither shows strength or falloff (other code
+        // reads them); the Heightmap brush hides its shape too.
+        Predicate<SettingsValues> shaping = stamping || tool == BrushTool.BIOME ? HIDDEN : SettingDef.ALWAYS;
+        strength = new SettingDef.Decimal("strength", PREFIX + "strength", defaultStrength(tool), 0, 1, STRENGTH_STEP,
+                shaping);
         falloff = new SettingDef.Enum<>("falloff", PREFIX + "falloff", Falloff.class,
-                painting || stamping ? Falloff.CONSTANT : Falloff.SMOOTH, shown);
+                painting || stamping ? Falloff.CONSTANT : Falloff.SMOOTH, shaping);
         shape = new SettingDef.Enum<>("shape", PREFIX + "shape", Shape.class, stamping ? Shape.SQUARE : Shape.CIRCLE, shown);
         heightmapImage = stamping
                 ? new SettingDef.Heightmap("heightmap.image", PREFIX + "heightmap.image", HeightmapLibrary.DEFAULT)
@@ -134,6 +147,10 @@ public final class BrushSettings {
         weatherMode = tool == BrushTool.WEATHER
                 ? new SettingDef.Enum<>("weather.mode", PREFIX + "weather.mode", WeatherSpec.Mode.class,
                         WeatherSpec.Mode.ERODE)
+                : null;
+        biome = tool == BrushTool.BIOME ? new SettingDef.Biome("biome", PREFIX + "biome", DEFAULT_BIOME) : null;
+        biomeThreeD = tool == BrushTool.BIOME
+                ? new SettingDef.Bool("biome.three_d", PREFIX + "biome.three_d", false)
                 : null;
         material = tool == BrushTool.PAINT
                 ? new SettingDef.Block("material", PREFIX + "material", block("minecraft:coarse_dirt"))
@@ -160,6 +177,8 @@ public final class BrushSettings {
         symmetry = new SettingDef.Enum<>("symmetry", PREFIX + "symmetry", Symmetry.Mode.class, Symmetry.Mode.OFF);
 
         List<SettingDef<?>> main = new ArrayList<>(List.of(radius, strength, falloff, shape));
+        if (biome != null) main.add(biome);
+        if (biomeThreeD != null) main.add(biomeThreeD);
         if (mode != null) main.add(mode);
         if (weatherMode != null) main.add(weatherMode);
         if (stamping) main.addAll(List.of(heightmapImage, heightmapMode, heightmapHeight, heightmapAngle));
@@ -179,6 +198,20 @@ public final class BrushSettings {
 
     public static BrushSettings forTool(BrushTool tool) {
         return new BrushSettings(tool);
+    }
+
+    /**
+     * The biome and its mode the Biome tool's {@code values} hold (protocol 6): what its Fill selection, and the
+     * Selection window's Fill biome, set.
+     */
+    public static dev.sculptory.core.brush.BiomeSpec biomeChoice(SettingsValues values) {
+        BrushSettings biome = BiomeHolder.SETTINGS;
+        return new dev.sculptory.core.brush.BiomeSpec(values.get(biome.biome), !values.get(biome.biomeThreeD));
+    }
+
+    /** The Biome tool's settings, made on first use. */
+    private static final class BiomeHolder {
+        static final BrushSettings SETTINGS = new BrushSettings(BrushTool.BIOME);
     }
 
     public SettingsSchema schema() {

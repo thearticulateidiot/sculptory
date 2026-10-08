@@ -68,7 +68,10 @@ import java.util.function.Function;
  */
 public final class SettingsForm {
     /** The widget a setting became. */
-    public enum Kind { SLIDER, SEGMENTED, DROPDOWN, TOGGLE, BLOCK, BLOCK_LIST, WEIGHTED_BLOCKS, INT_RANGE, SEED, ASSET_MIX, MASK_RULES, HEIGHTMAP }
+    public enum Kind {
+        SLIDER, SEGMENTED, DROPDOWN, TOGGLE, BLOCK, BLOCK_LIST, WEIGHTED_BLOCKS, INT_RANGE, SEED, ASSET_MIX, MASK_RULES, BIOME,
+        HEIGHTMAP
+    }
 
     /** What the form needs from the editor. */
     public interface Services {
@@ -87,6 +90,17 @@ public final class SettingsForm {
          * {@code current}; {@code onChange} runs with each edit. Does nothing where no editor is offered.
          */
         default void editMask(Rect anchor, EditMask current, Consumer<EditMask> onChange) {}
+
+        /** The biomes the client knows, for a biome setting (protocol 6; names from the ids where none is offered). */
+        default dev.sculptory.fabric.client.editor.biomes.BiomeCatalog biomes() {
+            return dev.sculptory.fabric.client.editor.biomes.BiomeCatalog.FALLBACK;
+        }
+
+        /**
+         * Opens the biome picker below {@code anchor} (protocol 6); {@code onPick} runs with the chosen biome's id. Does
+         * nothing where no picker is offered.
+         */
+        default void pickBiome(Rect anchor, String current, Consumer<String> onPick) {}
 
         /** Opens the height image picker below {@code anchor}; {@code onPick} runs with the picture chosen. Nothing by default. */
         default void pickHeightmap(Rect anchor, HeightmapRef current, Consumer<HeightmapRef> onPick) {}
@@ -295,6 +309,7 @@ public final class SettingsForm {
             case SettingDef.Seed d -> new SeedField(d);
             case SettingDef.AssetMix d -> new AssetField(d);
             case SettingDef.MaskRules d -> new MaskRulesField(d);
+            case SettingDef.Biome d -> new BiomeField(d);
             case SettingDef.Heightmap d -> new HeightmapField(d);
         };
     }
@@ -384,6 +399,7 @@ public final class SettingsForm {
             case SettingDef.AssetMix d -> describeList(d.defaultValue().stream()
                     .map(entry -> entry.asset() + " (" + entry.weight() + ")").toList());
             case SettingDef.MaskRules d -> tr("sculptory.setting.brush.mask.rules.none");
+            case SettingDef.Biome d -> services.biomes().name(d.defaultValue());
             case SettingDef.Heightmap d -> HeightmapView.label(services.translator(), d.defaultValue());
         };
     }
@@ -608,6 +624,26 @@ public final class SettingsForm {
         @Override
         void show(BlockDescriptor value) {
             chip.setBlock(value);
+        }
+    }
+
+    /** A biome (protocol 6): its swatch and name; a click opens the biome picker. */
+    private final class BiomeField extends Field<String> {
+        private final dev.sculptory.fabric.client.editor.biomes.BiomeChip chip;
+
+        BiomeField(SettingDef.Biome def) {
+            super(def, Kind.BIOME);
+            chip = new dev.sculptory.fabric.client.editor.biomes.BiomeChip(services.biomes(), value(), null);
+            chip.setOnClick(() -> services.pickBiome(chip.bounds(), chip.biome(), biome -> {
+                chip.setBiome(biome);
+                set(biome);
+            }));
+            finish(Column.of(heading(), chip), chip);
+        }
+
+        @Override
+        void show(String value) {
+            chip.setBiome(value);
         }
     }
 

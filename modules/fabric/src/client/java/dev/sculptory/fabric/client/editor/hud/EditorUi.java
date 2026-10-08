@@ -85,6 +85,7 @@ import dev.sculptory.fabric.client.editor.wiki.WikiPage;
 import dev.sculptory.fabric.client.editor.wiki.WikiPages;
 import dev.sculptory.fabric.client.editor.wiki.WikiPictures;
 import dev.sculptory.fabric.client.editor.wiki.WikiSource;
+import dev.sculptory.fabric.client.editor.windows.BiomeLegendWindow;
 import dev.sculptory.fabric.client.editor.windows.ClipboardWindow;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import dev.sculptory.fabric.client.editor.windows.ExportDialog;
@@ -179,6 +180,9 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
     private final EditorPlatform platform;
     private final EditorKeymap keymap;
     private final Services services;
+    /** The biomes of the world the client is in (protocol 6; the Biome tool's picker, Biome view's legend). */
+    private final dev.sculptory.fabric.client.editor.biomes.BiomeCatalog biomes =
+            new dev.sculptory.fabric.client.editor.biomes.ClientBiomeCatalog();
     private final Translator tr;
     private final TextMeasure text;
     private final Theme theme = Theme.DARK;
@@ -240,6 +244,10 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
     private final WikiWindow wikiWindow;
     /** The Tinker panel, opened by the Tinker tool's click. */
     private final TinkerWindow tinkerWindow;
+    /** Biome view (protocol 6) and its legend. */
+    private final dev.sculptory.fabric.client.editor.biomes.BiomeView biomeView =
+            new dev.sculptory.fabric.client.editor.biomes.BiomeView();
+    private final BiomeLegendWindow biomeLegend;
     // ---- Tutorial ----
     /** Tutorial mode: the lesson card (in {@link #offerLayer}), the Tutorial window and the step highlight. */
     private final Tutorial tutorial;
@@ -458,6 +466,14 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
                         tinkerWindow::node)
                 .anchor(Corner.TOP_RIGHT, 180, EditorWindowLayout.GAP).size(TinkerWindow.WIDTH, TinkerWindow.HEIGHT)
                 .minSize(150, 100).openByDefault(false).build());
+
+        // Biome view (protocol 6): View > Biome view tints the ground and opens its legend.
+        biomeLegend = new BiomeLegendWindow(biomeView, tr);
+        windows.register(WindowSpec.builder(EditorWindows.BIOME_LEGEND,
+                        EditorWindows.titleKey(EditorWindows.BIOME_LEGEND), biomeLegend::node)
+                .anchor(Corner.BOTTOM_RIGHT, EditorWindowLayout.GAP, EditorWindowLayout.GAP)
+                .size(BiomeLegendWindow.WIDTH, BiomeLegendWindow.HEIGHT).minSize(120, 60).openByDefault(false).build());
+        commands.provide(EditorCommands.VIEW_BIOMES, this::toggleBiomeView, biomeView::enabled);
 
         // The wiki: its window (View > Wiki), Help > Wiki and the ? beside the tool's name in Tool Settings
         wikiWindow = new WikiWindow(tr);
@@ -1042,6 +1058,9 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         if (windows.isOpen(EditorWindows.TINKER)) {
             tinkerWindow.refresh();
         }
+        if (windows.isOpen(EditorWindows.BIOME_LEGEND)) {
+            biomeLegend.refresh();
+        }
         if (windows.isOpen(EditorWindows.MASK)) {
             maskWindow.refresh();
         }
@@ -1296,6 +1315,26 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         windows.layout(width, height);
         windows.layout(width, height);
         return true;
+    }
+
+    /** Turns Biome view on or off (View > Biome view), opening or closing its legend with it. */
+    public void toggleBiomeView() {
+        biomeView.setEnabled(!biomeView.enabled());
+        if (biomeView.enabled()) {
+            showWindow(EditorWindows.BIOME_LEGEND);
+        } else if (windows.isOpen(EditorWindows.BIOME_LEGEND)) {
+            toggleWindow(EditorWindows.BIOME_LEGEND);
+        }
+    }
+
+    /** Biome view (protocol 6): what the world renderer tints. */
+    public dev.sculptory.fabric.client.editor.biomes.BiomeView biomeView() {
+        return biomeView;
+    }
+
+    /** The biomes of the world the client is in. */
+    public dev.sculptory.fabric.client.editor.biomes.BiomeCatalog biomeCatalog() {
+        return biomes;
     }
 
     /** Opens the Tinker panel (or brings it forward, expanded) for what the Tinker tool clicked. */
@@ -1729,6 +1768,16 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
             }
 
             @Override
+            public dev.sculptory.fabric.client.editor.biomes.BiomeCatalog biomes() {
+                return biomes;
+            }
+
+            @Override
+            public void pickBiome(Rect anchor, String current, Consumer<String> onPick) {
+                dev.sculptory.fabric.client.editor.biomes.BiomePicker.open(windows.context(), anchor, biomes, tr, onPick);
+            }
+
+            @Override
             public void pickHeightmap(Rect anchor, HeightmapRef current, Consumer<HeightmapRef> onPick) {
                 GameHeightmaps pictures = GameHeightmaps.get();
                 HeightmapPicker.open(windows.context(), anchor, pictures.library(), pictures, tr, current,
@@ -1787,6 +1836,12 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
             @Override
             public void updateSettings(SettingsValues values) {
                 ctx.updateSettings(ToolId.SELECT, values);
+            }
+
+            @Override
+            public Optional<dev.sculptory.core.brush.BiomeSpec> biomeChoice() {
+                return Optional.of(dev.sculptory.fabric.client.editor.tools.brush.BrushSettings.biomeChoice(
+                        ctx.settings(ToolId.BIOME)));
             }
 
             @Override

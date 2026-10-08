@@ -18,18 +18,21 @@ import java.util.zip.CRC32C;
  * BEGIN      entry UUID | i64 createdMillis | utf world | utf base label       an entry's data starts
  * SECTION    entry UUID | i64 section key | i32 data version | varint cells | SectionCodec body
  * ENTITIES   entry UUID | i32 data version | varint changes | EntityCodec body  a batch of the entry's entities
+ * BIOMES     entry UUID | i32 data version | varint changes | BiomeCodec body   a batch of the entry's biome quarts
  * SEAL       entry UUID | utf label | i64 createdMillis | i64 heap bytes        the entry's data is complete
  * PUSH, UNDONE, REDONE, REDO_BEGIN, REDO_ABORT, EVICT, ABORT    entry UUID     stack operations
  * </pre>
  * A later {@code SECTION} of the same entry and key replaces an earlier one; a later {@code ENTITIES} change of the
- * same entry and entity UUID replaces an earlier one. Reading stops at the first record that is cut short, fails its
- * checksum or does not parse (a torn tail after a crash): what follows it is ignored.
+ * same entry and entity UUID replaces an earlier one, and a later {@code BIOMES} change of the same entry and quart an
+ * earlier one. Reading stops at the first record that is cut short, fails its checksum or does not parse (a torn tail
+ * after a crash): what follows it is ignored.
  *
  * <p><b>Flags.</b> Bit 0 ({@link #FLAG_ENTITIES}, entities, 2026-09-27) says the file may hold {@code ENTITIES}
  * records. It is set in place (the 28-byte header rewritten) right before the first such record is appended, and by
  * compactions and rewrites that copy one, so a file without entities keeps the header earlier builds read, and a build
  * that does not know the record type leaves a file that has one alone (unknown flags) instead of cutting it off there.
- * This build reads files with or without the flag.
+ * Bit 1 ({@link #FLAG_BIOMES}, biomes, protocol 6) does the same for {@code BIOMES} records. This build reads files
+ * with or without either flag.
  *
  * <p><b>Record sizes.</b> A payload's length is checked against its type before anything is read or allocated: a stack
  * operation is exactly {@value #MARK_PAYLOAD} bytes, a {@code BEGIN} or {@code SEAL} at most {@value #MAX_DATA_PAYLOAD}
@@ -44,8 +47,10 @@ final class Journal {
     static final int VERSION = 1;
     /** Header flag: the file may hold {@code ENTITIES} records. */
     static final int FLAG_ENTITIES = 1;
+    /** Header flag: the file may hold {@code BIOMES} records (protocol 6). */
+    static final int FLAG_BIOMES = 2;
     /** Every flag this build knows. */
-    static final int KNOWN_FLAGS = FLAG_ENTITIES;
+    static final int KNOWN_FLAGS = FLAG_ENTITIES | FLAG_BIOMES;
     static final int HEADER_BYTES = 28;
     static final int FRAME_BYTES = 9;
     /** Payload of a stack operation (entry UUID only). */
@@ -67,7 +72,7 @@ final class Journal {
 
     enum Type {
         BEGIN(1), SECTION(2), SEAL(3), PUSH(4), UNDONE(5), REDONE(6), REDO_BEGIN(7), REDO_ABORT(8), EVICT(9), ABORT(10),
-        ENTITIES(11);
+        ENTITIES(11), BIOMES(12);
 
         final int code;
 
@@ -83,19 +88,19 @@ final class Journal {
         }
 
         boolean mark() {
-            return this != BEGIN && this != SECTION && this != SEAL && this != ENTITIES;
+            return this != BEGIN && this != SECTION && this != SEAL && this != ENTITIES && this != BIOMES;
         }
 
         /** Whether the payload is streamed through the checksum by a scan, never held whole. */
         boolean large() {
-            return this == SECTION || this == ENTITIES;
+            return this == SECTION || this == ENTITIES || this == BIOMES;
         }
 
         /** Whether a payload of {@code length} bytes can be a record of this type. */
         boolean fits(int length) {
             return switch (this) {
                 case SECTION -> length >= 16 + 8 + 4 + 1 + 1 && length <= MAX_SECTION_PAYLOAD;
-                case ENTITIES -> length >= 16 + 4 + 1 + 1 && length <= MAX_SECTION_PAYLOAD;
+                case ENTITIES, BIOMES -> length >= 16 + 4 + 1 + 1 && length <= MAX_SECTION_PAYLOAD;
                 case BEGIN -> length >= 16 + 8 + 1 + 1 && length <= MAX_DATA_PAYLOAD;
                 case SEAL -> length >= 16 + 1 + 8 + 8 && length <= MAX_DATA_PAYLOAD;
                 default -> length == MARK_PAYLOAD;
@@ -198,7 +203,7 @@ final class Journal {
     // ---------------------------------------------------------------- payloads
 
     /** A decoded record. */
-    sealed interface Op permits Begin, Section, Entities, Seal, Mark {
+    sealed interface Op permits Begin, Section, Entities, Biomes, Seal, Mark {
         UUID entry();
     }
 
@@ -209,6 +214,9 @@ final class Journal {
 
     /** A batch of entity changes; {@code bodyOffset} is where its body starts within the payload. */
     record Entities(UUID entry, int dataVersion, int changes, int bodyOffset) implements Op {}
+
+    /** A batch of biome changes (protocol 6); {@code bodyOffset} is where its body starts within the payload. */
+    record Biomes(UUID entry, int dataVersion, int changes, int bodyOffset) implements Op {}
 
     record Seal(UUID entry, String label, long created, long bytes) implements Op {}
 
@@ -224,6 +232,10 @@ final class Journal {
     }
 
     static byte[] entities(UUID entry, int dataVersion, int changes, byte[] body) {
+        return new Bytes.Writer(body.length + 32).uuid(entry).i32(dataVersion).varint(changes).bytes(body).toArray();
+    }
+
+    static byte[] biomes(UUID entry, int dataVersion, int changes, byte[] body) {
         return new Bytes.Writer(body.length + 32).uuid(entry).i32(dataVersion).varint(changes).bytes(body).toArray();
     }
 
@@ -248,6 +260,17 @@ final class Journal {
         int bodyOffset = in.position();
         if (payloadLength <= bodyOffset) throw new CorruptDataException("Section without a body");
         return new Section(entry, key, dataVersion, cells, bodyOffset);
+    }
+
+    /** {@link #decodeSectionHead} for a {@code BIOMES} record (the same head as {@code ENTITIES}). */
+    static Biomes decodeBiomesHead(byte[] head, int payloadLength) throws CorruptDataException {
+        Bytes.Reader in = new Bytes.Reader(head);
+        UUID entry = in.uuid();
+        int dataVersion = in.i32();
+        int changes = in.varint(BiomeCodec.MAX_CHANGES, "Biome change count");
+        int bodyOffset = in.position();
+        if (payloadLength <= bodyOffset) throw new CorruptDataException("Biome batch without a body");
+        return new Biomes(entry, dataVersion, changes, bodyOffset);
     }
 
     /** {@link #decodeSectionHead} for an {@code ENTITIES} record (at most {@link #ENTITIES_HEAD_BYTES}). */
@@ -280,6 +303,12 @@ final class Journal {
                 if (in.remaining() < 1) throw new CorruptDataException("Entity batch without a body");
                 yield new Entities(entry, dataVersion, changes, in.position() - FRAME_BYTES);
             }
+            case BIOMES -> {
+                int dataVersion = in.i32();
+                int changes = in.varint(BiomeCodec.MAX_CHANGES, "Biome change count");
+                if (in.remaining() < 1) throw new CorruptDataException("Biome batch without a body");
+                yield new Biomes(entry, dataVersion, changes, in.position() - FRAME_BYTES);
+            }
             case SEAL -> {
                 String label = in.utf(MAX_LABEL_BYTES);
                 long created = in.i64();
@@ -289,7 +318,7 @@ final class Journal {
             }
             default -> new Mark(type, entry);
         };
-        if (!(op instanceof Section) && !(op instanceof Entities)) in.expectEnd();
+        if (!(op instanceof Section) && !(op instanceof Entities) && !(op instanceof Biomes)) in.expectEnd();
         return op;
     }
 }

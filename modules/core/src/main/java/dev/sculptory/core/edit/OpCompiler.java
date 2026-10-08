@@ -107,7 +107,8 @@ public final class OpCompiler {
         long sections = c.maxSections();
         // A paste's volume needs its source; it is checked once the source is known. Counts stop past the budget.
         // Volumes count every symmetric copy.
-        if (!(s instanceof OpSpec.Paste || s instanceof OpSpec.PasteMany) && budget != Long.MAX_VALUE) {
+        if (!(s instanceof OpSpec.Paste || s instanceof OpSpec.PasteMany || s instanceof OpSpec.BiomeFill)
+                && budget != Long.MAX_VALUE) {
             checkBudget(Math.max(targetVolume(s, null, budget), sourceVolume(s, budget)), budget);
         }
         SourceBlocks source = null;
@@ -128,6 +129,9 @@ public final class OpCompiler {
         }
         Symmetry symmetry = OpSymmetry.of(s);
         if (copies.isEmpty()) throw new IllegalArgumentException("An op has at least one copy");
+        if (s instanceof OpSpec.BiomeFill fill) {
+            return BiomeFillProgram.compile(fill, copies, bottom, (int) top + 1, budget, sections);
+        }
         byte[] table = layerTable(s, c, states);
         if (s instanceof OpSpec.PasteMany many) {
             // Each copy is the op's own placements under its image (PasteProgram.compilePlacement), sharing one scan of
@@ -256,8 +260,8 @@ public final class OpCompiler {
                     sections);
             // Compiled with its copies in compile(), from the op's own placements.
             case OpSpec.PasteMany many -> PasteManyProgram.compile(many, source, states, height);
-            // Contract stub (protocol 6): ws/biomes compiles the biome fill. The server refuses it before compiling.
-            case OpSpec.BiomeFill fill -> throw new UnsupportedOperationException("BiomeFill is not implemented");
+            // Compiled whole by compile() (BiomeFillProgram), its copies united.
+            case OpSpec.BiomeFill fill -> throw new IllegalStateException("A biome fill is compiled whole");
         };
     }
 
@@ -278,7 +282,8 @@ public final class OpCompiler {
      *       twice its cells (its overlap with itself would need the moved cells, worked out only when compiling).</li>
      *   <li>Stack: the region's cells times the count.</li>
      *   <li>PasteMany (protocol 6): the source box volume times the placements.</li>
-     *   <li>BiomeFill (protocol 6): the region's cells.</li>
+     *   <li>BiomeFill (protocol 6): the region's cells (a bound for callers; compiling counts the quarts it sets
+     *       against the budget instead).</li>
      *   <li>ScatterCommit: 0 (its size lives in the server's plan: {@code ScatterPlan.totalCells()}; compile checks
      *       it against {@link CompileContext#maxCells()}).</li>
      * </ul>

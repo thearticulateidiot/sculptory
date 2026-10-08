@@ -4,6 +4,7 @@
   "package": "dev.sculptory.fabric.client.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "ClientBiomeDataMixin",
     "ClientWorldMixin",
     "InGameHudAccessor",
     "InGameHudMixin",

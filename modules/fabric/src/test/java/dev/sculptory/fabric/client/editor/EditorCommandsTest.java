@@ -131,7 +131,7 @@ class EditorCommandsTest {
         assertEquals(List.of("view.window.tool_settings", "view.window.selection", "view.window.clipboard",
                 "view.window.library", "view.window.history", "view.window.keys", "view.notifications",
                 "view.tutorial", "view.wiki", "view.hide_windows", "view.reset_layout", "view.ui_size",
-                "view.opacity", "view.aim_at_fluids"), ids(CommandMenu.VIEW));
+                "view.opacity", "view.aim_at_fluids", "view.biomes"), ids(CommandMenu.VIEW));
         assertEquals(List.of("help.find_command", "help.key_sheet", "help.quick_start", "help.tutorial", "help.wiki",
                 "help.change_keys"), ids(CommandMenu.HELP));
     }

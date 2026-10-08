@@ -92,7 +92,7 @@ class WikiLibraryTest {
         for (WikiPages.Target target : WikiPages.tools().values()) {
             assertTrue(WikiPages.FROZEN.contains(target.pageId()), target.pageId());
         }
-        assertEquals(33, WikiPages.FROZEN.size());
+        assertEquals(34, WikiPages.FROZEN.size());
         assertTrue(WikiPages.FROZEN.stream().allMatch(id -> WikiLink.PAGE_ID.matcher(id).matches()));
     }
 }

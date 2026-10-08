@@ -47,6 +47,8 @@ public final class MaskedKernel implements BrushKernel {
         } else {
             kernel.applyStep(s, dabs, st, w, buffer);
         }
+        // Biome quarts were judged by the kernel itself (a Grouped kernel: the Biome brush judges at the surface).
+        for (BiomeWrite biome : buffer.biomes) out.biome(biome.qx(), biome.qy(), biome.qz(), biome.id());
         if (buffer.size() == 0) return;
         // Every cell is tested before any is forwarded: the sink may write the world the tests read.
         boolean[] keep = new boolean[buffer.size()];
@@ -107,9 +109,12 @@ public final class MaskedKernel implements BrushKernel {
         }
     }
 
+    private record BiomeWrite(int qx, int qy, int qz, String id) {}
+
     /** A step's cells in the order the kernel wrote them, with the tiles it kept. */
     private static final class Buffer implements CellSink {
         final IntArrayList cells = new IntArrayList();
+        final List<BiomeWrite> biomes = new ArrayList<>(0);
         final IntArrayList handles = new IntArrayList();
         List<BlockEntityData> tiles;
 
@@ -137,6 +142,11 @@ public final class MaskedKernel implements BrushKernel {
             cells.add(z);
             handles.add(handle);
             if (tiles != null) tiles.add(tile);
+        }
+
+        @Override
+        public void biome(int qx, int qy, int qz, String biomeId) {
+            biomes.add(new BiomeWrite(qx, qy, qz, biomeId));
         }
     }
 }

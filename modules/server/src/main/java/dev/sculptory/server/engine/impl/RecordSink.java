@@ -8,7 +8,7 @@ import java.util.UUID;
 /**
  * Receives every cell a job or brush actually changed, in write order, on the server thread. The signature matches
  * {@code core.history.RecordBuilder#record}, so the history integration can pass {@code builder::record}. Entity
- * changes arrive through {@link #entity}.
+ * changes arrive through {@link #entity}, biome changes through {@link #biome}.
  *
  * @see dev.sculptory.core.history.RecordBuilder
  */
@@ -38,6 +38,15 @@ public interface RecordSink {
     default void entitiesFinished() {}
 
     /**
+     * One biome quart the job changed (protocol 6): quart {@code (qx, qy, qz)} went from biome {@code before} to
+     * {@code after}, both read from the world. The default records nothing.
+     */
+    default void biome(int qx, int qy, int qz, String before, String after) {}
+
+    /** A bulk job finished a chunk column of biome work: a hint to save the biomes recorded so far. */
+    default void biomesFinished() {}
+
+    /**
      * Records into {@code builder} and {@linkplain RecordBuilder#prepare prepares} each finished section's part of the
      * record, so building it when the job ends does not stall that tick.
      */
@@ -57,6 +66,11 @@ public interface RecordSink {
             @Override
             public void entity(UUID id, EntityState before, EntityState after) {
                 builder.recordEntity(id, before, after);
+            }
+
+            @Override
+            public void biome(int qx, int qy, int qz, String before, String after) {
+                builder.recordBiome(qx, qy, qz, before, after);
             }
         };
     }

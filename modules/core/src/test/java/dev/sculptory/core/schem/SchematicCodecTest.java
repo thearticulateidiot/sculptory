@@ -415,7 +415,7 @@ class SchematicCodecTest {
     }
 
     @Test
-    void reportsSkippedEntitiesBiomesAndBlockEntities() throws SchematicException {
+    void reportsSkippedEntitiesMalformedBiomesAndBlockEntities() throws SchematicException {
         NbtCompound items = NbtCompound.builder().put("Items", NbtList.EMPTY).build();
         NbtList entities = NbtList.of(NbtTag.COMPOUND, List.of(
                 blockEntity(1, 0, 0, "minecraft:chest", items),        // kept
@@ -427,7 +427,7 @@ class SchematicCodecTest {
         NbtCompound root = wrap(v3(2, 1, 1, palette("minecraft:stone", "minecraft:chest"), new byte[] {0, 1}, entities)
                 .put("Entities", NbtList.of(NbtTag.COMPOUND, List.of(NbtCompound.EMPTY, NbtCompound.EMPTY)))
                 .put("Biomes", NbtCompound.builder().put("Palette", palette("minecraft:plains"))
-                        .putByteArray("Data", new byte[] {0, 0}).build()));
+                        .putByteArray("Data", new byte[] {0, 5}).build())); // an index past the biome palette
         Schematic schematic = decode(root);
         SchematicReport report = schematic.report();
         assertEquals(1, report.blockEntities());
@@ -437,6 +437,22 @@ class SchematicCodecTest {
         assertFalse(report.isLossless());
         assertEquals(7, report.warnings().size(), report.warnings().toString());
         assertInstanceOf(BlockEntityData.class, schematic.clipboard().tile(1, 0, 0));
+    }
+
+    @Test
+    void aHugeBiomePaletteIsSkippedBeforeItsIdsAreFixed() throws SchematicException {
+        String[] ids = new String[SchematicCodec.MAX_BIOME_PALETTE + 1];
+        for (int i = 0; i < ids.length; i++) ids[i] = "mod:biome_" + i;
+        NbtCompound root = wrap(v3(2, 1, 1, palette("minecraft:stone"), new byte[] {0, 0}, NbtList.EMPTY)
+                .put("Biomes", NbtCompound.builder().put("Palette", palette(ids))
+                        .putByteArray("Data", new byte[] {0, 1}).build()));
+        Schematic schematic = decode(root);
+        assertTrue(schematic.report().biomesSkipped());
+        assertTrue(schematic.report().warnings().toString().contains("biome palette of 4,097 entries")
+                || schematic.report().warnings().toString().contains("biome palette of 4097 entries"),
+                schematic.report().warnings().toString());
+        assertEquals(null, schematic.clipboard().biomes());
+        assertEquals(2, schematic.clipboard().size().x(), "the blocks are kept");
     }
 
     @Test

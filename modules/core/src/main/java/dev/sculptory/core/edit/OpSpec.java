@@ -395,10 +395,10 @@ public sealed interface OpSpec {
 
     /**
      * Sets the biome of the region's biome cells (protocol 6; the Biome tool's Fill selection). Biomes are stored per
-     * <i>quart</i>: a 4×4×4 cell aligned to multiples of 4 in world coordinates, as the game keeps them. With
-     * {@code columns} every quart in each quart column whose centre column ({@code min + 2} on x and z) holds a region
-     * cell is set, over the world's whole build height; without, each quart whose centre cell ({@code min + 2} on every
-     * axis) is a region cell is set. Needs the {@code biome} node; undone exactly.
+     * <i>quart</i>: a 4×4×4 cell aligned to multiples of 4 in world coordinates, as the game keeps them. Every quart the
+     * region touches is set (WorldEdit's {@code //setbiome} rule): with {@code columns}, every quart over the world's
+     * whole build height of each quart column holding a region cell; without, each quart holding a region cell. Needs the
+     * {@code biome} node; the quarts it sets count against the op volume limit; undone exactly.
      *
      * @param biomeId the biome's registry id ("minecraft:cherry_grove"); a well-formed namespaced id
      */

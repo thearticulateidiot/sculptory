@@ -294,19 +294,25 @@ class MultiplayerDispatcherTest {
     }
 
     @Test
-    void resyncNeedsUseAsWellAsBrush() {
+    void resyncNeedsUseAsWellAsBrushOrBiome() {
         Player alice = connect("alice");
         permissions.granted.remove(Perm.USE);
         alice.send(new C2S.Resync(BOX));
         assertEquals(ServerDispatcher.RESYNC_NO_PERMISSION, ((S2C.Notice) alice.transport.last()).key());
         permissions.granted.add(Perm.USE);
         permissions.granted.remove(Perm.BRUSH);
+        permissions.granted.remove(Perm.BIOME);
         alice.send(new C2S.Resync(BOX));
         assertEquals(ServerDispatcher.RESYNC_NO_PERMISSION, ((S2C.Notice) alice.transport.last()).key());
+        permissions.granted.add(Perm.BIOME);
+        alice.send(new C2S.Resync(BOX));
+        assertEquals(ServerDispatcher.RESYNC_NO_STROKE, ((S2C.Notice) alice.transport.last()).key(),
+                "the biome node serves a Biome brush stroke (protocol 6): the request goes on (and finds no stroke)");
+        permissions.granted.remove(Perm.BIOME);
         permissions.granted.add(Perm.BRUSH);
         alice.send(new C2S.Resync(BOX));
         assertEquals(ServerDispatcher.RESYNC_NO_STROKE, ((S2C.Notice) alice.transport.last()).key(),
-                "with both nodes the request goes on (and finds no stroke)");
+                "with use and brush the request goes on (and finds no stroke)");
     }
 
     // ---------------------------------------------------------------- concurrent transfers

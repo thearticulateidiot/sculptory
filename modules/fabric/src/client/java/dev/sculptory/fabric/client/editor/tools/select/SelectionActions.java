@@ -81,7 +81,8 @@ public final class SelectionActions {
      * {@link #applyProperty}).
      */
     public enum Op {
-        FILL, REPLACE, ERASE, HOLLOW, WALLS, EXTRUDE, CARVE, SMEAR, TINKER, OVERLAY, NATURALIZE, UPDATE_BLOCKS, ROTATE;
+        FILL, REPLACE, ERASE, HOLLOW, WALLS, EXTRUDE, CARVE, SMEAR, TINKER, OVERLAY, NATURALIZE, UPDATE_BLOCKS, ROTATE,
+        BIOME_FILL;
 
         public String nameKey() {
             return "sculptory.op." + name().toLowerCase(Locale.ROOT);
@@ -96,9 +97,15 @@ public final class SelectionActions {
                 case EXTRUDE -> OpLabel.EXTRUDE;
                 case CARVE -> OpLabel.CARVE;
                 case SMEAR -> OpLabel.SMEAR;
+                case BIOME_FILL -> OpLabel.BIOME_FILL;
                 case ROTATE -> OpLabel.ROTATE;
                 case FILL, REPLACE, ERASE, HOLLOW, WALLS, TINKER, OVERLAY, NATURALIZE, UPDATE_BLOCKS -> OpLabel.NONE;
             };
+        }
+
+        /** The node the op needs beside {@code use}: {@code biome} for a biome fill (protocol 6), else {@code region}. */
+        public Perm node() {
+            return this == BIOME_FILL ? Perm.BIOME : Perm.REGION;
         }
     }
 
@@ -451,6 +458,16 @@ public final class SelectionActions {
     }
 
     /**
+     * Sets the biome of every quart the selection touches to {@code biomeId} (protocol 6; the Biome tool's and the
+     * Selection window's Fill selection): whole quart columns with {@code columns}, else only the quarts holding a
+     * selected cell. One undo step, "Biome fill". Needs the {@code biome} node; the usual checks and confirmation apply,
+     * with the Select tool's symmetry.
+     */
+    public boolean biomeFill(String biomeId, boolean columns) {
+        return run(Op.BIOME_FILL, region -> Optional.of(new OpSpec.BiomeFill(region, biomeId, columns)));
+    }
+
+    /**
      * Tinker's "Apply to all like it in the selection": a Fill of the selection with
      * the property pattern, setting {@code property} to {@code template}'s value on every block of {@code template}'s
      * type in it (the other blocks are left alone). The usual checks, size limit and confirmation apply, counted on the
@@ -470,8 +487,8 @@ public final class SelectionActions {
             return false;
         }
         Permissions permissions = ctx.session().permissions();
-        if (!permissions.has(Perm.REGION)) {
-            notify(Notice.Level.WARNING, "sculptory.notice.needs_permission", Perm.REGION.node());
+        if (!permissions.has(op.node())) {
+            notify(Notice.Level.WARNING, "sculptory.notice.needs_permission", op.node().node());
             return false;
         }
         Optional<Symmetry> symmetry = symmetric ? symmetryOrExplain(ctx, symmetryMode()) : Optional.of(Symmetry.NONE);

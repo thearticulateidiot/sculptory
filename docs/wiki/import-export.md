@@ -10,7 +10,7 @@ Builds travel as files: drop one on the game to import it, or export the clipboa
 
 | Format | Made by | Notes |
 |---|---|---|
-| `.schem` | WorldEdit and most editors (Sponge schematic, versions 1–3) | The default. Biomes in the file are left out |
+| `.schem` | WorldEdit and most editors (Sponge schematic, versions 1–3) | The default. Keeps biomes both ways (versions 2 and 3 hold them); paste them with **Biomes** ticked in [Place](place.md) |
 | `.litematic` | Litematica (versions 2–6) | Every region comes in at its own place; the cells between regions stay untouched when pasted |
 | `.nbt` | Vanilla structure blocks | Lists every block, so at most 1,048,576 blocks; structure blocks themselves load only 48 per side |
 

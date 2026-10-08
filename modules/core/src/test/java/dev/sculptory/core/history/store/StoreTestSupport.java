@@ -106,6 +106,7 @@ final class StoreTestSupport {
         store.begin(e.owner(), e.id(), e.createdMillis(), e.world(), e.label());
         sections(store, e);
         store.entities(e.owner(), e.id(), e.record().entities());
+        store.biomes(e.owner(), e.id(), e.record().biomes());
         store.seal(e.owner(), e.id(), e.label(), e.createdMillis(), e.record().estimatedBytes());
         store.push(e.owner(), e.id());
     }
@@ -121,6 +122,7 @@ final class StoreTestSupport {
         assertSameBuffer(expected.before(), actual.before());
         assertSameBuffer(expected.after(), actual.after());
         assertEquals(expected.entities(), actual.entities(), "entities");
+        assertEquals(expected.biomes(), actual.biomes(), "biomes");
     }
 
     static void assertSameBuffer(BlockBuffer expected, BlockBuffer actual) {

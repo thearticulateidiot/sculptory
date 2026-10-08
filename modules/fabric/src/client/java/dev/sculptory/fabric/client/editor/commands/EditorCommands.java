@@ -83,6 +83,8 @@ public final class EditorCommands {
     /** View > Opacity…: the panels' and the tool outlines' opacity (a popup). */
     public static final String OPACITY = "view.opacity";
     public static final String AIM_AT_FLUIDS = "view.aim_at_fluids";
+    /** View > Biome view (protocol 6): tints the ground by biome and opens its legend. */
+    public static final String VIEW_BIOMES = "view.biomes";
     public static final String FIND_COMMAND = "help.find_command";
     public static final String KEY_SHEET = "help.key_sheet";
     public static final String QUICK_START = "help.quick_start";
@@ -380,6 +382,9 @@ public final class EditorCommands {
                 .tooltip("sculptory.command.view.aim_at_fluids.tooltip")
                 .checked(controller::aimsAtFluids)
                 .action(() -> controller.setAimAtFluids(!controller.aimsAtFluids())));
+        add(command(VIEW_BIOMES, CommandMenu.VIEW)
+                .tooltip("sculptory.command.view.biomes.tooltip")
+                .provided());
     }
 
     /** UI size ▸: Smaller, Larger, then every size with a check on the current one. */

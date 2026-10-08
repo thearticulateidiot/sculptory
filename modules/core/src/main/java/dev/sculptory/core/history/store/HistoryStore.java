@@ -2,6 +2,8 @@ package dev.sculptory.core.history.store;
 
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
+import dev.sculptory.core.history.BiomeChange;
+import dev.sculptory.core.history.BiomeChanges;
 import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.EntityChange;
 import java.io.IOException;
@@ -262,6 +264,21 @@ public final class HistoryStore {
         }
     }
 
+    /** A batch of an entry's biome changes (protocol 6), encoded on the I/O thread. */
+    private static final class BiomeAppend extends Item {
+        final UUID entry;
+        final List<BiomeChange> changes;
+        /** The chunk columns the changes are in ({@link #column}), for {@link #awaitColumn}. */
+        final long[] columns;
+
+        BiomeAppend(UUID player, UUID entry, List<BiomeChange> changes, long[] columns) {
+            super(player, 64 + 32L * changes.size());
+            this.entry = entry;
+            this.changes = changes;
+            this.columns = columns;
+        }
+    }
+
     private static final class LoadRequest extends Item {
         LoadRequest(UUID player) {
             super(player, 0);
@@ -427,6 +444,22 @@ public final class HistoryStore {
         }
         offer(new EntityAppend(player, entry, List.copyOf(changes),
                 columns.stream().mapToLong(Long::longValue).toArray()));
+    }
+
+    /**
+     * A batch of an entry's biome changes (protocol 6; a later change of a quart replaces an earlier one, and one with
+     * the same biome on both sides cancels it). The list must not change afterwards. A chunk save of a column one of
+     * them is in waits for it ({@link #awaitColumn}).
+     */
+    public void biomes(UUID player, UUID entry, List<BiomeChange> changes) {
+        if (changes.isEmpty()) return;
+        // A BiomeChanges is immutable and compact: kept as it is, read without an object per quart.
+        BiomeChanges compact = BiomeChanges.of(changes);
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet columns = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (int i = 0; i < compact.size(); i++) columns.add(column(compact.qx(i) >> 2, compact.qz(i) >> 2));
+        long[] sorted = columns.toLongArray();
+        java.util.Arrays.sort(sorted);
+        offer(new BiomeAppend(player, entry, compact, sorted));
     }
 
     /** The entry's data is complete: its final label, creation time and estimated heap bytes. */
@@ -798,6 +831,10 @@ public final class HistoryStore {
                 for (long column : batch.columns) {
                     columns.computeIfAbsent(column, c -> new HashMap<>()).put(item.player, item.seq);
                 }
+            } else if (item instanceof BiomeAppend batch) {
+                for (long column : batch.columns) {
+                    columns.computeIfAbsent(column, c -> new HashMap<>()).put(item.player, item.seq);
+                }
             } else if (item instanceof Append append && append.type == Journal.Type.REDO_BEGIN) {
                 redoBegins.put(item.player, item.seq);
             }
@@ -1032,6 +1069,8 @@ public final class HistoryStore {
             if (item instanceof SectionAppend section) {
                 handledColumn(columnOf(section.key), item);
             } else if (item instanceof EntityAppend batch) {
+                for (long column : batch.columns) handledColumn(column, item);
+            } else if (item instanceof BiomeAppend batch) {
                 for (long column : batch.columns) handledColumn(column, item);
             }
             Long redo = redoBegins.get(item.player);
@@ -1301,6 +1340,25 @@ public final class HistoryStore {
                     afterWrite(pf, op);
                 }
             }
+            case BiomeAppend batch -> {
+                PlayerFile pf = file(batch.player);
+                if (!writable(pf) || pf.unpersistable.contains(batch.entry)) return;
+                List<byte[]> payloads = new ArrayList<>();
+                try {
+                    for (List<BiomeChange> part : BiomeCodec.batches(batch.changes)) {
+                        payloads.add(Journal.biomes(batch.entry, codec.dataVersion(), part.size(),
+                                BiomeCodec.encode(part)));
+                    }
+                } catch (IllegalArgumentException | IllegalStateException e) {
+                    unpersistable(pf, batch.entry, e);
+                    return;
+                }
+                for (byte[] payload : payloads) {
+                    Journal.Op op = append(pf, Journal.Type.BIOMES, payload, item.seq);
+                    if (op == null) return;
+                    afterWrite(pf, op);
+                }
+            }
             case LoadRequest request -> {
                 PlayerFile pf = file(request.player);
                 if (pf == null) {
@@ -1343,10 +1401,13 @@ public final class HistoryStore {
         long at;
         try {
             StorageIo.File file = ensureOpen(pf);
-            if (type == Journal.Type.ENTITIES && (pf.flags & Journal.FLAG_ENTITIES) == 0) {
-                // A build that does not know entity records must leave this file alone rather than cut it off at the
-                // first one: the header says so, on the device, before the record is written (once per file).
-                int flags = pf.flags | Journal.FLAG_ENTITIES;
+            int needed = type == Journal.Type.ENTITIES ? Journal.FLAG_ENTITIES
+                    : type == Journal.Type.BIOMES ? Journal.FLAG_BIOMES : 0;
+            if ((pf.flags & needed) != needed) {
+                // A build that does not know entity (or biome) records must leave this file alone rather than cut it
+                // off at the first one: the header says so, on the device, before the record is written (once per
+                // file and kind).
+                int flags = pf.flags | needed;
                 file.write(ByteBuffer.wrap(Journal.header(pf.player, flags)), 0);
                 file.force();
                 pf.flags = flags;
@@ -1552,7 +1613,9 @@ public final class HistoryStore {
                     return new Scanned1(null, Journal.FRAME_BYTES + length, "a record with a bad checksum", true,
                             false);
                 }
-                op = section ? Journal.decodeSectionHead(head, length) : Journal.decodeEntitiesHead(head, length);
+                op = section ? Journal.decodeSectionHead(head, length)
+                        : type == Journal.Type.BIOMES ? Journal.decodeBiomesHead(head, length)
+                        : Journal.decodeEntitiesHead(head, length);
             } else {
                 byte[] record = new byte[Journal.FRAME_BYTES + length];
                 System.arraycopy(frame, 0, record, 0, Journal.FRAME_BYTES);
@@ -1905,7 +1968,8 @@ public final class HistoryStore {
                 append(pf, Journal.Type.ABORT, Journal.mark(entry.id), 0);
             } else {
                 String label = entry.baseLabel + " (interrupted) · " + blocks(record.before().cellCount())
-                        + (record.entities().isEmpty() ? "" : " · " + entities(record.entities().size()));
+                        + (record.entities().isEmpty() ? "" : " · " + entities(record.entities().size()))
+                        + (record.biomes().isEmpty() ? "" : " · " + biomeCells(record.biomes().size()));
                 append(pf, Journal.Type.SEAL, Journal.seal(entry.id, label, entry.created, record.estimatedBytes()), 0);
                 if (pf.broken) return;
                 append(pf, Journal.Type.PUSH, Journal.mark(entry.id), 0);
@@ -1926,7 +1990,12 @@ public final class HistoryStore {
         return n == 1 ? "1 entity" : String.format(Locale.ROOT, "%,d entities", n);
     }
 
-    /** Reads and decodes one entry's latest sections and its entities. */
+    /** "1 biome cell", "1,536 biome cells" (as the edit service labels entries). */
+    static String biomeCells(long n) {
+        return n == 1 ? "1 biome cell" : String.format(Locale.ROOT, "%,d biome cells", n);
+    }
+
+    /** Reads and decodes one entry's latest sections, its entities and its biomes. */
     private EditRecord readRecord(PlayerFile pf, JournalState.Entry entry) throws IOException {
         StorageIo.File file = ensureOpen(pf);
         BlockBuffer before = new BlockBuffer();
@@ -1936,7 +2005,9 @@ public final class HistoryStore {
         }
         LinkedHashMap<UUID, EntityChange> changes = new LinkedHashMap<>();
         for (JournalState.EntitiesRef batch : entry.entities) decodeEntities(file, batch, changes);
-        return new EditRecord(before, after, keptChanges(changes));
+        BiomeLoad biomes = new BiomeLoad();
+        for (JournalState.BiomesRef batch : entry.biomes) decodeBiomes(file, batch, biomes);
+        return new EditRecord(before, after, keptChanges(changes), biomes.kept());
     }
 
     /**
@@ -1961,6 +2032,30 @@ public final class HistoryStore {
         byte[] body = java.util.Arrays.copyOfRange(record, start, record.length);
         // A later change replaces an earlier one in place: entities keep the order they were first recorded in.
         for (EntityChange change : EntityCodec.decode(body, decoded.changes())) changes.put(change.id(), change);
+    }
+
+    /**
+     * Reads one biomes record into {@code changes} (a later change of a quart replaces an earlier one).
+     *
+     * @throws UnrestorableException for another game data version
+     * @throws CorruptDataException if the record is damaged
+     */
+    private void decodeBiomes(StorageIo.File file, JournalState.BiomesRef batch,
+                              BiomeLoad changes) throws IOException {
+        if (batch.changes() == 0) return;
+        if (batch.dataVersion() != codec.dataVersion()) {
+            throw new UnrestorableException("biomes recorded by game data version " + batch.dataVersion()
+                    + ", this game is " + codec.dataVersion());
+        }
+        byte[] record = readRecord(file, batch.ref());
+        Journal.Op op = Journal.decode(Journal.Type.BIOMES, record, record.length - Journal.FRAME_BYTES);
+        if (!(op instanceof Journal.Biomes decoded) || decoded.changes() != batch.changes()) {
+            throw new CorruptDataException("biomes record does not match its index");
+        }
+        int start = Journal.FRAME_BYTES + decoded.bodyOffset();
+        byte[] body = java.util.Arrays.copyOfRange(record, start, record.length);
+        // A later change replaces an earlier one in place: quarts keep the order they were first recorded in.
+        BiomeCodec.decode(body, decoded.changes(), changes::put);
     }
 
     /** The changes a record keeps: cancelled and unchanged ones left out. */
@@ -2156,9 +2251,11 @@ public final class HistoryStore {
         int index;
         Iterator<Map.Entry<Long, JournalState.SectionRef>> sections;
         Iterator<JournalState.EntitiesRef> entityBatches;
+        Iterator<JournalState.BiomesRef> biomeBatches;
         BlockBuffer before;
         BlockBuffer after;
         LinkedHashMap<UUID, EntityChange> entityChanges;
+        BiomeLoad biomeChanges;
         /** Reads of each entry that found damaged data (kept when the load starts over). */
         final Map<UUID, Integer> damagedReads = new HashMap<>();
         /** Entries given up, with why (kept when the load starts over: they are not read again). */
@@ -2217,9 +2314,11 @@ public final class HistoryStore {
                 if (sections == null) {
                     sections = entry.sections.entrySet().iterator();
                     entityBatches = entry.entities.iterator();
+                    biomeBatches = entry.biomes.iterator();
                     before = new BlockBuffer();
                     after = new BlockBuffer();
                     entityChanges = new LinkedHashMap<>();
+                    biomeChanges = new BiomeLoad();
                 }
                 try {
                     StorageIo.File file = ensureOpen(pf);
@@ -2232,6 +2331,11 @@ public final class HistoryStore {
                         JournalState.EntitiesRef batch = entityBatches.next();
                         budget -= batch.ref().length();
                         decodeEntities(file, batch, entityChanges);
+                    }
+                    while (!sections.hasNext() && !entityBatches.hasNext() && biomeBatches.hasNext() && budget > 0) {
+                        JournalState.BiomesRef batch = biomeBatches.next();
+                        budget -= batch.ref().length();
+                        decodeBiomes(file, batch, biomeChanges);
                     }
                 } catch (UnrestorableException e) {
                     givenUp.put(entry.id, e.getMessage());
@@ -2261,8 +2365,9 @@ public final class HistoryStore {
                     wait = wait == 0 ? RETRY_FIRST_NANOS : Math.min(RETRY_MAX_NANOS, wait * 2);
                     return retry(pf, e, wait);
                 }
-                if (sections.hasNext() || entityBatches.hasNext()) break;
-                EditRecord record = new EditRecord(before, after, keptChanges(entityChanges));
+                if (sections.hasNext() || entityBatches.hasNext() || biomeBatches.hasNext()) break;
+                EditRecord record = new EditRecord(before, after, keptChanges(entityChanges),
+                        biomeChanges.kept());
                 if (record.isEmpty()) {
                     givenUp.put(entry.id, "it holds nothing");
                     fail(entry, "it holds nothing");
@@ -2304,6 +2409,8 @@ public final class HistoryStore {
             sections = null;
             entityBatches = null;
             entityChanges = null;
+            biomeBatches = null;
+            biomeChanges = null;
             before = null;
             after = null;
         }
@@ -2319,6 +2426,8 @@ public final class HistoryStore {
             sections = null;
             entityBatches = null;
             entityChanges = null;
+            biomeBatches = null;
+            biomeChanges = null;
             before = null;
             after = null;
         }
@@ -2342,8 +2451,11 @@ public final class HistoryStore {
         long length;
         /** The flags the copy's header was written with. */
         int headerFlags;
-        /** Whether an {@code ENTITIES} record went into the copy (even one of an entry dropped again since). */
-        boolean copiedEntities;
+        /**
+         * The header flags the records copied need: an {@code ENTITIES} or {@code BIOMES} record went into the copy (even
+         * one of an entry dropped again since).
+         */
+        int copiedFlags;
 
         CompactTask(PlayerFile pf) {
             this.pf = pf;
@@ -2376,6 +2488,7 @@ public final class HistoryStore {
                 if (section.cells() > 0) plan.add(section.ref());
             }
             for (JournalState.EntitiesRef batch : entry.entities) plan.add(batch.ref());
+            for (JournalState.BiomesRef batch : entry.biomes) plan.add(batch.ref());
             if (entry.seal != null) plan.add(entry.seal);
         }
 
@@ -2397,7 +2510,7 @@ public final class HistoryStore {
                     io.delete(temp);
                     out = io.open(temp);
                     out.truncate(0);
-                    headerFlags = pf.state.holdsEntities() ? Journal.FLAG_ENTITIES : 0;
+                    headerFlags = pf.state.flagsNeeded();
                     append(Journal.header(pf.player, headerFlags), false);
                 }
                 StorageIo.File source = ensureOpen(pf);
@@ -2423,7 +2536,8 @@ public final class HistoryStore {
             if (apply) {
                 int payload = record.length - Journal.FRAME_BYTES;
                 Journal.Type type = Journal.Type.of(record[4]);
-                if (type == Journal.Type.ENTITIES) copiedEntities = true;
+                if (type == Journal.Type.ENTITIES) copiedFlags |= Journal.FLAG_ENTITIES;
+                if (type == Journal.Type.BIOMES) copiedFlags |= Journal.FLAG_BIOMES;
                 state.apply(Journal.decode(type, record, payload), new JournalState.Ref(length, record.length));
             }
             length += record.length;
@@ -2440,10 +2554,11 @@ public final class HistoryStore {
                 append(record, true);
                 position += record.length;
             }
-            // Entity records copied (appended meanwhile) need the flag the copy's header was written without, also when
-            // their entry was aborted, evicted or dropped since: an older build must not cut the file at such a record.
-            if (copiedEntities && (headerFlags & Journal.FLAG_ENTITIES) == 0) {
-                headerFlags |= Journal.FLAG_ENTITIES;
+            // Entity or biome records copied (appended meanwhile) need the flag the copy's header was written without,
+            // also when their entry was aborted, evicted or dropped since: an older build must not cut the file at such a
+            // record.
+            if ((headerFlags | copiedFlags) != headerFlags) {
+                headerFlags |= copiedFlags;
                 out.write(ByteBuffer.wrap(Journal.header(pf.player, headerFlags)), 0);
             }
             out.force();
@@ -2521,7 +2636,10 @@ public final class HistoryStore {
         long length;
         int kept;
         int applied;
-        /** The copy's header flags: {@link Journal#FLAG_ENTITIES} when a planned entry holds entities. */
+        /**
+         * The copy's header flags: {@link Journal#FLAG_ENTITIES} and {@link Journal#FLAG_BIOMES}, as planned entries
+         * need.
+         */
         int flags;
 
         RewriteTask(PlayerFile pf, RewriteRequest request) {
@@ -2564,8 +2682,12 @@ public final class HistoryStore {
                 for (JournalState.SectionRef section : old.sections.values()) {
                     if (section.cells() > 0) plan.add(() -> skipped.contains(id) ? null : copy(section.ref()));
                 }
-                if (!old.entities.isEmpty()) flags = Journal.FLAG_ENTITIES;
+                if (!old.entities.isEmpty()) flags |= Journal.FLAG_ENTITIES;
                 for (JournalState.EntitiesRef batch : old.entities) {
+                    plan.add(() -> skipped.contains(id) ? null : copy(batch.ref()));
+                }
+                if (!old.biomes.isEmpty()) flags |= Journal.FLAG_BIOMES;
+                for (JournalState.BiomesRef batch : old.biomes) {
                     plan.add(() -> skipped.contains(id) ? null : copy(batch.ref()));
                 }
                 plan.add(() -> skipped.contains(id) ? null : copy(old.seal));
@@ -2598,7 +2720,7 @@ public final class HistoryStore {
             }
             List<EntityChange> entities = entry.record().entities();
             if (!entities.isEmpty()) {
-                flags = Journal.FLAG_ENTITIES;
+                flags |= Journal.FLAG_ENTITIES;
                 List<List<EntityChange>> batches;
                 try {
                     batches = EntityCodec.batches(entities);
@@ -2614,6 +2736,24 @@ public final class HistoryStore {
                             return Journal.frame(Journal.Type.ENTITIES, payload);
                         } catch (IllegalArgumentException | IllegalStateException e) {
                             log.warn("Sculptory: a step of " + pf.player + "'s undo history is too large to save ("
+                                    + e.getMessage() + "); it can be undone until the server stops", null);
+                            skipped.add(id);
+                            return Journal.frame(Journal.Type.ABORT, Journal.mark(id));
+                        }
+                    });
+                }
+            }
+            List<BiomeChange> biomes = entry.record().biomes();
+            if (!biomes.isEmpty()) {
+                flags |= Journal.FLAG_BIOMES;
+                for (List<BiomeChange> batch : BiomeCodec.batches(biomes)) {
+                    plan.add(() -> {
+                        if (skipped.contains(id)) return null;
+                        try {
+                            return Journal.frame(Journal.Type.BIOMES, Journal.biomes(id, codec.dataVersion(),
+                                    batch.size(), BiomeCodec.encode(batch)));
+                        } catch (IllegalArgumentException | IllegalStateException e) {
+                            log.warn("Sculptory: a step of " + pf.player + "'s undo history cannot be saved ("
                                     + e.getMessage() + "); it can be undone until the server stops", null);
                             skipped.add(id);
                             return Journal.frame(Journal.Type.ABORT, Journal.mark(id));

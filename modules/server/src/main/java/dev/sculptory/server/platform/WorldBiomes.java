@@ -32,7 +32,8 @@ public interface WorldBiomes {
     boolean loaded(int cx, int cz);
 
     /**
-     * The biome handle of quart {@code (qx, qy, qz)}.
+     * The biome handle of quart {@code (qx, qy, qz)}, or -1 when it holds a biome the world's registry does not list (a
+     * mod placed one directly): such a quart is never read as an id or written over.
      *
      * @throws IllegalStateException if its chunk is not loaded
      * @throws IllegalArgumentException if {@code qy} is outside the world's height
@@ -42,7 +43,8 @@ public interface WorldBiomes {
     /**
      * Sets quart {@code (qx, qy, qz)} to biome {@code handle} exactly (that one quart, no blending), marks its chunk to be
      * saved and to be sent at the next {@link #flush}, and returns the handle it held. Setting the biome it holds
-     * changes nothing and marks nothing.
+     * changes nothing and marks nothing. A quart holding a biome the registry does not list ({@link #get}
+     * -1) is left alone: -1 is returned and nothing changes.
      *
      * @throws IllegalStateException if its chunk is not loaded
      * @throws IllegalArgumentException if {@code qy} is outside the world's height or {@code handle} names no biome

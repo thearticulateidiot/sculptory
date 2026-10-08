@@ -372,6 +372,16 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
             public void entitiesFinished() {
                 sink.entitiesFinished();
             }
+
+            @Override
+            public void biome(int qx, int qy, int qz, String before, String after) {
+                sink.biome(qx, qy, qz, before, after);
+            }
+
+            @Override
+            public void biomesFinished() {
+                sink.biomesFinished();
+            }
         };
     }
 
@@ -421,6 +431,16 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
             @Override
             public void entitiesFinished() {
                 sink.entitiesFinished();
+            }
+
+            @Override
+            public void biome(int qx, int qy, int qz, String before, String after) {
+                sink.biome(qx, qy, qz, before, after);
+            }
+
+            @Override
+            public void biomesFinished() {
+                sink.biomesFinished();
             }
         };
     }

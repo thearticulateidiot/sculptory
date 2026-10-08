@@ -5,6 +5,24 @@ same build.
 
 ## Unreleased
 
+- **Free rotation**: turn a paste or a move by any angle around any axis.
+  - Three rings on the ghost snap every 15°; hold `Ctrl` to turn freely, or type the angles in Tool Settings.
+  - **Rotate…** in the Selection window turns blocks where they stand.
+  - Blocks that face a way take the nearest facing, including tipped onto their side or upside down, and 90° turns are
+    exact.
+- **Extrude along a path and to a point**: Extrude gets a Direction setting. Carry a face along a curve you click, or
+  taper it to a tip for pyramids, spires and cones.
+- **Generate Sweep, Stamp and Heightmap**:
+  - Sweep carries the selection as a profile along a path.
+  - Stamp places the clipboard or a library asset at each point you click, turned along the path.
+  - Heightmap shapes a selected area from a grayscale picture.
+- **Heightmap brush** (`;`): stamp or paint terrain from grayscale pictures, using the built-in set or your own PNGs in
+  `sculptory/heightmaps`.
+- **Biome tool** (`'`): paint biomes, or fill the selection with one, as whole columns or in 3D.
+  - Biomes travel with copy, move, stack and `.schem`; Paste has a Biomes toggle.
+  - View > Biome view tints the ground by biome.
+  - Needs the new `sculptory.biome` permission.
+- Servers can cap the Heightmap brush's height with `limits.maxHeightmapHeight`.
 - Network protocol 6: this build and 0.3.0-alpha refuse each other at the handshake (client and server need the same
   protocol).
 

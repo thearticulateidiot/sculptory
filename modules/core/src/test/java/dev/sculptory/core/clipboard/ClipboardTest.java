@@ -179,6 +179,29 @@ class ClipboardTest {
         assertEquals(18 * 36 + 2, masked.cellCount());
         assertEquals(-1, masked.get(0, 2, 0), "masked-out cells are absent");
         assertEquals(BlockPos.ORIGIN, masked.anchor());
+
+        // A copy with biomes and entities in one step is the copy those steps make one by one (hashed once).
+        dev.sculptory.core.region.Region region = new dev.sculptory.core.region.Region.Cuboid(box);
+        dev.sculptory.core.biome.BiomeMapping.QuartReader biomes = (qx, qy, qz) -> qx < -3 ? "minecraft:desert" : null;
+        List<EntitySnapshot> taken = List.of(entity("minecraft:boat", -9.5, NbtCompound.EMPTY, true));
+        Clipboard once = Clipboard.copyOf(world, region, box, box.min(), null, "copy", biomes, taken);
+        Clipboard stepwise = Clipboard.copyOf(world, region, box, box.min(), null, "copy")
+                .withBiomesFrom(box.min(), biomes).withEntities(taken);
+        assertEquals(stepwise.contentHash(), once.contentHash());
+        assertEquals(stepwise.biomes(), once.biomes());
+        assertEquals(stepwise.entities(), once.entities());
+        assertNull(Clipboard.copyOf(world, region, box, box.min(), null, "copy", (qx, qy, qz) -> null, List.of())
+                .biomes(), "no quart read, no biomes");
+
+        // Two cells far apart: their box is too large for a dense biome grid, so only the biomes are dropped.
+        dev.sculptory.core.region.CellSet.Builder far = dev.sculptory.core.region.CellSet.builder();
+        far.add(-10, 60, 5);
+        far.add(9_000_000, 60, 9_000_000);
+        dev.sculptory.core.region.Region sparse = new dev.sculptory.core.region.Region.Cells(far.build());
+        Clipboard wide = Clipboard.copyOf(world, sparse, sparse.bounds(), sparse.bounds().min(), null, "copy",
+                (qx, qy, qz) -> "minecraft:desert", List.of());
+        assertNull(wide.biomes());
+        assertEquals(2, wide.cellCount(), "the blocks are copied");
     }
 
     // ---- Entities ----

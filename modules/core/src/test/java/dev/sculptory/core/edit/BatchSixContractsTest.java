@@ -130,7 +130,7 @@ class BatchSixContractsTest {
     }
 
     @Test
-    void aBiomeFillNamesAWellFormedBiomeAndIsAStubForNow() {
+    void aBiomeFillNamesAWellFormedBiomeAndCompilesToTheQuartsItTouches() {
         OpSpec.BiomeFill fill = new OpSpec.BiomeFill(BOX, "minecraft:cherry_grove", true);
         assertEquals(Symmetry.NONE, fill.symmetry());
         assertEquals(BOX, OpRegions.region(fill));
@@ -145,11 +145,42 @@ class BatchSixContractsTest {
         assertEquals("minecraft:cherry_grove", image.biomeId());
         assertTrue(image.columns());
         assertEquals(MIRROR.imageBox(copies.get(1).image(), BOX.bounds()), image.box());
-        assertThrows(UnsupportedOperationException.class, () -> OpCompiler.compile(fill, CONTEXT));
+        assertThrows(IllegalArgumentException.class, () -> OpCompiler.compile(fill, CONTEXT),
+                "a fill needs the world's build height");
+        CompileContext world = new CompileContext() {
+            @Override
+            public StateSpace states() {
+                return STATES;
+            }
+
+            @Override
+            public Optional<SourceBlocks> source(SourceRef ref) {
+                return Optional.empty();
+            }
+
+            @Override
+            public int bottomY() {
+                return -64;
+            }
+
+            @Override
+            public int topYExclusive() {
+                return 320;
+            }
+        };
+        // x and z 0..7 touch two quart columns each way; full height is 96 quarts.
+        BiomeFillProgram program = (BiomeFillProgram) OpCompiler.compile(fill, world);
+        assertEquals(4 * 96, program.estimatedCells());
+        assertEquals(0, program.sectionOrder().length, "no block is written");
+        BiomeFillProgram threeD = (BiomeFillProgram) OpCompiler.compile(new OpSpec.BiomeFill(BOX, "minecraft:desert",
+                false), world);
+        assertEquals(4, threeD.estimatedCells(), "y 60..63 is one quart layer");
+        assertEquals(8 * 96, ((BiomeFillProgram) OpCompiler.compile(mirrored, world)).estimatedCells(),
+                "the mirrored copy's quarts too");
     }
 
     @Test
-    void theHeightmapAndBiomeBrushesHaveTheirOwnSpecsAndTheBiomeAStubKernel() {
+    void theHeightmapAndBiomeBrushesHaveTheirOwnSpecs() {
         assertFalse(BrushTool.HEIGHTMAP.terrain());
         assertFalse(BrushTool.BIOME.terrain());
         assertFalse(SculptMode.surfaceTool(BrushTool.HEIGHTMAP));
@@ -174,15 +205,6 @@ class BatchSixContractsTest {
                 new BiomeSpec("minecraft:desert", true));
         assertEquals(new BiomeSpec("minecraft:desert", true), biome.withSymmetry(MIRROR).biome());
         assertThrows(IllegalArgumentException.class, () -> new BiomeSpec("Desert", true));
-        // ws/heightmap built its kernel (HeightmapKernelTest); the Biome brush is still a stub.
-        for (BrushSpec spec : List.of(biome)) {
-            UnsupportedOperationException stub = assertThrows(UnsupportedOperationException.class,
-                    () -> BrushKernels.forTool(spec.tool()).applyStep(spec, List.of(new Dab(0, 0, 64 * 16, 0, 255)),
-                            new StrokeState(), new FakeWorld(STATES), (x, y, z, s) -> {
-                                throw new AssertionError("wrote " + x + " " + y + " " + z);
-                            }));
-            assertTrue(stub.getMessage().contains("not implemented"), stub.getMessage());
-        }
     }
 
     @Test

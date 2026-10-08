@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Copy, paste and share](home.md#copy-paste-and-share)
 
-The clipboard holds what you last copied or cut: blocks, their contents and the entities in them. From there you paste it with [Place](place.md), save it to the [Library](library.md) or export it to a file. There is one clipboard per player, kept on the server.
+The clipboard holds what you last copied or cut: blocks, their contents, the entities in them and their biomes. From there you paste it with [Place](place.md), save it to the [Library](library.md) or export it to a file. There is one clipboard per player, kept on the server.
 
 ![The Clipboard window](images/clipboard-window.png)
 
@@ -35,6 +35,10 @@ The Select tool's **Entities** setting decides what comes along with the blocks.
 | None | Blocks only |
 
 Players and dropped items never come along.
+
+## Biomes
+
+A copy also keeps the biomes of the 4×4×4 biome cells its blocks are in. Paste writes them only with **Biomes** ticked in [Place](place.md); Move and Stack carry them along. See [Biomes](biomes.md).
 
 ## Tips
 

@@ -17,6 +17,7 @@ import dev.sculptory.fabric.world.FabricNeighbourShapes;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import dev.sculptory.fabric.world.FabricTile;
 import dev.sculptory.fabric.world.FabricTileMatcher;
+import dev.sculptory.fabric.world.FabricWorldBiomes;
 import dev.sculptory.fabric.world.FabricWorldEntities;
 import dev.sculptory.fabric.world.FabricWorldReader;
 import dev.sculptory.fabric.world.FeatureGrower;
@@ -70,6 +71,11 @@ import org.slf4j.LoggerFactory;
  * {@link MinecraftServer}.
  */
 public final class EngineRuntime implements EngineHost<ServerPlayerEntity, ServerWorld> {
+    /**
+     * Each world's biomes ({@link #biomes}). The value holds its world, so a weak map would never drop it: the entry is
+     * removed when the world unloads (ServerWorldEvents.UNLOAD). Server thread only.
+     */
+    private final java.util.Map<ServerWorld, FabricWorldBiomes> worldBiomes = new java.util.IdentityHashMap<>();
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static boolean installed;
     private static volatile EngineRuntime current;
@@ -119,6 +125,11 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
         ServerLifecycleEvents.SERVER_STARTING.register(EngineRuntime::start);
         // Every entity type is known once the worlds exist: scanned before any player can send a file.
         ServerLifecycleEvents.SERVER_STARTED.register(server -> EntityTypeRules.scan(server.getOverworld()));
+        // A world unloading takes its biomes object (and its pending biome packets) with it.
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents.UNLOAD.register((server, world) -> {
+            EngineRuntime runtime = current;
+            if (runtime != null && runtime.server == server) runtime.worldBiomes.remove(world);
+        });
         ServerTickEvents.START_SERVER_TICK.register(server -> {
             EngineRuntime runtime = current;
             if (runtime == null || runtime.server != server) return;
@@ -465,12 +476,12 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
     }
 
     /**
-     * Contract stub (protocol 6): ws/biomes replaces it with the Fabric biome layer. Nothing calls it yet: the server
-     * refuses every biome edit before it would.
+     * The world's biomes ({@link FabricWorldBiomes}, protocol 6): one instance per world, so the chunks every job and
+     * stroke changed go out together once per tick. Forgotten when the world unloads.
      */
     @Override
     public WorldBiomes biomes(ServerWorld world) {
-        throw new UnsupportedOperationException("Biome editing is not implemented");
+        return worldBiomes.computeIfAbsent(world, FabricWorldBiomes::new);
     }
 
     /** {@link EntityTypeRules#scan}. */

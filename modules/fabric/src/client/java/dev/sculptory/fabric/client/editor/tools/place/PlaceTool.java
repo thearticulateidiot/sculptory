@@ -333,8 +333,16 @@ public final class PlaceTool implements Tool {
      * @param symmetryCentre the symmetry centre placements use, shared with the brushes and the Select tool
      */
     public PlaceTool(Services services, java.util.function.BooleanSupplier physicsAllowed, SymmetryCentre symmetryCentre) {
+        this(services, physicsAllowed, () -> true, symmetryCentre);
+    }
+
+    /**
+     * @param biomesAllowed whether the player may paste biomes (shows the Biomes setting; protocol 6)
+     */
+    public PlaceTool(Services services, java.util.function.BooleanSupplier physicsAllowed,
+                     java.util.function.BooleanSupplier biomesAllowed, SymmetryCentre symmetryCentre) {
         this.services = Objects.requireNonNull(services);
-        this.settings = new PlaceSettings(physicsAllowed);
+        this.settings = new PlaceSettings(physicsAllowed, biomesAllowed);
         this.symmetryCentre = Objects.requireNonNull(symmetryCentre);
         this.ghostFilter = new GhostFilter(services::releaseGhost);
     }
@@ -1414,9 +1422,12 @@ public final class PlaceTool implements Tool {
         }
         SettingsValues values = c.settings();
         boolean physics = values.get(settings.physics()) && permissions.has(Perm.PHYSICS);
+        // Biomes only for a player who may change them (protocol 6), as physics: a ticked toggle never refuses a paste.
+        boolean biomes = values.get(settings.biomes()) && permissions.has(Perm.BIOME);
         EntityFilter filter = values.get(settings.entities());
         OpSpec op = OpSymmetry.withSymmetry(placement.op(new PasteOptions(values.get(settings.includeAir()), physics,
-                filter != EntityFilter.NONE, values.get(settings.into())), c.states().air(), filter), symmetry);
+                filter != EntityFilter.NONE, values.get(settings.into())).withBiomes(biomes),
+                c.states().air(), filter), symmetry);
         Placement.Mode mode = placement.mode();
         // Where the selection goes after a move is worked out only once the move is sent (after any confirmation).
         Region source = placement.region();

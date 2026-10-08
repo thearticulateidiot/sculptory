@@ -252,6 +252,7 @@ public final class MockEditorSession implements EditorSession {
                     case OpSpec.Paste paste -> Perm.CLIPBOARD;
                     case OpSpec.PasteMany many -> Perm.CLIPBOARD;
                     case OpSpec.ScatterCommit commit -> Perm.SCATTER;
+                    case OpSpec.BiomeFill fill -> Perm.BIOME;
                     default -> Perm.REGION;
                 };
                 if (!permissions.has(needed) || (run.physics() && !permissions.has(Perm.PHYSICS))) {

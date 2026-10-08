@@ -82,6 +82,17 @@ public final class FabricDataFixHook implements DataFixHook {
         return result;
     }
 
+    /** Biome ids (protocol 6) go through {@code TypeReferences.BIOME} as an {@code NbtString}. */
+    @Override
+    public String fixBiome(String biomeId, int fromDataVersion) {
+        Objects.requireNonNull(biomeId);
+        if (fromDataVersion >= target) return biomeId;
+        Dynamic<NbtElement> fixed = fixer.update(TypeReferences.BIOME, new Dynamic<>(NbtOps.INSTANCE, NbtString.of(biomeId)),
+                fromDataVersion, target);
+        return fixed.asString().result()
+                .orElseThrow(() -> new IllegalStateException("the data fixer did not return a string for " + biomeId));
+    }
+
     /**
      * Entities go through {@code TypeReferences.ENTITY_TREE} (an entity with its {@code Passengers}, each fixed as an
      * {@code ENTITY}), as vanilla fixes the entities of a chunk.

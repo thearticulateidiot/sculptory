@@ -194,6 +194,47 @@ class SettingsFormTest {
         assertTrue(form.kind("nope").isEmpty());
     }
 
+    /** A biome setting (protocol 6) is a chip with the biome's swatch and name; picking one sets the value. */
+    @Test
+    void aBiomeSettingIsAChipThatOpensTheBiomePicker() {
+        SettingDef.Biome biome = new SettingDef.Biome("biome", "setting.biome", "minecraft:cherry_grove");
+        SettingsSchema schema = new SettingsSchema(List.of(new Section("", List.of(biome))));
+        List<String> asked = new ArrayList<>();
+        SettingsForm.Services picking = new SettingsForm.Services() {
+            @Override
+            public Translator translator() {
+                return Translator.KEYS;
+            }
+
+            @Override
+            public BlockCatalog blocks() {
+                return BlockCatalog.EMPTY;
+            }
+
+            @Override
+            public void pickBlock(Rect anchor, BlockDescriptor current, Consumer<BlockDescriptor> onPick) {}
+
+            @Override
+            public void pickBiome(Rect anchor, String current, Consumer<String> onPick) {
+                asked.add(current);
+                onPick.accept("minecraft:desert");
+            }
+
+            @Override
+            public Limits limits() {
+                return LIMITS;
+            }
+        };
+        SettingsForm form = SettingsForm.build(SettingsValues.defaults(schema), changes::add, picking);
+        assertEquals(Kind.BIOME, form.kind("biome").orElseThrow());
+        dev.sculptory.fabric.client.editor.biomes.BiomeChip chip = assertInstanceOf(
+                dev.sculptory.fabric.client.editor.biomes.BiomeChip.class, form.control("biome").orElseThrow());
+        chip.click();
+        assertEquals(List.of("minecraft:cherry_grove"), asked);
+        assertEquals("minecraft:desert", changes.get(changes.size() - 1).get(biome));
+        assertEquals("minecraft:desert", chip.biome());
+    }
+
     @Test
     void titledSectionsBecomeCollapsible() {
         List<Node> sections = form().node().children();

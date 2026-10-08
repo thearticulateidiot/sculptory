@@ -1,6 +1,7 @@
 package dev.sculptory.core.schem;
 
 import dev.sculptory.core.BlockPos;
+import dev.sculptory.core.biome.BiomeGrid;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.clipboard.Clipboard;
 import dev.sculptory.core.entity.EntityNbt;
@@ -41,8 +42,13 @@ import java.util.TreeSet;
  * {@code -WEOffset} ((0, 0, 0) without it). Every stored coordinate must be within
  * &plusmn;{@value #MAX_COORDINATE}.
  *
- * <p>Unknown states become air and are reported; biomes are counted and skipped; block entities that cannot be placed
- * are counted and skipped. Nothing is dropped silently.
+ * <p>Unknown states become air and are reported; block entities that cannot be placed are counted and skipped. Nothing
+ * is dropped silently.
+ *
+ * <p><b>Biomes</b> (protocol 6) are read from version 3's {@code Biomes: {Palette, Data}} (a biome per cell) and version
+ * 2's {@code BiomePalette}/{@code BiomeData} (a biome per column) into the clipboard's quart grid, and written as
+ * version 3 {@code Biomes} (a cell of an absent quart takes the grid's first biome) with the grid's phase in
+ * {@code Metadata.SculptoryBiomePhase}, which other readers ignore. Malformed biome data is skipped and reported.
  *
  * <p><b>Entities</b> (versions 2 and 3) are {@code {Pos: double[3], Id, Data}}
  * entries in the schematic's {@code Entities} list ({@code Pos} relative to the minimum corner in version 3, absolute in
@@ -70,6 +76,8 @@ public final class SchematicCodec {
     public static final int MAX_ASSET_TAGS = 64;
     public static final int MAX_ASSET_TAG_LENGTH = 128;
     public static final int MAX_REQUIRED_MODS = 256;
+    /** Most biome palette entries a file may hold (a modded server lists a few hundred), checked before any is fixed. */
+    public static final int MAX_BIOME_PALETTE = 4096;
     /** The compound that holds this mod's library metadata ({@link AssetInfo}) in a schematic. */
     public static final String META_KEY = "Sculptory";
     /** Its name in files written before the rename: read when {@link #META_KEY} is absent, never written. */
@@ -209,11 +217,126 @@ public final class SchematicCodec {
             decodeBlockEntities(blockEntities);
             decodeEntities(schem.getList("Entities"), offset);
 
-            boolean biomes = version == 3 ? schem.contains("Biomes")
-                    : schem.contains("BiomeData") || schem.contains("BiomePalette");
-            if (biomes) in.warn("biome data skipped (not imported in v1)");
-            SchematicReport report = in.report(biomes);
+            boolean biomesSkipped = false;
+            try {
+                BiomeGrid biomes = decodeBiomes(offset, meta, dataVersion);
+                if (biomes != null) in.builder.biomes(biomes);
+            } catch (SchematicException e) {
+                in.warn("biome data skipped (" + e.getMessage() + ")");
+                biomesSkipped = true;
+            }
+            SchematicReport report = in.report(biomesSkipped);
             return new Schematic(SchematicFormat.SPONGE, version, dataVersion, offset, metadata, in.build(), report);
+        }
+
+        /**
+         * Reads the biomes (protocol 6) into a grid: version 3's {@code Biomes: {Palette, Data}} (a biome per cell, in cell
+         * order) or version 2's {@code BiomePalette} and {@code BiomeData} (a biome per column, {@code x + z*Width}); a
+         * version 1 file has none. Each quart takes the biome of its first cell in cell order. The grid's phase is the one
+         * our writer stored ({@code Metadata.SculptoryBiomePhase}), else the minimum corner's within its quart for a
+         * version 2 file (whose {@code Offset} is that corner in the world), else 0. Ids are data-fixed
+         * ({@link DataFixHook#fixBiome}); an entry that is not a namespaced id leaves its cells without a biome.
+         *
+         * @return the grid, or {@code null} when the file holds no biomes
+         * @throws SchematicException when the biome data is malformed (the caller skips it and reports that)
+         */
+        private BiomeGrid decodeBiomes(BlockPos offset, NbtCompound meta, int dataVersion) throws SchematicException {
+            NbtCompound palette;
+            NbtTag.NbtByteArray data;
+            boolean perColumn;
+            if (version == 3) {
+                NbtCompound biomes = schem.getCompound("Biomes");
+                if (biomes == null) return null;
+                palette = require(biomes, "Palette", NbtCompound.class, "Biomes.Palette");
+                data = require(biomes, "Data", NbtTag.NbtByteArray.class, "Biomes.Data");
+                perColumn = false;
+            } else if (version == 2 && (schem.contains("BiomeData") || schem.contains("BiomePalette"))) {
+                palette = require(schem, "BiomePalette", NbtCompound.class, "BiomePalette");
+                data = require(schem, "BiomeData", NbtTag.NbtByteArray.class, "BiomeData");
+                perColumn = true;
+            } else {
+                return null;
+            }
+            if (palette.isEmpty() || palette.size() > Math.min(MAX_BIOME_PALETTE, limits.maxPaletteSize())) {
+                throw malformed("biome palette of " + palette.size() + " entries");
+            }
+            String[] names = new String[palette.size()];
+            for (Map.Entry<String, NbtTag> entry : palette.entries().entrySet()) {
+                if (!(entry.getValue() instanceof NbtTag.NbtInt index) || index.value() < 0
+                        || index.value() >= names.length || names[index.value()] != null) {
+                    throw malformed("biome palette entry " + entry.getKey());
+                }
+                String id = FileImport.namespaced(entry.getKey());
+                if (id != null && dataVersion < hook.targetDataVersion()) {
+                    try {
+                        id = FileImport.namespaced(hook.fixBiome(id, dataVersion));
+                    } catch (RuntimeException e) {
+                        id = null;
+                    }
+                }
+                names[index.value()] = id == null ? "" : id;
+            }
+            int[] stored = meta == null ? null : meta.getIntArray("SculptoryBiomePhase");
+            BlockPos phase;
+            if (stored != null && stored.length == 3 && inPhase(stored[0]) && inPhase(stored[1]) && inPhase(stored[2])) {
+                phase = new BlockPos(stored[0], stored[1], stored[2]);
+            } else if (version == 2) {
+                phase = new BlockPos(offset.x() & 3, offset.y() & 3, offset.z() & 3);
+            } else {
+                phase = BlockPos.ORIGIN;
+            }
+            BiomeGrid.Builder grid;
+            try {
+                grid = BiomeGrid.builder(phase, new BlockPos(width, height, length));
+            } catch (IllegalArgumentException e) {
+                throw malformed("biome grid: " + e.getMessage());
+            }
+            long cells = perColumn ? (long) width * length : (long) width * height * length;
+            int pos = 0, size = data.length();
+            boolean unnamed = false;
+            for (long cell = 0; cell < cells; cell++) {
+                int value = 0, shift = 0;
+                while (true) {
+                    if (pos >= size) throw malformed("biome data ends after " + cell + " of " + cells + " cells");
+                    int b = data.get(pos++);
+                    value |= (b & 0x7F) << shift;
+                    if ((b & 0x80) == 0) break;
+                    shift += 7;
+                    if (shift > 28) throw malformed("varint longer than 5 bytes in the biome data");
+                }
+                if (value < 0 || value >= names.length) throw malformed("biome data index " + value + " not in the palette");
+                String id = names[value];
+                if (id.isEmpty()) {
+                    unnamed = true;
+                    continue;
+                }
+                int x = (int) (cell % width);
+                if (perColumn) {
+                    int z = (int) (cell / width);
+                    for (int y = 0; y < height; y += 4 - ((y + phase.y()) & 3)) {
+                        if (!grid.hasAt(x, y, z)) setBiome(grid, x, y, z, id);
+                    }
+                } else {
+                    int z = (int) (cell / width % length), y = (int) (cell / ((long) width * length));
+                    if (!grid.hasAt(x, y, z)) setBiome(grid, x, y, z, id);
+                }
+            }
+            if (pos != size) throw malformed((size - pos) + " bytes of biome data after the last cell");
+            if (unnamed) in.warn("biomes that are not namespaced ids skipped");
+            return grid.build();
+        }
+
+        /** Sets a cell's biome; the grid refusing it (too many biomes) makes the biome data malformed. */
+        private static void setBiome(BiomeGrid.Builder grid, int x, int y, int z, String id) throws SchematicException {
+            try {
+                grid.setAt(x, y, z, id);
+            } catch (IllegalArgumentException e) {
+                throw malformed("biome grid: " + e.getMessage());
+            }
+        }
+
+        private static boolean inPhase(int v) {
+            return v >= 0 && v <= 3;
         }
 
         /**
@@ -551,6 +674,17 @@ public final class SchematicCodec {
             addNamespace(namespaces, entity.typeId());
         }
 
+        // A modded biome's namespace is a mod the file needs too (protocol 6).
+        BiomeGrid grid = clipboard.biomes();
+        if (grid != null) {
+            for (String id : grid.ids()) addNamespace(namespaces, id);
+        }
+        NbtCompound metaTag = metadataTag(metadata, List.copyOf(namespaces));
+        if (grid != null) {
+            BlockPos phase = grid.phase();
+            metaTag = metaTag.toBuilder().putIntArray("SculptoryBiomePhase", new int[] {phase.x(), phase.y(), phase.z()})
+                    .build();
+        }
         NbtCompound.Builder paletteTag = NbtCompound.builder();
         palette.forEach(paletteTag::putInt);
         NbtCompound blocks = NbtCompound.builder()
@@ -561,14 +695,43 @@ public final class SchematicCodec {
         NbtCompound.Builder schem = NbtCompound.builder()
                 .putInt("Version", 3)
                 .putInt("DataVersion", dataVersion)
-                .put("Metadata", metadataTag(metadata, List.copyOf(namespaces)))
+                .put("Metadata", metaTag)
                 .putShort("Width", (short) size.x())
                 .putShort("Height", (short) size.y())
                 .putShort("Length", (short) size.z())
                 .putIntArray("Offset", new int[] {offset.x(), offset.y(), offset.z()})
                 .put("Blocks", blocks);
         if (!entities.isEmpty()) schem.put("Entities", NbtList.of(NbtTag.COMPOUND, entities));
+        if (grid != null) schem.put("Biomes", biomes(clipboard, grid));
         return NbtCompound.builder().put("Schematic", schem.build()).build();
+    }
+
+    /**
+     * Version 3's {@code Biomes: {Palette, Data}}: a biome per cell, in cell order, the palette in first-use order; a
+     * cell of an absent quart takes the grid's first biome.
+     */
+    private static NbtCompound biomes(Clipboard clipboard, BiomeGrid grid) {
+        BlockPos size = clipboard.size();
+        String fallback = grid.ids().get(0);
+        LinkedHashMap<String, Integer> palette = new LinkedHashMap<>();
+        ByteArrayOutputStream data = new ByteArrayOutputStream((int) Math.min(1 << 20, clipboard.volume()));
+        for (int y = 0; y < size.y(); y++) {
+            for (int z = 0; z < size.z(); z++) {
+                for (int x = 0; x < size.x(); x++) {
+                    String id = grid.biomeAt(x, y, z);
+                    if (id == null) id = fallback;
+                    Integer index = palette.get(id);
+                    if (index == null) {
+                        index = palette.size();
+                        palette.put(id, index);
+                    }
+                    writeVarint(data, index);
+                }
+            }
+        }
+        NbtCompound.Builder paletteTag = NbtCompound.builder();
+        palette.forEach(paletteTag::putInt);
+        return NbtCompound.builder().put("Palette", paletteTag.build()).putByteArray("Data", data.toByteArray()).build();
     }
 
     /**

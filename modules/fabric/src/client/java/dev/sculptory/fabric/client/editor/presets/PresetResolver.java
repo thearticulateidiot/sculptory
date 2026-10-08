@@ -219,6 +219,8 @@ public final class PresetResolver {
             case SettingDef.Seed seed -> value;
             // The blocks a mask names match nothing when they are missing; they are kept as they are.
             case SettingDef.MaskRules rules -> value;
+            // A biome names no block; one the server lacks is refused when the brush is used.
+            case SettingDef.Biome biome -> value;
             // A picture the folder lacks is kept by name: using it says it is missing.
             case SettingDef.Heightmap picture -> value;
         };
@@ -249,6 +251,7 @@ public final class PresetResolver {
             case SettingDef.Block block -> value;
             case SettingDef.Seed seed -> value;
             case SettingDef.MaskRules rules -> value;
+            case SettingDef.Biome biome -> value;
             case SettingDef.Heightmap picture -> value;
         };
     }

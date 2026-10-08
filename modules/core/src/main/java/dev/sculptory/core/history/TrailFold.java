@@ -82,6 +82,6 @@ public final class TrailFold {
             before.putSection(key, nb.compact());
             after.putSection(key, na.compact());
         }
-        return new EditRecord(before, after, record.entities());
+        return new EditRecord(before, after, record.entities(), record.biomes());
     }
 }

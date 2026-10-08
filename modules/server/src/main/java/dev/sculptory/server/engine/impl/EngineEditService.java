@@ -18,6 +18,7 @@ import dev.sculptory.core.brush.StrokeState;
 import dev.sculptory.core.brush.SymmetricStep;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.clipboard.Clipboard;
+import dev.sculptory.core.edit.BiomeFillProgram;
 import dev.sculptory.core.edit.CompileContext;
 import dev.sculptory.core.edit.NeighbourShapes;
 import dev.sculptory.core.edit.EditProgram;
@@ -32,6 +33,9 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.edit.SourceBlocks;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.entity.EntityFilter;
+import dev.sculptory.core.biome.BiomeMapping;
+import dev.sculptory.core.history.BiomeChanges;
+import dev.sculptory.core.history.BiomeHistory;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.EntityHistory;
@@ -74,6 +78,7 @@ import dev.sculptory.server.library.LibraryPath;
 import dev.sculptory.server.platform.FluidTrailHook;
 import dev.sculptory.server.platform.LiveReader;
 import dev.sculptory.server.platform.PlatformPermissions;
+import dev.sculptory.server.platform.WorldBiomes;
 import dev.sculptory.server.platform.WorldEntities;
 import dev.sculptory.server.platform.WorldWriter;
 import dev.sculptory.server.platform.WriteOptions;
@@ -480,11 +485,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             default -> Perm.REGION;
         };
         require(p, opNode);
-        // Contract stubs (protocol 6): ws/biomes (the biome fill and pasted biomes) removes its refusals here.
-        if (s instanceof OpSpec.BiomeFill || (s instanceof OpSpec.Paste paste && paste.o().biomes())
-                || (s instanceof OpSpec.PasteMany many && many.o().biomes())) {
-            throw new EditRejected(RejectReason.INVALID, NOT_IMPLEMENTED);
-        }
+        // Pasting biomes (a paste or multi-paste with Biomes ticked) needs the biome node too (protocol 6), asked before
+        // anything else.
+        boolean pastesBiomes = (s instanceof OpSpec.Paste withBiomes && withBiomes.o().biomes())
+                || (s instanceof OpSpec.PasteMany manyWithBiomes && manyWithBiomes.o().biomes());
+        if (pastesBiomes) require(p, Perm.BIOME);
         Region region = OpRegions.region(s);
         boolean bypass = permissions.has(p, Perm.LIMIT_BYPASS);
         if (region != null) admitRegion(region, bypass);
@@ -535,6 +540,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         // A free move's landing cells, worked out at admission and handed to the compiler.
         Region freeLandingCells = null;
         int maxEntities = config().entities.maxPerJob;
+        // Biomes a paste, move or stack carries (protocol 6), planned now; moves and stacks carry them for a player
+        // holding the biome node.
+        BiomeJobs.Plan biomePlan = null;
+        BiomeJobs.Carried.Builder carried = null;
+        boolean carriesBiomes = permissions.has(p, Perm.BIOME);
         switch (s) {
             case OpSpec.Paste paste -> {
                 if (paste.o().physics() && !o.physics()) options = new RunOptions(true, o.conflictPolicy(), o.label());
@@ -579,6 +589,27 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                     }
                     entityWork = EntityJobs.paste(clipboard.entities(), clipboard.size(), paste.orientation(),
                             target.min());
+                }
+                if (pastesBiomes && clipboard.biomes() != null) {
+                    long bound = 0;
+                    for (OpSymmetry.Copy copy : copies) {
+                        bound = pastedBiomesBound(bound, clipboard, ((OpSpec.Paste) copy.op()).orientation());
+                    }
+                    bypassed |= checkPastedBiomes(bound, limit, bypass);
+                    biomePlan = new BiomeJobs.Plan();
+                    if (paste.orientation().isExact()) {
+                        for (OpSymmetry.Copy copy : copies) {
+                            OpSpec.Paste pasteCopy = (OpSpec.Paste) copy.op();
+                            planPastedBiomes(biomePlan, clipboard, pasteCopy.orientation(), pasteCopy.origin(), world);
+                        }
+                    } else {
+                        // The original first: where copies overlap it keeps its quarts, as its blocks.
+                        for (OpSymmetry.Copy copy : copies) {
+                            planImagedBiomes(biomePlan, clipboard, paste.orientation(), paste.origin(), paste.symmetry(),
+                                    copy.image(), world);
+                        }
+                    }
+                    bypassed |= admitPastedBiomes(biomePlan, world, limit, bypass);
                 }
             }
             case OpSpec.PasteMany many -> {
@@ -633,6 +664,34 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                     }
                     entityWork = EntityJobs.all(works);
                 }
+                if (pastesBiomes && clipboard.biomes() != null) {
+                    // The biome node was asked first. Every placement and copy is bounded before any quart is planned.
+                    long bound = 0;
+                    for (OpSymmetry.Copy copy : copies) {
+                        for (OpSpec.PasteMany.Placement placement : ((OpSpec.PasteMany) copy.op()).placements()) {
+                            bound = pastedBiomesBound(bound, clipboard, placement.orientation());
+                        }
+                    }
+                    bypassed |= checkPastedBiomes(bound, limit, bypass);
+                    biomePlan = new BiomeJobs.Plan();
+                    // In the blocks' claiming order: the original copy first, each copy's placements in order; the first
+                    // to plan a quart keeps it.
+                    for (OpSymmetry.Copy copy : copies) {
+                        List<OpSpec.PasteMany.Placement> imaged = ((OpSpec.PasteMany) copy.op()).placements();
+                        for (int i = 0; i < placements; i++) {
+                            OpSpec.PasteMany.Placement placement = many.placements().get(i);
+                            if (placement.orientation().isExact()) {
+                                // An exact placement's copy is a paste of its own imaged placement.
+                                OpSpec.PasteMany.Placement pl = imaged.get(i);
+                                planPastedBiomes(biomePlan, clipboard, pl.orientation(), pl.origin(), world);
+                            } else {
+                                planImagedBiomes(biomePlan, clipboard, placement.orientation(), placement.origin(),
+                                        many.symmetry(), copy.image(), world);
+                            }
+                        }
+                    }
+                    bypassed |= admitPastedBiomes(biomePlan, world, limit, bypass);
+                }
             }
             case OpSpec.Move move -> {
                 bypassed |= checkVolume(Math.max(OpCompiler.targetVolume(move, null, limit),
@@ -647,6 +706,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 // the bound) and handed to the compiler and the entities; its copies write the images of what it writes
                 // (OpCompiler), so their boxes and cells are the images of the original's.
                 Region freeMoved = null;
+                // Each copy's landing cells, worked out once (the identity's is freeMoved) for the checks and the biomes.
+                List<Region> copyLandings = new ArrayList<>(copies.size());
                 if (free) {
                     OpSpec.Move single = (OpSpec.Move) copies.get(0).op();
                     freeMoved = freeLanding(single, world, bypass ? Long.MAX_VALUE : limit);
@@ -661,9 +722,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                         try {
                             copyFrom = move.symmetry().imageBox(copy.image(), from);
                             copyTo = move.symmetry().imageBox(copy.image(), to);
-                            if (!(moveCopy.region() instanceof Region.Cuboid)) {
-                                copyMoved = Regions.image(freeMoved, move.symmetry(), copy.image());
+                            if (!(moveCopy.region() instanceof Region.Cuboid) || carriesBiomes) {
+                                copyMoved = copy.image() == dev.sculptory.core.brush.Symmetry.Image.IDENTITY ? freeMoved
+                                        : Regions.image(freeMoved, move.symmetry(), copy.image());
                             }
+                            copyLandings.add(copyMoved);
                         } catch (IllegalArgumentException e) {
                             throw new EditRejected(RejectReason.INVALID, e.getMessage());
                         }
@@ -693,6 +756,43 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                             : EntityJobs.move(move.region(), move.entities(), from, move.orientation(), to.min(),
                                     bypass ? Long.MAX_VALUE : maxEntities);
                 }
+                if (carriesBiomes) {
+                    // The source's biomes are read when the job's biome stage starts, before it writes any.
+                    carried = carriedBiomes(world, limit, bypass);
+                    if (free) {
+                        // A free move's biomes land with its cells: the landing set worked out once above, sampled
+                        // through the orientation's own sampler about the whole bounds; each copy writes the image of
+                        // what the original writes, as its blocks do.
+                        // Each copy reads its own imaged source, as its blocks do (MoveProgram's FreeMap).
+                        Box box = move.box();
+                        for (int c = 0; c < copies.size(); c++) {
+                            OpSymmetry.Copy copy = copies.get(c);
+                            boolean original = copy.image() == dev.sculptory.core.brush.Symmetry.Image.IDENTITY;
+                            Region copyRegion;
+                            Box copyBox;
+                            try {
+                                copyRegion = original ? move.region()
+                                        : Regions.image(move.region(), move.symmetry(), copy.image());
+                                copyBox = original ? box : move.symmetry().imageBox(copy.image(), box);
+                            } catch (IllegalArgumentException e) {
+                                throw new EditRejected(RejectReason.INVALID, e.getMessage());
+                            }
+                            int source = carried.source(copyRegion, copyBox, regionColumns(copyRegion,
+                                    from.min().y(), from.max().y()));
+                            carried.target(source, box, move.orientation(), to.min(),
+                                    regionColumns(copyLandings.get(c), to.min().y(), to.max().y()), move.symmetry(),
+                                    copy.image());
+                        }
+                    }
+                    for (OpSymmetry.Copy copy : free ? List.<OpSymmetry.Copy>of() : copies) {
+                        OpSpec.Move moveCopy = (OpSpec.Move) copy.op();
+                        Box copyFrom = inBuildHeight(moveCopy.box(), world);
+                        int source = carried.source(moveCopy.region(), copyFrom, regionColumns(moveCopy.region(),
+                                copyFrom.min().y(), copyFrom.max().y()));
+                        carried.target(source, moveCopy.t(), moveDestination(moveCopy, copyFrom, world).min());
+                    }
+                    bypassed |= checkVolume(carried.bound(), limit, bypass);
+                }
             }
             case OpSpec.Stack stack -> {
                 if (stack.count() > MAX_STACK_COUNT) {
@@ -714,6 +814,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                     entityWork = EntityJobs.stack(stack.region(), stack.entities(), from, stack.dx(), stack.dy(),
                             stack.dz(), stack.count(), stack.upsideDown(), trustSource,
                             bypass ? Long.MAX_VALUE : Math.max(1, maxEntities / stack.count()));
+                }
+                if (carriesBiomes) {
+                    carried = carriedBiomes(world, limit, bypass);
+                    for (OpSymmetry.Copy copy : copies) planStackBiomes(carried, (OpSpec.Stack) copy.op(), world);
+                    bypassed |= checkVolume(carried.bound(), limit, bypass);
                 }
             }
             case OpSpec.ScatterCommit commit -> {
@@ -750,6 +855,12 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 scatter = held.plan().toMultiPaste(denied);
                 label = "Scatter · " + count(held.plan().placements().size(), "placement");
             }
+            case OpSpec.BiomeFill fill -> {
+                copying = false;
+                // An unknown biome is refused before anything is queued. The quarts it sets are counted while compiling,
+                // under the volume limit (exactly up front for boxes) and the job's column cap, every copy included.
+                requireKnownBiomes(world, Set.of(fill.biomeId()));
+            }
             default -> copying = false;
         }
         // Tinker's "Apply to all like it in the selection" is a Fill with the property pattern: named as the change.
@@ -765,14 +876,21 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         compileFreeMoved = freeLandingCells;
         EditProgram compiled;
         try {
-            compiled = compile(s, copies, world, pasteSource, scatter, copying && !bypass ? limit : Long.MAX_VALUE,
-                    bypass);
+            compiled = compile(s, copies, world, pasteSource, scatter,
+                    (copying || s instanceof OpSpec.BiomeFill) && !bypass ? limit : Long.MAX_VALUE, bypass);
         } finally {
             compileSourceMask = BoundMask.ALL;
             compileFreeMoved = null;
         }
-        // A scatter commit was masked whole placement by whole placement above.
-        if (!sourceMasked && scatter == null) compiled = MaskedProgram.wrap(compiled, editMask);
+        // A scatter commit was masked whole placement by whole placement above; a biome fill writes no block (the global
+        // mask does not judge biomes).
+        BiomeWork biomeWork = biomePlan == null || biomePlan.isEmpty() ? null : biomePlan.work();
+        if (carried != null && !carried.isEmpty()) biomeWork = carried.build();
+        if (compiled instanceof BiomeFillProgram fill && s instanceof OpSpec.BiomeFill op) {
+            biomeWork = BiomeJobs.fill(fill.quarts(), op.biomeId());
+        } else if (!sourceMasked && scatter == null) {
+            compiled = MaskedProgram.wrap(compiled, editMask);
+        }
         if (!copying) bypassed |= checkVolume(compiled.estimatedCells(), limit, bypass);
         // A scatter commit reports the placements it skipped (cells no longer open) as conflicts.
         ConflictCountingProgram skipped = scatter != null ? new ConflictCountingProgram(compiled, maskedPlacements) : null;
@@ -782,6 +900,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         EnumSet<Perm> required = EnumSet.of(Perm.USE, opNode);
         if (options.physics()) required.add(Perm.PHYSICS);
         if (bypassed) required.add(Perm.LIMIT_BYPASS);
+        // A job writing biomes needs the biome node for as long as it runs (protocol 6).
+        if (biomeWork != null) required.add(Perm.BIOME);
         TrackedJob job = new TrackedJob(runtime.id(p), runtime.name(p), label != null ? label : program.label(),
                 l, skipped, record, runtime.worldId(world), session, null, required);
         // Saved section by section as the job writes, once it is admitted (history.editStarted below).
@@ -789,7 +909,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         // Fluid the job writes is marked as the entry's: what it does later is taken back with the entry's undo.
         JobRequest<W> request = JobRequest.forPlayer(runtime, p, program, options, job,
                 trails.marking(history.sink(record, job.openRecord), world, record.id()))
-                .withEntities(entityWork);
+                .withEntities(entityWork)
+                .withBiomes(biomeWork);
         if (!trustSource) {
             // Tiles captured from a source the player could not write are not theirs to vouch for.
             WriteOptions w = request.writeOptions();
@@ -806,6 +927,131 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         // A committed plan is spent: the job holds what it writes.
         if (s instanceof OpSpec.ScatterCommit commit) scatterPlans.consume(runtime.id(p), commit.planId());
         return ticket;
+    }
+
+    /**
+     * Refuses ({@code INVALID}) biome ids the world does not know (protocol 6): a biome fill's or brush's, or those a
+     * pasted clipboard carries (from a file of another game or a modded server). Nothing is queued.
+     */
+    private void requireKnownBiomes(W world, java.util.Collection<String> ids) throws EditRejected {
+        WorldBiomes biomes = runtime.biomes(world);
+        for (String id : ids) {
+            if (biomes.handle(id) < 0) {
+                throw new EditRejected(RejectReason.INVALID, "unknown biome " + id + " (untick Biomes to paste without "
+                        + "them)");
+            }
+        }
+    }
+
+    /**
+     * Plans the biomes {@code clipboard} carries for one placement of a paste with Biomes ticked (protocol 6): where its
+     * anchor lands on {@code origin} after {@code orientation} ({@link BiomeMapping#map}). A paste calls it once per
+     * symmetric copy; a multi-paste (PasteMany) does the same for each placement and copy, into one plan, then
+     * {@link #admitPastedBiomes} (after {@code require(p, Perm.BIOME)}, asked before anything else).
+     */
+    private void planPastedBiomes(BiomeJobs.Plan plan, Clipboard clipboard, dev.sculptory.core.transform.Orientation
+            orientation, BlockPos origin, W world) throws EditRejected {
+        if (clipboard.biomes() == null) return;
+        Box target;
+        try {
+            target = PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(), orientation, origin);
+        } catch (IllegalArgumentException e) {
+            throw new EditRejected(RejectReason.INVALID, e.getMessage());
+        }
+        BiomeJobs.map(plan, clipboard.biomes(), clipboard.size(), orientation, target.min(), runtime.bottomY(world),
+                runtime.topY(world));
+    }
+
+    /**
+     * Plans the biomes one symmetric copy of a free placement writes, as its blocks are (the image of what the original
+     * writes, {@code PasteProgram.compileImage}): {@link BiomeJobs#mapImage} of the original's result box, the identity
+     * being the original itself.
+     */
+    private void planImagedBiomes(BiomeJobs.Plan plan, Clipboard clipboard,
+                                  dev.sculptory.core.transform.Orientation orientation, BlockPos origin,
+                                  dev.sculptory.core.brush.Symmetry symmetry,
+                                  dev.sculptory.core.brush.Symmetry.Image image, W world) throws EditRejected {
+        if (clipboard.biomes() == null) return;
+        Box target;
+        try {
+            target = PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(), orientation, origin);
+        } catch (IllegalArgumentException e) {
+            throw new EditRejected(RejectReason.INVALID, e.getMessage());
+        }
+        try {
+            BiomeJobs.mapImage(plan, clipboard.biomes(), clipboard.size(), orientation, target, symmetry, image,
+                    runtime.bottomY(world), runtime.topY(world));
+        } catch (IllegalArgumentException e) {
+            throw new EditRejected(RejectReason.INVALID, e.getMessage());
+        }
+    }
+
+    /**
+     * Checks the most quarts a paste's biomes may plan ({@link #pastedBiomesBound}) before any is planned: against the
+     * volume limit, and against {@link BiomeJobs.Plan#MAX_QUARTS} even under {@code limit.bypass} (planning runs on the
+     * server thread at admission).
+     *
+     * @return whether admitting them relies on {@code limit.bypass}
+     */
+    private boolean checkPastedBiomes(long bound, long limit, boolean bypass) throws EditRejected {
+        if (bound > BiomeJobs.Plan.MAX_QUARTS) {
+            throw new EditRejected(RejectReason.TOO_LARGE, "pasted biomes: " + bound + " biome cells > "
+                    + BiomeJobs.Plan.MAX_QUARTS);
+        }
+        return checkVolume(bound, limit, bypass);
+    }
+
+    /**
+     * {@code sum} plus the most quarts one placement of {@code clipboard}'s biomes under {@code orientation} may write
+     * ({@link BiomeMapping#bound}), saturating: summed over every placement and copy and checked against the volume limit
+     * before any quart is planned. A multi-paste (PasteMany) does the same before {@link #planPastedBiomes}.
+     */
+    static long pastedBiomesBound(long sum, Clipboard clipboard, dev.sculptory.core.transform.Orientation orientation) {
+        long add = BiomeMapping.bound(clipboard.size(), orientation);
+        return sum > Long.MAX_VALUE - add ? Long.MAX_VALUE : sum + add;
+    }
+
+    /**
+     * Admits the planned pasted biomes: an unknown biome is refused INVALID, and the quarts written (every placement's)
+     * count against the op volume limit.
+     *
+     * @return whether admitting them relies on {@code limit.bypass}
+     */
+    private boolean admitPastedBiomes(BiomeJobs.Plan plan, W world, long limit, boolean bypass) throws EditRejected {
+        requireKnownBiomes(world, plan.biomeIds());
+        return checkVolume(plan.count(), limit, bypass);
+    }
+
+    /**
+     * A move's or stack's carried biomes, refused {@code TOO_LARGE} past the job's column cap or (without
+     * {@code limit.bypass}) the volume limit as sources and targets are added.
+     */
+    private BiomeJobs.Carried.Builder carriedBiomes(W world, long limit, boolean bypass) {
+        return new BiomeJobs.Carried.Builder(runtime.bottomY(world), runtime.topY(world),
+                executor.settings().maxColumnsPerJob(), bypass ? Long.MAX_VALUE : limit);
+    }
+
+    /**
+     * Plans the biomes a stack carries into each copy: the source's quarts, turned over with the flip within the
+     * region's uncut height as the blocks are, then shifted by {@code k} times the offset for copy {@code k}. The source is
+     * read when the job's biome stage starts.
+     */
+    private void planStackBiomes(BiomeJobs.Carried.Builder carried, OpSpec.Stack stack, W world) throws EditRejected {
+        Box from = inBuildHeight(stack.box(), world);
+        int source = carried.source(stack.region(), from, regionColumns(stack.region(), from.min().y(), from.max().y()));
+        Box uncut = stack.region().bounds();
+        long imageY = stack.upsideDown() ? (long) uncut.min().y() + uncut.max().y() - from.max().y() : from.min().y();
+        dev.sculptory.core.transform.Transform t = stack.upsideDown()
+                ? dev.sculptory.core.transform.Transform.UPSIDE_DOWN : dev.sculptory.core.transform.Transform.IDENTITY;
+        List<BlockPos> mins = new ArrayList<>(stack.count());
+        for (int k = 1; k <= stack.count(); k++) {
+            long x = from.min().x() + (long) k * stack.dx(), y = imageY + (long) k * stack.dy();
+            long z = from.min().z() + (long) k * stack.dz();
+            if (x != (int) x || y != (int) y || z != (int) z) continue; // the compiler refuses such a stack
+            mins.add(new BlockPos((int) x, (int) y, (int) z));
+        }
+        // The landed columns are worked out once and shifted per copy.
+        carried.stack(source, t, mins);
     }
 
     /**
@@ -1314,6 +1560,9 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         if (!steps.isEmpty()) {
             request = request.withEntities(EntityJobs.history(steps, policy, EntityMatcher.ignoringVolatile()));
         }
+        // Biomes too (protocol 6): a quart painted since the step is kept and counted with the kept blocks.
+        BiomeChanges biomeSteps = BiomeHistory.steps(entry, op == HistoryService.Op.REDO);
+        if (!biomeSteps.isEmpty()) request = request.withBiomes(BiomeJobs.history(biomeSteps, policy));
         return new HistoryJob(job, executor.submit(request));
     }
 
@@ -1411,6 +1660,10 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             request = request.withEntities(EntityJobs.history(entitySteps, ConflictPolicy.OVERWRITE,
                     EntityMatcher.ignoringVolatile()));
         }
+        BiomeChanges biomeSteps = BiomeHistory.reapplySteps(run, redo);
+        if (!biomeSteps.isEmpty()) {
+            request = request.withBiomes(BiomeJobs.history(biomeSteps, ConflictPolicy.OVERWRITE));
+        }
         return new HistoryJob(job, executor.submit(request));
     }
 
@@ -1485,11 +1738,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         requireEditing();
         require(p, Perm.USE);
         // The Biome brush needs the biome node instead of the brush node (protocol 6).
-        require(p, spec.tool() == BrushTool.BIOME ? Perm.BIOME : Perm.BRUSH);
-        // Contract stub (protocol 6): ws/biomes removes this refusal with its kernel.
-        if (spec.tool() == BrushTool.BIOME) {
-            throw new EditRejected(RejectReason.INVALID, NOT_IMPLEMENTED);
-        }
+        require(p, strokeNode(spec));
         String over = overBrushLimit(spec, config().limits.maxBrushRadius, config().limits.maxHeightmapHeight);
         if (over != null && !permissions.has(p, Perm.LIMIT_BYPASS)) throw new EditRejected(RejectReason.TOO_LARGE, over);
         // The Shape brush: every valid shape fits the step cap; it stands as a backstop, for everyone.
@@ -1510,6 +1759,19 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         }
         BoundMask strokeMask = EditMasks.current(runtime.id(p));
         W world = runtime.world(p);
+        WorldBiomes biomes = null;
+        if (spec.tool() == BrushTool.BIOME) {
+            biomes = runtime.biomes(world);
+            // An unknown biome is refused before any dab is queued.
+            if (biomes.handle(spec.biome().biomeId()) < 0) {
+                throw new EditRejected(RejectReason.INVALID, "unknown biome " + spec.biome().biomeId());
+            }
+            long quarts = biomeQuartsPerStep(spec, runtime.bottomY(world), runtime.topY(world));
+            long limit = config().limits.maxOpVolume;
+            if (quarts > limit && !permissions.has(p, Perm.LIMIT_BYPASS)) {
+                throw new EditRejected(RejectReason.TOO_LARGE, quarts + " biome cells a step > " + limit);
+            }
+        }
         if (spec.clip() != null && !insideWorld(spec.clip(), world)) {
             throw new EditRejected(RejectReason.INVALID, "clip box outside the world: " + spec.clip());
         }
@@ -1523,6 +1785,18 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 runtime.reader(world),
                 runtime.writer(world, WriteOptions.DEFAULT).watchVanillaWrites(executor.clientSync(world)),
                 clock.getAsLong(), shapeCells, strokeMask);
+        lane.stroke.biomes = biomes;
+    }
+
+    /**
+     * The most biome quarts one step of a Biome brush of {@code spec} may write (protocol 6), its symmetric copies
+     * included: the quart columns (or quarts, in 3D) around each dab within the radius and the dab's own, over the build
+     * height in columns mode. What a stroke's step counts against the op volume limit.
+     */
+    static long biomeQuartsPerStep(BrushSpec spec, int bottomY, int topYExclusive) {
+        long across = spec.radius() / 2 + 2;
+        long height = spec.biome().columns() ? ((long) topYExclusive >> 2) - (bottomY >> 2) : across;
+        return across * across * height * spec.symmetry().mode().copies();
     }
 
     @Override
@@ -1718,10 +1992,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             List<StrokeSession> strokes = new ArrayList<>(lane.closing);
             if (lane.stroke != null) strokes.add(lane.stroke);
             for (StrokeSession stroke : strokes) {
-                if (!stroke.record.hasDirty()) continue;
+                if (!stroke.record.hasDirty() && !stroke.record.hasDirtyBiomes()) continue;
                 HistoryService.OpenRecord open = history.openRecord(stroke.history, stroke.worldId,
                         strokeLabel(stroke.spec.tool()), this::createdMillis, stroke.record);
                 if (open == null) continue;
+                history.saveBiomes(open);
                 for (long key : stroke.record.dirtyKeys()) {
                     history.saveSection(open, key);
                     if (System.nanoTime() >= deadline) return false;
@@ -1742,13 +2017,16 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             if (lane.stroke != null) strokes.add(lane.stroke);
             // The open stroke, and closed strokes whose commit is still queued.
             for (StrokeSession stroke : strokes) {
-                if (!stroke.record.hasDirty()) continue;
+                boolean biomes = stroke.record.hasDirtyBiomes();
+                if (!stroke.record.hasDirty() && !biomes) continue;
                 if (world != null && !world.equals(stroke.worldId)) continue;
-                if (column && !stroke.record.dirtyIn(cx, cz)) continue;
+                // A stroke's biomes are few beside its sections: saved whole before any chunk save of its world.
+                if (column && !biomes && !stroke.record.dirtyIn(cx, cz)) continue;
                 HistoryService.OpenRecord open = history.openRecord(stroke.history, stroke.worldId,
                         strokeLabel(stroke.spec.tool()), this::createdMillis, stroke.record);
                 if (column) {
                     history.save(open, cx, cz);
+                    history.saveBiomes(open);
                 } else {
                     history.save(open);
                 }
@@ -2009,6 +2287,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
 
         /** The global mask read at StrokeBegin ({@link BoundMask#ALL}: off). */
         final BoundMask mask;
+        /** The world's biomes, for the Biome brush (protocol 6); null for every other brush. */
+        WorldBiomes biomes;
 
         StrokeSession(int strokeId, BrushSpec spec, W world, String worldId, HistoryService.Session history,
                       LiveReader reader, WorldWriter writer, long now, long shapeCells, BoundMask mask) {
@@ -2322,7 +2602,9 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             units += units(stroke, dab, images);
         }
         if (runtime.world(p) != stroke.world) return RejectReason.INVALID;
-        if (!permissions.has(p, Perm.USE) || !permissions.has(p, Perm.BRUSH)) return RejectReason.NO_PERMISSION;
+        if (!permissions.has(p, Perm.USE) || !permissions.has(p, strokeNode(stroke.spec))) {
+            return RejectReason.NO_PERMISSION;
+        }
         int queued = pendingUnits(lane);
         // One step larger than the cap goes through when nothing of the player's is queued (the client waits for it).
         if (queued + units > MAX_QUEUED_DABS && !(queued == 0 && dabs.size() == 1)) return RejectReason.RATE_LIMITED;
@@ -2458,7 +2740,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         boolean createdNow = work.shapeRun == null;
         if (work.shapeRun == null) {
             // An admitted dab stops only on a definite no: a permissions mod that fails (throws) stops nothing admitted.
-            if (deniedBrush(player)) {
+            if (deniedBrush(player, stroke)) {
                 reject(lane, stroke, dab, RejectReason.NO_PERMISSION);
                 return true;
             }
@@ -2509,7 +2791,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             if (!first && System.nanoTime() + partNanos(run.step, cells) > deadline) return false;
             if (run.writer.parts > 0 || !createdNow) {
                 // The world may have changed since the step was worked out or its last part ran.
-                if (deniedBrush(player)) {
+                if (deniedBrush(player, stroke)) {
                     reject(lane, stroke, dab, RejectReason.NO_PERMISSION);
                     break;
                 }
@@ -2563,9 +2845,17 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         return parts.planned() ? (long) (cells * plannedCellNanos) : shapeNanos(cells);
     }
 
-    /** Whether the player definitely lost {@code use} or {@code brush} (a failing permissions mod is not a no). */
-    private boolean deniedBrush(P player) {
-        return permissions.denied(player, Perm.USE) || permissions.denied(player, Perm.BRUSH);
+    /**
+     * Whether the player definitely lost {@code use} or the stroke's node ({@code brush}, or {@code biome} for the Biome
+     * brush; a failing permissions mod is not a no).
+     */
+    private boolean deniedBrush(P player, StrokeSession stroke) {
+        return permissions.denied(player, Perm.USE) || permissions.denied(player, strokeNode(stroke.spec));
+    }
+
+    /** The node a stroke of {@code spec} needs beside {@code use}: {@code biome} for the Biome brush, else {@code brush}. */
+    static Perm strokeNode(BrushSpec spec) {
+        return spec.tool() == BrushTool.BIOME ? Perm.BIOME : Perm.BRUSH;
     }
 
     /** After a step (or what of it was written): refused {@code PROTECTED} when protection kept every cell of it. */
@@ -2622,6 +2912,31 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 // put until the record is committed, so none flows into a cell a later dab of the stroke writes.
                 if (trails.wrote(stroke.world, x, y, z, handle, stroke.record.id())) trails.freeze(stroke.record.id());
             }
+        }
+
+        /**
+         * A biome quart the Biome brush writes (protocol 6): its centre column's permit and the world border decide, as for
+         * a cell; recorded into the stroke when it changes, and sent to players at the tick's end.
+         */
+        @Override
+        public void biome(int qx, int qy, int qz, String biomeId) {
+            WorldBiomes biomes = stroke.biomes;
+            if (biomes == null) return;
+            int x = (qx << 2) + 2, y = (qy << 2) + 2, z = (qz << 2) + 2;
+            if (!permitFor(x >> 4, z >> 4).allows(x, z) || !runtime.insideBorder(stroke.world, x, z)
+                    || !runtime.inBuildLimit(stroke.world, x, y, z) || !biomes.loaded(x >> 4, z >> 4)) {
+                denied++;
+                return;
+            }
+            int handle = biomes.handle(biomeId);
+            if (handle < 0) return;
+            int before = biomes.set(qx, qy, qz, handle);
+            // A quart holding a biome the registry does not list is left alone (-1).
+            if (before == handle || before < 0) return;
+            stroke.record.recordBiome(qx, qy, qz, biomes.id(before), biomeId);
+            stroke.dirty = true;
+            written++;
+            executor.biomesChanged(biomes);
         }
 
         /** Clears the scheduled ticks of the cells written since the last call. */
@@ -2887,11 +3202,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         stroke.record = new RecordBuilder();
         stroke.dirty = false;
         trails.thaw(builder.id());
-        if (record.before().isEmpty()) {
+        if (record.isEmpty()) {
             history.discard(builder.id()); // what was saved of it while open
             return;
         }
-        String label = strokeLabel(stroke.spec.tool()) + " · " + blocks(record.before().cellCount());
+        String label = strokeLabel(stroke.spec.tool()) + contents(record);
         history.push(stroke.history, new HistoryEntry(builder.id(), stroke.history.player(), stroke.worldId,
                 label, record, createdMillis()));
     }
@@ -2951,6 +3266,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      */
     static Box dabBox(BrushSpec spec, int bottomY, int topYExclusive, Dab dab) {
         int r = spec.radius();
+        if (spec.tool() == BrushTool.BIOME) return biomeDabBox(spec, bottomY, topYExclusive, dab);
         long reach = (long) r + SCAN_MARGIN;
         // Surface Raise, Lower and Flatten work in a cylinder of that reach along any of the six directions
         // (SurfaceKernel), so their box is as wide across as it is tall; everything else (Smooth, and the Weather brush in
@@ -2970,6 +3286,21 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         }
         int y0 = (int) Math.max(bottom, Math.min(top, low));
         int y1 = (int) Math.max(bottom, Math.min(top, high));
+        return new Box(new BlockPos(bx - across, y0, bz - across), new BlockPos(bx + across, y1, bz + across));
+    }
+
+    /**
+     * Every cell a Biome brush dab (protocol 6) may read or write: the quarts whose centre is within the radius (up to
+     * {@code radius + 2} across) and the dab's own (up to 4), a block more for the slope's neighbours, the surface scan
+     * window, and in columns mode the whole build height.
+     */
+    static Box biomeDabBox(BrushSpec spec, int bottomY, int topYExclusive, Dab dab) {
+        int across = Math.max(spec.radius() + 2, 4) + 1;
+        long reach = (long) spec.radius() + SCAN_MARGIN + 4;
+        int bx = dab.blockX(), by = dab.blockY(), bz = dab.blockZ();
+        int top = topYExclusive - 1;
+        int y0 = spec.biome().columns() ? bottomY : (int) Math.max(bottomY, Math.min(top, by - reach));
+        int y1 = spec.biome().columns() ? top : (int) Math.max(bottomY, Math.min(top, by + reach));
         return new Box(new BlockPos(bx - across, y0, bz - across), new BlockPos(bx + across, y1, bz + across));
     }
 
@@ -3196,8 +3527,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 case CANCELLED -> " (cancelled)";
                 case FAILED -> " (failed)";
             };
-            String entryLabel = label + state + " · " + blocks(built.before().cellCount())
-                    + (built.entities().isEmpty() ? "" : " · " + entities(built.entities().size()));
+            String entryLabel = label + state + contents(built);
             // The builder's id: the entry its saved sections belong to.
             return new HistoryEntry(record.id(), owner, worldId, entryLabel, built, createdMillis());
         }
@@ -3381,6 +3711,24 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     /** "1 entity", "12 entities". */
     static String entities(long n) {
         return n == 1 ? "1 entity" : String.format(Locale.ROOT, "%,d entities", n);
+    }
+
+    /** "1 biome cell", "1,536 biome cells" (protocol 6; a biome cell is a quart, 4 × 4 × 4 blocks). */
+    static String biomeCells(long n) {
+        return count(n, "biome cell");
+    }
+
+    /**
+     * What an entry's label says its record holds, after its name: " · 12 blocks", then " · 2 entities" and
+     * " · 96 biome cells" when it holds any; a record of biomes alone (a biome fill or stroke) leaves the blocks out.
+     */
+    static String contents(EditRecord record) {
+        StringBuilder out = new StringBuilder();
+        boolean biomesAlone = record.before().isEmpty() && record.entities().isEmpty() && !record.biomes().isEmpty();
+        if (!biomesAlone) out.append(" · ").append(blocks(record.before().cellCount()));
+        if (!record.entities().isEmpty()) out.append(" · ").append(entities(record.entities().size()));
+        if (!record.biomes().isEmpty()) out.append(" · ").append(biomeCells(record.biomes().size()));
+        return out.toString();
     }
 
     /** "1 placement", "1,284 placements". */

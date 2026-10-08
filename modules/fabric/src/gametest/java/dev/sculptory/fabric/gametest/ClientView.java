@@ -17,6 +17,7 @@ import net.minecraft.network.PacketByteBuf;
 import net.minecraft.network.packet.Packet;
 import net.minecraft.network.packet.s2c.play.BlockEntityUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
+import net.minecraft.network.packet.s2c.play.ChunkBiomeDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
 import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
 import net.minecraft.network.packet.s2c.play.LightData;
@@ -49,6 +50,7 @@ final class ClientView implements Consumer<Packet<?>> {
     int deltaPackets;
     int blockPackets;
     int blockEntityPackets;
+    int biomePackets;
     int updatesOutsideLoadedChunks;
 
     ClientView(ServerWorld world) {
@@ -60,6 +62,7 @@ final class ClientView implements Consumer<Packet<?>> {
     /** Forgets the packet counts (not the view). */
     void resetCounts() {
         chunkPackets = deltaPackets = blockPackets = blockEntityPackets = updatesOutsideLoadedChunks = lightPackets = 0;
+        biomePackets = 0;
     }
 
     @Override
@@ -77,6 +80,15 @@ final class ClientView implements Consumer<Packet<?>> {
             case BlockEntityUpdateS2CPacket entity -> {
                 blockEntityPackets++;
                 blockEntities.put(entity.getPos().toImmutable(), entity.getNbt());
+            }
+            case ChunkBiomeDataS2CPacket biome -> {
+                biomePackets++;
+                for (ChunkBiomeDataS2CPacket.Serialized data : biome.chunkBiomeData()) {
+                    ChunkSection[] column = columns.get(data.pos().toLong());
+                    if (column == null) continue;
+                    PacketByteBuf buf = data.toReadingBuf();
+                    for (ChunkSection section : column) section.readBiomePacket(buf);
+                }
             }
             case LightUpdateS2CPacket update -> {
                 lightPackets++;
@@ -123,6 +135,16 @@ final class ClientView implements Consumer<Packet<?>> {
         if (column == null) return null;
         if (y < world.getBottomY() || y >= world.getTopY()) return Blocks.VOID_AIR.getDefaultState();
         return column[world.getSectionIndex(y)].getBlockState(x & 15, y & 15, z & 15);
+    }
+
+    /**
+     * The biome id the client would show in quart {@code (qx, qy, qz)} (from chunk packets and biome packets), or
+     * {@code null} when it has no chunk there.
+     */
+    String biome(int qx, int qy, int qz) {
+        ChunkSection[] column = columns.get(ChunkPos.toLong(qx >> 2, qz >> 2));
+        if (column == null) return null;
+        return column[world.getSectionIndex(qy << 2)].getBiome(qx & 3, qy & 3, qz & 3).getIdAsString();
     }
 
     /** The block-entity data the client would hold at {@code pos}, or {@code null}. */

@@ -24,11 +24,12 @@ import java.util.concurrent.ThreadLocalRandom;
  * @param seed per-job seed exposed through {@code ComputeContext.seed()}
  * @param records receives every changed cell (and entity); the history integration passes a {@code RecordBuilder}
  * @param entities the job's entity work, or {@code null} for none
+ * @param biomes the job's biome work (protocol 6), or {@code null} for none
  * @param <W> the platform's world type
  */
 public record JobRequest<W>(UUID owner, W world, EditProgram program, WriteOptions writeOptions,
                             PermitSource permits, boolean mayLoadChunks, long seed, JobListener listener,
-                            RecordSink records, EntityWork entities) {
+                            RecordSink records, EntityWork entities, BiomeWork biomes) {
     /** Owner of jobs started by the server itself (tests, admin tools). */
     public static final UUID SYSTEM_OWNER = new UUID(0L, 0L);
 
@@ -48,6 +49,12 @@ public record JobRequest<W>(UUID owner, W world, EditProgram program, WriteOptio
         if (permits == null) permits = PermitSource.ALLOW_ALL;
         if (listener == null) listener = NO_LISTENER;
         if (records == null) records = RecordSink.NONE;
+    }
+
+    /** A job without biome work. */
+    public JobRequest(UUID owner, W world, EditProgram program, WriteOptions writeOptions, PermitSource permits,
+                      boolean mayLoadChunks, long seed, JobListener listener, RecordSink records, EntityWork entities) {
+        this(owner, world, program, writeOptions, permits, mayLoadChunks, seed, listener, records, entities, null);
     }
 
     /** A job without entity work. */
@@ -87,22 +94,28 @@ public record JobRequest<W>(UUID owner, W world, EditProgram program, WriteOptio
 
     public JobRequest<W> withRecords(RecordSink sink) {
         return new JobRequest<>(owner, world, program, writeOptions, permits, mayLoadChunks, seed, listener, sink,
-                entities);
+                entities, biomes);
     }
 
     public JobRequest<W> withPermits(PermitSource source) {
         return new JobRequest<>(owner, world, program, writeOptions, source, mayLoadChunks, seed, listener, records,
-                entities);
+                entities, biomes);
     }
 
     public JobRequest<W> withWriteOptions(WriteOptions options) {
         return new JobRequest<>(owner, world, program, options, permits, mayLoadChunks, seed, listener, records,
-                entities);
+                entities, biomes);
     }
 
     /** This job with entity work ({@code null}: none). */
     public JobRequest<W> withEntities(EntityWork work) {
         return new JobRequest<>(owner, world, program, writeOptions, permits, mayLoadChunks, seed, listener, records,
-                work);
+                work, biomes);
+    }
+
+    /** This job with biome work ({@code null}: none; protocol 6). */
+    public JobRequest<W> withBiomes(BiomeWork work) {
+        return new JobRequest<>(owner, world, program, writeOptions, permits, mayLoadChunks, seed, listener, records,
+                entities, work);
     }
 }

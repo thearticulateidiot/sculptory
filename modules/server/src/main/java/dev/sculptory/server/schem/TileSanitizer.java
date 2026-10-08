@@ -292,6 +292,7 @@ public final class TileSanitizer {
         }
         // Entities are EntitySanitizer's business: they go along as they are.
         original.entities().forEach(builder::addEntity);
+        builder.biomes(original.biomes());
         return builder.build();
     }
 }

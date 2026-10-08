@@ -32,6 +32,11 @@ public final class EditorWindows {
      * {@link #MENU} (the chip stands for it).
      */
     public static final String MASK = "mask";
+    /**
+     * Biome view's legend ({@code BiomeLegendWindow}, protocol 6), opened and closed with View > Biome view: not in
+     * {@link #MENU} (the view stands for it).
+     */
+    public static final String BIOME_LEGEND = "biome_legend";
 
     /** The windows listed in the top bar's Windows menu, in order. */
     public static final List<String> MENU = List.of(TOOL_SETTINGS, SELECTION, CLIPBOARD, LIBRARY, HISTORY, KEYS);

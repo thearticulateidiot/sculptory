@@ -16,7 +16,7 @@ import java.util.TreeMap;
  * @param entities entities read into the clipboard
  * @param entitiesSkipped entities in the file that were not read (every entity of a version 1 file; no or a bad
  *     {@code Id} or {@code Pos}, a position outside the box, or a failed data fix); see {@link #warnings()}
- * @param biomesSkipped whether the file had biome data (never imported in v1)
+ * @param biomesSkipped whether the file had biome data that could not be read (malformed; skipped)
  * @param newerDataVersion whether the file comes from a newer game version than the data fixer's target
  * @param warnings human-readable details, at most {@link #MAX_WARNINGS} (then a final "... more" line)
  * @param ticksSkipped scheduled block and fluid updates the file held (Litematica's pending ticks), never imported

@@ -185,7 +185,7 @@ public final class BrushPredictor {
             case WEATHER -> r + SCAN_MARGIN + PLANT_CELLS;
             // Without its spec, the tallest stamp ({@link #estimatedHeightmapCells} knows the height); a square footprint.
             case HEIGHTMAP -> HeightmapSpec.MAX_HEIGHT_BLOCKS + PLANT_CELLS + 1;
-            // Contract placeholder (protocol 6): a biome brush writes no block.
+            // The Biome brush writes no block (protocol 6): nothing to predict.
             case BIOME -> 0;
         };
         boolean square = tool == BrushTool.SHAPE || tool == BrushTool.HEIGHTMAP;

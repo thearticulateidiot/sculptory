@@ -181,7 +181,10 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                         exported)))
                 .createAndAdd(() -> {
                     ClipboardService.Outbound out = exported.get("export");
-                    check(out.notices().isEmpty(), "export notices " + out.notices());
+                    // The copy carries its biomes, which this format does not keep (protocol 6).
+                    check(out.notices().equals(List.of(new S2C.Notice(S2C.Notice.Level.INFO,
+                            ServerClipboards.NOTICE_EXPORT_BIOMES_DROPPED, List.of(format.extension())))),
+                            "export notices " + out.notices());
                     Schematic read;
                     try {
                         read = SchematicFiles.read(new ByteArrayInputStream(out.payload()), h.runtime.states(),
@@ -194,7 +197,9 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     Clipboard original = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
                     String difference = difference(original, read.clipboard());
                     check(difference == null, format + " read back differently: " + difference);
-                    check(read.clipboard().contentHash().equals(original.contentHash()), "content hash differs");
+                    // Litematica and structure files hold no biomes (protocol 6): compared without the copy's.
+                    check(read.clipboard().contentHash().equals(original.withBiomes(null).contentHash()),
+                            "content hash differs");
                     ClipTestSupport.upload(clips, h.player, "kitchen" + format.extension(), out.payload(), uploaded);
                 })
                 .createAndAdd(() -> {

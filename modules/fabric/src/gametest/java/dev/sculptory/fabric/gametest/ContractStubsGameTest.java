@@ -9,27 +9,16 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.regionCorner;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
-import dev.sculptory.core.brush.BiomeSpec;
-import dev.sculptory.core.brush.BrushSpec;
-import dev.sculptory.core.brush.BrushTool;
-import dev.sculptory.core.brush.Falloff;
-import dev.sculptory.core.brush.SculptMode;
-import dev.sculptory.core.brush.Shape;
-import dev.sculptory.core.brush.SurfaceMask;
-import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.SourceRef;
-import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Orientation;
-import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.world.BlockWriter;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
-import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.UUID;
@@ -40,10 +29,9 @@ import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
 
 /**
- * The contracts of the batch after 0.3.0-alpha (protocol 6) before its streams land: every new op, orientation, paste
- * option and brush is refused cleanly by the real service ({@code INVALID}, {@value EngineEditService#NOT_IMPLEMENTED}),
- * after the permission check it will keep, and writes nothing, holds nothing and pushes no history. Each stream deletes
- * its own lines here when it makes them work. Region slot 990.
+ * The contracts of the batch after 0.3.0-alpha (protocol 6), all built now: what stays is that the multi-paste asks for
+ * the clipboard node before anything else, and that a refusal writes nothing, holds nothing and pushes no history.
+ * Region slot 990.
  */
 public final class ContractStubsGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
@@ -60,43 +48,12 @@ public final class ContractStubsGameTest implements FabricGameTest {
         for (int x = x0; x <= x0 + 7; x++) {
             for (int z = z0; z <= z0 + 7; z++) writer.write(x, 100, z, stone, null);
         }
-        Region region = new Region.Cuboid(box(x0, 100, z0, x0 + 7, 102, z0 + 7));
         SourceRef clipboard = new SourceRef.Clipboard(new UUID(9, 9));
         List<String> undoBefore = h.service.history(h.player).undoLabels();
 
-        // ws/biomes: the biome fill and pasted biomes. Free orientations (ws/free-rotation, FreeRotationGameTest) and the
-        // multi-paste, free placements included (ws/extrude-paths, ExtrudePathsGameTest), work.
-        Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * x0 + 7, 0);
-        OpSpec.BiomeFill biomeFill = new OpSpec.BiomeFill(region, "minecraft:desert", true);
-        List<OpSpec> ops = List.of(
-                biomeFill,
-                new OpSpec.BiomeFill(region, "minecraft:desert", false, mirror),
-                new OpSpec.Paste(clipboard, new BlockPos(x0, 101, z0), Transform.IDENTITY,
-                        PasteOptions.DEFAULT.withBiomes(true)),
-                new OpSpec.PasteMany(clipboard, List.of(new OpSpec.PasteMany.Placement(new BlockPos(x0, 101, z0),
-                        Orientation.IDENTITY)), PasteOptions.DEFAULT.withBiomes(true)));
-        for (OpSpec op : ops) {
-            EditRejected refused = refusal(() -> h.service.run(h.player, op, RunOptions.DEFAULT, null));
-            check(refused.reason() == RejectReason.INVALID && EngineEditService.NOT_IMPLEMENTED.equals(refused.detail()),
-                    op.getClass().getSimpleName() + " refused " + refused.reason() + ": " + refused.detail());
-        }
-        // ws/biomes: its brush (ws/heightmap built the Heightmap brush: HeightmapGameTest).
-        BrushSpec biome = new BrushSpec(BrushTool.BIOME, 4, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
-                0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null, null,
-                new BiomeSpec("minecraft:cherry_grove", true));
-        for (BrushSpec spec : List.of(biome)) {
-            EditRejected refused = refusal(() -> h.service.beginStroke(h.player, 7, spec));
-            check(refused.reason() == RejectReason.INVALID && EngineEditService.NOT_IMPLEMENTED.equals(refused.detail()),
-                    spec.tool() + " stroke refused " + refused.reason() + ": " + refused.detail());
-        }
-        // The biome node is checked first, as it will be: a player with the brush and region nodes but not biome.
-        ServerPlayerEntity builder = h.addPlayer(false);
-        EditTestSupport.grant(builder, Perm.USE, Perm.BRUSH, Perm.REGION, Perm.CLIPBOARD);
-        EditRejected noFill = refusal(() -> h.service.run(builder, biomeFill, RunOptions.DEFAULT, null));
-        check(noFill.reason() == RejectReason.NO_PERMISSION, "a fill without the biome node: " + noFill.reason());
-        EditRejected noPaint = refusal(() -> h.service.beginStroke(builder, 8, biome));
-        check(noPaint.reason() == RejectReason.NO_PERMISSION, "a biome stroke without the biome node: " + noPaint.reason());
-        // The multi-paste needs the clipboard node, checked before its source or placements: use and region are not enough.
+        // Every protocol 6 contract is built now (BiomesGameTest, HeightmapGameTest, FreeRotationGameTest,
+        // ExtrudePathsGameTest). What stays here: the multi-paste needs the clipboard node, checked before its source or
+        // placements (use and region are not enough), and a refusal leaves nothing behind.
         OpSpec.PasteMany exactStamp = new OpSpec.PasteMany(clipboard, List.of(new OpSpec.PasteMany.Placement(
                 new BlockPos(x0, 101, z0), Orientation.IDENTITY)), PasteOptions.DEFAULT);
         EditRejected stampNoNode = refusal(() -> h.service.run(h.addPlayer(false), exactStamp, RunOptions.DEFAULT, null));

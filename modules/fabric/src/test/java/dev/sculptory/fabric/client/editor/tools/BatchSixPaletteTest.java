@@ -34,7 +34,7 @@ import org.lwjgl.glfw.GLFW;
 
 /**
  * The client contracts of the batch after 0.3.0-alpha (protocol 6) before its streams land: palette slots 16 and 17
- * (the Heightmap brush on ;, built by ws/heightmap, and the Biome tool on ', a placeholder until ws/biomes registers it),
+ * (the Heightmap brush on ; and the Biome brush on ', both built),
  * and Generate's Sweep and Stamp kinds, listed but not yet offered (Heightmap is built).
  */
 class BatchSixPaletteTest {
@@ -53,7 +53,7 @@ class BatchSixPaletteTest {
     }
 
     @Test
-    void slotSixteenIsTheHeightmapBrushAndSeventeenTheBiomePlaceholderOnSemicolonAndApostrophe() throws IOException {
+    void slotSixteenIsTheHeightmapBrushAndSeventeenTheBiomeBrushOnSemicolonAndApostrophe() throws IOException {
         assertEquals(17, ToolRegistry.PALETTE_SLOTS);
         JsonObject lang = lang();
         Tool heightmap = slot(16);
@@ -62,13 +62,12 @@ class BatchSixPaletteTest {
                 Perm.BRUSH), heightmap.descriptor());
         assertEquals(new ToolDescriptor(ToolId.BIOME, "sculptory.tool.biome", TerrainBrushTool.BIOME_ICON, Perm.BIOME),
                 biome.descriptor());
+        // Both streams landed: the Heightmap brush in slot 16 and the Biome brush (needing the biome node) in 17.
         assertEquals(dev.sculptory.core.brush.BrushTool.HEIGHTMAP,
                 assertInstanceOf(TerrainBrushTool.class, heightmap, "ws/heightmap built it").kind());
-        assertTrue(lang.has("sculptory.tool.heightmap.tooltip"));
-        for (Tool tool : List.of(biome)) {
-            assertInstanceOf(PlaceholderTool.class, tool, "a placeholder until its stream lands");
-            assertEquals(SettingsSchema.EMPTY, tool.schema());
-            assertEquals(List.of(new KeyHint("", "sculptory.hint.coming_soon")), tool.hints(null));
+        assertEquals(dev.sculptory.core.brush.BrushTool.BIOME,
+                assertInstanceOf(TerrainBrushTool.class, biome, "ws/biomes built it").kind());
+        for (Tool tool : List.of(heightmap, biome)) {
             assertFalse(EditorToolSet.comingSoon(tool.descriptor().id()).isPresent(), "selectable, not greyed out");
             for (String key : List.of(tool.descriptor().nameKey(), tool.descriptor().nameKey() + ".tooltip")) {
                 assertTrue(lang.has(key), key);

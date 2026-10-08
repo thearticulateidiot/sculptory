@@ -16,6 +16,7 @@ import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.platform.BorderBounds;
 import dev.sculptory.server.platform.ClientUpdates;
+import dev.sculptory.server.platform.WorldBiomes;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
@@ -182,6 +183,8 @@ public final class EditExecutor<W> {
     private final Map<Lane, Double> laneShares = new HashMap<>();
     /** Client sync of the bulk jobs' writes, per world; flushed at the end of every tick and when a job ends. */
     private final Map<W, ClientUpdates> clientSyncs = new HashMap<>();
+    /** Biomes changed this tick, sent to players at its end ({@link #biomesChanged}), in the order first changed. */
+    private final java.util.Set<WorldBiomes> biomeFlushes = new java.util.LinkedHashSet<>();
     /** When each player last sent brush dabs ({@code System.nanoTime}). */
     private final Map<UUID, Long> predictedAt = new HashMap<>();
     private int roundRobin;
@@ -268,6 +271,10 @@ public final class EditExecutor<W> {
         }
         // Entity work visits columns of its own (an undo of entities only has no sections): they count and load alike.
         long[] entityColumns = request.entities() == null ? new long[0] : request.entities().admissionColumns();
+        // So does biome work (a biome fill has no sections; protocol 6).
+        if (request.biomes() != null) {
+            entityColumns = concat(entityColumns, concat(request.biomes().readColumns(), request.biomes().columns()));
+        }
         int columns = distinctColumns(order, sources, entityColumns);
         if (columns > settings.maxColumnsPerJob()) {
             throw new EditRejected(RejectReason.TOO_LARGE, columns + " chunk columns > " + settings.maxColumnsPerJob());
@@ -757,6 +764,28 @@ public final class EditExecutor<W> {
     }
 
     /**
+     * Biomes changed through {@code biomes} this tick (protocol 6): its changed chunks are sent to the players watching
+     * them at the tick's end ({@link WorldBiomes#flush}), once per tick however many jobs and dabs changed them.
+     */
+    public void biomesChanged(WorldBiomes biomes) {
+        biomeFlushes.add(java.util.Objects.requireNonNull(biomes));
+    }
+
+    /** Sends the biomes changed since the last flush. */
+    private void flushBiomes() {
+        if (biomeFlushes.isEmpty()) return;
+        List<WorldBiomes> pending = new ArrayList<>(biomeFlushes);
+        biomeFlushes.clear();
+        for (WorldBiomes biomes : pending) {
+            try {
+                biomes.flush();
+            } catch (RuntimeException e) {
+                LOG.error("Sculptory could not send edited biomes to players", e);
+            }
+        }
+    }
+
+    /**
      * The end of a server tick; registered on {@code ServerTickEvents.END_SERVER_TICK}. Sends this tick's bulk writes
      * to players: at the end of the tick, after the network tick has sent vanilla's prediction acks, so a resent
      * column always arrives after the acks of block changes the server handled before it.
@@ -765,6 +794,7 @@ public final class EditExecutor<W> {
         checkThread();
         if (shutDown) return;
         flushClientSync(false);
+        flushBiomes();
         if (tickCount % TICKET_REFRESH_TICKS == 0) {
             // Worlds a dimension mod unloaded.
             clientSyncs.keySet().removeIf(w -> !host.exists(w));
@@ -818,6 +848,7 @@ public final class EditExecutor<W> {
         }
         for (BulkJob<W> job : new ArrayList<>(waiting)) finish(job, JobOutcome.CANCELLED);
         flushClientSync(true);
+        flushBiomes();
     }
 
     /**
@@ -942,8 +973,9 @@ public final class EditExecutor<W> {
         }
         emitPhase(job, Phase.FINALIZE);
         // Entities count with the cells: changed, left alone as protected, kept as changed since (undo), stripped.
-        JobResult result = new JobResult(job.id, outcome, job.changed(), job.skippedProtected + job.entitiesProtected(),
-                job.entityConflicts(), job.writer.strippedNbt() + job.entitiesStripped());
+        JobResult result = new JobResult(job.id, outcome, job.changed(),
+                job.skippedProtected + job.entitiesProtected() + job.biomesProtected(),
+                job.entityConflicts() + job.biomeConflicts(), job.writer.strippedNbt() + job.entitiesStripped());
         try {
             job.request.listener().finished(result);
         } catch (RuntimeException e) {
@@ -1052,6 +1084,12 @@ public final class EditExecutor<W> {
      * Whether every packed column's chunk is loaded (its entities, which load a tick or more later, are waited for by the
      * job itself).
      */
+    private static long[] concat(long[] a, long[] b) {
+        long[] out = java.util.Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, out, a.length, b.length);
+        return out;
+    }
+
     private boolean allEntityColumnsLoaded(W world, long[] columns) {
         for (long column : columns) {
             if (!host.chunkLoaded(world, ColumnPlan.unpackX(column), ColumnPlan.unpackZ(column))) return false;

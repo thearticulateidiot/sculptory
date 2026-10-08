@@ -18,7 +18,7 @@ Every editor key can be changed, and `F1` always shows the keys as you have them
 
 | Action | Key |
 |---|---|
-| Tools 1–16 | `1`–`9`, `0`, `-`, `=`, `[`, `]`, `\`, `;` |
+| Tools 1–17 | `1`–`9`, `0`, `-`, `=`, `[`, `]`, `\`, `;`, `'` |
 | Heightmap brush: turn the picture | `R`, `Shift+R` |
 | Tool size, strength or height | `Ctrl+Scroll` (`Shift`: steps of 4), `Alt+Scroll` |
 | Fly speed | `Scroll` over the world |

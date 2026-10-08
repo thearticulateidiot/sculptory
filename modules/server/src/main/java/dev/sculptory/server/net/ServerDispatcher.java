@@ -733,7 +733,8 @@ public final class ServerDispatcher<P> {
     }
 
     /**
-     * Resends chunks after the client lost a prediction acknowledgement. Needs {@link Perm#USE}, {@link Perm#BRUSH}
+     * Resends chunks after the client lost a prediction acknowledgement. Needs {@link Perm#USE}, {@link Perm#BRUSH} (or
+     * {@link Perm#BIOME}, for a Biome brush stroke)
      * and a stroke that is open or ended within {@link #RESYNC_WINDOW_NANOS}; serves only chunks inside that stroke's (or
      * the previous stroke's) accepted-dab footprint that the player is tracking, at most
      * {@link #MAX_RESYNC_CHUNKS}. A request with no chunk in the footprint, or over the chunk cap, counts as a
@@ -741,7 +742,7 @@ public final class ServerDispatcher<P> {
      */
     private void resync(NetSession<P> s, Box box) {
         long now = nanoClock.getAsLong();
-        if (!has(s, Perm.USE) || !has(s, Perm.BRUSH)) {
+        if (!has(s, Perm.USE) || !(has(s, Perm.BRUSH) || has(s, Perm.BIOME))) {
             refuseResync(s, RESYNC_NO_PERMISSION);
             return;
         }

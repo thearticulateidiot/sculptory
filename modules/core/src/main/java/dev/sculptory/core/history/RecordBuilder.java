@@ -3,8 +3,12 @@ package dev.sculptory.core.history;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
+import it.unimi.dsi.fastutil.longs.Long2LongLinkedOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -29,11 +33,21 @@ import java.util.UUID;
  *
  * <p><b>Entities.</b> {@link #recordEntity} keeps, per UUID, the first {@code before} and the last {@code after}, like
  * cells; entities recorded since they were last {@link #drainEntities drained} are saved the same way.
+ *
+ * <p><b>Biomes</b> (protocol 6). {@link #recordBiome} keeps, per quart, the first {@code before} and the last
+ * {@code after} biome id, like cells; quarts recorded since they were last {@link #drainBiomes drained} are saved the
+ * same way. Ids are kept once each, so a stroke painting thousands of quarts holds a few longs per quart.
  */
 public final class RecordBuilder {
     private static final SectionBuffer[] NOTHING_KEPT = new SectionBuffer[0];
 
     private final UUID id = UUID.randomUUID();
+    /** Per quart ({@link BiomeHistory#key}): its first before and last after, as indices into {@link #biomeIds}. */
+    private final Long2LongLinkedOpenHashMap biomes = new Long2LongLinkedOpenHashMap();
+    /** Quarts recorded since they were last drained. */
+    private final LongLinkedOpenHashSet dirtyBiomes = new LongLinkedOpenHashSet();
+    private final List<String> biomeIds = new ArrayList<>();
+    private final Object2IntOpenHashMap<String> biomeIndex = new Object2IntOpenHashMap<>();
     /** Sections recorded into since they were last drained. */
     private final LongOpenHashSet dirty = new LongOpenHashSet();
     /** Per entity: {first before, last after}, in first-recorded order. */
@@ -142,6 +156,73 @@ public final class RecordBuilder {
     }
 
     /**
+     * Records one biome change of quart {@code (qx, qy, qz)}: keeps its first {@code before} and its last {@code after}
+     * biome id. A quart painted and painted back again by the same edit changes nothing and is not kept.
+     *
+     * @throws IllegalArgumentException if an id is not a namespaced id
+     */
+    public void recordBiome(int qx, int qy, int qz, String before, String after) {
+        int a = biomeIndex(after);
+        long key = BiomeHistory.key(qx, qy, qz);
+        long pair = biomes.getOrDefault(key, -1L);
+        if (pair == -1L) {
+            biomes.put(key, ((long) biomeIndex(before) << 32) | a);
+        } else {
+            biomes.put(key, (pair & 0xFFFFFFFF00000000L) | a);
+        }
+        dirtyBiomes.add(key);
+    }
+
+    /** Quarts recorded so far (unchanged ones included). */
+    public int biomeCount() {
+        return biomes.size();
+    }
+
+    /** The biome changes {@link #build()} would keep now, in first-recorded order. */
+    public BiomeChanges biomeChanges() {
+        if (biomes.isEmpty()) return BiomeChanges.EMPTY;
+        BiomeChanges.Builder changes = new BiomeChanges.Builder(biomes.size(), false);
+        for (Long2LongMap.Entry quart : biomes.long2LongEntrySet()) {
+            long pair = quart.getLongValue();
+            if ((int) (pair >>> 32) == (int) pair) continue;
+            add(changes, quart.getLongKey(), pair);
+        }
+        return changes.build();
+    }
+
+    /** Whether a quart was recorded since the biomes were last drained. */
+    public boolean hasDirtyBiomes() {
+        return !dirtyBiomes.isEmpty();
+    }
+
+    /**
+     * The quarts recorded since they were last drained, each as the record holds it now (first before, last after; the
+     * same id on both sides for one painted back), in first-recorded order, and forgets that they were: what the history
+     * journal saves of an unfinished record. A later batch's change of a quart replaces an earlier one's.
+     */
+    public BiomeChanges drainBiomes() {
+        BiomeChanges.Builder out = new BiomeChanges.Builder(dirtyBiomes.size(), false);
+        for (long key : dirtyBiomes) add(out, key, biomes.get(key));
+        dirtyBiomes.clear();
+        return out.build();
+    }
+
+    private int biomeIndex(String id) {
+        int index = biomeIndex.getOrDefault(id, -1);
+        if (index >= 0) return index;
+        new dev.sculptory.core.NamespacedId(id); // refuses a malformed id before it is kept
+        index = biomeIds.size();
+        biomeIds.add(id);
+        biomeIndex.put(id, index);
+        return index;
+    }
+
+    private void add(BiomeChanges.Builder into, long key, long pair) {
+        into.add(BiomeHistory.keyX(key), BiomeHistory.keyY(key), BiomeHistory.keyZ(key), biomeIds.get((int) (pair >>> 32)),
+                biomeIds.get((int) pair));
+    }
+
+    /**
      * Records every present cell of {@code written} (one section, as produced by {@code EditProgram.compute}
      * and actually applied) against the same cells of {@code before}, the section's content before the write.
      */
@@ -189,7 +270,10 @@ public final class RecordBuilder {
 
     /** Approximate heap held so far (grows with coalesced strokes; see {@link #build()} for the final size). */
     public long estimatedBytes() {
-        return before.estimatedBytes() + after.estimatedBytes() + entityBytes + 48L * entities.size();
+        // A quart: its key and before/after pair in a linked map (~43 bytes at 0.75 load) and, while unsaved, its key in
+        // the dirty set: about 52 bytes.
+        return before.estimatedBytes() + after.estimatedBytes() + entityBytes + 48L * entities.size()
+                + 52L * biomes.size();
     }
 
     /** The id of the history entry this record becomes (fresh per builder). */
@@ -263,11 +347,13 @@ public final class RecordBuilder {
     }
 
     /**
-     * Marks every section and entity recorded so far dirty again (the journal lost what it had saved of this record).
+     * Marks every section, entity and biome quart recorded so far dirty again (the journal lost what it had saved of
+     * this record).
      */
     public void markAllDirty() {
         dirty.addAll(before.keys());
         dirtyEntities.addAll(entities.keySet());
+        dirtyBiomes.addAll(biomes.keySet());
     }
 
     /**
@@ -288,7 +374,8 @@ public final class RecordBuilder {
 
     /**
      * Builds the record, dropping cells where before == after with the same tile content (both absent, or
-     * {@link BlockEntityData#sameContent}), and entities left as they were found. The result holds compacted copies;
+     * {@link BlockEntityData#sameContent}), and entities and biome quarts left as they were found. The result holds
+     * compacted copies;
      * this builder is unchanged and may keep recording (sections {@link #prepare prepared} are handed to the result and
      * are built afresh next time).
      */
@@ -302,7 +389,7 @@ public final class RecordBuilder {
             outBefore.putSection(key, kept[0]);
             outAfter.putSection(key, kept[1]);
         }
-        return new EditRecord(outBefore, outAfter, entityChanges());
+        return new EditRecord(outBefore, outAfter, entityChanges(), biomeChanges());
     }
 
     /** One section's kept cells as compact {before, after} copies, or {@link #NOTHING_KEPT}. */

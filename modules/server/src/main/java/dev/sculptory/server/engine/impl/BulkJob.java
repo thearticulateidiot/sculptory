@@ -45,10 +45,15 @@ import org.slf4j.LoggerFactory;
  * ({@link #ENTITY_UNITS} per entity) between steps. Cancelling takes effect between steps as between sections: a move
  * cancelled after taking its entities leaves them removed (and recorded) until it is undone.
  *
+ * <p><b>Biomes</b> (protocol 6). A job with {@link JobRequest#biomes() biome work} sets them after its blocks and
+ * before placing entities ({@link Stage#BIOMES}), a chunk column at a time, each column ticketed and waited for like
+ * the entity columns; a column is one step, its quarts charged to the tick's budget. The executor sends the changed
+ * chunks' biomes to players at the end of the tick ({@link EditExecutor#biomesChanged}).
+ *
  * @param <W> the platform's world type
  */
 final class BulkJob<W> {
-    enum Stage { WAITING, ENTITIES_BEFORE, SOURCES, APPLY, ENTITIES_AFTER, DONE }
+    enum Stage { WAITING, ENTITIES_BEFORE, SOURCES, APPLY, BIOMES, ENTITIES_AFTER, DONE }
 
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
 
@@ -132,6 +137,14 @@ final class BulkJob<W> {
     private long prepareNanos;
     /** Light checks the section just finished queued ({@link EngineHost#relightSection}), charged to the budget. */
     private int relit;
+    /** The job's biome work and what it counts, or {@code null}. */
+    private final BiomeWork biomeWork;
+    private BiomeWork.Context biomes;
+    private ColumnPlan biomePlan;
+    private TicketWindow biomeTickets;
+    private int biomeCursor;
+    /** Whether the biome stage is still reading ({@link BiomeWork#readColumns}) before it writes. */
+    private boolean biomeReading;
     /** The job's entity work and what it counts, or {@code null}. */
     private final EntityWork entityWork;
     private EntityWork.Context<?> entities;
@@ -193,6 +206,7 @@ final class BulkJob<W> {
         };
         this.guard = (live, liveTile) -> program.mayReplace(guardKey, guardIndex, live, liveTile, context);
         this.entityWork = request.entities();
+        this.biomeWork = request.biomes();
     }
 
     UUID owner() {
@@ -203,9 +217,19 @@ final class BulkJob<W> {
         return stage == Stage.DONE;
     }
 
-    /** Cells written and recorded so far, and entities placed, put back or removed. */
+    /** Cells written and recorded so far, entities placed, put back or removed, and biome quarts changed. */
     long changed() {
-        return writer.changed() + (entities == null ? 0 : entities.changed());
+        return writer.changed() + (entities == null ? 0 : entities.changed()) + (biomes == null ? 0 : biomes.changed);
+    }
+
+    /** Biome quarts left alone because their column was protected. */
+    long biomesProtected() {
+        return biomes == null ? 0 : biomes.protectedQuarts;
+    }
+
+    /** Biome quarts kept because they changed since the step (undo, redo) or name a biome the world lacks. */
+    long biomeConflicts() {
+        return biomes == null ? 0 : biomes.conflicts;
     }
 
     /** Entities left alone because their block was protected. */
@@ -238,6 +262,10 @@ final class BulkJob<W> {
         if (sources.length > 0 || airSources.length > 0) {
             snapshots = new Long2ObjectOpenHashMap<>(sources.length + airSources.length);
             for (long key : airSources) snapshots.put(key, SectionBuffer.uniform(air));
+        }
+        if (biomeWork != null) {
+            biomes = new BiomeWork.Context(host.biomes(world), request.permits(), request.records(),
+                    (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z));
         }
         if (entityWork != null) {
             entities = EntityWork.Context.of(host.entities(world), request.writeOptions(), request.permits(),
@@ -309,6 +337,74 @@ final class BulkJob<W> {
     }
 
     /**
+     * Plans the biome stage: the columns it reads first, if any, then those it writes, each with a ticket window of its
+     * own (a column both read and written is ticketed once for its read, then again for its write). False when the job
+     * has no biome work or the work writes no column.
+     */
+    private boolean beginBiomes() {
+        if (biomeWork == null) return false;
+        long[] columns = biomeWork.columns();
+        if (columns.length == 0) return false;
+        long[] sourceColumns = biomeWork.readColumns();
+        biomeReading = sourceColumns.length > 0;
+        planBiomeColumns(biomeReading ? sourceColumns : columns);
+        return true;
+    }
+
+    private void planBiomeColumns(long[] columns) {
+        long[] keys = new long[columns.length];
+        for (int i = 0; i < columns.length; i++) {
+            keys[i] = BlockBuffer.key(ColumnPlan.unpackX(columns[i]), 0, ColumnPlan.unpackZ(columns[i]));
+        }
+        biomePlan = ColumnPlan.of(keys);
+        biomeTickets = new TicketWindow(biomePlan, tickets, maxTickets);
+        biomeTickets.advance(0);
+        biomeCursor = 0;
+    }
+
+    /**
+     * After the blocks and biomes: the entity work after the blocks, or the end of the job.
+     *
+     * @return whether the job finished
+     */
+    private boolean afterBiomes() {
+        if (entityWork != null && beginEntities(entityWork.afterColumns())) {
+            stage = Stage.ENTITIES_AFTER;
+            return false;
+        }
+        executor.finish(this, JobOutcome.COMPLETED);
+        return true;
+    }
+
+    /**
+     * One step of the biome stage: the current column's quarts, once its chunk is loaded.
+     *
+     * @return units used, or -1 when the job must wait for a chunk
+     */
+    private long biomeStep(EditExecutor.Budget budget) {
+        long column = biomePlan.column(biomePlan.columnOfSection(biomeCursor));
+        int cx = ColumnPlan.unpackX(column), cz = ColumnPlan.unpackZ(column);
+        if (!biomes.biomes.loaded(cx, cz)) {
+            waitFor(cx, cz);
+            return -1;
+        }
+        waitingSince = NOT_WAITING;
+        report(Phase.APPLY);
+        long before = biomes.visited, changedBefore = biomes.changed;
+        if (biomeReading) {
+            biomeWork.read(column, biomes);
+        } else {
+            biomeWork.apply(column, biomes);
+        }
+        long visited = biomes.visited - before;
+        budget.cellsLeft -= visited;
+        if (biomes.changed > changedBefore) executor.biomesChanged(biomes.biomes);
+        request.records().biomesFinished();
+        biomeTickets.advance(++biomeCursor);
+        return EditExecutor.SECTION_OVERHEAD_UNITS + visited;
+    }
+
+    /**
      * Works until {@code maxUnits} units (one per cell visited, plus a fixed overhead per section) are used, the
      * budget runs out, or the job must wait for a chunk. May finish the job.
      *
@@ -341,6 +437,24 @@ final class BulkJob<W> {
                 budget.checkTime();
                 continue;
             }
+            if (stage == Stage.BIOMES) {
+                if (biomeCursor >= biomePlan.sectionCount()) {
+                    biomeTickets.releaseAll();
+                    if (biomeReading) {
+                        // Every source is read: now the writes, under a window of their own.
+                        biomeReading = false;
+                        planBiomeColumns(biomeWork.columns());
+                        continue;
+                    }
+                    if (afterBiomes()) return used;
+                    continue;
+                }
+                long step = biomeStep(budget);
+                if (step < 0) return used;
+                used += step;
+                budget.checkTime();
+                continue;
+            }
             if (stage == Stage.SOURCES) {
                 if (sourceCursor >= sources.length) {
                     beginApply();
@@ -362,15 +476,15 @@ final class BulkJob<W> {
             }
             if (current == null) {
                 if (sectionCursor >= order.length) {
-                    if (entityWork != null) {
-                        applyTickets.releaseAll();
-                        if (beginEntities(entityWork.afterColumns())) {
-                            stage = Stage.ENTITIES_AFTER;
-                            continue;
-                        }
+                    applyTickets.releaseAll();
+                    // The blocks are done: their neighbour-read tickets go too, before the biome and entity stages.
+                    if (reads != null) reads.releaseAll();
+                    if (beginBiomes()) {
+                        stage = Stage.BIOMES;
+                        continue;
                     }
-                    executor.finish(this, JobOutcome.COMPLETED);
-                    return used;
+                    if (afterBiomes()) return used;
+                    continue;
                 }
                 long key = order[sectionCursor];
                 int sy = BlockBuffer.keyY(key);
@@ -420,6 +534,11 @@ final class BulkJob<W> {
     /** Progress in units of {@link #totalCells}, by sections written. */
     long done() {
         if (outcome == JobOutcome.COMPLETED || stage == Stage.ENTITIES_AFTER) return totalCells;
+        if (stage == Stage.BIOMES) {
+            if (order.length > 0) return totalCells;
+            if (biomeReading) return 0;
+            return Math.min(totalCells, (long) (totalCells * ((double) biomeCursor / biomePlan.sectionCount())));
+        }
         if (stage == Stage.WAITING || stage == Stage.ENTITIES_BEFORE || stage == Stage.SOURCES || order.length == 0) {
             return 0;
         }
@@ -432,6 +551,7 @@ final class BulkJob<W> {
         if (applyTickets != null) applyTickets.refresh();
         if (reads != null) reads.refresh();
         if (entityTickets != null) entityTickets.refresh();
+        if (biomeTickets != null) biomeTickets.refresh();
     }
 
     void releaseTickets() {
@@ -439,6 +559,7 @@ final class BulkJob<W> {
         if (applyTickets != null) applyTickets.releaseAll();
         if (reads != null) reads.releaseAll();
         if (entityTickets != null) entityTickets.releaseAll();
+        if (biomeTickets != null) biomeTickets.releaseAll();
     }
 
     /** Drops the source snapshots and the section in progress (the job has ended). */

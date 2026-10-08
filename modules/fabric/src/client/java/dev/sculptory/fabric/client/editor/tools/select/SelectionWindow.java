@@ -77,6 +77,14 @@ public final class SelectionWindow {
 
         /** The UI context whose popup layer holds the Replace popup. */
         UiContext popups();
+
+        /**
+         * The Biome tool's biome and mode (protocol 6), for Fill biome; empty where there is no Biome tool (the button is
+         * then hidden).
+         */
+        default Optional<dev.sculptory.core.brush.BiomeSpec> biomeChoice() {
+            return Optional.empty();
+        }
     }
 
     private final SelectionActions actions;
@@ -142,8 +150,11 @@ public final class SelectionWindow {
                 actions::updateBlocks);
         Button rotate = button("sculptory.op.rotate_dots", "sculptory.selection.rotate.tooltip", () -> { });
         rotate.setOnClick(() -> openRotate(rotate.bounds()));
+        Button biome = button("sculptory.selection.biome_fill", "sculptory.selection.biome_fill.tooltip",
+                () -> host.biomeChoice().ifPresent(choice -> actions.biomeFill(choice.biomeId(), choice.columns())));
         List<Button> buttons = new ArrayList<>(List.of(fill, replace, erase, hollow, walls, overlay, naturalize, update,
                 rotate));
+        if (host.biomeChoice().isPresent()) buttons.add(biome);
         thickness = Slider.ofInt(tr.translate("sculptory.selection.thickness"), SelectSettings.THICKNESS.min(),
                 SelectSettings.THICKNESS.max(), host.settings().get(SelectSettings.THICKNESS),
                 value -> host.updateSettings(host.settings().with(SelectSettings.THICKNESS, value)));
@@ -159,6 +170,7 @@ public final class SelectionWindow {
                 FlowRow.of(grow(hollow), grow(walls)),
                 thickness,
                 FlowRow.of(grow(overlay), grow(naturalize), grow(update)));
+        if (host.biomeChoice().isPresent()) column.add(FlowRow.of(grow(biome)));
         if (clipboard != null) {
             Button copy = button("sculptory.selection.copy", "sculptory.selection.copy.tooltip",
                     () -> clipboard.copySelection(false));

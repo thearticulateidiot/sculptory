@@ -135,7 +135,11 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
                     check(out.kind() == StreamKind.SCHEM_FILE
                             && ("clipboard" + format.extension()).equals(out.meta().get("fileName"))
                             && format.name().equals(out.meta().get("format")), "meta " + out.meta());
-                    check(out.notices().isEmpty(), "export notices " + out.notices());
+                    // A copy carries its biomes; only .schem keeps them (protocol 6).
+                    List<S2C.Notice> expectedNotices = format == SchematicFormat.SPONGE ? List.of()
+                            : List.of(new S2C.Notice(S2C.Notice.Level.INFO, ServerClipboards.NOTICE_EXPORT_BIOMES_DROPPED,
+                                    List.of(format.extension())));
+                    check(out.notices().equals(expectedNotices), "export notices " + out.notices());
                     byte[] bytes = out.payload();
                     try {
                         NbtCompound file = NbtIo.readAuto(new ByteArrayInputStream(bytes), NbtLimits.DEFAULT).value();
@@ -148,7 +152,9 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
                         Clipboard original = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
                         String difference = SchematicLibraryGameTest.difference(original, read.clipboard());
                         check(difference == null, "read back differently: " + difference);
-                        check(read.clipboard().contentHash().equals(original.contentHash()), "content hash differs");
+                        // Only .schem keeps biomes (protocol 6): the other formats read back without them.
+                        Clipboard expected = format == SchematicFormat.SPONGE ? original : original.withBiomes(null);
+                        check(read.clipboard().contentHash().equals(expected.contentHash()), "content hash differs");
                     } catch (IOException e) {
                         throw new GameTestException("cannot read our own file: " + e);
                     }
@@ -203,11 +209,16 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
                     run(() -> clips.export(h.player, info.clipboardId(), SchematicFormat.LITEMATIC, litematic));
                 })
                 .createAndAdd(() -> {
+                    // A copy carries its biomes (protocol 6), which neither format keeps: each export says so.
                     List<S2C.Notice> notices = structure.get("structure export").notices();
-                    check(notices.equals(List.of(new S2C.Notice(S2C.Notice.Level.WARN,
-                            ServerClipboards.NOTICE_EXPORT_STRUCTURE_SIZE, List.of("49", "1", "1", "48")))),
-                            "structure notices " + notices);
-                    check(litematic.get("litematic export").notices().isEmpty(), "Litematica has no such limit");
+                    check(notices.equals(List.of(new S2C.Notice(S2C.Notice.Level.INFO,
+                                    ServerClipboards.NOTICE_EXPORT_BIOMES_DROPPED, List.of(".nbt")),
+                            new S2C.Notice(S2C.Notice.Level.WARN, ServerClipboards.NOTICE_EXPORT_STRUCTURE_SIZE,
+                                    List.of("49", "1", "1", "48")))), "structure notices " + notices);
+                    List<S2C.Notice> lite = litematic.get("litematic export").notices();
+                    check(lite.equals(List.of(new S2C.Notice(S2C.Notice.Level.INFO,
+                            ServerClipboards.NOTICE_EXPORT_BIOMES_DROPPED, List.of(".litematic")))),
+                            "Litematica has no size limit: " + lite);
                     forceChunks(world, wide, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
@@ -431,7 +442,9 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
                     for (int i = 1; i < loaded.size(); i++) {
                         String difference = SchematicLibraryGameTest.difference(loaded.get(0), loaded.get(i));
                         check(difference == null, paths.get(i) + " loaded differently: " + difference);
-                        check(loaded.get(i).contentHash().equals(loaded.get(0).contentHash()), paths.get(i) + " hash");
+                        // Only the .schem keeps biomes (protocol 6): compared without them.
+                        check(loaded.get(i).withBiomes(null).contentHash().equals(loaded.get(0).withBiomes(null)
+                                .contentHash()), paths.get(i) + " hash");
                     }
                     forceChunks(world, source, false);
                     ClipTestSupport.deleteTree(root.getParent());

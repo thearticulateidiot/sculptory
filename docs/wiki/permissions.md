@@ -10,6 +10,7 @@ Every permission node is `sculptory.<name>`. A permissions mod such as LuckPerms
 |---|---|
 | `use` | Opening the editor at all; every other node needs it |
 | `brush` | The terrain brushes, the Weather brush, the Shape brush, the Fluid ball |
+| `biome` | The Biome tool (painting and filling biomes), and pasting a clipboard's biomes; a move or stack carries biomes only with it |
 | `region` | Select and its operations, Move, Stack, Extrude, Flood, Drain, Tinker, Generate and the Shape brush's Line (with `clipboard`) |
 | `clipboard` | Copy, paste, the library, Generate and the Shape brush's Line (with `region`) |
 | `builder` | Builder mode's powers outside the editor |
@@ -30,7 +31,7 @@ A useful split for a build server.
 
 | Role | Nodes |
 |---|---|
-| Builder | `use`, `brush`, `region`, `clipboard`, `scatter`, `builder`, `navigate` |
+| Builder | `use`, `brush`, `biome`, `region`, `clipboard`, `scatter`, `builder`, `navigate` |
 | Lead builder | Builder, plus `schematic.import`, `schematic.export`, `library.write` |
 | Admin | `sculptory.*` |
 

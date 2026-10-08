@@ -3,6 +3,7 @@ package dev.sculptory.fabric.client.editor.tools.brush;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
+import dev.sculptory.core.brush.BiomeSpec;
 import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
@@ -213,7 +214,9 @@ public final class TerrainBrushTool implements Tool {
         this.press = new BrushPress(centre, services);
         this.gradient = new GradientDrag(centre.gradientLine());
         this.settings = BrushSettings.forTool(kind);
-        this.descriptor = new ToolDescriptor(toolId(kind), "sculptory.tool." + name(kind), icon(kind), Perm.BRUSH);
+        // The Biome brush needs the biome node instead of the brush node (protocol 6).
+        this.descriptor = new ToolDescriptor(toolId(kind), "sculptory.tool." + name(kind), icon(kind),
+                kind == BrushTool.BIOME ? Perm.BIOME : Perm.BRUSH);
         this.controller = new StrokeController(new Host(), flows(kind));
     }
 
@@ -666,7 +669,8 @@ public final class TerrainBrushTool implements Tool {
         } catch (IllegalStateException noSession) {
             return null;
         }
-        boolean predict = BrushPredictor.estimatedCells(spec) <= MAX_PREDICTED_CELLS;
+        // Biomes are not predicted: the client sees them when the server's biome packets come (protocol 6).
+        boolean predict = kind != BrushTool.BIOME && BrushPredictor.estimatedCells(spec) <= MAX_PREDICTED_CELLS;
         StrokeHandle handle = session.beginStroke(descriptor.id(), spec, new StrokeParams(predict, MAX_PREDICTED_CELLS));
         if (!handle.active()) {
             return null;
@@ -747,7 +751,9 @@ public final class TerrainBrushTool implements Tool {
         BrushSpec spec = new BrushSpec(effectiveTool(invert), radius, strength, values.get(settings.falloff),
                 values.get(settings.shape), material, settings.mask(values, states), depth, targetY, seed, clip,
                 press.symmetry(c, values.get(settings.symmetry), aimPos), null, SculptMode.TERRAIN, null,
-                settings.weatherMode == null ? null : new WeatherSpec(values.get(settings.weatherMode)));
+                settings.weatherMode == null ? null : new WeatherSpec(values.get(settings.weatherMode)), null,
+                settings.biome == null ? null
+                        : new BiomeSpec(values.get(settings.biome), !values.get(settings.biomeThreeD)));
         if (surface(values)) {
             if (kind == BrushTool.FLATTEN && surfacePlane == null) {
                 return null;
@@ -898,7 +904,8 @@ public final class TerrainBrushTool implements Tool {
         long cells = kind == BrushTool.HEIGHTMAP
                 ? BrushPredictor.estimatedHeightmapCells(radius, values.get(settings.heightmapHeight))
                 : BrushPredictor.estimatedCells(shown, radius, shape, depth, mode);
-        boolean serverOnly = cells * copies(values) > MAX_PREDICTED_CELLS;
+        // The Biome brush writes no block: nothing to predict (the server's cursor shows it).
+        boolean serverOnly = kind == BrushTool.BIOME || cells * copies(values) > MAX_PREDICTED_CELLS;
         cursorRadius = radius;
         cursorShape = shape;
         cursorColor = color(shown);
