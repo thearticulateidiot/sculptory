@@ -2079,6 +2079,8 @@ public final class FabricEditorSession implements EditorSession {
             case OpSpec.Overlay o -> "Overlay";
             case OpSpec.Naturalize n -> "Naturalize";
             case OpSpec.UpdateBlocks u -> "Update blocks";
+            case OpSpec.PasteMany m -> "Paste";
+            case OpSpec.BiomeFill b -> "Biome fill";
         };
     }
 }

@@ -46,7 +46,7 @@ class HandshakeTest {
      */
     @Test
     void olderPeersAreRefusedAtTheHandshake() {
-        assertEquals(5, ProtocolV2.VERSION);
+        assertEquals(6, ProtocolV2.VERSION);
         for (int older = 2; older < ProtocolV2.VERSION; older++) {
             assertFalse(Handshake.supports(older));
             C2S.Hello old = new C2S.Hello(older, older, "0.2.0", Features.NONE);

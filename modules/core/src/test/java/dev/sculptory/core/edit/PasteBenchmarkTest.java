@@ -54,6 +54,44 @@ class PasteBenchmarkTest {
         assertTrue(warm < BUDGET_NANOS, "warm 1M paste took " + warm / 1_000_000 + " ms");
     }
 
+    /**
+     * A free orientation resamples every cell of its (larger) turned box: a million-cell source turned 30, 20 and 10
+     * degrees, within the same budget.
+     */
+    @Test
+    void millionCellFreePaste() {
+        FakeStateSpace states = new FakeStateSpace();
+        int[] palette = {states.state("minecraft:stone"), states.state("minecraft:oak_stairs[facing=north]"),
+                states.state("minecraft:oak_log[axis=x]"), states.state("testmod:widget[facing=west]")};
+        Clipboard.Builder builder = Clipboard.builder(states, new BlockPos(100, 100, 100));
+        for (int y = 0; y < 100; y++) {
+            for (int z = 0; z < 100; z++) {
+                for (int x = 0; x < 100; x++) builder.set(x, y, z, palette[(x * 7 + y * 3 + z) % palette.length]);
+            }
+        }
+        Clipboard clipboard = builder.anchor(new BlockPos(50, 0, 50)).build();
+        SourceRef ref = new SourceRef.Clipboard(UUID.randomUUID());
+        CompileContext context = CopyTestSupport.context(states, Map.of(ref, clipboard.toSource()));
+        OpSpec.Paste op = new OpSpec.Paste(ref, new BlockPos(1000, 100, -1000),
+                dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3_000, 2_000, 1_000), PasteOptions.DEFAULT);
+        FakeWorld world = new FakeWorld(states);
+        long start = System.nanoTime();
+        EditProgram program = OpCompiler.compile(op, context);
+        long written = 0;
+        SectionBuffer before = new SectionBuffer();
+        for (long key : program.sectionOrder()) {
+            world.copySection(BlockBuffer.keyX(key), BlockBuffer.keyY(key), BlockBuffer.keyZ(key), before);
+            SectionBuffer out = new SectionBuffer();
+            program.compute(key, before, out, null);
+            written += out.presentCount();
+        }
+        long elapsed = System.nanoTime() - start;
+        System.out.printf("1M-cell free paste: %.1f ms, %d cells written%n", elapsed / 1e6, written);
+        // A turned solid holds about the volume it had (the nearest-cell resampling neither loses nor doubles much).
+        assertTrue(written > 950_000 && written < 1_050_000, "written " + written);
+        assertTrue(elapsed < BUDGET_NANOS, "free 1M paste took " + elapsed / 1_000_000 + " ms");
+    }
+
     private static long time(OpSpec.Paste op, CompileContext context, FakeWorld world, long[] computeNanos) {
         long start = System.nanoTime();
         EditProgram program = OpCompiler.compile(op, context);

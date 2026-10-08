@@ -36,6 +36,7 @@ import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.TicketWindow;
 import dev.sculptory.server.platform.BorderBounds;
 import dev.sculptory.server.platform.Profile;
+import dev.sculptory.server.platform.WorldBiomes;
 import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -461,6 +462,15 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
     @Override
     public FabricWorldEntities entities(ServerWorld world) {
         return new FabricWorldEntities(world);
+    }
+
+    /**
+     * Contract stub (protocol 6): ws/biomes replaces it with the Fabric biome layer. Nothing calls it yet: the server
+     * refuses every biome edit before it would.
+     */
+    @Override
+    public WorldBiomes biomes(ServerWorld world) {
+        throw new UnsupportedOperationException("Biome editing is not implemented");
     }
 
     /** {@link EntityTypeRules#scan}. */

@@ -75,9 +75,9 @@ class ToolRegistryTest {
     }
 
     @Test
-    void onlyFifteenSlots() {
+    void onlySeventeenSlots() {
         ToolRegistry registry = new ToolRegistry();
-        for (int i = 0; i < 16; i++) registry.register(new RecordingTool(new ToolId("tool" + i)));
+        for (int i = 0; i < 18; i++) registry.register(new RecordingTool(new ToolId("tool" + i)));
         assertEquals("tool8", registry.slot(9).orElseThrow().descriptor().id().value());
         assertEquals("tool9", registry.slot(10).orElseThrow().descriptor().id().value(), "slot 10, on key 0");
         assertEquals("tool10", registry.slot(11).orElseThrow().descriptor().id().value(), "slot 11, on key -");
@@ -85,8 +85,10 @@ class ToolRegistryTest {
         assertEquals("tool12", registry.slot(13).orElseThrow().descriptor().id().value(), "slot 13, on key [");
         assertEquals("tool13", registry.slot(14).orElseThrow().descriptor().id().value(), "slot 14, on key ]");
         assertEquals("tool14", registry.slot(15).orElseThrow().descriptor().id().value(), "slot 15, on key \\");
-        assertTrue(registry.slot(16).isEmpty());
-        assertEquals(16, registry.paletteOrder().size());
+        assertEquals("tool15", registry.slot(16).orElseThrow().descriptor().id().value(), "slot 16, on key ;");
+        assertEquals("tool16", registry.slot(17).orElseThrow().descriptor().id().value(), "slot 17, on key '");
+        assertTrue(registry.slot(18).isEmpty());
+        assertEquals(18, registry.paletteOrder().size());
     }
 
     @Test

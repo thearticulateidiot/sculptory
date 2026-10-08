@@ -7,11 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
+import dev.sculptory.core.edit.OpSpec;
+import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Transform;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.fabric.client.editor.EditorBackend;
@@ -31,6 +35,8 @@ import dev.sculptory.fabric.client.editor.ui.UiContext;
 import dev.sculptory.fabric.client.editor.ui.widget.Button;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.JobTracker;
+import dev.sculptory.fabric.client.session.ToolAction;
+import dev.sculptory.protocol.v2.OpLabel;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -280,5 +286,63 @@ class SelectionWindowTest {
                 "nothing selected, nothing to note");
         ctx.setSelectionRegion(new Region.Cells(CellSets.of(BlockPos.ORIGIN)));
         assertTrue(tool.hints(ctx.contextFor(ToolId.SELECT)).contains(KeyHint.text("sculptory.hint.select.too_detailed")));
+    }
+
+    @Test
+    void rotateSendsAMoveLabelledRotateAboutTheSymmetryCentreOrTheMiddle() {
+        ctx.setSelectionRegion(new Region.Cuboid(BOX));
+        assertFalse(actions.rotate(0, 0, 0, EntityFilter.NONE), "no angle, nothing to do");
+        assertTrue(session.sent().isEmpty());
+        // Without a centre: about the selection's middle cell (offset 0).
+        assertTrue(actions.rotate(3_000, 0, 0, EntityFilter.DECORATIONS));
+        ToolAction.RunOp first = (ToolAction.RunOp) session.sent().get(0);
+        assertEquals(OpLabel.ROTATE, first.label());
+        OpSpec.Move move = (OpSpec.Move) first.op();
+        assertEquals(BlockPos.ORIGIN, move.offset());
+        assertEquals(Orientation.free(Transform.IDENTITY, 3_000, 0, 0), move.orientation());
+        assertEquals(EntityFilter.DECORATIONS, move.entities());
+        // About the symmetry centre (M) at x 20.5, z -3: the centre stays put to within half a block.
+        ctx.setSelectionRegion(new Region.Cuboid(BOX)); // the first rotate selected the cells it turned
+        actions.symmetryCentre().set(41, -6);
+        Orientation o = Orientation.free(Transform.IDENTITY, 4_000, 0, 1_000);
+        assertTrue(actions.rotate(4_000, 0, 1_000, EntityFilter.NONE));
+        OpSpec.Move about = (OpSpec.Move) ((ToolAction.RunOp) session.sent().get(1)).op();
+        assertEquals(SelectionActions.rotateOffset(BOX, new int[] {41, -6}, o), about.offset());
+        double cx = BOX.min().x() + (BOX.sizeX() - 1) / 2 + 0.5, cy = BOX.min().y() + (BOX.sizeY() - 1) / 2 + 0.5;
+        double cz = BOX.min().z() + (BOX.sizeZ() - 1) / 2 + 0.5;
+        double[] m = o.matrix();
+        double[] d = {20.5 - cx, 0, -3 - cz};
+        double[] landed = {m[0] * d[0] + m[2] * d[2] + cx + about.offset().x(), m[3] * d[0] + m[5] * d[2] + cy
+                + about.offset().y(), m[6] * d[0] + m[8] * d[2] + cz + about.offset().z()};
+        assertTrue(Math.abs(landed[0] - 20.5) <= 0.5 && Math.abs(landed[1] - cy) <= 0.5 && Math.abs(landed[2] + 3) <= 0.5,
+                java.util.Arrays.toString(landed));
+        assertEquals(BlockPos.ORIGIN, SelectionActions.rotateOffset(BOX, null, o));
+    }
+
+    @Test
+    void quarterAndHalfTurnsPivotAboutTheCentreOrTheMiddleCellToo() {
+        // Turns that fold into an exact transform keep the box corner frame; the offset must still keep the pivot put.
+        for (Box box : java.util.List.of(BOX, new Box(new BlockPos(3, 60, -7), new BlockPos(11, 66, -1)))) {
+            for (Orientation o : java.util.List.of(Orientation.free(Transform.IDENTITY, 9_000, 0, 0),
+                    Orientation.free(Transform.IDENTITY, 18_000, 0, 0), Orientation.free(Transform.IDENTITY, 27_000, 0, 0),
+                    Orientation.free(Transform.IDENTITY, 0, 18_000, 0), Orientation.free(Transform.IDENTITY, 0, 9_000, 0))) {
+                int sx = box.sizeX(), sy = box.sizeY(), sz = box.sizeZ();
+                BlockPos middle = new BlockPos((sx - 1) / 2, (sy - 1) / 2, (sz - 1) / 2);
+                // Unset: the middle cell stays put.
+                check(box, o, null, middle, box.min().add(middle));
+                // Set on a block centre (x 20, z 2): that column's cell at the middle height stays put.
+                BlockPos centre = new BlockPos(20, box.min().y() + middle.y(), 2);
+                check(box, o, new int[] {41, 5}, centre.offset(-box.min().x(), -box.min().y(), -box.min().z()), centre);
+            }
+        }
+    }
+
+    /** Where the move rotateOffset gives puts local cell {@code local} of {@code box}: on {@code expected}. */
+    private static void check(Box box, Orientation o, int[] centre, BlockPos local, BlockPos expected) {
+        BlockPos offset = SelectionActions.rotateOffset(box, centre, o);
+        BlockPos at = o.isExact() ? BlockPos.ORIGIN : o.bounds(box.sizeX(), box.sizeY(), box.sizeZ()).offset();
+        BlockPos landed = box.min().add(at).add(offset)
+                .add(o.mapCell(local.x(), local.y(), local.z(), box.sizeX(), box.sizeY(), box.sizeZ()));
+        assertEquals(expected, landed, o + " " + box + (centre == null ? " about the middle" : " about M"));
     }
 }

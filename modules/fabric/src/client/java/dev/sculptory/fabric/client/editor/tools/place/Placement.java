@@ -10,6 +10,7 @@ import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import java.util.ArrayList;
 import java.util.List;
@@ -19,26 +20,32 @@ import java.util.Objects;
  * Where a Place tool preview sits and what committing it sends. Pure and mutable; client thread only.
  *
  * <p>Every source is a box of {@link #dims()} cells in its own local coordinates. The <b>pivot</b> is the local cell
- * at the bottom centre of that box: the ghost hangs from it, it follows the cursor, and rotations turn around it.
- * {@link #pivotWorld()} is the world cell the pivot lands on. The transformed box then starts at
- * {@link #targetMin()} = pivotWorld − T(pivot), where T maps local cells exactly as the server's paste does
- * ({@link Transform#mapX}, extended affinely to cells outside the box).
+ * at the bottom centre of that box: the ghost hangs from it, it follows the cursor, and quarter turns turn around it.
+ * {@link #pivotWorld()} is the world cell the pivot lands on. The placement's {@link #orientation()} maps the box onto
+ * its result box ({@link Orientation#bounds}), which starts at {@link #targetMin()}: the pivot cell, mapped by
+ * {@link Orientation#mapCell} (as the server's paste maps its anchor), lands on the pivot's column, and the result
+ * box's bottom on the pivot's height. For an exact orientation (a {@link Transform}) that is pivotWorld − T(pivot), T
+ * extended affinely to cells outside the box, exactly as before free turns.
  *
  * <p>Modes:
  * <ul>
  *   <li>{@link Mode#PASTE}: a clipboard or library asset. The server places the source's own {@link #anchor()} on the
- *       origin it is sent: origin = targetMin + T(anchor), so the paste lands where the ghost shows whatever the
+ *       origin it is sent: origin = targetMin + mapCell(anchor), so the paste lands where the ghost shows whatever the
  *       anchor is.</li>
- *   <li>{@link Mode#MOVE}: the selection moves (with the transform); offset = targetMin − box.min, where box is the
- *       selection's bounds. A shape or cell set moves only its own cells ({@link #region()}).</li>
+ *   <li>{@link Mode#MOVE}: the selection moves (with the orientation); offset = targetMin − box.min − the result box's
+ *       offset ({@link Orientation.Bounds#offset}, 0 for an exact orientation), where box is the selection's bounds.
+ *       A shape or cell set moves only its own cells ({@link #region()}).</li>
  *   <li>{@link Mode#STACK}: the selection repeats {@link #count()} times, each copy offset by
  *       targetMin − box.min from the previous one. Stacked copies cannot be rotated or mirrored, only flipped upside
  *       down.</li>
  * </ul>
  *
- * <p>The flip upside down ({@link #flipUpsideDown}) turns the source over
- * within its own height: the transformed box stays where it is (its bottom on the pivot's height), and only what is in
- * it turns over.
+ * <p><b>Turning.</b> Quarter turns ({@link #rotate}), mirrors ({@link #mirror}) and the flip upside down
+ * ({@link #flipUpsideDown}) act about the world's axes and stay exact, whatever free angles the placement has. The free
+ * angles are shown and typed as yaw, pitch and roll ({@link #angles}, {@link #setAngles}): the orientation is then
+ * {@code free(reflection, yaw, pitch, roll)}, its reflection a mirror across x and the flip, or neither
+ * ({@link #reflection}), so a turn of the exact transform shows in the yaw. The gizmo's rings turn about the world's
+ * axes ({@link #turnedAbout}).
  */
 public final class Placement {
     /** Stack copies: at least 1, at most the server's 256. */
@@ -57,7 +64,7 @@ public final class Placement {
     private final BlockPos dims;
     private final BlockPos anchor;
     private final BlockPos pivot;
-    private Transform transform = Transform.IDENTITY;
+    private Orientation orientation = Orientation.IDENTITY;
     private BlockPos pivotWorld;
     private int count = 1;
 
@@ -150,8 +157,14 @@ public final class Placement {
         return pivot;
     }
 
+    /** How the placement turns the source. */
+    public Orientation orientation() {
+        return orientation;
+    }
+
+    /** The exact part of {@link #orientation()}: all of it unless the placement has free angles. */
     public Transform transform() {
-        return transform;
+        return orientation.transform();
     }
 
     /** Where the pivot lands in the world. */
@@ -175,8 +188,8 @@ public final class Placement {
     }
 
     /**
-     * Turns the placement clockwise (seen from above) by quarter turns around the pivot. Returns false (and changes
-     * nothing) for a stack, whose copies cannot turn.
+     * Turns the placement clockwise (seen from above) by quarter turns about the world's vertical: exact, a free
+     * placement's yaw changes by 90° a turn. Returns false (and changes nothing) for a stack, whose copies cannot turn.
      */
     public boolean rotate(int quarterTurnsCw) {
         return apply(Transform.rotation(quarterTurnsCw));
@@ -189,25 +202,99 @@ public final class Placement {
 
     /** Turns the placement upside down (or back): a stack's copies too. */
     public boolean flipUpsideDown() {
-        transform = transform.compose(Transform.UPSIDE_DOWN);
+        orientation = orientation.then(Transform.UPSIDE_DOWN);
         return true;
     }
 
     /**
-     * Sets the whole transform (e.g. carried over from the Clipboard window). False (and nothing changes) for a stack
-     * with a turn or mirror in it; a stack takes the flip upside down alone.
+     * Sets the whole transform (e.g. carried over from the Clipboard window), dropping any free angles. False (and
+     * nothing changes) for a stack with a turn or mirror in it; a stack takes the flip upside down alone.
      */
     public boolean setTransform(Transform next) {
         Objects.requireNonNull(next);
-        if (mode == Mode.STACK && !next.horizontal().isIdentity()) return false;
-        transform = next;
+        return setOrientation(Orientation.of(next));
+    }
+
+    /** Sets the whole orientation. False (and nothing changes) for a stack, unless it is the flip alone or nothing. */
+    public boolean setOrientation(Orientation next) {
+        Objects.requireNonNull(next);
+        if (mode == Mode.STACK && (!next.isExact() || !next.transform().horizontal().isIdentity())) return false;
+        orientation = next;
         return true;
     }
 
     private boolean apply(Transform step) {
         if (mode == Mode.STACK) return false;
-        transform = transform.compose(step);
+        orientation = orientation.then(step);
         return true;
+    }
+
+    /**
+     * The mirror and flip the orientation keeps outside its angles: a mirror across x (a mirror across z is that and a
+     * half turn) and the flip upside down, or neither. {@link #angles} are the turn that follows it.
+     */
+    public Transform reflection() {
+        return reflection(orientation);
+    }
+
+    /**
+     * The placement's turn as yaw, pitch and roll in 1/100 degree (each normalised into 0..35999), applied after
+     * {@link #reflection}: the free angles with the exact transform's quarter turns (and the half turn a mirror across
+     * z stands for) folded into them, so a placement turned with R shows a yaw of 90°.
+     */
+    public int[] angles() {
+        return angles(orientation);
+    }
+
+    /**
+     * Sets the turn to yaw, pitch and roll in 1/100 degree after {@link #reflection} (typed in Tool Settings); turns that
+     * keep up vertical fold into the exact transform. False (and nothing changes) for a stack.
+     */
+    public boolean setAngles(int yaw, int pitch, int roll) {
+        if (mode == Mode.STACK) return false;
+        orientation = Orientation.free(reflection(), yaw, pitch, roll);
+        return true;
+    }
+
+    /** {@link #reflection()} of an orientation. */
+    public static Transform reflection(Orientation orientation) {
+        Transform t = orientation.transform();
+        return new Transform(0, t.mirror() == Mirror.NONE ? Mirror.NONE : Mirror.X, t.upsideDown());
+    }
+
+    /**
+     * {@link #angles()} of an orientation: exact whenever the orientation's transform has no odd quarter turn left over
+     * (every orientation the keys and rings make), else the nearest angles.
+     */
+    public static int[] angles(Orientation orientation) {
+        Transform t = orientation.transform();
+        int turns = t.quarterTurnsCw() + (t.mirror() == Mirror.Z ? 2 : 0);
+        if (orientation.isExact()) {
+            return new int[] {Math.floorMod(turns * Orientation.QUARTER_TURN, Orientation.FULL_TURN), 0, 0};
+        }
+        if (turns % 4 == 0) return new int[] {orientation.yaw(), orientation.pitch(), orientation.roll()};
+        double[] turned = times(orientation.rotationMatrix(), yaw(turns * Orientation.QUARTER_TURN));
+        Orientation nearest = Orientation.nearest(reflection(orientation), turned);
+        return new int[] {nearest.yaw(), nearest.pitch(), nearest.roll()};
+    }
+
+    /**
+     * {@code start}, then turned by {@code angle} (1/100 degree) about a world axis through the placement (0 east-west,
+     * 1 up, 2 north-south; positive as the orientation's pitch, yaw and roll): what a gizmo ring drag shows. A turn
+     * about the vertical adds to the yaw exactly; one about a horizontal axis is decomposed again into the nearest
+     * angles (exact for multiples of 90°).
+     */
+    public static Orientation turnedAbout(Orientation start, int axis, int angle) {
+        int[] a = angles(start);
+        Transform reflection = reflection(start);
+        if (axis == 1) return Orientation.free(reflection, a[0] + angle, a[1], a[2]);
+        double[] step = axis == 0 ? Orientation.rotationMatrix(0, angle, 0) : Orientation.rotationMatrix(0, 0, angle);
+        double[] r = Orientation.rotationMatrix(a[0], a[1], a[2]);
+        return Orientation.nearest(reflection, times(step, r));
+    }
+
+    private static double[] yaw(int angle) {
+        return Orientation.rotationMatrix(angle, 0, 0);
     }
 
     /** Sets the stack count, clamped to 1..{@value #MAX_STACK}; returns the new count. */
@@ -218,16 +305,16 @@ public final class Placement {
 
     // ---- Geometry ----
 
-    /** The transformed source size. */
+    /** The turned source size: the result box's ({@link Orientation#bounds}). */
     public BlockPos size() {
-        return transform.size(dims.x(), dims.y(), dims.z());
+        return orientation.bounds(dims.x(), dims.y(), dims.z()).size();
     }
 
-    /** The world cell of the transformed box's minimum corner (the flip upside down never moves it). */
+    /** The world cell of the result box's minimum corner (the flip upside down never moves it). */
     public BlockPos targetMin() {
-        long[] mapped = map(transform, dims, pivot.x(), pivot.z());
+        long[] mapped = map(orientation, dims, pivot);
         return new BlockPos(clampInt(pivotWorld.x() - mapped[0]), pivotWorld.y() - pivot.y(),
-                clampInt(pivotWorld.z() - mapped[1]));
+                clampInt(pivotWorld.z() - mapped[2]));
     }
 
     /** The box the (first) copy covers. */
@@ -240,22 +327,27 @@ public final class Placement {
     /** Where the source's anchor lands (the origin a paste sends). */
     public BlockPos pasteOrigin() {
         BlockPos min = targetMin();
-        long[] mapped = map(transform, dims, anchor.x(), anchor.z());
-        long anchorY = min.y() + transform.mapY((long) anchor.y(), dims.y());
-        return new BlockPos(clampInt(min.x() + mapped[0]), clampInt(anchorY), clampInt(min.z() + mapped[1]));
+        long[] mapped = map(orientation, dims, anchor);
+        return new BlockPos(clampInt(min.x() + mapped[0]), clampInt(min.y() + mapped[1]), clampInt(min.z() + mapped[2]));
     }
 
-    /** targetMin − box.min (MOVE and STACK). */
+    /**
+     * targetMin − box.min (MOVE and STACK), less the result box's offset for a free orientation: the offset a move
+     * sends.
+     */
     public BlockPos offset() {
         if (box == null) return BlockPos.ORIGIN;
         BlockPos min = targetMin();
-        return new BlockPos(min.x() - box.min().x(), min.y() - box.min().y(), min.z() - box.min().z());
+        BlockPos at = orientation.isExact() ? BlockPos.ORIGIN
+                : orientation.bounds(dims.x(), dims.y(), dims.z()).offset();
+        return new BlockPos(min.x() - box.min().x() - at.x(), min.y() - box.min().y() - at.y(),
+                min.z() - box.min().z() - at.z());
     }
 
     /** Whether committing would change nothing (a move or stack that has not moved). */
     public boolean unmoved() {
         if (mode == Mode.PASTE) return false;
-        return offset().equals(BlockPos.ORIGIN) && (mode == Mode.STACK || transform.isIdentity());
+        return offset().equals(BlockPos.ORIGIN) && (mode == Mode.STACK || orientation.isIdentity());
     }
 
     /** The boxes of the stack copies, first to last, at most {@code max} of them (the target box otherwise). */
@@ -297,13 +389,13 @@ public final class Placement {
         Objects.requireNonNull(entities);
         if (unmoved()) throw new IllegalStateException("The placement has not moved");
         return switch (mode) {
-            case PASTE -> new OpSpec.Paste(source, pasteOrigin(), transform, options);
-            case MOVE -> new OpSpec.Move(region, offset(), transform, new Pattern.Single(air), entities, Symmetry.NONE,
+            case PASTE -> new OpSpec.Paste(source, pasteOrigin(), orientation, options);
+            case MOVE -> new OpSpec.Move(region, offset(), orientation, new Pattern.Single(air), entities, Symmetry.NONE,
                     options.into());
             case STACK -> {
                 BlockPos step = offset();
                 yield new OpSpec.Stack(region, step.x(), step.y(), step.z(), count, entities, Symmetry.NONE, options.into(),
-                        transform.upsideDown());
+                        transform().upsideDown());
             }
         };
     }
@@ -327,6 +419,35 @@ public final class Placement {
         long mappedX = originX + (long) (t.mapX(1, 0, sx, sz) - originX) * x + (long) (t.mapX(0, 1, sx, sz) - originX) * z;
         long mappedZ = originZ + (long) (t.mapZ(1, 0, sx, sz) - originZ) * x + (long) (t.mapZ(0, 1, sx, sz) - originZ) * z;
         return new long[] {mappedX, mappedZ};
+    }
+
+    /**
+     * Where local cell {@code cell} lands in the result box, {x, y, z}: {@link #map(Transform, BlockPos, int, int)} and
+     * the flip for an exact orientation, {@link Orientation#mapCell} (clamped far outside the int range) for a free one.
+     */
+    static long[] map(Orientation orientation, BlockPos dims, BlockPos cell) {
+        Transform t = orientation.transform();
+        if (orientation.isExact()) {
+            long[] xz = map(t, dims, cell.x(), cell.z());
+            return new long[] {xz[0], t.mapY((long) cell.y(), dims.y()), xz[1]};
+        }
+        try {
+            BlockPos to = orientation.mapCell(cell.x(), cell.y(), cell.z(), dims.x(), dims.y(), dims.z());
+            return new long[] {to.x(), to.y(), to.z()};
+        } catch (ArithmeticException beyond) {
+            double[] p = orientation.mapPoint(cell.x() + 0.5, cell.y() + 0.5, cell.z() + 0.5, dims.x(), dims.y(), dims.z());
+            return new long[] {(long) Math.floor(p[0]), (long) Math.floor(p[1]), (long) Math.floor(p[2])};
+        }
+    }
+
+    private static double[] times(double[] a, double[] b) {
+        double[] m = new double[9];
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 3; col++) {
+                m[3 * row + col] = a[3 * row] * b[col] + a[3 * row + 1] * b[3 + col] + a[3 * row + 2] * b[6 + col];
+            }
+        }
+        return m;
     }
 
     private static BlockPos sizeOf(Box box) {

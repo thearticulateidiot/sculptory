@@ -6,7 +6,9 @@ import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
+import dev.sculptory.core.region.Regions;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.client.editor.world.Aabb;
 import dev.sculptory.fabric.client.editor.world.BoxFace;
@@ -129,6 +131,24 @@ public final class SelectionModel {
             case Region.Cells cells -> new Region.Cells(mapped(cells, destinationMin, t));
             case Region.Uploaded uploaded -> throw new IllegalArgumentException("An uploaded region has no cells here");
         };
+    }
+
+    /**
+     * {@link #moved(Region, BlockPos, Transform)} for an orientation: an exact one moves as its transform does; a free one
+     * gives the cells the server's move writes ({@code Regions.moved}: the result cells, in the turned box of the region's
+     * whole bounds starting at {@code destinationMin}, whose source cell is a region cell between {@code minY} and
+     * {@code maxY}, the world's height), as a cell set. It maps each region cell forwards (at most 27 cells looked at
+     * per cell): callers run it off the client thread for a large selection.
+     *
+     * @throws IllegalArgumentException if a cell would leave the coordinate range, or none is left
+     */
+    public static Region moved(Region region, BlockPos destinationMin, Orientation orientation, int minY, int maxY) {
+        if (orientation.isExact()) return moved(region, destinationMin, orientation.transform());
+        if (region instanceof Region.Uploaded) throw new IllegalArgumentException("An uploaded region has no cells here");
+        Box bounds = region.bounds();
+        return Regions.moved(region, bounds, destinationMin,
+                orientation.sampler(bounds.sizeX(), bounds.sizeY(), bounds.sizeZ()), minY, maxY, Long.MAX_VALUE,
+                Long.MAX_VALUE);
     }
 
     /**

@@ -562,6 +562,7 @@ public final class SettingsForm {
             } else {
                 dropdown = new Dropdown<>(options, value(), labeler, this::set);
                 dropdown.setOptionTooltips(optionTooltips);
+                dropdown.setOptionEnabled(def::available);
                 chooser = dropdown;
             }
             finish(Column.of(heading(), chooser), chooser);

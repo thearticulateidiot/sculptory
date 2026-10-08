@@ -3,6 +3,11 @@
 All notable changes to Sculptory. Versions follow `mod_version` in `gradle.properties`; client and server need the
 same build.
 
+## Unreleased
+
+- Network protocol 6: this build and 0.3.0-alpha refuse each other at the handshake (client and server need the same
+  protocol).
+
 ## 0.3.0-alpha — first public release
 
 The first public release of Sculptory, for Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API

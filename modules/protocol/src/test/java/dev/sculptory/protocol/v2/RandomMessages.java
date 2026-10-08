@@ -5,7 +5,9 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.Sha256;
 import dev.sculptory.core.brush.BrushSpec;
+import dev.sculptory.core.brush.BiomeSpec;
 import dev.sculptory.core.brush.BrushTool;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.Dab;
 import dev.sculptory.core.brush.Falloff;
 import dev.sculptory.core.brush.Shape;
@@ -41,6 +43,7 @@ import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.tinker.EntityEdit;
 import dev.sculptory.core.tinker.EntityEdits;
 import dev.sculptory.core.tinker.SignText;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -473,8 +476,37 @@ final class RandomMessages {
         return placements;
     }
 
+    /** An orientation: mostly exact, otherwise free with angles over the whole range (multiples of 90° too). */
+    Orientation orientation() {
+        Transform t = opTransform();
+        if (rnd.nextInt(3) == 0) return Orientation.of(t);
+        int[] angles = new int[3];
+        for (int i = 0; i < 3; i++) {
+            angles[i] = rnd.nextBoolean() ? rnd.nextInt(4) * Orientation.QUARTER_TURN : rnd.nextInt(Orientation.FULL_TURN);
+        }
+        return Orientation.free(t, angles[0], angles[1], angles[2]);
+    }
+
+    PasteOptions pasteOptions() {
+        return new PasteOptions(rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), pick(PasteOptions.Into.values()),
+                rnd.nextBoolean());
+    }
+
+    /** A biome id. */
+    String biome() {
+        String[] ids = {"minecraft:plains", "minecraft:cherry_grove", "minecraft:deep_dark", "modded:a/b_c.d"};
+        return ids[rnd.nextInt(ids.length)];
+    }
+
     OpSpec op() {
-        return switch (rnd.nextInt(12)) {
+        return switch (rnd.nextInt(14)) {
+            case 12 -> {
+                List<OpSpec.PasteMany.Placement> placements = new ArrayList<>();
+                int count = rnd.nextInt(8) == 0 ? OpSpec.PasteMany.MAX_PLACEMENTS : 1 + rnd.nextInt(12);
+                for (int i = 0; i < count; i++) placements.add(new OpSpec.PasteMany.Placement(pos(), orientation()));
+                yield new OpSpec.PasteMany(source(), placements, pasteOptions(), symmetry());
+            }
+            case 13 -> new OpSpec.BiomeFill(region(), biome(), rnd.nextBoolean(), symmetry());
             case 9 -> new OpSpec.Overlay(region(), pattern(), 1 + rnd.nextInt(OpSpec.MAX_LAYER_DEPTH), symmetry());
             case 10 -> new OpSpec.Naturalize(region(), pattern(), 1 + rnd.nextInt(OpSpec.MAX_LAYER_DEPTH), pattern(),
                     rnd.nextInt(OpSpec.MAX_LAYER_DEPTH + 1), pattern(), symmetry());
@@ -484,9 +516,8 @@ final class RandomMessages {
             case 2 -> new OpSpec.Erase(region(), mask());
             case 3 -> new OpSpec.Hollow(region(), 1 + rnd.nextInt(16), pattern());
             case 4 -> new OpSpec.Walls(region(), 1 + rnd.nextInt(16), pattern());
-            case 5 -> new OpSpec.Paste(source(), pos(), opTransform(),
-                    new PasteOptions(rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean(), pick(PasteOptions.Into.values())));
-            case 6 -> new OpSpec.Move(region(), pos(), opTransform(), pattern(), pick(EntityFilter.values()), Symmetry.NONE,
+            case 5 -> new OpSpec.Paste(source(), pos(), orientation(), pasteOptions());
+            case 6 -> new OpSpec.Move(region(), pos(), orientation(), pattern(), pick(EntityFilter.values()), Symmetry.NONE,
                     pick(PasteOptions.Into.values()));
             case 7 -> new OpSpec.Stack(region(), 1 + rnd.nextInt(64), anyInt(), anyInt(), 1 + rnd.nextInt(100),
                     pick(EntityFilter.values()), Symmetry.NONE, pick(PasteOptions.Into.values()), rnd.nextBoolean());
@@ -514,11 +545,20 @@ final class RandomMessages {
             case 1 -> 1f;
             default -> rnd.nextFloat();
         };
-        BrushSpec spec = new BrushSpec(tool, 1 + rnd.nextInt(BrushSpec.MAX_RADIUS), strength, pick(Falloff.values()),
+        int radius = 1 + rnd.nextInt(BrushSpec.MAX_RADIUS);
+        HeightmapSpec heightmap = null;
+        if (tool == BrushTool.HEIGHTMAP) {
+            int side = 2 * radius + 1;
+            byte[] heights = new byte[side * side];
+            rnd.nextBytes(heights);
+            heightmap = new HeightmapSpec(side, heights, 1 + rnd.nextInt(HeightmapSpec.MAX_HEIGHT_BLOCKS), rnd.nextBoolean());
+        }
+        BrushSpec spec = new BrushSpec(tool, radius, strength, pick(Falloff.values()),
                 pick(Shape.values()), needsMaterial || rnd.nextBoolean() ? pattern(tool == BrushTool.PALETTE) : null, surface(),
                 rnd.nextInt(BrushSpec.MAX_DEPTH + 1), anyInt(), anyLong(), rnd.nextBoolean() ? clip() : null, symmetry(),
                 shape, SculptMode.TERRAIN, null,
-                tool == BrushTool.WEATHER ? new WeatherSpec(pick(WeatherSpec.Mode.values())) : null);
+                tool == BrushTool.WEATHER ? new WeatherSpec(pick(WeatherSpec.Mode.values())) : null, heightmap,
+                tool == BrushTool.BIOME ? new BiomeSpec(biome(), rnd.nextBoolean()) : null);
         if (!SculptMode.surfaceTool(tool) || rnd.nextBoolean()) return spec;
         return spec.withSurface(tool == BrushTool.FLATTEN ? plane() : null);
     }

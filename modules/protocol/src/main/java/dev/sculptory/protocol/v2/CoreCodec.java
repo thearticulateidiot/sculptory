@@ -5,10 +5,12 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.Sha256;
+import dev.sculptory.core.brush.BiomeSpec;
 import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
 import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.SculptMode;
 import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.ShapeSpec;
@@ -31,6 +33,7 @@ import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import java.util.ArrayList;
 import java.util.List;
@@ -123,6 +126,9 @@ final class CoreCodec {
     static final int OP_OVERLAY = 9;
     static final int OP_NATURALIZE = 10;
     static final int OP_UPDATE_BLOCKS = 11;
+    // Protocol 6: Generate's Stamp and the Biome tool's fill
+    static final int OP_PASTE_MANY = 12;
+    static final int OP_BIOME_FILL = 13;
 
     // Region tags (a Region.Cells has none: cell sets travel as uploads)
     static final int REGION_CUBOID = 0;
@@ -213,12 +219,55 @@ final class CoreCodec {
     }
 
     static Transform readTransform(WireReader in) throws ProtocolException {
-        int b = in.u8();
+        return transformOf(in.u8());
+    }
+
+    private static Transform transformOf(int b) throws ProtocolException {
         int mirror = (b >>> 2) & 3;
         if (mirror >= Mirror.values().length || (b & ~(TRANSFORM_UPSIDE_DOWN | 0xF)) != 0) {
             throw WireReader.malformed("Invalid transform byte " + b);
         }
         return new Transform(b & 3, Mirror.values()[mirror], (b & TRANSFORM_UPSIDE_DOWN) != 0);
+    }
+
+    /** The orientation byte's free rotation bit (protocol 6): three angles follow. */
+    static final int ORIENTATION_FREE = 0x20;
+
+    /**
+     * An orientation (protocol 6, in place of protocol 5's transform byte): the transform byte ({@link #writeTransform})
+     * with bit 5 set when a free rotation follows as {@code varint yaw | varint pitch | varint roll}, each 0-35999
+     * (1/100 degree). Only the canonical form travels: bit 5 with angles that are all zero, out of range or foldable
+     * into the transform ({@link Orientation}) is MALFORMED, as are bits 6-7.
+     */
+    static void writeOrientation(WireWriter out, Orientation orientation) throws ProtocolException {
+        Transform t = orientation.transform();
+        int b = t.quarterTurnsCw() | (t.mirror().ordinal() << 2) | (t.upsideDown() ? TRANSFORM_UPSIDE_DOWN : 0);
+        if (orientation.isExact()) {
+            out.u8(b);
+            return;
+        }
+        out.u8(b | ORIENTATION_FREE);
+        out.varint(orientation.yaw());
+        out.varint(orientation.pitch());
+        out.varint(orientation.roll());
+    }
+
+    static Orientation readOrientation(WireReader in) throws ProtocolException {
+        int b = in.u8();
+        Transform t = transformOf(b & ~ORIENTATION_FREE);
+        if ((b & ORIENTATION_FREE) == 0) return Orientation.of(t);
+        int yaw = in.varint();
+        int pitch = in.varint();
+        int roll = in.varint();
+        if (yaw >= Orientation.FULL_TURN || pitch >= Orientation.FULL_TURN || roll >= Orientation.FULL_TURN) {
+            throw WireReader.malformed("Orientation angle out of range");
+        }
+        Orientation orientation = Orientation.free(t, yaw, pitch, roll);
+        if (orientation.isExact() || orientation.yaw() != yaw || orientation.pitch() != pitch
+                || orientation.roll() != roll) {
+            throw WireReader.malformed("Orientation not in canonical form: " + yaw + ", " + pitch + ", " + roll);
+        }
+        return orientation;
     }
 
     static void writeId(WireWriter out, NamespacedId id) throws ProtocolException {
@@ -719,19 +768,20 @@ final class CoreCodec {
     }
 
     /**
-     * One byte (bit 0 include air, bit 1 physics, bit 2 entities; other bits must be 0), then the {@code into} filter
-     * as a varint ordinal (an unknown value is MALFORMED).
+     * One byte (bit 0 include air, bit 1 physics, bit 2 entities, bit 3 biomes (protocol 6); other bits must be 0), then
+     * the {@code into} filter as a varint ordinal (an unknown value is MALFORMED).
      */
     static void writePasteOptions(WireWriter out, PasteOptions options) throws ProtocolException {
-        out.u8((options.includeAir() ? 1 : 0) | (options.physics() ? 2 : 0) | (options.entities() ? 4 : 0));
+        out.u8((options.includeAir() ? 1 : 0) | (options.physics() ? 2 : 0) | (options.entities() ? 4 : 0)
+                | (options.biomes() ? 8 : 0));
         out.enumValue(options.into());
     }
 
     static PasteOptions readPasteOptions(WireReader in) throws ProtocolException {
         int b = in.u8();
-        if ((b & ~7) != 0) throw WireReader.malformed("Invalid paste options " + b);
+        if ((b & ~15) != 0) throw WireReader.malformed("Invalid paste options " + b);
         PasteOptions.Into into = readInto(in);
-        return new PasteOptions((b & 1) != 0, (b & 2) != 0, (b & 4) != 0, into);
+        return new PasteOptions((b & 1) != 0, (b & 2) != 0, (b & 4) != 0, into, (b & 8) != 0);
     }
 
     static PasteOptions.Into readInto(WireReader in) throws ProtocolException {
@@ -782,7 +832,7 @@ final class CoreCodec {
                 out.u8(OP_PASTE);
                 writeSource(out, paste.src());
                 writePos(out, paste.origin());
-                writeTransform(out, paste.t());
+                writeOrientation(out, paste.orientation());
                 writePasteOptions(out, paste.o());
                 writeSymmetry(out, paste.symmetry());
             }
@@ -790,7 +840,7 @@ final class CoreCodec {
                 out.u8(OP_MOVE);
                 writeRegion(out, move.region());
                 writePos(out, move.offset());
-                writeTransform(out, move.t());
+                writeOrientation(out, move.orientation());
                 writePattern(out, palette, move.leave());
                 out.enumValue(move.entities());
                 writeSymmetry(out, move.symmetry());
@@ -834,6 +884,24 @@ final class CoreCodec {
                 writeRegion(out, update.region());
                 writeSymmetry(out, update.symmetry());
             }
+            case OpSpec.PasteMany many -> {
+                out.u8(OP_PASTE_MANY);
+                writeSource(out, many.src());
+                out.count(many.placements().size(), OpSpec.PasteMany.MAX_PLACEMENTS, "placements");
+                for (OpSpec.PasteMany.Placement placement : many.placements()) {
+                    writePos(out, placement.origin());
+                    writeOrientation(out, placement.orientation());
+                }
+                writePasteOptions(out, many.o());
+                writeSymmetry(out, many.symmetry());
+            }
+            case OpSpec.BiomeFill fill -> {
+                out.u8(OP_BIOME_FILL);
+                writeRegion(out, fill.region());
+                out.string(fill.biomeId(), NAMESPACED_ID_BYTES, "biome id");
+                out.bool(fill.columns());
+                writeSymmetry(out, fill.symmetry());
+            }
         }
     }
 
@@ -872,18 +940,18 @@ final class CoreCodec {
             case OP_PASTE -> {
                 SourceRef source = readSource(in);
                 BlockPos origin = readPos(in);
-                Transform transform = readTransform(in);
+                Orientation orientation = readOrientation(in);
                 PasteOptions options = readPasteOptions(in);
-                yield new OpSpec.Paste(source, origin, transform, options, readSymmetry(in));
+                yield new OpSpec.Paste(source, origin, orientation, options, readSymmetry(in));
             }
             case OP_MOVE -> {
                 Region region = readRegion(in);
                 BlockPos offset = readPos(in);
-                Transform transform = readTransform(in);
+                Orientation orientation = readOrientation(in);
                 Pattern leave = withoutSteepness(readPattern(in, palette), "an op");
                 EntityFilter entities = readEntityFilter(in);
                 Symmetry symmetry = readSymmetry(in);
-                yield new OpSpec.Move(region, offset, transform, leave, entities, symmetry, readInto(in));
+                yield new OpSpec.Move(region, offset, orientation, leave, entities, symmetry, readInto(in));
             }
             case OP_STACK -> {
                 Region region = readRegion(in);
@@ -919,6 +987,26 @@ final class CoreCodec {
                 Region region = readRegion(in);
                 yield new OpSpec.UpdateBlocks(region, readSymmetry(in));
             }
+            // Protocol 6: source | varint n (1-256) | n × (pos origin | orientation) | paste options | symmetry.
+            case OP_PASTE_MANY -> {
+                SourceRef source = readSource(in);
+                int count = in.count(OpSpec.PasteMany.MAX_PLACEMENTS, "placements");
+                if (count == 0) throw WireReader.malformed("A multi-paste without placements");
+                List<OpSpec.PasteMany.Placement> placements = new ArrayList<>(count);
+                for (int i = 0; i < count; i++) {
+                    BlockPos origin = readPos(in);
+                    placements.add(new OpSpec.PasteMany.Placement(origin, readOrientation(in)));
+                }
+                PasteOptions options = readPasteOptions(in);
+                yield new OpSpec.PasteMany(source, placements, options, readSymmetry(in));
+            }
+            // Protocol 6: region | biome id (a namespaced id; malformed is MALFORMED) | bool columns | symmetry.
+            case OP_BIOME_FILL -> {
+                Region region = readRegion(in);
+                String biome = in.string(NAMESPACED_ID_BYTES, "biome id");
+                boolean columns = in.bool();
+                yield new OpSpec.BiomeFill(region, biome, columns, readSymmetry(in));
+            }
             default -> throw WireReader.malformed("Unknown op tag " + tag);
         };
     }
@@ -945,6 +1033,9 @@ final class CoreCodec {
         if (spec.shapeSpec() != null) writeShape(out, spec.shapeSpec());
         // Protocol 5: the Weather brush's mode, a varint ordinal after the (absent) shape spec.
         if (spec.weather() != null) out.enumValue(spec.weather().mode());
+        // Protocol 6: the Heightmap brush's image and the Biome brush's biome, after the (absent) weather mode.
+        if (spec.heightmap() != null) writeHeightmap(out, spec.heightmap());
+        if (spec.biome() != null) writeBiome(out, spec.biome());
     }
 
     static BrushSpec readBrush(WireReader in, StatePalette.Table palette) throws ProtocolException {
@@ -970,8 +1061,46 @@ final class CoreCodec {
         WeatherSpec weather = tool == BrushTool.WEATHER
                 ? new WeatherSpec(in.enumOf(WeatherSpec.Mode.values(), "weather mode"))
                 : null;
+        // A height image whose side is not 2 × radius + 1 is refused by BrushSpec (MALFORMED).
+        HeightmapSpec heightmap = tool == BrushTool.HEIGHTMAP ? readHeightmap(in) : null;
+        BiomeSpec biome = tool == BrushTool.BIOME ? readBiome(in) : null;
         return new BrushSpec(tool, radius, strength, falloff, shape, material, mask, depth, flattenY, seed, clip, symmetry,
-                solid, mode, plane, weather);
+                solid, mode, plane, weather, heightmap, biome);
+    }
+
+    /**
+     * The Heightmap brush's image (protocol 6, after a {@code HEIGHTMAP} brush's symmetry):
+     * {@code varint side | side × side raw bytes | varint heightBlocks | bool lower}, uncompressed (a 65 × 65 image is
+     * 4,225 bytes, well inside a {@code StrokeBegin} frame). What {@link HeightmapSpec} refuses (a side outside
+     * 1-{@value HeightmapSpec#MAX_SIDE}, a height outside 1-{@value HeightmapSpec#MAX_HEIGHT_BLOCKS}) is MALFORMED.
+     */
+    static void writeHeightmap(WireWriter out, HeightmapSpec heightmap) throws ProtocolException {
+        out.varint(heightmap.side());
+        out.raw(heightmap.heights());
+        out.varint(heightmap.heightBlocks());
+        out.bool(heightmap.lower());
+    }
+
+    static HeightmapSpec readHeightmap(WireReader in) throws ProtocolException {
+        int side = in.varint();
+        if (side < 1 || side > HeightmapSpec.MAX_SIDE) throw WireReader.malformed("Heightmap side " + side);
+        byte[] heights = in.raw(side * side);
+        int heightBlocks = in.varint();
+        return new HeightmapSpec(side, heights, heightBlocks, in.bool());
+    }
+
+    /**
+     * The Biome brush's biome (protocol 6, after a {@code BIOME} brush's symmetry): {@code string biome id | bool
+     * columns}. A malformed id is MALFORMED.
+     */
+    static void writeBiome(WireWriter out, BiomeSpec biome) throws ProtocolException {
+        out.string(biome.biomeId(), NAMESPACED_ID_BYTES, "biome id");
+        out.bool(biome.columns());
+    }
+
+    static BiomeSpec readBiome(WireReader in) throws ProtocolException {
+        String id = in.string(NAMESPACED_ID_BYTES, "biome id");
+        return new BiomeSpec(id, in.bool());
     }
 
     /**

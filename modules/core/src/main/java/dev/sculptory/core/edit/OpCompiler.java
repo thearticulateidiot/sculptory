@@ -102,7 +102,7 @@ public final class OpCompiler {
         long sections = c.maxSections();
         // A paste's volume needs its source; it is checked once the source is known. Counts stop past the budget.
         // Volumes count every symmetric copy.
-        if (!(s instanceof OpSpec.Paste) && budget != Long.MAX_VALUE) {
+        if (!(s instanceof OpSpec.Paste || s instanceof OpSpec.PasteMany) && budget != Long.MAX_VALUE) {
             checkBudget(Math.max(targetVolume(s, null, budget), sourceVolume(s, budget)), budget);
         }
         SourceBlocks source = null;
@@ -122,12 +122,60 @@ public final class OpCompiler {
             return compileCopy(copies.get(0).op(), null, c, states, height, sections, source, budget, table);
         }
         List<ClaimingProgram> programs = new ArrayList<>(copies.size());
+        OpSpec original = copies.get(0).op();
+        // A free move's landing cells, worked out once for the original and every copy.
+        Region freeLanding = original instanceof OpSpec.Move move && !move.orientation().isExact()
+                ? landingOf(move, c, height, sections, budget) : null;
         for (OpSymmetry.Copy copy : copies) {
             CopyFrame frame = copy.image() == Symmetry.Image.IDENTITY ? null : new CopyFrame(symmetry, copy.image(), states);
-            programs.add((ClaimingProgram) compileCopy(copy.op(), frame, c, states, height, sections, source, budget,
-                    table));
+            // A copy of a free paste or move is the exact image of what the original writes.
+            if (frame != null && original instanceof OpSpec.Paste paste && !paste.orientation().isExact()) {
+                programs.add(PasteProgram.compileImage(paste, frame, source, states, height));
+            } else if (frame != null && original instanceof OpSpec.Move move && !move.orientation().isExact()) {
+                programs.add(MoveProgram.compileImage(move, checked(move.leave(), states), states, height, sections,
+                        frame, Objects.requireNonNull(c.sourceMask()), freeLanding, Long.MAX_VALUE));
+            } else if (original instanceof OpSpec.Move move && !move.orientation().isExact()) {
+                programs.add(MoveProgram.compileFree(move, checked(move.leave(), states), states, height, sections,
+                        Objects.requireNonNull(c.sourceMask()), freeLanding, Long.MAX_VALUE));
+            } else {
+                programs.add((ClaimingProgram) compileCopy(copy.op(), frame, c, states, height, sections, source, budget,
+                        table));
+            }
         }
         return new SymmetricProgram(programs);
+    }
+
+    /**
+     * The most cells a free move may turn even with {@code limit.bypass}: working out its landing cells maps each
+     * cell forwards (at most 27 result cells looked at per cell) on the server thread, at admission.
+     */
+    public static final long MAX_FREE_MOVE_CELLS = 1L << 22;
+
+    /** The most cells a free move may turn for an op budget: the budget, and never past {@link #MAX_FREE_MOVE_CELLS}. */
+    public static long maxFreeMoveCells(long budget) {
+        return Math.min(budget, MAX_FREE_MOVE_CELLS);
+    }
+
+    /**
+     * The landing cells of a move with a free orientation (without symmetry): the result cells whose source cell is a
+     * region cell between {@code bottomY} and {@code topY}, the region's whole bounds turning about their middle cell.
+     * The work is at most 27 per cell; regions of more cells than {@link #maxFreeMoveCells} allows are refused.
+     *
+     * @throws EditTooLargeException past the sections or the work allowed
+     * @throws IllegalArgumentException if the destination leaves the coordinate range or the build height, or no cell is
+     *     left
+     */
+    public static Region freeLanding(OpSpec.Move move, int bottomY, int topY, long budget, long maxSections) {
+        if (move.orientation().isExact()) throw new IllegalArgumentException("Not a free move");
+        return MoveProgram.landing(move, new RegionProgram.Height(bottomY, topY), maxSections,
+                maxFreeMoveCells(budget));
+    }
+
+    /** The context's landing cells of a free move, else worked out here (refused past the work allowed). */
+    private static Region landingOf(OpSpec.Move move, CompileContext c, RegionProgram.Height height, long sections,
+                                    long budget) {
+        Region given = c.movedRegion(move);
+        return given != null ? given : MoveProgram.landing(move, height, sections, maxFreeMoveCells(budget));
     }
 
     /**
@@ -165,8 +213,12 @@ public final class OpCompiler {
             case OpSpec.Walls walls -> RegionProgram.walls("Walls", walls.region(), height, walls.thickness(),
                     checked(walls.pattern(), states), states, sections, frame);
             case OpSpec.Paste paste -> PasteProgram.compile(paste, source, states, height);
-            case OpSpec.Move move -> MoveProgram.compile(move, checked(move.leave(), states), states, height, sections, frame,
-                    Objects.requireNonNull(c.sourceMask()));
+            case OpSpec.Move move -> move.orientation().isExact()
+                    ? MoveProgram.compile(move, checked(move.leave(), states), states, height, sections, frame,
+                            Objects.requireNonNull(c.sourceMask()))
+                    : MoveProgram.compileFree(move, checked(move.leave(), states), states, height, sections,
+                            Objects.requireNonNull(c.sourceMask()), landingOf(move, c, height, sections, budget),
+                            Long.MAX_VALUE);
             case OpSpec.Stack stack -> StackProgram.compile(stack, states, height, sections);
             case OpSpec.ScatterCommit scatter -> {
                 MultiPaste plan = Objects.requireNonNull(c.scatterPlan(scatter.planId())).orElseThrow(
@@ -179,6 +231,10 @@ public final class OpCompiler {
                     checked(n.middle(), states), n.middleDepth(), checked(n.bottom(), states), states, table, sections, frame);
             case OpSpec.UpdateBlocks update -> new UpdateProgram(update.region(), height, c.neighbourShapes(), states, table,
                     sections);
+            // Contract stubs (protocol 6): ws/extrude-paths compiles a multi-paste through MultiPasteProgram, ws/biomes
+            // the biome fill. The server refuses both before compiling until then.
+            case OpSpec.PasteMany many -> throw new UnsupportedOperationException("PasteMany is not implemented");
+            case OpSpec.BiomeFill fill -> throw new UnsupportedOperationException("BiomeFill is not implemented");
         };
     }
 
@@ -198,6 +254,8 @@ public final class OpCompiler {
      *   <li>Move: the destination plus the vacated cells: for a box {@code 2 * volume - overlap}, for any other region
      *       twice its cells (its overlap with itself would need the moved cells, worked out only when compiling).</li>
      *   <li>Stack: the region's cells times the count.</li>
+     *   <li>PasteMany (protocol 6): the source box volume times the placements.</li>
+     *   <li>BiomeFill (protocol 6): the region's cells.</li>
      *   <li>ScatterCommit: 0 (its size lives in the server's plan: {@code ScatterPlan.totalCells()}; compile checks
      *       it against {@link CompileContext#maxCells()}).</li>
      * </ul>
@@ -235,6 +293,17 @@ public final class OpCompiler {
                     overlay.box().sizeZ(), overlay.depth()));
             case OpSpec.Naturalize naturalize -> cells(naturalize.region(), cap);
             case OpSpec.UpdateBlocks update -> cells(update.region(), cap);
+            // Every placement may write the whole source box.
+            case OpSpec.PasteMany many -> {
+                Objects.requireNonNull(pasteSourceSize, "a multi-paste's volume needs its source size");
+                if (pasteSourceSize.x() < 0 || pasteSourceSize.y() < 0 || pasteSourceSize.z() < 0) {
+                    throw new IllegalArgumentException("Negative paste source size " + pasteSourceSize);
+                }
+                yield product(product(pasteSourceSize.x(), pasteSourceSize.y(), pasteSourceSize.z()),
+                        many.placements().size());
+            }
+            // Biome cells, not blocks: the region's cells bound the cells it is judged on (ws/biomes may refine it).
+            case OpSpec.BiomeFill fill -> cells(fill.region(), cap);
         };
         return product(single, copies);
     }
@@ -286,15 +355,22 @@ public final class OpCompiler {
         if (cells > budget) throw new EditTooLargeException(cells, budget);
     }
 
-    /** Destination plus vacated cells of a move: the transform keeps the volume, the offset decides the overlap. */
+    /**
+     * Destination plus vacated cells of a move: the destination is the oriented box ({@link
+     * dev.sculptory.core.transform.Orientation#bounds}, at most the source volume for an exact orientation; a free
+     * one's bounds), the offset decides the overlap.
+     */
     private static long moveVolume(OpSpec.Move move) {
         Box box = move.box();
-        int sizeX = move.t().sizeX(box.sizeX(), box.sizeZ()), sizeZ = move.t().sizeZ(box.sizeX(), box.sizeZ());
+        dev.sculptory.core.transform.Orientation.Bounds turned = move.orientation().bounds(box.sizeX(), box.sizeY(),
+                box.sizeZ());
+        BlockPos at = turned.offset();
+        BlockPos size = turned.size();
         long overlap = product(
-                overlap(box.min().x(), box.max().x(), (long) box.min().x() + move.offset().x(), sizeX),
-                overlap(box.min().y(), box.max().y(), (long) box.min().y() + move.offset().y(), box.sizeY()),
-                overlap(box.min().z(), box.max().z(), (long) box.min().z() + move.offset().z(), sizeZ));
-        long volume = box.volume();
+                overlap(box.min().x(), box.max().x(), (long) box.min().x() + at.x() + move.offset().x(), size.x()),
+                overlap(box.min().y(), box.max().y(), (long) box.min().y() + at.y() + move.offset().y(), size.y()),
+                overlap(box.min().z(), box.max().z(), (long) box.min().z() + at.z() + move.offset().z(), size.z()));
+        long volume = Math.max(box.volume(), product(size.x(), size.y(), size.z()));
         long twice = volume > Long.MAX_VALUE / 2 ? Long.MAX_VALUE : 2 * volume;
         return twice == Long.MAX_VALUE ? twice : twice - overlap;
     }

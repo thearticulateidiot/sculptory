@@ -20,6 +20,11 @@ class EngineTypesTest {
             assertTrue(nodes.add(perm.node()));
         }
         assertEquals("sculptory.schematic.import", Perm.SCHEMATIC_IMPORT.node());
+        // Appended only: Navigate is bit 14, Biome (protocol 6) bit 15.
+        assertEquals(14, Perm.NAVIGATE.bit());
+        assertEquals(15, Perm.BIOME.bit());
+        assertEquals("sculptory.biome", Perm.BIOME.node());
+        assertEquals(Perm.BIOME, Perm.values()[Perm.values().length - 1]);
         assertTrue(Perm.values().length <= 64);
         EnumSet<Perm> granted = EnumSet.of(Perm.USE, Perm.BRUSH, Perm.EDIT_UNLOADED);
         assertEquals(granted, Perm.granted(Perm.mask(granted)));

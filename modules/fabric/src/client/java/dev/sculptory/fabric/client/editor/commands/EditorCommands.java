@@ -94,7 +94,8 @@ public final class EditorCommands {
 
     /**
      * The palette slots that start a new tool group after the first (Select · Terrain · Place and scatter · Build ·
-     * Weather): the Weather brush, a terrain brush that came after the Build tools, stands in a group of its own.
+     * Weather, Heightmap and Biome): the terrain tools that came after the Build tools (the Weather brush, slot 15, and
+     * from protocol 6 the Heightmap brush and the Biome tool, slots 16 and 17) stand in a group of their own.
      */
     public static final Set<Integer> TOOL_GROUP_STARTS = Set.of(2, 8, 10, 15);
 

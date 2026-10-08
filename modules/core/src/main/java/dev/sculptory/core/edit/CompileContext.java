@@ -79,4 +79,13 @@ public interface CompileContext {
     default BoundMask sourceMask() {
         return BoundMask.ALL;
     }
+
+    /**
+     * The landing cells of {@code move} (a move with a free orientation, without symmetry) when the caller worked them
+     * out already ({@link OpCompiler#freeLanding}: the server does at admission), so the compiler does not again; the
+     * default, {@code null}, has the compiler work them out.
+     */
+    default dev.sculptory.core.region.Region movedRegion(OpSpec.Move move) {
+        return null;
+    }
 }

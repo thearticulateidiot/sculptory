@@ -29,10 +29,15 @@ import java.util.Objects;
  * @param plane Surface-mode Flatten's plane, fixed for the press: required for FLATTEN in {@link SculptMode#SURFACE},
  *     {@code null} otherwise
  * @param weather what the Weather brush does: required for {@link BrushTool#WEATHER}, {@code null} for every other tool
+ * @param heightmap the Heightmap brush's image (protocol 6): required for {@link BrushTool#HEIGHTMAP}, whose
+ *     {@link HeightmapSpec#side()} must be {@code 2 * radius + 1}; {@code null} for every other tool
+ * @param biome what the Biome brush paints (protocol 6): required for {@link BrushTool#BIOME}, {@code null} for every
+ *     other tool
  */
 public record BrushSpec(BrushTool tool, int radius, float strength, Falloff falloff, Shape shape, Pattern material,
                         SurfaceMask mask, int depth, int flattenY, long seed, Box clip, Symmetry symmetry,
-                        ShapeSpec shapeSpec, SculptMode mode, SurfacePlane plane, WeatherSpec weather) {
+                        ShapeSpec shapeSpec, SculptMode mode, SurfacePlane plane, WeatherSpec weather,
+                        HeightmapSpec heightmap, BiomeSpec biome) {
     public static final int MIN_RADIUS = 1;
     public static final int MAX_RADIUS = 32;
     public static final int MAX_DEPTH = 32;
@@ -75,6 +80,25 @@ public record BrushSpec(BrushTool tool, int radius, float strength, Falloff fall
             throw new IllegalArgumentException(tool == BrushTool.WEATHER ? "WEATHER needs a weather mode"
                     : tool + " takes no weather mode");
         }
+        if ((tool == BrushTool.HEIGHTMAP) != (heightmap != null)) {
+            throw new IllegalArgumentException(tool == BrushTool.HEIGHTMAP ? "HEIGHTMAP needs a height image"
+                    : tool + " takes no height image");
+        }
+        if (heightmap != null && heightmap.side() != 2 * radius + 1) {
+            throw new IllegalArgumentException("A height image " + heightmap.side() + " wide on a brush of radius " + radius
+                    + " (needs " + (2 * radius + 1) + ")");
+        }
+        if ((tool == BrushTool.BIOME) != (biome != null)) {
+            throw new IllegalArgumentException(tool == BrushTool.BIOME ? "BIOME needs a biome" : tool + " takes no biome");
+        }
+    }
+
+    /** A brush that is neither the Heightmap nor the Biome brush (protocol 5's fields). */
+    public BrushSpec(BrushTool tool, int radius, float strength, Falloff falloff, Shape shape, Pattern material,
+                     SurfaceMask mask, int depth, int flattenY, long seed, Box clip, Symmetry symmetry,
+                     ShapeSpec shapeSpec, SculptMode mode, SurfacePlane plane, WeatherSpec weather) {
+        this(tool, radius, strength, falloff, shape, material, mask, depth, flattenY, seed, clip, symmetry, shapeSpec,
+                mode, plane, weather, null, null);
     }
 
     /** A brush that is not the Weather brush (no weather mode). */
@@ -124,13 +148,13 @@ public record BrushSpec(BrushTool tool, int radius, float strength, Falloff fall
     /** This spec with {@code clip} as its clip box ({@code null}: none). */
     public BrushSpec withClip(Box clip) {
         return new BrushSpec(tool, radius, strength, falloff, shape, material, mask, depth, flattenY, seed, clip, symmetry,
-                shapeSpec, mode, plane, weather);
+                shapeSpec, mode, plane, weather, heightmap, biome);
     }
 
     /** This spec with {@code symmetry}. */
     public BrushSpec withSymmetry(Symmetry symmetry) {
         return new BrushSpec(tool, radius, strength, falloff, shape, material, mask, depth, flattenY, seed, clip, symmetry,
-                shapeSpec, mode, plane, weather);
+                shapeSpec, mode, plane, weather, heightmap, biome);
     }
 
     /**
@@ -139,7 +163,7 @@ public record BrushSpec(BrushTool tool, int radius, float strength, Falloff fall
      */
     public BrushSpec withSurface(SurfacePlane plane) {
         return new BrushSpec(tool, radius, strength, falloff, shape, material, mask, depth, flattenY, seed, clip, symmetry,
-                shapeSpec, SculptMode.SURFACE, plane, weather);
+                shapeSpec, SculptMode.SURFACE, plane, weather, heightmap, biome);
     }
 
     /** Whether this spec sculpts in the Surface mode. */

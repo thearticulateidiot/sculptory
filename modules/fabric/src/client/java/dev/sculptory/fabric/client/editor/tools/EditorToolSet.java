@@ -4,6 +4,7 @@ import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.fabric.client.editor.tool.Tool;
+import dev.sculptory.fabric.client.editor.tool.ToolDescriptor;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.fabric.client.editor.tool.ToolRegistry;
 import dev.sculptory.fabric.client.editor.tools.brush.BrushServices;
@@ -16,22 +17,27 @@ import dev.sculptory.fabric.client.editor.tools.tinker.TinkerTool;
 import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.editor.tools.scatter.ScatterTool;
+import dev.sculptory.server.engine.Perm;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
- * The editor palette, slots 1-15: Select, Raise, Lower, Smooth, Flatten, Paint, Palette Paint, Place, Scatter, Shape
+ * The editor palette, slots 1-17: Select, Raise, Lower, Smooth, Flatten, Paint, Palette Paint, Place, Scatter, Shape
  * (slot 10, key 0), Generate (slot 11, key -), Extrude (slot 12, key =), Fluid (slot 13, key [), Tinker (slot 14,
- * key ]) and Weather (slot 15, key \).
+ * key ]), Weather (slot 15, key \), Heightmap (slot 16, key ;) and Biome (slot 17, key ').
  *
  * <p>Slots 2-7 and 15 are the {@link TerrainBrushTool}s, slot 8 the {@link PlaceTool}, slot 9 the {@link ScatterTool},
  * slot 10 the {@link ShapeBrushTool}, slot 11 the {@link GenerateTool}, slot 12 the {@link ExtrudeTool}, slot 13 the
  * {@link FluidTool} and slot 14 the {@link TinkerTool}. A tool whose id is in {@link #COMING_SOON} is shown disabled in
- * the palette with its milestone (none at the moment).
+ * the palette with its milestone (none at the moment). Slots 16 and 17 are {@link PlaceholderTool}s (selectable, no
+ * settings, a hint line saying they are coming, nothing on click) until ws/heightmap and ws/biomes register their
+ * tools there.
  */
 public final class EditorToolSet {
+    /** What the hint line says while a placeholder is selected. */
+    private static final String PLACEHOLDER_HINT = "sculptory.hint.coming_soon";
     /** Tools shown disabled, with the milestone that brings them. */
     public static final Map<ToolId, String> COMING_SOON = Map.of();
     /** The active block of tool sets built without an editor (tests): stone. */
@@ -113,7 +119,7 @@ public final class EditorToolSet {
     }
 
     /**
-     * Registers the fifteen palette tools in slot order, the eight brushes and the Fluid tool sharing {@code centre}
+     * Registers the seventeen palette tools in slot order, the eight brushes and the Fluid tool sharing {@code centre}
      * (the editor gives the Select, Place and Extrude tools the same one, so M sets it for every
      * tool); the Shape brush places {@code activeBlock} (the editor's
      * active block) unless it is set to a mix.
@@ -136,7 +142,12 @@ public final class EditorToolSet {
                 extrude,
                 fluid,
                 tinker,
-                new TerrainBrushTool(BrushTool.WEATHER, brushes, centre))) {
+                new TerrainBrushTool(BrushTool.WEATHER, brushes, centre),
+                // Contract placeholders (protocol 6): ws/heightmap and ws/biomes replace them with their tools.
+                new PlaceholderTool(new ToolDescriptor(ToolId.HEIGHTMAP, "sculptory.tool.heightmap",
+                        TerrainBrushTool.HEIGHTMAP_ICON, Perm.BRUSH), PLACEHOLDER_HINT),
+                new PlaceholderTool(new ToolDescriptor(ToolId.BIOME, "sculptory.tool.biome", TerrainBrushTool.BIOME_ICON,
+                        Perm.BIOME), PLACEHOLDER_HINT))) {
             registry.register(tool);
         }
     }

@@ -454,6 +454,8 @@ public final class MockEditorSession implements EditorSession {
             case OpSpec.Overlay overlay -> overlay.box().volume();
             case OpSpec.Naturalize naturalize -> naturalize.box().volume();
             case OpSpec.UpdateBlocks update -> update.box().volume();
+            case OpSpec.PasteMany many -> many.placements().size();
+            case OpSpec.BiomeFill fill -> fill.box().volume();
         };
     }
 
@@ -472,6 +474,8 @@ public final class MockEditorSession implements EditorSession {
             case OpSpec.Overlay overlay -> "Overlay";
             case OpSpec.Naturalize naturalize -> "Naturalize";
             case OpSpec.UpdateBlocks update -> "Update blocks";
+            case OpSpec.PasteMany many -> "Paste";
+            case OpSpec.BiomeFill fill -> "Biome fill";
         };
     }
 

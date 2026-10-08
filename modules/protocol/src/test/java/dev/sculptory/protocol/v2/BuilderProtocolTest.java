@@ -53,7 +53,7 @@ class BuilderProtocolTest {
         assertEquals(RateLimiter.Kind.CONTROL, RateLimiter.frameKind(MessageType.BUILDER_POWERS));
         assertEquals(RateLimiter.Kind.CONTROL, RateLimiter.frameKind(MessageType.BUILDER_DRAG_END));
         assertEquals("builder", Features.BUILDER);
-        assertEquals(5, ProtocolV2.VERSION);
+        assertTrue(ProtocolV2.VERSION >= 5, "builder mode joined protocol 5");
     }
 
     @Test

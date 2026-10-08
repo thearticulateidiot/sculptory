@@ -310,7 +310,7 @@ class TinkerToolTest {
 
     @Test
     void theFourteenthSlotAndItsKey() {
-        assertEquals(15, ToolRegistry.PALETTE_SLOTS);
+        assertEquals(17, ToolRegistry.PALETTE_SLOTS);
         ToolRegistry registry = new ToolRegistry();
         EditorToolSet.register(registry, select());
         assertInstanceOf(TinkerTool.class, registry.slot(14).orElseThrow());

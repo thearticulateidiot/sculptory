@@ -127,7 +127,7 @@ class EditorCommandsTest {
                 ids(CommandMenu.SELECTION));
         assertEquals(List.of("tool.select", "tool.raise", "tool.lower", "tool.smooth", "tool.flatten", "tool.paint",
                 "tool.palette", "tool.place", "tool.scatter", "tool.shape", "tool.generate", "tool.extrude",
-                "tool.fluid", "tool.tinker", "tool.weather"), ids(CommandMenu.TOOLS));
+                "tool.fluid", "tool.tinker", "tool.weather", "tool.heightmap", "tool.biome"), ids(CommandMenu.TOOLS));
         assertEquals(List.of("view.window.tool_settings", "view.window.selection", "view.window.clipboard",
                 "view.window.library", "view.window.history", "view.window.keys", "view.notifications",
                 "view.tutorial", "view.wiki", "view.hide_windows", "view.reset_layout", "view.ui_size",
@@ -175,7 +175,7 @@ class EditorCommandsTest {
         List<MenuItem> items = commands.menuItems(CommandMenu.TOOLS);
         List<String> shape = items.stream().map(item -> item.isSeparator() ? "---" : item.keyText()).toList();
         assertEquals(List.of("1", "---", "2", "3", "4", "5", "6", "7", "---", "8", "9", "---", "0", "-", "=", "[",
-                "]", "---", "\\"), shape);
+                "]", "---", "\\", ";", "'"), shape);
         assertEquals("sculptory.tool.select", items.get(0).label());
         assertTrue(items.get(0).isChecked(), "Select is active");
         assertEquals("sculptory.tool.select.tooltip", items.get(0).tooltipText());

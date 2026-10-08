@@ -111,8 +111,12 @@ class KeySheetTest {
         assertEquals(new HelpSheet.Line("1", "tool 1", KeyAction.TOOL_1), tools.lines().get(0));
         assertEquals(new HelpSheet.Line("]", "tool 14", KeyAction.TOOL_14), tools.lines().get(13),
                 "the tool's name alone: the key beside it stands for the slot, so its number shows once");
-        assertEquals(new HelpSheet.Line("\\", "tool 15", KeyAction.TOOL_15), tools.lines().get(ToolRegistry.PALETTE_SLOTS - 1),
-                "the last slot, the Weather brush, on backslash");
+        assertEquals(new HelpSheet.Line("\\", "tool 15", KeyAction.TOOL_15), tools.lines().get(14),
+                "the Weather brush, on backslash");
+        assertEquals(new HelpSheet.Line(";", "tool 16", KeyAction.TOOL_16), tools.lines().get(15),
+                "the Heightmap brush, on semicolon");
+        assertEquals(new HelpSheet.Line("'", "tool 17", KeyAction.TOOL_17), tools.lines().get(ToolRegistry.PALETTE_SLOTS - 1),
+                "the last slot, the Biome tool, on apostrophe");
         List<HelpSheet.Line> unnamed = HelpSheet.build(keymap, Translator.KEYS, VANILLA, slot -> Optional.empty()).get(1)
                 .lines();
         assertEquals(new HelpSheet.Line("1", "sculptory.key.tool_1", KeyAction.TOOL_1), unnamed.get(0),

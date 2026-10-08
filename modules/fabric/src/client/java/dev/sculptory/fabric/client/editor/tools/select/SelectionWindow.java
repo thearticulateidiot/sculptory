@@ -102,6 +102,8 @@ public final class SelectionWindow {
     private BlockDescriptor naturalMiddle = BlockDescriptor.parse("minecraft:dirt");
     private BlockDescriptor naturalBottom = BlockDescriptor.parse("minecraft:stone");
     private int naturalTopDepth = 1;
+    /** Rotate…'s angles in degrees: yaw, pitch, roll. */
+    private final double[] rotateAngles = new double[3];
     private int naturalMiddleDepth = 3;
     private Box shown;
     private boolean shownResizable;
@@ -138,7 +140,10 @@ public final class SelectionWindow {
         naturalize.setOnClick(() -> openNaturalize(naturalize.bounds()));
         Button update = button("sculptory.op.update_blocks", "sculptory.selection.update_blocks.tooltip",
                 actions::updateBlocks);
-        List<Button> buttons = new ArrayList<>(List.of(fill, replace, erase, hollow, walls, overlay, naturalize, update));
+        Button rotate = button("sculptory.op.rotate_dots", "sculptory.selection.rotate.tooltip", () -> { });
+        rotate.setOnClick(() -> openRotate(rotate.bounds()));
+        List<Button> buttons = new ArrayList<>(List.of(fill, replace, erase, hollow, walls, overlay, naturalize, update,
+                rotate));
         thickness = Slider.ofInt(tr.translate("sculptory.selection.thickness"), SelectSettings.THICKNESS.min(),
                 SelectSettings.THICKNESS.max(), host.settings().get(SelectSettings.THICKNESS),
                 value -> host.updateSettings(host.settings().with(SelectSettings.THICKNESS, value)));
@@ -149,7 +154,7 @@ public final class SelectionWindow {
                 size,
                 Row.of(axisLabel("sculptory.selection.min"), min[0], min[1], min[2]),
                 Row.of(axisLabel("sculptory.selection.max"), max[0], max[1], max[2]),
-                FlowRow.of(grow(convert)),
+                FlowRow.of(grow(convert), grow(rotate)),
                 FlowRow.of(grow(fill), grow(replace), grow(erase)),
                 FlowRow.of(grow(hollow), grow(walls)),
                 thickness,
@@ -440,6 +445,46 @@ public final class SelectionWindow {
         content.setFixedWidth(200);
         popup[0] = ctx.popups().open(null, new Padding(Insets.all(5), content), anchor, 212, null);
         ctx.setFocus(confirm);
+    }
+
+    /**
+     * Opens the Rotate… dialog below {@code anchor}: yaw (about up), pitch (about east-west) and roll (about
+     * north-south) in degrees, each from -180 to 180 (typed to 1/100 degree), and Rotate, which turns the selected blocks
+     * where they stand about the symmetry centre (M) or the selection's middle ({@link SelectionActions#rotate}).
+     */
+    public void openRotate(Rect anchor) {
+        UiContext ctx = host.popups();
+        String[] names = {"sculptory.place.angle.yaw", "sculptory.place.angle.pitch", "sculptory.place.angle.roll"};
+        Slider[] sliders = new Slider[3];
+        for (int i = 0; i < 3; i++) {
+            int axis = i;
+            sliders[i] = Slider.ofDecimal(tr.translate(names[i]), -180, 180, 0.01, rotateAngles[i],
+                    value -> rotateAngles[axis] = value);
+            sliders[i].setTooltip(tr.translate(names[i] + ".tooltip"));
+        }
+        PopupLayer.Popup[] popup = new PopupLayer.Popup[1];
+        Button cancel = new Button(tr.translate("sculptory.dialog.cancel"), () -> ctx.popups().close(popup[0]));
+        Button confirm = new Button(tr.translate("sculptory.op.rotate"), () -> {
+            ctx.popups().close(popup[0]);
+            actions.rotate(centidegrees(rotateAngles[0]), centidegrees(rotateAngles[1]), centidegrees(rotateAngles[2]),
+                    host.settings().get(SelectSettings.ENTITIES));
+        });
+        confirm.setStyle(Button.Style.PRIMARY);
+        Column content = Column.of(
+                Label.heading(tr.translate("sculptory.selection.rotate.title")),
+                Label.dim(tr.translate(actions.symmetryCentre().isSet() ? "sculptory.selection.rotate.hint_centre"
+                        : "sculptory.selection.rotate.hint")).setWrap(true),
+                sliders[0], sliders[1], sliders[2],
+                Row.of(Spacer.flexible(), cancel, confirm));
+        content.setGap(5);
+        content.setFixedWidth(220);
+        popup[0] = ctx.popups().open(null, new Padding(Insets.all(5), content), anchor, 232, null);
+        ctx.setFocus(confirm);
+    }
+
+    /** Degrees as whole 1/100 degrees. */
+    static int centidegrees(double degrees) {
+        return (int) Math.round(degrees * 100);
     }
 
     /** Opens the Naturalize… dialog below {@code anchor}: the top, middle and bottom blocks and depths. */

@@ -127,7 +127,8 @@ class ShapeBrushToolTest {
         ToolRegistry registry = new ToolRegistry();
         EditorToolSet.register(registry, new PlaceholderTool(new ToolDescriptor(ToolId.SELECT, "sculptory.tool.select",
                 "minecraft:stone", Perm.REGION), "sculptory.hint.select.drag"));
-        assertEquals(15, registry.paletteOrder().size(), "Generate, Extrude, Fluid, Tinker and Weather follow in slots 11-15");
+        assertEquals(17, registry.paletteOrder().size(),
+                "Generate, Extrude, Fluid, Tinker, Weather, Heightmap and Biome follow in slots 11-17");
         Tool shape = registry.slot(10).orElseThrow();
         assertInstanceOf(ShapeBrushTool.class, shape);
         assertEquals(ToolId.SHAPE, shape.descriptor().id());

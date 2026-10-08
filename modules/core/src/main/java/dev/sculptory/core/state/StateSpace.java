@@ -71,6 +71,24 @@ public interface StateSpace {
         return VerticalFlip.FLIPS;
     }
 
+    /**
+     * Tips a state a quarter turn about a horizontal axis: the part of a free rotation that {@link #rotate},
+     * {@link #mirror} and {@link #flip} cannot do (the rules are {@link StateTips}'). A state with no tipped form comes
+     * back as it is ({@link #tipKind} tells which). {@link dev.sculptory.core.transform.CubeTurn.Tip#NONE} answers
+     * {@code h}; spaces that cannot tip answer {@code h}.
+     */
+    default int tip(int h, dev.sculptory.core.transform.CubeTurn.Tip tip) {
+        return h;
+    }
+
+    /**
+     * How {@link #tip} treats a state: {@link StateTips#TURNS}, {@link StateTips#KEPT} or
+     * {@link StateTips#UNKNOWN_PROPERTIES}.
+     */
+    default int tipKind(int h, dev.sculptory.core.transform.CubeTurn.Tip tip) {
+        return StateTips.TURNS;
+    }
+
     /** Sets the waterlogged property; identity when the state is not waterloggable. */
     int withWaterlogged(int h, boolean on);
 

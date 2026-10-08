@@ -104,6 +104,11 @@ public final class ClipboardActions {
         return nextTransform;
     }
 
+    /** The Place tool while it is the active tool (its angles show in Tool Settings and the Clipboard window). */
+    public Optional<PlaceTool> placeTool() {
+        return host.activePlaceTool();
+    }
+
     /** The last file exported in this session. */
     public Optional<Path> lastExport() {
         return lastExport;

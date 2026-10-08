@@ -1,0 +1,307 @@
+package dev.sculptory.protocol.v2;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
+
+import dev.sculptory.core.BlockPos;
+import dev.sculptory.core.Box;
+import dev.sculptory.core.brush.BiomeSpec;
+import dev.sculptory.core.brush.BrushSpec;
+import dev.sculptory.core.brush.BrushTool;
+import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightmapSpec;
+import dev.sculptory.core.brush.SculptMode;
+import dev.sculptory.core.brush.Shape;
+import dev.sculptory.core.brush.SurfaceMask;
+import dev.sculptory.core.brush.Symmetry;
+import dev.sculptory.core.edit.CellMask;
+import dev.sculptory.core.edit.OpSpec;
+import dev.sculptory.core.edit.PasteOptions;
+import dev.sculptory.core.edit.Pattern;
+import dev.sculptory.core.edit.SourceRef;
+import dev.sculptory.core.entity.EntityFilter;
+import dev.sculptory.core.history.ConflictPolicy;
+import dev.sculptory.core.region.Region;
+import dev.sculptory.core.testing.FakeStateSpace;
+import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Transform;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
+/**
+ * The wire contracts of the batch after 0.3.0-alpha (protocol 6): orientations on Paste and Move, the multi-paste, the
+ * biome fill, the paste options' biomes bit, the Heightmap and Biome brushes and the new tool labels. Round trips, and
+ * the refusals a hostile or broken client meets.
+ */
+class ProtocolSixContractsTest {
+    private static final FakeStateSpace STATES = new FakeStateSpace();
+    private static final Region BOX = new Region.Cuboid(Box.of(new BlockPos(0, 60, 0), new BlockPos(9, 70, 9)));
+    private static final SourceRef CLIPBOARD = new SourceRef.Clipboard(new UUID(1, 2));
+    private static final Pattern STONE = new Pattern.Single(STATES.state("minecraft:stone"));
+
+    private static C2S roundTrip(C2S message) throws ProtocolException {
+        return Codec.decodeC2S(Codec.encodeC2S(message, STATES), STATES);
+    }
+
+    private static ProtocolException.Reason reasonOf(byte[] frame) {
+        try {
+            Codec.decodeC2S(frame, STATES);
+        } catch (ProtocolException e) {
+            return e.reason();
+        }
+        return fail("Expected a ProtocolException for " + HexFormat.of().formatHex(frame));
+    }
+
+    /** What a test writes as an op's body. */
+    private interface Body {
+        void write(WireWriter out) throws ProtocolException;
+    }
+
+    /** A RunOp frame (no states, no physics, Skip conflicts, no label) around an op written by hand. */
+    private static byte[] runOp(Body op) throws ProtocolException {
+        WireWriter out = new WireWriter(ProtocolV2.MAX_C2S_FRAME);
+        out.varint(MessageType.RUN_OP.code());
+        out.zigzag(1);
+        out.varint(0); // an empty state palette
+        op.write(out);
+        out.bool(false);
+        out.varint(ConflictPolicy.SKIP_CONFLICTS.ordinal());
+        out.varint(OpLabel.NONE.ordinal());
+        return out.toByteArray();
+    }
+
+    /** A paste of the clipboard at the origin whose orientation is {@code orientation} bytes. */
+    private static byte[] paste(int... orientation) throws ProtocolException {
+        return runOp(out -> {
+            out.u8(CoreCodec.OP_PASTE);
+            CoreCodec.writeSource(out, CLIPBOARD);
+            CoreCodec.writePos(out, BlockPos.ORIGIN);
+            for (int b : orientation) out.u8(b);
+            CoreCodec.writePasteOptions(out, PasteOptions.DEFAULT);
+            CoreCodec.writeSymmetry(out, Symmetry.NONE);
+        });
+    }
+
+    private static BrushSpec heightmap(int radius, int side) {
+        return new BrushSpec(BrushTool.HEIGHTMAP, radius, 1f, Falloff.SMOOTH, Shape.SQUARE, null, SurfaceMask.ANY, 0, 0, 1L,
+                null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(side, new byte[side * side], 8, false), null);
+    }
+
+    private static BrushSpec biome(String id) {
+        return new BrushSpec(BrushTool.BIOME, 5, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0, 1L, null,
+                Symmetry.NONE, null, SculptMode.TERRAIN, null, null, null, new BiomeSpec(id, true));
+    }
+
+    // ---------------------------------------------------------------- orientations
+
+    @Test
+    void exactAndFreeOrientationsRoundTripOnPastesAndMoves() throws ProtocolException {
+        Transform turned = new Transform(3, Mirror.X, true);
+        for (Orientation orientation : List.of(Orientation.IDENTITY, Orientation.of(turned),
+                Orientation.free(turned, 1, 0, 0), Orientation.free(Transform.IDENTITY, 0, 9_000, 0),
+                Orientation.free(turned, 35_999, 17_999, 12_345))) {
+            C2S paste = new C2S.RunOp(1, new OpSpec.Paste(CLIPBOARD, new BlockPos(1, -2, 3), orientation,
+                    PasteOptions.DEFAULT), false, ConflictPolicy.SKIP_CONFLICTS);
+            assertEquals(paste, roundTrip(paste), orientation.toString());
+            C2S move = new C2S.RunOp(2, new OpSpec.Move(BOX, BlockPos.ORIGIN, orientation, STONE, EntityFilter.ALL,
+                    Symmetry.NONE, PasteOptions.Into.AIR), false, ConflictPolicy.OVERWRITE, OpLabel.ROTATE);
+            assertEquals(move, roundTrip(move), orientation.toString());
+        }
+        // An exact orientation is the protocol 5 transform byte, nothing more.
+        assertEquals(Codec.encodeC2S(new C2S.RunOp(1, new OpSpec.Paste(CLIPBOARD, BlockPos.ORIGIN, turned,
+                PasteOptions.DEFAULT), false, ConflictPolicy.SKIP_CONFLICTS), STATES).length, paste(0).length);
+    }
+
+    @Test
+    void aFreeOrientationIsTheTransformByteWithBitFiveThenThreeAngles() throws ProtocolException {
+        C2S.RunOp decoded = (C2S.RunOp) Codec.decodeC2S(paste(0x21, 0xA9, 0x46, 0x00, 0x05), STATES);
+        // yaw 9,001 (varint 0xA9 0x46), pitch 0, roll 5; the transform one quarter turn.
+        assertEquals(Orientation.free(Transform.rotation(1), 9_001, 0, 5), ((OpSpec.Paste) decoded.op()).orientation());
+    }
+
+    @Test
+    void onlyTheCanonicalFormOfAnOrientationIsAccepted() throws ProtocolException {
+        // Bit 5 with no free angle, with a quarter turn of yaw (an exact transform), a half turn of pitch (upside down
+        // plus a mirror), an angle of a full turn or more, or a negative varint.
+        for (int[] bytes : List.of(new int[] {0x20, 0, 0, 0}, new int[] {0x20, 0xA8, 0x46, 0, 0},
+                new int[] {0x20, 0, 0xD0, 0x8C, 0x01, 0}, new int[] {0x20, 0xA0, 0x99, 0x02, 0, 0},
+                new int[] {0x20, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F, 0, 0})) {
+            assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(paste(bytes)), HexFormat.of().formatHex(
+                    paste(bytes)));
+        }
+        // Bits 6 and 7 stay zero, with or without bit 5.
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(paste(0x40)));
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(paste(0xA0, 1, 0, 0)));
+        // A quarter turn of pitch keeps the vertical axis horizontal: it stays free, and travels.
+        Orientation pitched = Orientation.free(Transform.IDENTITY, 0, 9_000, 0);
+        assertFalse(pitched.isExact());
+        C2S.RunOp decoded = (C2S.RunOp) Codec.decodeC2S(paste(0x20, 0, 0xA8, 0x46, 0), STATES);
+        assertEquals(pitched, ((OpSpec.Paste) decoded.op()).orientation());
+    }
+
+    // ---------------------------------------------------------------- paste options, multi-paste, biome fill
+
+    @Test
+    void thePasteOptionsCarryTheBiomesBitAndRefuseHigherBits() throws ProtocolException {
+        PasteOptions biomes = new PasteOptions(true, false, true, PasteOptions.Into.EXISTING, true);
+        C2S paste = new C2S.RunOp(3, new OpSpec.Paste(CLIPBOARD, BlockPos.ORIGIN, Transform.IDENTITY, biomes), false,
+                ConflictPolicy.SKIP_CONFLICTS);
+        assertEquals(paste, roundTrip(paste));
+        assertFalse(PasteOptions.DEFAULT.biomes());
+        assertTrue(PasteOptions.DEFAULT.withBiomes(true).withInto(PasteOptions.Into.AIR).biomes());
+        byte[] bad = runOp(out -> {
+            out.u8(CoreCodec.OP_PASTE);
+            CoreCodec.writeSource(out, CLIPBOARD);
+            CoreCodec.writePos(out, BlockPos.ORIGIN);
+            out.u8(0);
+            out.u8(0x10); // bit 4 of the paste options
+            out.varint(0);
+            CoreCodec.writeSymmetry(out, Symmetry.NONE);
+        });
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(bad));
+    }
+
+    @Test
+    void multiPastesRoundTripUpToTheirCapAndRefuseNoneOrMore() throws ProtocolException {
+        List<OpSpec.PasteMany.Placement> placements = new ArrayList<>();
+        for (int i = 0; i < OpSpec.PasteMany.MAX_PLACEMENTS; i++) {
+            placements.add(new OpSpec.PasteMany.Placement(new BlockPos(i * 7 - 900, 64 + i % 5, -i * 13),
+                    i % 3 == 0 ? Orientation.free(new Transform(i, Mirror.Z, true), i * 97, i * 31, i * 13)
+                            : Orientation.of(Transform.rotation(i))));
+        }
+        C2S stamp = new C2S.RunOp(4, new OpSpec.PasteMany(new SourceRef.Asset(dev.sculptory.core.Sha256.digest(
+                new byte[] {4}).hex()), placements, new PasteOptions(false, false, true, PasteOptions.Into.AIR, true),
+                new Symmetry(Symmetry.Mode.MIRROR_X, 4, 0)), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP);
+        byte[] frame = Codec.encodeC2S(stamp, STATES);
+        assertTrue(frame.length < ProtocolV2.MAX_C2S_FRAME, "the largest stamp fits a frame: " + frame.length);
+        assertEquals(stamp, Codec.decodeC2S(frame, STATES));
+        assertThrows(IllegalArgumentException.class, () -> new OpSpec.PasteMany(CLIPBOARD, List.of(),
+                PasteOptions.DEFAULT));
+        List<OpSpec.PasteMany.Placement> tooMany = new ArrayList<>(placements);
+        tooMany.add(placements.get(0));
+        assertThrows(IllegalArgumentException.class, () -> new OpSpec.PasteMany(CLIPBOARD, tooMany, PasteOptions.DEFAULT));
+        for (int count : new int[] {0, OpSpec.PasteMany.MAX_PLACEMENTS + 1}) {
+            byte[] bad = runOp(out -> {
+                out.u8(CoreCodec.OP_PASTE_MANY);
+                CoreCodec.writeSource(out, CLIPBOARD);
+                out.varint(count);
+                for (int i = 0; i < count; i++) {
+                    CoreCodec.writePos(out, BlockPos.ORIGIN);
+                    out.u8(0);
+                }
+                CoreCodec.writePasteOptions(out, PasteOptions.DEFAULT);
+                CoreCodec.writeSymmetry(out, Symmetry.NONE);
+            });
+            assertEquals(count == 0 ? ProtocolException.Reason.MALFORMED : ProtocolException.Reason.TOO_LARGE,
+                    reasonOf(bad), count + " placements");
+        }
+    }
+
+    @Test
+    void biomeFillsRoundTripAndRefuseAMalformedBiomeId() throws ProtocolException {
+        for (boolean columns : new boolean[] {true, false}) {
+            C2S fill = new C2S.RunOp(5, new OpSpec.BiomeFill(BOX, "minecraft:cherry_grove", columns,
+                    new Symmetry(Symmetry.Mode.ROTATE_4, 2, 2)), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.BIOME_FILL);
+            assertEquals(fill, roundTrip(fill));
+        }
+        for (String id : List.of("", "plains", "Minecraft:Plains", "minecraft:plains with spaces")) {
+            assertThrows(IllegalArgumentException.class, () -> new OpSpec.BiomeFill(BOX, id, true), id);
+            byte[] bad = runOp(out -> {
+                out.u8(CoreCodec.OP_BIOME_FILL);
+                CoreCodec.writeRegion(out, BOX);
+                out.string(id, CoreCodec.NAMESPACED_ID_BYTES, "biome id");
+                out.bool(true);
+                CoreCodec.writeSymmetry(out, Symmetry.NONE);
+            });
+            assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(bad), id);
+        }
+    }
+
+    @Test
+    void theNewLabelsFitTheirOpsAndTheServerSideRefusesAnyOther() {
+        OpSpec paste = new OpSpec.Paste(CLIPBOARD, BlockPos.ORIGIN, Transform.IDENTITY, PasteOptions.DEFAULT);
+        OpSpec many = new OpSpec.PasteMany(CLIPBOARD, List.of(new OpSpec.PasteMany.Placement(BlockPos.ORIGIN,
+                Orientation.IDENTITY)), PasteOptions.DEFAULT);
+        OpSpec move = new OpSpec.Move(BOX, BlockPos.ORIGIN, Transform.IDENTITY, STONE, EntityFilter.NONE);
+        OpSpec biome = new OpSpec.BiomeFill(BOX, "minecraft:plains", true);
+        OpSpec fill = new OpSpec.Fill(BOX, STONE, CellMask.ANY);
+        List<OpSpec> ops = List.of(paste, many, move, biome, fill);
+        for (OpLabel label : List.of(OpLabel.PATH_EXTRUDE, OpLabel.TAPER, OpLabel.SWEEP, OpLabel.HEIGHTMAP)) {
+            assertEquals(List.of(paste), ops.stream().filter(label::fits).toList(), label.name());
+        }
+        assertEquals(List.of(many), ops.stream().filter(OpLabel.STAMP::fits).toList());
+        assertEquals(List.of(move), ops.stream().filter(OpLabel.ROTATE::fits).toList());
+        assertEquals(List.of(biome), ops.stream().filter(OpLabel.BIOME_FILL::fits).toList());
+        assertFalse(OpLabel.ROAD.fits(many));
+    }
+
+    // ---------------------------------------------------------------- the Heightmap and Biome brushes
+
+    @Test
+    void theLargestHeightmapFitsAStrokeBeginFrameUncompressed() throws ProtocolException {
+        int side = HeightmapSpec.MAX_SIDE;
+        byte[] heights = new byte[side * side];
+        for (int i = 0; i < heights.length; i++) heights[i] = (byte) (i * 131 + 7);
+        BrushSpec spec = new BrushSpec(BrushTool.HEIGHTMAP, BrushSpec.MAX_RADIUS, 0.5f, Falloff.SPHERE, Shape.CIRCLE, null,
+                SurfaceMask.ANY, 0, 0, -3L, Box.of(new BlockPos(-100, -64, -100), new BlockPos(100, 300, 100)),
+                new Symmetry(Symmetry.Mode.ROTATE_4, 0, 0), null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(side, heights, HeightmapSpec.MAX_HEIGHT_BLOCKS, true), null);
+        C2S begin = new C2S.StrokeBegin(1, spec);
+        byte[] frame = Codec.encodeC2S(begin, STATES);
+        assertTrue(frame.length > side * side && frame.length < ProtocolV2.MAX_C2S_FRAME, "frame of " + frame.length);
+        assertEquals(begin, Codec.decodeC2S(frame, STATES));
+        assertEquals(side, HeightmapSpec.MAX_SIDE);
+        assertEquals(65, side);
+    }
+
+    @Test
+    void heightmapAndBiomeBrushesRoundTripAndRefuseWhatTheirSpecsRefuse() throws ProtocolException {
+        C2S heightmap = new C2S.StrokeBegin(2, heightmap(3, 7));
+        assertEquals(heightmap, roundTrip(heightmap));
+        C2S biome = new C2S.StrokeBegin(3, biome("minecraft:deep_dark"));
+        assertEquals(biome, roundTrip(biome));
+        // A height image the radius does not fit, a missing or misplaced spec, a bad height, a bad biome id.
+        assertThrows(IllegalArgumentException.class, () -> heightmap(3, 9));
+        assertThrows(IllegalArgumentException.class, () -> new HeightmapSpec(3, new byte[8], 4, false));
+        assertThrows(IllegalArgumentException.class, () -> new HeightmapSpec(3, new byte[9], 0, false));
+        assertThrows(IllegalArgumentException.class, () -> new HeightmapSpec(3, new byte[9],
+                HeightmapSpec.MAX_HEIGHT_BLOCKS + 1, false));
+        assertThrows(IllegalArgumentException.class, () -> new HeightmapSpec(HeightmapSpec.MAX_SIDE + 2,
+                new byte[(HeightmapSpec.MAX_SIDE + 2) * (HeightmapSpec.MAX_SIDE + 2)], 4, false));
+        assertThrows(IllegalArgumentException.class, () -> new BrushSpec(BrushTool.HEIGHTMAP, 3, 1f, Falloff.SMOOTH,
+                Shape.SQUARE, null, SurfaceMask.ANY, 0, 0, 1L));
+        assertThrows(IllegalArgumentException.class, () -> new BrushSpec(BrushTool.RAISE, 3, 1f, Falloff.SMOOTH,
+                Shape.SQUARE, null, SurfaceMask.ANY, 0, 0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
+                null, new BiomeSpec("minecraft:plains", true)));
+        assertThrows(IllegalArgumentException.class, () -> biome("plains"));
+        // On the wire: the image's side is checked before its bytes are read, and against the radius after.
+        byte[] frame = Codec.encodeC2S(heightmap, STATES);
+        int sideAt = indexOfSide(frame, 7);
+        byte[] wrongSide = frame.clone();
+        wrongSide[sideAt] = 5;
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(wrongSide));
+        byte[] hugeSide = frame.clone();
+        hugeSide[sideAt] = (byte) (HeightmapSpec.MAX_SIDE + 1);
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(hugeSide));
+        byte[] biomeFrame = Codec.encodeC2S(new C2S.StrokeBegin(3, biome("minecraft:a")), STATES);
+        // The id's last character, then the columns bool: "minecraft:a" becomes "minecraft:A".
+        biomeFrame[biomeFrame.length - 2] = 'A';
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(biomeFrame));
+    }
+
+    /** Where the height image's side sits in a frame of a heightmap brush: just before its {@code side²} bytes. */
+    private static int indexOfSide(byte[] frame, int side) {
+        // The side, the heights, the height (varint 8) and the lower bool end the frame.
+        int at = frame.length - 2 - side * side - 1;
+        assertEquals(side, frame[at], "the side's place in " + HexFormat.of().formatHex(frame));
+        return at;
+    }
+}

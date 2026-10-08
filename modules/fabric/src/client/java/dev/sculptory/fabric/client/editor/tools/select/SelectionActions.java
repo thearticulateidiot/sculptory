@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.client.editor.tools.select;
 
 import dev.sculptory.core.BlockDescriptor;
+import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.brush.Symmetry;
@@ -9,11 +10,14 @@ import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.OpSymmetry;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.Pattern;
+import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.mask.BlockSet;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.BlockFamilies;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.client.editor.Translator;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
@@ -77,7 +81,7 @@ public final class SelectionActions {
      * {@link #applyProperty}).
      */
     public enum Op {
-        FILL, REPLACE, ERASE, HOLLOW, WALLS, EXTRUDE, CARVE, SMEAR, TINKER, OVERLAY, NATURALIZE, UPDATE_BLOCKS;
+        FILL, REPLACE, ERASE, HOLLOW, WALLS, EXTRUDE, CARVE, SMEAR, TINKER, OVERLAY, NATURALIZE, UPDATE_BLOCKS, ROTATE;
 
         public String nameKey() {
             return "sculptory.op." + name().toLowerCase(Locale.ROOT);
@@ -92,6 +96,7 @@ public final class SelectionActions {
                 case EXTRUDE -> OpLabel.EXTRUDE;
                 case CARVE -> OpLabel.CARVE;
                 case SMEAR -> OpLabel.SMEAR;
+                case ROTATE -> OpLabel.ROTATE;
                 case FILL, REPLACE, ERASE, HOLLOW, WALLS, TINKER, OVERLAY, NATURALIZE, UPDATE_BLOCKS -> OpLabel.NONE;
             };
         }
@@ -265,6 +270,66 @@ public final class SelectionActions {
         return run(Op.NATURALIZE, region -> resolve(top).flatMap(t -> resolve(middle).flatMap(m -> resolve(bottom).map(b ->
                 new OpSpec.Naturalize(region, new Pattern.Single(t), topDepth, new Pattern.Single(m), middleDepth,
                         new Pattern.Single(b))))));
+    }
+
+    /**
+     * Rotate: turns the selected blocks where they stand by yaw, pitch and roll (1/100 degree), as a Move labelled
+     * "Rotate" (one undo step) about the symmetry centre's x and z (M) and the selection's middle height, or about the
+     * selection's middle cell without a centre ({@link #rotateOffset}); air fills what the blocks leave and
+     * {@code entities} turn with them. The Select tool's symmetry mode does not apply. Every turn of the selection
+     * resamples it (a turned box becomes the cells it now fills).
+     */
+    public boolean rotate(int yaw, int pitch, int roll, EntityFilter entities) {
+        Objects.requireNonNull(entities);
+        Orientation orientation = Orientation.free(Transform.IDENTITY, yaw, pitch, roll);
+        if (orientation.isIdentity()) {
+            notify(Notice.Level.INFO, "sculptory.notice.rotate_nothing");
+            return false;
+        }
+        int air = context.get().states().air();
+        int[] centre = symmetryCentre.isSet() ? new int[] {symmetryCentre.x2(), symmetryCentre.z2()} : null;
+        return run(Op.ROTATE, region -> {
+            BlockPos offset;
+            try {
+                offset = rotateOffset(region.bounds(), centre, orientation);
+            } catch (IllegalArgumentException tooLarge) {
+                notify(Notice.Level.WARNING, "sculptory.notice.rotate_too_large");
+                return Optional.empty();
+            }
+            return Optional.of(new OpSpec.Move(region, offset, orientation, new Pattern.Single(air), entities,
+                    Symmetry.NONE, PasteOptions.Into.EVERYTHING));
+        }, false);
+    }
+
+    /**
+     * The offset of a Move that turns {@code bounds} (the selection's whole bounds, the box a move turns) by
+     * {@code orientation} about the point C = ({@code centre2[0] / 2}, the middle cell's centre height,
+     * {@code centre2[1] / 2}), or about the middle cell's centre without a centre: the middle cell's centre c should land
+     * on {@code C + M·(c − C)}, and lands with no offset on {@code bounds.min() + bounds offset + mapPoint(c)} (the result
+     * box's frame: the box corner for an exact orientation, which a quarter turn folds into, the middle cell for a free
+     * one), so the offset is their difference, rounded to whole blocks (C stays put to within half a block).
+     *
+     * @throws IllegalArgumentException if the offset would be out of range
+     */
+    public static BlockPos rotateOffset(Box bounds, int[] centre2, Orientation orientation) {
+        int sx = bounds.sizeX(), sy = bounds.sizeY(), sz = bounds.sizeZ();
+        double[] local = {(sx - 1) / 2 + 0.5, (sy - 1) / 2 + 0.5, (sz - 1) / 2 + 0.5};
+        double[] c = {bounds.min().x() + local[0], bounds.min().y() + local[1], bounds.min().z() + local[2]};
+        double[] pivot = centre2 == null ? c : new double[] {centre2[0] / 2.0, c[1], centre2[1] / 2.0};
+        double[] m = orientation.matrix();
+        double[] d = {c[0] - pivot[0], c[1] - pivot[1], c[2] - pivot[2]};
+        BlockPos at = orientation.isExact() ? BlockPos.ORIGIN : orientation.bounds(sx, sy, sz).offset();
+        double[] p = orientation.mapPoint(local[0], local[1], local[2], sx, sy, sz);
+        long[] offset = new long[3];
+        int[] min = {bounds.min().x() + at.x(), bounds.min().y() + at.y(), bounds.min().z() + at.z()};
+        for (int i = 0; i < 3; i++) {
+            double target = pivot[i] + m[3 * i] * d[0] + m[3 * i + 1] * d[1] + m[3 * i + 2] * d[2];
+            offset[i] = Math.round(target - (min[i] + p[i]));
+            if (Math.abs(offset[i]) > Integer.MAX_VALUE / 2) {
+                throw new IllegalArgumentException("The turn moves the selection out of range");
+            }
+        }
+        return new BlockPos((int) offset[0], (int) offset[1], (int) offset[2]);
     }
 
     /** Update blocks: re-runs the shape updates of every block in the selection (no physics) and fixes its light. */
@@ -518,11 +583,15 @@ public final class SelectionActions {
     }
 
     private void send(ToolContext ctx, Op op, OpSpec spec) {
+        // The selection the op was sent for: a Rotate… selects its turned cells only if this is still the selection.
+        Optional<Selection> sentFor = ctx.selectionState();
         ctx.session().send(new ToolAction.RunOp(spec, false, op.label())).thenAccept(result -> {
             switch (result) {
                 case ToolResult.Accepted accepted -> {
                     lastJob = accepted.jobId();
                     lastOp = op;
+                    // A refused Rotate… leaves the selection where it was.
+                    if (op == Op.ROTATE && spec instanceof OpSpec.Move move) selectRotated(ctx, move, sentFor);
                 }
                 case ToolResult.Rejected rejected -> ctx.notify(SessionNotices.rejection(
                         rejected.reason(), SessionNotices.Subject.EDIT, ctx.session().permissions().limits()));
@@ -530,6 +599,21 @@ public final class SelectionActions {
                 }
             }
         });
+    }
+
+    /**
+     * After the server accepted a Rotate: selects the cells it writes (worked out off the client thread, as the server's
+     * move does, only the cells inside the world's height), if the selection is still the one it was sent for.
+     */
+    private static void selectRotated(ToolContext ctx, OpSpec.Move move, Optional<Selection> before) {
+        int bottom = ctx.world().bottomY(), top = ctx.world().topYExclusive() - 1;
+        Box bounds = move.region().bounds();
+        Orientation.Bounds turned = move.orientation().bounds(bounds.sizeX(), bounds.sizeY(), bounds.sizeZ());
+        BlockPos destination = bounds.min().add(turned.offset()).add(move.offset());
+        ctx.regionWork().supply(() -> SelectionModel.moved(move.region(), destination, move.orientation(), bottom, top))
+                .thenAccept(moved -> {
+                    if (ctx.selectionState().equals(before)) ctx.setSelectionRegion(moved);
+                });
     }
 
     // ---- Patterns ----

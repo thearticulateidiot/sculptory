@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -31,6 +32,7 @@ public class Dropdown<T> extends Node {
     private boolean reselectNotifies;
     private boolean listOnly;
     private Function<T, String> optionTooltips = option -> null;
+    private Predicate<T> optionEnabled = option -> true;
 
     public Dropdown(List<T> options, T selected, Function<T, String> labeler, Consumer<T> onChange) {
         if (options.isEmpty()) {
@@ -96,9 +98,26 @@ public class Dropdown<T> extends Node {
         return this;
     }
 
-    /** Chooses {@code value} as a click in the list would, notifying the listener. */
+    /**
+     * Which options can be chosen: the others are listed greyed out, picking one does nothing and Up/Down step past it
+     * (give such an option a tooltip saying why).
+     */
+    public Dropdown<T> setOptionEnabled(Predicate<T> optionEnabled) {
+        this.optionEnabled = Objects.requireNonNull(optionEnabled);
+        return this;
+    }
+
+    /** Whether {@code option} can be chosen ({@link #setOptionEnabled}). */
+    public boolean isOptionEnabled(T option) {
+        return optionEnabled.test(option);
+    }
+
+    /**
+     * Chooses {@code value} as a click in the list would, notifying the listener; an option that can't be chosen
+     * ({@link #setOptionEnabled}) is ignored.
+     */
     public void pick(T value) {
-        if (options.contains(value)) {
+        if (options.contains(value) && optionEnabled.test(value)) {
             choose(value, reselectNotifies);
         }
     }
@@ -123,6 +142,7 @@ public class Dropdown<T> extends Node {
         ListView<T> list = new ListView<>(options, (option, index) -> {
             Label row = new Label(labeler.apply(option));
             row.setTooltip(optionTooltips.apply(option));
+            if (!optionEnabled.test(option)) row.setColor(theme.textDisabled);
             return row;
         });
         list.setPreferredRows(Math.min(options.size(), theme.popupMaxRows));
@@ -211,14 +231,24 @@ public class Dropdown<T> extends Node {
             return true;
         }
         switch (keyCode) {
-            case GLFW.GLFW_KEY_UP -> choose(options.get(Math.max(0, index - 1)));
-            case GLFW.GLFW_KEY_DOWN -> choose(options.get(Math.min(options.size() - 1, index + 1)));
+            case GLFW.GLFW_KEY_UP -> step(index, -1);
+            case GLFW.GLFW_KEY_DOWN -> step(index, 1);
             case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER, GLFW.GLFW_KEY_SPACE -> open(ctx);
             default -> {
                 return false;
             }
         }
         return true;
+    }
+
+    /** Chooses the next option that can be chosen from {@code index} in {@code direction}, if any. */
+    private void step(int index, int direction) {
+        for (int i = index + direction; i >= 0 && i < options.size(); i += direction) {
+            if (optionEnabled.test(options.get(i))) {
+                choose(options.get(i));
+                return;
+            }
+        }
     }
 
     @Override

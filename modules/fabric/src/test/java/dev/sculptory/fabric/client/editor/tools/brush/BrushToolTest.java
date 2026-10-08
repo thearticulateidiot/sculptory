@@ -142,7 +142,7 @@ class BrushToolTest {
                 // The default mix's coarse dirt and moss are unknown to the test state space: skipped, with a warning.
                 case PALETTE -> new BrushSpec(kind, 4, 1f, Falloff.CONSTANT, Shape.CIRCLE,
                         new Pattern.Weighted(new int[] {grass}, new int[] {4}, SEED), SurfaceMask.ANY, 1, 0, SEED);
-                case SHAPE, WEATHER -> throw new AssertionError("not a terrain brush");
+                case SHAPE, WEATHER, HEIGHTMAP, BIOME -> throw new AssertionError("not a terrain brush");
             };
             assertEquals(expected, begin.spec(), kind.name());
             assertEquals(TerrainBrushTool.toolId(kind), begin.tool());

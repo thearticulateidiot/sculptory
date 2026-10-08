@@ -6,6 +6,7 @@ import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.Regions;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,11 +24,15 @@ import java.util.Objects;
  * <ul>
  *   <li>Fill, Replace, Erase, Hollow, Walls: the same op on the image region ({@link Regions#image}); the copy's
  *       program turns the states it writes with the image.</li>
- *   <li>Paste: the same source with transform {@code t.compose(image.transform())} (the op's transform, then the
- *       image) and the anchor cell mapped: an exact image, since the paste map is affine.</li>
+ *   <li>Paste: the same source with orientation {@code orientation.then(image.transform())} (the op's orientation,
+ *       then the image) and the anchor cell mapped: for an exact orientation an exact image, since the paste map is
+ *       affine. A free orientation's copy is compiled as the exact image of the original's cells
+ *       ({@code PasteProgram.compileImage}); the op names it. A multi-paste's placements compose the same way.</li>
  *   <li>Move: the image region, moved so that its bounds' image lands on the image of the original's destination box,
  *       with the conjugated transform {@code image⁻¹ ∘ t ∘ image}: its cells land on the images of where the
- *       original's land.</li>
+ *       original's land. A free orientation's copy is compiled as the exact image of the original's move
+ *       ({@code MoveProgram.compileImage}); its op carries the conjugated orientation ({@code Orientation.conjugated})
+ *       and an offset that puts its result box on the image of the original's.</li>
  *   <li>Stack: the image region stacked with the image of the step (flipped upside down as the original: the images
  *       are horizontal, so they commute with the flip).</li>
  * </ul>
@@ -58,6 +63,8 @@ public final class OpSymmetry {
             case OpSpec.Naturalize naturalize -> naturalize.symmetry();
             case OpSpec.UpdateBlocks update -> update.symmetry();
             case OpSpec.ScatterCommit scatter -> Symmetry.NONE;
+            case OpSpec.PasteMany many -> many.symmetry();
+            case OpSpec.BiomeFill fill -> fill.symmetry();
         };
     }
 
@@ -74,8 +81,9 @@ public final class OpSymmetry {
             case OpSpec.Erase erase -> new OpSpec.Erase(erase.region(), erase.mask(), symmetry);
             case OpSpec.Hollow hollow -> new OpSpec.Hollow(hollow.region(), hollow.thickness(), hollow.inside(), symmetry);
             case OpSpec.Walls walls -> new OpSpec.Walls(walls.region(), walls.thickness(), walls.pattern(), symmetry);
-            case OpSpec.Paste paste -> new OpSpec.Paste(paste.src(), paste.origin(), paste.t(), paste.o(), symmetry);
-            case OpSpec.Move move -> new OpSpec.Move(move.region(), move.offset(), move.t(), move.leave(),
+            case OpSpec.Paste paste -> new OpSpec.Paste(paste.src(), paste.origin(), paste.orientation(), paste.o(),
+                    symmetry);
+            case OpSpec.Move move -> new OpSpec.Move(move.region(), move.offset(), move.orientation(), move.leave(),
                     move.entities(), symmetry, move.into());
             case OpSpec.Stack stack -> new OpSpec.Stack(stack.region(), stack.dx(), stack.dy(), stack.dz(),
                     stack.count(), stack.entities(), symmetry, stack.into(), stack.upsideDown());
@@ -85,6 +93,8 @@ public final class OpSymmetry {
                     n.middleDepth(), n.bottom(), symmetry);
             case OpSpec.UpdateBlocks update -> new OpSpec.UpdateBlocks(update.region(), symmetry);
             case OpSpec.ScatterCommit scatter -> throw new IllegalArgumentException("A scatter commit has no symmetry");
+            case OpSpec.PasteMany many -> new OpSpec.PasteMany(many.src(), many.placements(), many.o(), symmetry);
+            case OpSpec.BiomeFill fill -> new OpSpec.BiomeFill(fill.region(), fill.biomeId(), fill.columns(), symmetry);
         };
     }
 
@@ -156,7 +166,7 @@ public final class OpSymmetry {
             case OpSpec.Walls walls -> new OpSpec.Walls(Regions.image(walls.region(), symmetry, image),
                     walls.thickness(), walls.pattern());
             case OpSpec.Paste paste -> new OpSpec.Paste(paste.src(), imageCell(symmetry, image, paste.origin()),
-                    paste.t().compose(image.transform()), paste.o());
+                    paste.orientation().then(image.transform()), paste.o());
             case OpSpec.Move move -> moveCopy(move, symmetry, image);
             case OpSpec.Stack stack -> {
                 BlockPos step = Symmetry.imageOffset(image, new BlockPos(stack.dx(), stack.dy(), stack.dz()));
@@ -171,6 +181,18 @@ public final class OpSymmetry {
                     n.topDepth(), n.middle(), n.middleDepth(), n.bottom());
             case OpSpec.UpdateBlocks update -> new OpSpec.UpdateBlocks(Regions.image(update.region(), symmetry, image));
             case OpSpec.ScatterCommit scatter -> scatter;
+            // Each placement as a paste's copy.
+            case OpSpec.PasteMany many -> {
+                List<OpSpec.PasteMany.Placement> placements = new ArrayList<>(many.placements().size());
+                for (OpSpec.PasteMany.Placement placement : many.placements()) {
+                    placements.add(new OpSpec.PasteMany.Placement(imageCell(symmetry, image, placement.origin()),
+                            placement.orientation().then(image.transform())));
+                }
+                yield new OpSpec.PasteMany(many.src(), placements, many.o());
+            }
+            // Columns stay vertical under every image, so a biome fill's copy is the fill of the image region.
+            case OpSpec.BiomeFill fill -> new OpSpec.BiomeFill(Regions.image(fill.region(), symmetry, image),
+                    fill.biomeId(), fill.columns());
         };
     }
 
@@ -180,6 +202,7 @@ public final class OpSymmetry {
      * image's inverse and the image, the copy's cells land exactly on the images of where the original's land).
      */
     private static OpSpec.Move moveCopy(OpSpec.Move move, Symmetry symmetry, Symmetry.Image image) {
+        if (!move.orientation().isExact()) return freeMoveCopy(move, symmetry, image);
         Box from = move.box();
         Transform t = move.t();
         Box destination = CopySupport.boxAt((long) from.min().x() + move.offset().x(), from.min().y(),
@@ -190,6 +213,30 @@ public final class OpSymmetry {
                 move.offset().y(), Math.subtractExact(imageDestination.min().z(), imageFrom.min().z()));
         Transform turned = image.inverse().transform().compose(t).compose(image.transform());
         return new OpSpec.Move(Regions.image(move.region(), symmetry, image), offset, turned, move.leave(),
+                move.entities(), Symmetry.NONE, move.into());
+    }
+
+    /**
+     * A free move's copy: the image region, turned by the conjugated orientation ({@link Orientation#conjugated}), with
+     * the offset that puts its result box on the image of the original's result box (worked out on the regions' whole
+     * bounds). It names the copy: the compiler writes a free copy as the exact image of the original's cells
+     * ({@code MoveProgram.compileImage}), which the admission checks too.
+     */
+    private static OpSpec.Move freeMoveCopy(OpSpec.Move move, Symmetry symmetry, Symmetry.Image image) {
+        Box from = move.box();
+        Orientation.Bounds turned = move.orientation().bounds(from.sizeX(), from.sizeY(), from.sizeZ());
+        Box destination = CopySupport.boxAt((long) from.min().x() + turned.offset().x() + move.offset().x(),
+                (long) from.min().y() + turned.offset().y() + move.offset().y(),
+                (long) from.min().z() + turned.offset().z() + move.offset().z(), turned.size());
+        Box imageFrom = symmetry.imageBox(image, from);
+        Box imageDestination = symmetry.imageBox(image, destination);
+        Orientation conjugated = move.orientation().conjugated(image.transform());
+        Orientation.Bounds copyTurned = conjugated.bounds(imageFrom.sizeX(), imageFrom.sizeY(), imageFrom.sizeZ());
+        BlockPos offset = new BlockPos(
+                Math.subtractExact(imageDestination.min().x(), imageFrom.min().x() + copyTurned.offset().x()),
+                Math.subtractExact(imageDestination.min().y(), imageFrom.min().y() + copyTurned.offset().y()),
+                Math.subtractExact(imageDestination.min().z(), imageFrom.min().z() + copyTurned.offset().z()));
+        return new OpSpec.Move(Regions.image(move.region(), symmetry, image), offset, conjugated, move.leave(),
                 move.entities(), Symmetry.NONE, move.into());
     }
 

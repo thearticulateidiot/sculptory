@@ -175,7 +175,7 @@ public final class UiTour {
                 }));
         List<ToolId> tools = List.of(ToolId.SELECT, ToolId.RAISE, ToolId.LOWER, ToolId.SMOOTH, ToolId.FLATTEN,
                 ToolId.PAINT, ToolId.PALETTE, ToolId.PLACE, ToolId.SCATTER, ToolId.SHAPE, ToolId.GENERATE,
-                ToolId.EXTRUDE, ToolId.FLUID, ToolId.TINKER, ToolId.WEATHER);
+                ToolId.EXTRUDE, ToolId.FLUID, ToolId.TINKER, ToolId.WEATHER, ToolId.HEIGHTMAP, ToolId.BIOME);
         for (int i = 0; i < tools.size(); i++) {
             ToolId tool = tools.get(i);
             steps.add(TourStep.of("tool-" + tool.value(), "Palette slot " + (i + 1) + " (" + tool.value()

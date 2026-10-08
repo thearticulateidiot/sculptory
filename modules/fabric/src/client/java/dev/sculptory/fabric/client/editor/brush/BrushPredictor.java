@@ -182,6 +182,10 @@ public final class BrushPredictor {
             case SHAPE -> 2L * r + 1;
             // The Weather brush reworks the surface around each column, as Smooth does (a bound, not an exact count).
             case WEATHER -> r + SCAN_MARGIN + PLANT_CELLS;
+            // Contract placeholders (protocol 6): ws/heightmap sets the stamp's bound (up to its height); a biome brush
+            // writes no block.
+            case HEIGHTMAP -> r + SCAN_MARGIN + PLANT_CELLS + dev.sculptory.core.brush.HeightmapSpec.MAX_HEIGHT_BLOCKS;
+            case BIOME -> 0;
         };
         return (tool == BrushTool.SHAPE ? columns(r, Shape.SQUARE) : columns(r, shape)) * perColumn;
     }

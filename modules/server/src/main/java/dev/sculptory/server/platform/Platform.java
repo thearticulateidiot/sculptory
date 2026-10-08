@@ -140,6 +140,14 @@ public interface Platform<P, W> {
     /** The world's entities. */
     WorldEntities<?> entities(W world);
 
+    /**
+     * The world's biomes (protocol 6), for one job, stroke or request: read and write them per quart, then
+     * {@link WorldBiomes#flush} the changed chunks to the players watching them.
+     *
+     * @throws UnsupportedOperationException on a platform that cannot edit biomes yet
+     */
+    WorldBiomes biomes(W world);
+
     /** What the game says about each entity type, learned with {@code world} if not yet learned. */
     EntityRules entityRules(W world);
 

@@ -26,6 +26,8 @@ public enum KeyAction {
     TOOL_13("tool_13", Group.TOOLS, false, null, "left_bracket"),
     TOOL_14("tool_14", Group.TOOLS, false, null, "right_bracket"),
     TOOL_15("tool_15", Group.TOOLS, false, null, "backslash"),
+    TOOL_16("tool_16", Group.TOOLS, false, null, "semicolon"),
+    TOOL_17("tool_17", Group.TOOLS, false, null, "apostrophe"),
     TOOL_SIZE("tool_size", Group.TOOLS, true, null, "ctrl+scroll"),
     TOOL_STRENGTH("tool_strength", Group.TOOLS, false, null, "alt+scroll"),
     EYEDROPPER("eyedropper", Group.TOOLS, false, EditorAction.EYEDROPPER, "mouse.middle"),
@@ -130,9 +132,9 @@ public enum KeyAction {
         return defaults.stream().map(KeyChord::parse).toList();
     }
 
-    /** The palette slot (1-15) for TOOL_n actions, else 0. */
+    /** The palette slot (1-17) for TOOL_n actions, else 0. */
     public int toolSlot() {
-        return ordinal() <= TOOL_15.ordinal() ? ordinal() - TOOL_1.ordinal() + 1 : 0;
+        return ordinal() <= TOOL_17.ordinal() ? ordinal() - TOOL_1.ordinal() + 1 : 0;
     }
 
     public static Optional<KeyAction> byId(String id) {

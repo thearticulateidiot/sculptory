@@ -147,8 +147,8 @@ class FluidToolTest {
         ToolRegistry registry = new ToolRegistry();
         EditorToolSet.register(registry, new PlaceholderTool(new ToolDescriptor(ToolId.SELECT, "sculptory.tool.select",
                 "minecraft:stone", Perm.REGION), "sculptory.hint.select.drag"));
-        assertEquals(15, registry.paletteOrder().size(), "Tinker follows in slot 14, Weather in 15");
-        assertEquals(15, ToolRegistry.PALETTE_SLOTS);
+        assertEquals(17, registry.paletteOrder().size(), "Tinker follows in slot 14, Weather in 15, Heightmap in 16, Biome in 17");
+        assertEquals(17, ToolRegistry.PALETTE_SLOTS);
         Tool fluid = registry.slot(13).orElseThrow();
         assertInstanceOf(FluidTool.class, fluid);
         assertEquals(ToolId.FLUID, fluid.descriptor().id());

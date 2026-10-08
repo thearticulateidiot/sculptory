@@ -266,7 +266,8 @@ public final class BrushSettings {
         return switch (tool) {
             case RAISE, LOWER -> 0.5;
             case SMOOTH, FLATTEN, WEATHER -> 0.6;
-            case PAINT, PALETTE, SHAPE -> 1.0;
+            // Protocol 6 placeholders: ws/heightmap and ws/biomes set their own.
+            case PAINT, PALETTE, SHAPE, HEIGHTMAP, BIOME -> 1.0;
         };
     }
 

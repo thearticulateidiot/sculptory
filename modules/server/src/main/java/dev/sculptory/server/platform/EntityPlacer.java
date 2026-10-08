@@ -3,7 +3,7 @@ package dev.sculptory.server.platform;
 import dev.sculptory.core.entity.EntityPlacement;
 import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.history.EntityState;
-import dev.sculptory.core.transform.Transform;
+import dev.sculptory.core.transform.Orientation;
 import java.util.function.Predicate;
 
 /**
@@ -17,10 +17,11 @@ public interface EntityPlacer<E> {
     record Spawn<E>(E entity, boolean refused) {}
 
     /**
-     * Places a clipboard entity at {@code where} (its position after {@code t}), turned by {@code t}, with new UUIDs,
-     * if {@code allowed} accepts it as it would be spawned.
+     * Places a clipboard entity at {@code where} (its position after {@code orientation}), turned by it (the exact part
+     * as blocks turn, then a free rotation: {@code dev.sculptory.core.entity.EntityTurn}), with new UUIDs, if
+     * {@code allowed} accepts it as it would be spawned.
      */
-    Spawn<E> place(EntitySnapshot entity, EntityPlacement.Placed where, Transform t, Predicate<E> allowed);
+    Spawn<E> place(EntitySnapshot entity, EntityPlacement.Placed where, Orientation orientation, Predicate<E> allowed);
 
     /**
      * Puts a recorded entity back as it was, with its UUIDs (undo, redo), if {@code allowed} accepts it as it would be

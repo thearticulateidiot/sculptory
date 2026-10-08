@@ -10,6 +10,7 @@ import dev.sculptory.core.history.EntityHistory;
 import dev.sculptory.core.history.EntityMatcher;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.region.Region;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.server.platform.EntityPlacer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
@@ -67,9 +68,9 @@ public final class EntityJobs {
     private abstract static class Placing implements EntityWork {
         private Long2ObjectLinkedOpenHashMap<List<Placement>> planned;
         private final Cursor placing = new Cursor();
-        final Transform transform;
+        final Orientation transform;
 
-        Placing(Transform transform) {
+        Placing(Orientation transform) {
             this.transform = Objects.requireNonNull(transform);
         }
 
@@ -110,6 +111,14 @@ public final class EntityJobs {
      * box that starts at {@code targetMin}.
      */
     public static EntityWork paste(List<EntitySnapshot> entities, BlockPos size, Transform t, BlockPos targetMin) {
+        return paste(entities, size, Orientation.of(t), targetMin);
+    }
+
+    /**
+     * A paste's entities with an orientation (protocol 6): {@code entities} placed into the result box that starts at
+     * {@code targetMin}, positions mapped by {@code EntityPlacement.place} for the orientation.
+     */
+    public static EntityWork paste(List<EntitySnapshot> entities, BlockPos size, Orientation t, BlockPos targetMin) {
         List<Placement> placements = new ArrayList<>(entities.size());
         for (EntitySnapshot entity : entities) {
             placements.add(new Placement(entity, EntityPlacement.place(entity, size, t, targetMin)));
@@ -166,7 +175,7 @@ public final class EntityJobs {
         private long takenTotal;
         private boolean cappedOut;
 
-        Taking(Region region, EntityFilter filter, Box frame, boolean remove, boolean trusted, long max, Transform t,
+        Taking(Region region, EntityFilter filter, Box frame, boolean remove, boolean trusted, long max, Orientation t,
                Region[] targets, Copies copies) {
             super(t);
             this.region = region;
@@ -256,8 +265,29 @@ public final class EntityJobs {
      */
     public static EntityWork move(Region region, EntityFilter filter, Box frame, Transform t, BlockPos destinationMin,
                            long max) {
+        return move(region, filter, frame, Orientation.of(t), destinationMin, max);
+    }
+
+    /**
+     * {@link #move(Region, EntityFilter, Box, Transform, BlockPos, long)} with an exact orientation.
+     *
+     * @throws IllegalArgumentException for a free orientation: use the overload taking its landing cells
+     */
+    public static EntityWork move(Region region, EntityFilter filter, Box frame, Orientation t, BlockPos destinationMin,
+                                  long max) {
+        // A free move's landing cells are worked out once, at admission, within the bound: they must be passed in.
+        if (!t.isExact()) throw new IllegalArgumentException("A free move passes its landing cells");
+        return move(region, filter, frame, t, destinationMin,
+                dev.sculptory.core.region.Regions.moved(region, frame, destinationMin, t.transform()), max);
+    }
+
+    /**
+     * {@link #move(Region, EntityFilter, Box, Orientation, BlockPos, long)} with the cells the blocks land on worked out
+     * already ({@code destination}: a free move's landing cells, for the admission columns).
+     */
+    public static EntityWork move(Region region, EntityFilter filter, Box frame, Orientation t, BlockPos destinationMin,
+                                  Region destination, long max) {
         BlockPos size = new BlockPos(frame.sizeX(), frame.sizeY(), frame.sizeZ());
-        Region destination = dev.sculptory.core.region.Regions.moved(region, frame, destinationMin, t);
         return new Taking(region, filter, frame, true, true, max, t, new Region[] {destination},
                 taken -> List.of(new Placement(taken, EntityPlacement.place(taken, size, t, destinationMin))));
     }
@@ -273,7 +303,7 @@ public final class EntityJobs {
                             boolean upsideDown, boolean trusted, long max) {
         BlockPos size = new BlockPos(frame.sizeX(), frame.sizeY(), frame.sizeZ());
         BlockPos min = upsideDown ? frame.flippedWithin(region.bounds()).min() : frame.min();
-        Transform t = upsideDown ? Transform.UPSIDE_DOWN : Transform.IDENTITY;
+        Orientation t = Orientation.of(upsideDown ? Transform.UPSIDE_DOWN : Transform.IDENTITY);
         // Where the copies land, for the admission columns: the flip keeps every column, so shifted copies will do.
         Region[] copyRegions = new Region[count];
         for (int k = 1; k <= count; k++) copyRegions[k - 1] = region.translate(k * dx, k * dy, k * dz);

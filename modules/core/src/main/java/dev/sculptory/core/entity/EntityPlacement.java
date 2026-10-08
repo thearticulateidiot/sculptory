@@ -2,6 +2,7 @@ package dev.sculptory.core.entity;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import java.util.Objects;
 
@@ -103,6 +104,27 @@ public final class EntityPlacement {
             BlockPos a = entity.attached();
             attached = new BlockPos(targetMin.x() + t.mapX(a.x(), a.z(), sx, sz), targetMin.y() + t.mapY(a.y(), size.y()),
                     targetMin.z() + t.mapZ(a.x(), a.z(), sx, sz));
+        }
+        BlockPos cell = attached != null ? attached
+                : new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));
+        return new Placed(x, y, z, attached, cell);
+    }
+
+    /**
+     * {@link #place(EntitySnapshot, BlockPos, Transform, BlockPos)} for an orientation (protocol 6): an exact one places
+     * as its transform does; a free one maps the position with {@link Orientation#mapPoint} (into the result box that
+     * starts at {@code targetMin}) and the attachment cell with {@link Orientation#mapCell}. The heading and the rest are
+     * turned by the server ({@link EntityTurn}).
+     */
+    public static Placed place(EntitySnapshot entity, BlockPos size, Orientation orientation, BlockPos targetMin) {
+        Objects.requireNonNull(entity);
+        if (orientation.isExact()) return place(entity, size, orientation.transform(), targetMin);
+        double[] p = orientation.mapPoint(entity.x(), entity.y(), entity.z(), size.x(), size.y(), size.z());
+        double x = targetMin.x() + p[0], y = targetMin.y() + p[1], z = targetMin.z() + p[2];
+        BlockPos attached = null;
+        if (entity.attached() != null) {
+            BlockPos a = entity.attached();
+            attached = targetMin.add(orientation.mapCell(a.x(), a.y(), a.z(), size.x(), size.y(), size.z()));
         }
         BlockPos cell = attached != null ? attached
                 : new BlockPos((int) Math.floor(x), (int) Math.floor(y), (int) Math.floor(z));

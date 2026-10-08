@@ -19,7 +19,7 @@ The clipboard holds what you last copied or cut: blocks, their contents and the 
 | Button | What it does |
 |---|---|
 | Paste | Starts placing it (`Ctrl+V`) |
-| Rotate, Flip, Flip upside down | Turn or mirror the ghost; with no ghost showing, the next paste ("Next paste upside down") |
+| Rotate, Flip, Flip upside down | Turn or mirror the ghost; with no ghost showing, the next paste ("Next paste upside down"). A paste turned by any angle shows it ("Next paste turned: yaw 30°, pitch 0°, roll 0°"): see [Place](place.md#turn-by-any-angle) |
 | Save as asset… | Saves it to the library, in `.schem`, `.litematic` or `.nbt` |
 | Export… | Writes a file into `sculptory/exports/` in your game folder: see [Import and export](import-export.md) |
 | Clear | Forgets the clipboard on this client |

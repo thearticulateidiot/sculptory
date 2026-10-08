@@ -4,8 +4,11 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.entity.EntityFilter;
+import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.region.Region;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -139,40 +142,85 @@ public sealed interface OpSpec {
         }
     }
 
-    /** Places a server-held source so its anchor lands on {@code origin}, after the transform. */
-    record Paste(SourceRef src, BlockPos origin, Transform t, PasteOptions o, Symmetry symmetry) implements OpSpec {
+    /**
+     * Places a server-held source so its anchor lands on {@code origin}, after the orientation: the source's box is
+     * oriented ({@link Orientation#bounds}) and the result box is placed so that the source's anchor cell, mapped by
+     * {@link Orientation#mapCell}, lands on {@code origin} ({@code PasteGeometry.pasteTarget}). Each result cell takes
+     * the source cell {@link Orientation#inverseCell} gives. Protocol 6 carries an {@link Orientation} where protocol 5
+     * carried a {@link Transform}; the constructors taking a transform mean its exact orientation.
+     */
+    record Paste(SourceRef src, BlockPos origin, Orientation orientation, PasteOptions o, Symmetry symmetry)
+            implements OpSpec {
         public Paste {
             Objects.requireNonNull(src);
             Objects.requireNonNull(origin);
-            Objects.requireNonNull(t);
+            Objects.requireNonNull(orientation);
             Objects.requireNonNull(o);
             Objects.requireNonNull(symmetry);
         }
 
+        public Paste(SourceRef src, BlockPos origin, Transform t, PasteOptions o, Symmetry symmetry) {
+            this(src, origin, Orientation.of(t), o, symmetry);
+        }
+
+        public Paste(SourceRef src, BlockPos origin, Orientation orientation, PasteOptions o) {
+            this(src, origin, orientation, o, Symmetry.NONE);
+        }
+
         public Paste(SourceRef src, BlockPos origin, Transform t, PasteOptions o) {
-            this(src, origin, t, o, Symmetry.NONE);
+            this(src, origin, Orientation.of(t), o, Symmetry.NONE);
+        }
+
+        /**
+         * The exact transform of an exact orientation (every paste before protocol 6).
+         *
+         * @throws IllegalStateException if the orientation has a free rotation (code that handles one reads
+         *     {@link #orientation()})
+         */
+        public Transform t() {
+            return orientation.exact();
         }
     }
 
     /**
-     * Moves the region by {@code offset} with a transform, filling the vacated cells with {@code leave}, and the
-     * entities {@code entities} selects along with it. {@code into} filters the landing cells only: a moved block whose landing cell is left out is not placed, while its
-     * source cell is vacated all the same.
+     * Moves the region by {@code offset} with an orientation, filling the vacated cells with {@code leave}, and the
+     * entities {@code entities} selects along with it. The region's bounds are the source box the orientation turns
+     * ({@link Orientation#bounds}); the result box lands with its minimum corner on
+     * {@code bounds.min() + orientation.bounds(size).offset() + offset}, so an exact orientation keeps the bounds'
+     * minimum corner (offset 0, as before protocol 6) and a free one with {@code offset} 0 turns in place about the
+     * bounds' middle cell (the pivot). {@code into} filters the landing cells only: a moved block whose landing cell is
+     * left out is not placed, while its source cell is vacated all the same. The constructors taking a transform mean
+     * its exact orientation.
      */
-    record Move(Region region, BlockPos offset, Transform t, Pattern leave, EntityFilter entities, Symmetry symmetry,
-                PasteOptions.Into into) implements OpSpec {
+    record Move(Region region, BlockPos offset, Orientation orientation, Pattern leave, EntityFilter entities,
+                Symmetry symmetry, PasteOptions.Into into) implements OpSpec {
         public Move {
             Objects.requireNonNull(region);
             Objects.requireNonNull(offset);
-            Objects.requireNonNull(t);
+            Objects.requireNonNull(orientation);
             Objects.requireNonNull(leave);
             Objects.requireNonNull(entities);
             Objects.requireNonNull(symmetry);
             Objects.requireNonNull(into);
         }
 
+        public Move(Region region, BlockPos offset, Transform t, Pattern leave, EntityFilter entities, Symmetry symmetry,
+                    PasteOptions.Into into) {
+            this(region, offset, Orientation.of(t), leave, entities, symmetry, into);
+        }
+
         public Move(Region region, BlockPos offset, Transform t, Pattern leave, EntityFilter entities, Symmetry symmetry) {
             this(region, offset, t, leave, entities, symmetry, PasteOptions.Into.EVERYTHING);
+        }
+
+        /**
+         * The exact transform of an exact orientation (every move before protocol 6).
+         *
+         * @throws IllegalStateException if the orientation has a free rotation (code that handles one reads
+         *     {@link #orientation()})
+         */
+        public Transform t() {
+            return orientation.exact();
         }
 
         public Move(Region region, BlockPos offset, Transform t, Pattern leave, EntityFilter entities) {
@@ -301,6 +349,68 @@ public sealed interface OpSpec {
 
         public UpdateBlocks(Region region) {
             this(region, Symmetry.NONE);
+        }
+
+        /** The region's bounds. */
+        public Box box() {
+            return region.bounds();
+        }
+    }
+
+    /**
+     * Many pastes of one server-held source (protocol 6; Generate's Stamp): each placement pastes {@code src} exactly
+     * as {@code new Paste(src, placement.origin(), placement.orientation(), o, symmetry)} would, all in one job and one
+     * history entry; where placements overlap, the later one in the list wins. Compiled through
+     * {@code MultiPasteProgram}; needs the {@code clipboard} node, and the volume limit counts the source's cells once per
+     * placement (and per symmetric copy).
+     *
+     * @param placements 1-{@value #MAX_PLACEMENTS} placements, in the order they are written
+     */
+    record PasteMany(SourceRef src, List<Placement> placements, PasteOptions o, Symmetry symmetry) implements OpSpec {
+        /** The most placements one op carries (and the wire takes). */
+        public static final int MAX_PLACEMENTS = 256;
+
+        public PasteMany {
+            Objects.requireNonNull(src);
+            Objects.requireNonNull(o);
+            Objects.requireNonNull(symmetry);
+            placements = List.copyOf(placements);
+            if (placements.isEmpty() || placements.size() > MAX_PLACEMENTS) {
+                throw new IllegalArgumentException("A multi-paste takes 1-" + MAX_PLACEMENTS + " placements");
+            }
+        }
+
+        public PasteMany(SourceRef src, List<Placement> placements, PasteOptions o) {
+            this(src, placements, o, Symmetry.NONE);
+        }
+
+        /** Where one copy goes: the source's anchor lands on {@code origin} after {@code orientation}, as in a paste. */
+        public record Placement(BlockPos origin, Orientation orientation) {
+            public Placement {
+                Objects.requireNonNull(origin);
+                Objects.requireNonNull(orientation);
+            }
+        }
+    }
+
+    /**
+     * Sets the biome of the region's biome cells (protocol 6; the Biome tool's Fill selection). Biomes are stored per
+     * <i>quart</i>: a 4×4×4 cell aligned to multiples of 4 in world coordinates, as the game keeps them. With
+     * {@code columns} every quart in each quart column whose centre column ({@code min + 2} on x and z) holds a region
+     * cell is set, over the world's whole build height; without, each quart whose centre cell ({@code min + 2} on every
+     * axis) is a region cell is set. Needs the {@code biome} node; undone exactly.
+     *
+     * @param biomeId the biome's registry id ("minecraft:cherry_grove"); a well-formed namespaced id
+     */
+    record BiomeFill(Region region, String biomeId, boolean columns, Symmetry symmetry) implements OpSpec {
+        public BiomeFill {
+            Objects.requireNonNull(region);
+            Objects.requireNonNull(symmetry);
+            new NamespacedId(biomeId); // refuses a malformed id
+        }
+
+        public BiomeFill(Region region, String biomeId, boolean columns) {
+            this(region, biomeId, columns, Symmetry.NONE);
         }
 
         /** The region's bounds. */

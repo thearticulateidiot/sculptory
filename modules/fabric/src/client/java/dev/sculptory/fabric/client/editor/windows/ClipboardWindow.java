@@ -2,10 +2,14 @@ package dev.sculptory.fabric.client.editor.windows;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.client.editor.Translator;
 import dev.sculptory.fabric.client.editor.clipboard.ClipboardActions;
 import dev.sculptory.fabric.client.editor.clipboard.LibraryPaths;
+import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
+import dev.sculptory.fabric.client.editor.tools.place.PlaceTransformPanel;
+import dev.sculptory.fabric.client.editor.tools.place.Placement;
 import dev.sculptory.fabric.client.editor.ui.Node;
 import dev.sculptory.fabric.client.editor.ui.UiContext;
 import dev.sculptory.fabric.client.editor.ui.layout.Column;
@@ -101,8 +105,26 @@ public final class ClipboardWindow {
             entities.setText("");
             source.setText("");
         }
-        turned.setText(current.isPresent() ? describe(actions.nextTransform(), tr) : "");
+        // A paste in progress shows its own turn (free angles included), else the next paste's.
+        Orientation next = actions.placeTool().flatMap(PlaceTool::placement)
+                .filter(placement -> placement.mode() == Placement.Mode.PASTE).map(Placement::orientation)
+                .orElse(Orientation.of(actions.nextTransform()));
+        turned.setText(current.isPresent() ? describe(next, tr) : "");
         transfers.update(session.get().map(EditorSession::transfers).orElse(List.of()));
+    }
+
+    /**
+     * {@link #describe(Transform, Translator)} for an orientation: a free one names its yaw, pitch and roll in degrees
+     * ({@link Placement#angles}), after its mirror and flip.
+     */
+    static String describe(Orientation orientation, Translator tr) {
+        if (orientation.isExact()) return describe(orientation.transform(), tr);
+        int[] angles = Placement.angles(orientation);
+        Transform reflection = Placement.reflection(orientation);
+        String key = "sculptory.clipboard.turned_free" + (reflection.mirror() != Mirror.NONE ? "_mirrored" : "")
+                + (reflection.upsideDown() ? "_upside_down" : "");
+        return tr.translate(key, PlaceTransformPanel.degrees(angles[0]), PlaceTransformPanel.degrees(angles[1]),
+                PlaceTransformPanel.degrees(angles[2]));
     }
 
     /** "Next paste mirrored, then turned 90°", "... upside down", or "" for no transform. */

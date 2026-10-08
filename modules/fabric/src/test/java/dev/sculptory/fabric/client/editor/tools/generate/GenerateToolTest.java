@@ -87,8 +87,8 @@ class GenerateToolTest {
         ToolRegistry registry = new ToolRegistry();
         EditorToolSet.register(registry, new PlaceholderTool(new ToolDescriptor(ToolId.SELECT, "sculptory.tool.select",
                 "minecraft:stone", Perm.REGION), "sculptory.hint.select.drag"));
-        assertEquals(15, registry.paletteOrder().size(), "Extrude is slot 12, the Fluid tool 13, Tinker 14, Weather 15");
-        assertEquals(15, ToolRegistry.PALETTE_SLOTS);
+        assertEquals(17, registry.paletteOrder().size(), "Extrude is slot 12, the Fluid tool 13, Tinker 14, Weather 15, Heightmap 16, Biome 17");
+        assertEquals(17, ToolRegistry.PALETTE_SLOTS);
         Tool generate = registry.slot(11).orElseThrow();
         assertInstanceOf(GenerateTool.class, generate);
         assertEquals(ToolId.GENERATE, generate.descriptor().id());

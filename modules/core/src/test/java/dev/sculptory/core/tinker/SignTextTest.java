@@ -37,4 +37,18 @@ class SignTextTest {
         assertEquals(16, SignText.COLORS.size());
         assertEquals("black", SignText.Side.EMPTY.color());
     }
+
+    /** Whichever of SignText and its Side loads first, both empties are whole (a fresh class loader loads Side first). */
+    @Test
+    void theEmptySignIsWholeWhenItsSideLoadsFirst() throws Exception {
+        java.net.URL classes = SignText.class.getProtectionDomain().getCodeSource().getLocation();
+        try (java.net.URLClassLoader fresh = new java.net.URLClassLoader(new java.net.URL[] {classes},
+                ClassLoader.getPlatformClassLoader())) {
+            Class<?> side = Class.forName(SignText.Side.class.getName(), true, fresh);
+            Object sideEmpty = side.getField("EMPTY").get(null);
+            Object empty = Class.forName(SignText.class.getName(), true, fresh).getField("EMPTY").get(null);
+            assertEquals(sideEmpty, empty.getClass().getMethod("front").invoke(empty));
+            assertEquals(sideEmpty, empty.getClass().getMethod("back").invoke(empty));
+        }
+    }
 }

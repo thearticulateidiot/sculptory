@@ -55,7 +55,9 @@ public record SignText(Side front, Side back) {
         }
     }
 
-    public static final SignText EMPTY = new SignText(Side.EMPTY, Side.EMPTY);
+    // Built from fresh sides, not Side.EMPTY: when Side is loaded first its EMPTY is still null while this runs.
+    public static final SignText EMPTY = new SignText(new Side(List.of("", "", "", ""), DEFAULT_COLOR, false),
+            new Side(List.of("", "", "", ""), DEFAULT_COLOR, false));
 
     /** The side {@code front} names. */
     public Side side(boolean front) {

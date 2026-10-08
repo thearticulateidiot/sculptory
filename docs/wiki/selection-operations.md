@@ -24,6 +24,7 @@ The **Selection** window (and the Selection menu) changes every block of the sel
 | Overlay… | Lays the fill block or palette on top of every column, 1–16 deep (below) |
 | Naturalize… | Grass on top, 3 dirt, then stone, from every column's top down; blocks and depths editable (below) |
 | Update blocks | Connects fences, walls, panes, stairs and redstone to their neighbours and fixes the light (below) |
+| Rotate… | Turns the selected blocks where they stand by any angle (below) |
 | Copy, Cut | Puts the selection on the [clipboard](clipboard.md) (`Ctrl+C`, `Ctrl+X`) |
 | Move, Stack | Drag the selection to a new place, or repeat it in a row: see [Place](place.md) |
 | Save as asset… | Saves the selection to the [library](library.md) |
@@ -67,6 +68,14 @@ Overlay and Naturalize look down each column of the selection from its top and p
 - logs, so a tree is looked past to the ground under it.
 
 The first other block is the column's highest block. When it is water or lava (or seagrass, kelp or another water plant), or it is outside the selection (a block selection with a gap under a roof), the column is left alone. When the selection's top cell of a column has a block right above it (the selection cuts into a hill), the column is buried and left alone too.
+
+## Rotate
+
+1. Select the blocks. To turn them around a particular point, set the symmetry centre there with `M`; otherwise they turn around the selection's middle.
+2. Click **Rotate…** and set **Yaw** (around up), **Pitch** (around east-west) and **Roll** (around north-south), from -180° to 180°. Double-click a slider (or `Ctrl`+click it) to type an exact angle.
+3. Click **Rotate**.
+
+The blocks turn where they stand, around the symmetry centre at the selection's middle height, as one undo step named "Rotate". What they leave becomes air, and the entities the Select tool's **Entities** setting takes turn with them. As with a turned paste, each block takes the nearest block of the original and directional blocks snap to the nearest facing (see [Place](place.md#turn-by-any-angle)). Afterwards the selection is exactly the turned blocks.
 
 ## Update blocks
 

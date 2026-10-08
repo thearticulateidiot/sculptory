@@ -7,7 +7,7 @@ import java.util.Objects;
 public final class OpRegions {
     private OpRegions() {}
 
-    /** The op's region, or {@code null} for a paste or scatter commit. */
+    /** The op's region, or {@code null} for a paste, multi-paste or scatter commit. */
     public static Region region(OpSpec op) {
         return switch (Objects.requireNonNull(op)) {
             case OpSpec.Fill fill -> fill.region();
@@ -22,13 +22,15 @@ public final class OpRegions {
             case OpSpec.Naturalize naturalize -> naturalize.region();
             case OpSpec.UpdateBlocks update -> update.region();
             case OpSpec.ScatterCommit scatter -> null;
+            case OpSpec.PasteMany many -> null;
+            case OpSpec.BiomeFill fill -> fill.region();
         };
     }
 
     /**
      * The same op on {@code region} instead of its own.
      *
-     * @throws IllegalArgumentException for a paste or scatter commit, which have no region
+     * @throws IllegalArgumentException for a paste, multi-paste or scatter commit, which have no region
      */
     public static OpSpec withRegion(OpSpec op, Region region) {
         Objects.requireNonNull(region);
@@ -38,7 +40,7 @@ public final class OpRegions {
             case OpSpec.Erase erase -> new OpSpec.Erase(region, erase.mask(), erase.symmetry());
             case OpSpec.Hollow hollow -> new OpSpec.Hollow(region, hollow.thickness(), hollow.inside(), hollow.symmetry());
             case OpSpec.Walls walls -> new OpSpec.Walls(region, walls.thickness(), walls.pattern(), walls.symmetry());
-            case OpSpec.Move move -> new OpSpec.Move(region, move.offset(), move.t(), move.leave(), move.entities(),
+            case OpSpec.Move move -> new OpSpec.Move(region, move.offset(), move.orientation(), move.leave(), move.entities(),
                     move.symmetry(), move.into());
             case OpSpec.Stack stack -> new OpSpec.Stack(region, stack.dx(), stack.dy(), stack.dz(), stack.count(),
                     stack.entities(), stack.symmetry(), stack.into(), stack.upsideDown());
@@ -49,6 +51,8 @@ public final class OpRegions {
             case OpSpec.UpdateBlocks update -> new OpSpec.UpdateBlocks(region, update.symmetry());
             case OpSpec.Paste paste -> throw new IllegalArgumentException("A paste has no region");
             case OpSpec.ScatterCommit scatter -> throw new IllegalArgumentException("A scatter commit has no region");
+            case OpSpec.BiomeFill fill -> new OpSpec.BiomeFill(region, fill.biomeId(), fill.columns(), fill.symmetry());
+            case OpSpec.PasteMany many -> throw new IllegalArgumentException("A multi-paste has no region");
         };
     }
 }

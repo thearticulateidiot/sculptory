@@ -1,5 +1,6 @@
 package dev.sculptory.fabric.client.editor.tools.place;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -15,6 +16,7 @@ import dev.sculptory.core.edit.CompileContext;
 import dev.sculptory.core.edit.EditProgram;
 import dev.sculptory.core.edit.OpCompiler;
 import dev.sculptory.core.edit.OpSpec;
+import dev.sculptory.core.edit.OpSymmetry;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.edit.SourceBlocks;
@@ -26,11 +28,13 @@ import dev.sculptory.core.testing.FakeExecutor;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostMapping;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostPlacement;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostSection;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
+import dev.sculptory.fabric.client.editor.tools.select.SelectionModel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -327,5 +331,213 @@ class PlacementTest {
         stack.moveTo(stack.pivotWorld().offset(-2, 0, 0));
         assertTrue(stack.unmoved());
         assertThrows(IllegalStateException.class, () -> stack.op(PasteOptions.DEFAULT, 0));
+    }
+
+    // ---------------------------------------------------------------- free angles
+
+    /** Orientations with free angles, about every axis and with mirrors and the flip. */
+    private static List<Orientation> freeOrientations() {
+        return List.of(Orientation.free(Transform.IDENTITY, 3_000, 0, 0), Orientation.free(Transform.IDENTITY, 0, 4_500, 0),
+                Orientation.free(Transform.IDENTITY, 0, 0, Orientation.QUARTER_TURN),
+                Orientation.free(new Transform(0, Mirror.X), 1_500, 2_000, 7_000),
+                Orientation.free(Transform.UPSIDE_DOWN, 26_000, 33_000, 1_234),
+                Orientation.free(new Transform(1, Mirror.Z, true), 4_500, 9_000, 0));
+    }
+
+    /** The cells a ghost baked for the placement's orientation shows, at the placement's target. */
+    private static Map<BlockPos, Integer> bakedCells(GhostVolume volume, Placement placement) {
+        Map<BlockPos, Integer> cells = new HashMap<>();
+        BlockPos min = placement.targetMin();
+        GhostVolume turned = GhostBaker.bake(volume.frame(), volume.sections(), placement.orientation(), STATES, null);
+        assertEquals(placement.size(), new BlockPos(turned.frame().sizeX(), turned.frame().sizeY(), turned.frame().sizeZ()));
+        GhostMapping mapping = GhostPlacement.of(turned, min.x(), min.y(), min.z()).mapping();
+        forEachCell(turned, (x, y, z, h) -> cells.put(new BlockPos(mapping.worldX(x, z), mapping.worldY(y),
+                mapping.worldZ(x, z)), h));
+        return cells;
+    }
+
+    @Test
+    void theGhostShowsExactlyWhatAFreePasteWrites() {
+        BlockBuffer cells = source();
+        BlockPos dims = new BlockPos(5, 3, 4);
+        GhostVolume volume = GhostVolume.of(cells, GhostBaker.air(STATES));
+        volume.setFrame(new Box(BlockPos.ORIGIN, new BlockPos(4, 2, 3)));
+        for (BlockPos anchor : List.of(Placement.bottomCentre(dims), new BlockPos(-3, 1, 9))) {
+            for (Orientation orientation : freeOrientations()) {
+                Placement placement = Placement.paste(SOURCE, dims, anchor, new BlockPos(100, 70, -40));
+                assertTrue(placement.setOrientation(orientation));
+                OpSpec.Paste paste = assertInstanceOf(OpSpec.Paste.class,
+                        placement.op(new PasteOptions(false, false), STATES.air()));
+                assertEquals(orientation, paste.orientation());
+                FakeWorld world = new FakeWorld(STATES, -64, 320);
+                FakeExecutor.run(OpCompiler.compile(paste, context(Map.of(SOURCE, new SourceBlocks(cells, dims, anchor)))),
+                        world);
+                Box around = placement.targetBox();
+                Map<BlockPos, Integer> pasted = written(world, new Box(around.min().offset(-8, -8, -8),
+                        around.max().offset(8, 8, 8)));
+                assertFalse(pasted.isEmpty());
+                assertEquals(pasted, bakedCells(volume, placement), orientation + " anchor " + anchor);
+            }
+        }
+    }
+
+    @Test
+    void theGhostShowsExactlyWhatAFreeMoveWrites() {
+        Box box = new Box(new BlockPos(20, 64, 20), new BlockPos(24, 66, 23));
+        BlockBuffer local = source();
+        FakeWorld world = new FakeWorld(STATES, -64, 320);
+        for (long key : local.sortedKeys()) {
+            SectionBuffer section = local.section(key);
+            section.forEachPresent(i -> world.set(20 + SectionBuffer.localX(i), 64 + SectionBuffer.localY(i),
+                    20 + SectionBuffer.localZ(i), section.get(i)));
+        }
+        GhostVolume captured = GhostBaker.capture(world, box);
+        for (Orientation orientation : freeOrientations()) {
+            Placement placement = Placement.move(box);
+            assertTrue(placement.setOrientation(orientation));
+            assertFalse(placement.unmoved(), "turning in place is a move");
+            placement.nudge(3, 1, -2);
+            FakeWorld copy = new FakeWorld(STATES, -64, 320);
+            for (long key : local.sortedKeys()) {
+                SectionBuffer section = local.section(key);
+                section.forEachPresent(i -> copy.set(20 + SectionBuffer.localX(i), 64 + SectionBuffer.localY(i),
+                        20 + SectionBuffer.localZ(i), section.get(i)));
+            }
+            OpSpec.Move move = assertInstanceOf(OpSpec.Move.class, placement.op(PasteOptions.DEFAULT, STATES.air()));
+            FakeExecutor.run(OpCompiler.compile(move, context(Map.of())), copy);
+            Box target = placement.targetBox();
+            Map<BlockPos, Integer> moved = written(copy, target);
+            assertEquals(moved, bakedCells(captured, placement), orientation.toString());
+            // The selection follows: every cell the move wrote is selected afterwards.
+            Region after = SelectionModel.moved(new Region.Cuboid(box), placement.targetMin(), orientation, -64, 319);
+            for (BlockPos cell : moved.keySet()) assertTrue(after.contains(cell.x(), cell.y(), cell.z()), orientation + " " + cell);
+        }
+    }
+
+    @Test
+    void aFreeMovesMirroredCopyGhostShowsExactlyWhatTheCopyWrites() {
+        Box box = new Box(new BlockPos(20, 64, 20), new BlockPos(24, 66, 23)); // even depth, odd width
+        Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * 40 + 1, 0); // the plane x = 40.5
+        Box copyBox = mirror.imageBox(Symmetry.Image.MIRROR_X, box);
+        BlockBuffer local = source();
+        Transform image = Symmetry.Image.MIRROR_X.transform();
+        for (Orientation orientation : freeOrientations()) {
+            FakeWorld world = new FakeWorld(STATES, -64, 320);
+            for (long key : local.sortedKeys()) {
+                SectionBuffer section = local.section(key);
+                section.forEachPresent(i -> {
+                    int x = SectionBuffer.localX(i), y = SectionBuffer.localY(i), z = SectionBuffer.localZ(i);
+                    world.set(20 + x, 64 + y, 20 + z, section.get(i));
+                    // The mirror image of the content, so the copy has something of its own to turn.
+                    world.set(60 - x, 64 + y, 20 + z, image.applyToState(STATES, section.get(i)));
+                });
+            }
+            GhostVolume copy = GhostBaker.capture(world, copyBox);
+            Placement placement = Placement.move(box);
+            assertTrue(placement.setOrientation(orientation));
+            placement.nudge(0, 2, 6);
+            OpSpec.Move move = assertInstanceOf(OpSpec.Move.class, OpSymmetry.withSymmetry(
+                    placement.op(PasteOptions.DEFAULT, STATES.air()), mirror));
+            FakeExecutor.run(OpCompiler.compile(move, context(Map.of())), world);
+            Box copyTarget = mirror.imageBox(Symmetry.Image.MIRROR_X, placement.targetBox());
+            GhostVolume baked = GhostBaker.bakeImage(copy, Symmetry.Image.MIRROR_X, orientation, STATES);
+            Map<BlockPos, Integer> shown = new HashMap<>();
+            forEachCell(baked, (x, y, z, h) -> shown.put(copyTarget.min().offset(x, y, z), h));
+            assertEquals(written(world, copyTarget), shown, orientation.toString());
+        }
+    }
+
+    @Test
+    void aFreeMoveOfASelectionPastTheBuildHeightLandsWhereTheGhostShows() {
+        // The selection reaches 6 below the world's bottom (-64): both sides turn its whole bounds; only the cells in the
+        // world move.
+        Box box = new Box(new BlockPos(30, -70, 30), new BlockPos(32, -59, 33));
+        for (Orientation orientation : List.of(Orientation.free(Transform.IDENTITY, 0, 0, Orientation.QUARTER_TURN),
+                Orientation.free(Transform.IDENTITY, 0, 9_000, 0), Orientation.free(Transform.IDENTITY, 0, 7_000, 0))) {
+            FakeWorld world = new FakeWorld(STATES, -64, 320);
+            for (int y = -64; y <= -59; y++) {
+                world.set(30, y, 30, STATES.state("minecraft:oak_log[axis=y]"));
+                world.set(32, y, 33, STATES.state("minecraft:stone"));
+            }
+            GhostVolume captured = GhostBaker.capture(world, box);
+            Placement placement = Placement.move(box);
+            assertTrue(placement.setOrientation(orientation));
+            placement.nudge(0, 8, 0);
+            OpSpec.Move move = assertInstanceOf(OpSpec.Move.class, placement.op(PasteOptions.DEFAULT, STATES.air()));
+            FakeExecutor.run(OpCompiler.compile(move, context(Map.of())), world);
+            Map<BlockPos, Integer> moved = written(world, placement.targetBox());
+            assertFalse(moved.isEmpty(), orientation.toString());
+            assertEquals(moved, bakedCells(captured, placement), orientation.toString());
+        }
+    }
+
+    @Test
+    void quarterTurnsMirrorsAndTheFlipStayExactAtFreeAngles() {
+        Placement placement = Placement.paste(SOURCE, new BlockPos(3, 2, 5), BlockPos.ORIGIN, BlockPos.ORIGIN);
+        assertTrue(placement.setAngles(3_000, 1_000, 0));
+        assertTrue(placement.rotate(1));
+        assertEquals(Orientation.free(Transform.IDENTITY, 12_000, 1_000, 0), placement.orientation());
+        assertArrayEquals(new int[] {12_000, 1_000, 0}, placement.angles());
+        assertTrue(placement.mirror(Mirror.X));
+        assertEquals(Orientation.free(new Transform(0, Mirror.X), -12_000, 1_000, 0), placement.orientation());
+        assertTrue(placement.mirror(Mirror.X));
+        assertEquals(Orientation.free(Transform.IDENTITY, 12_000, 1_000, 0), placement.orientation(),
+                "mirroring twice undoes it");
+        assertTrue(placement.flipUpsideDown());
+        assertTrue(placement.flipUpsideDown());
+        assertEquals(Orientation.free(Transform.IDENTITY, 12_000, 1_000, 0), placement.orientation());
+        // Angles that keep up vertical fold back into an exact transform.
+        assertTrue(placement.setAngles(9_000, 0, 0));
+        assertTrue(placement.orientation().isExact());
+        assertEquals(Transform.rotation(1), placement.transform());
+        // An exact transform shows its turns as the yaw (a mirror across z as a mirror across x and a half turn).
+        placement.setTransform(new Transform(0, Mirror.Z));
+        assertArrayEquals(new int[] {18_000, 0, 0}, placement.angles());
+        assertEquals(new Transform(0, Mirror.X), placement.reflection());
+        // A stack takes no angles.
+        Placement stack = Placement.stack(new Box(BlockPos.ORIGIN, new BlockPos(1, 1, 1)), new int[] {1, 0, 0});
+        assertFalse(stack.setAngles(1_500, 0, 0));
+        assertFalse(stack.setOrientation(Orientation.free(Transform.IDENTITY, 1_500, 0, 0)));
+    }
+
+    @Test
+    void ringTurnsAreAboutTheWorldAxes() {
+        // About up: the yaw changes exactly.
+        Orientation tilted = Orientation.free(Transform.IDENTITY, 3_000, 2_000, 1_000);
+        assertEquals(Orientation.free(Transform.IDENTITY, 4_500, 2_000, 1_000), Placement.turnedAbout(tilted, 1, 1_500));
+        // A quarter turn about east-west from level is a pitch of 90 degrees, exactly; about north-south a roll.
+        assertEquals(Orientation.free(Transform.IDENTITY, 0, 9_000, 0), Placement.turnedAbout(Orientation.IDENTITY, 0, 9_000));
+        assertEquals(Orientation.free(Transform.IDENTITY, 0, 0, 9_000), Placement.turnedAbout(Orientation.IDENTITY, 2, 9_000));
+        // About east-west after a yaw: the world axis, not the turned one (the turn times the start).
+        Orientation yawed = Orientation.free(Transform.IDENTITY, 9_000, 0, 0);
+        Orientation turned = Placement.turnedAbout(yawed, 0, 3_000);
+        double[] expected = times(Orientation.free(Transform.IDENTITY, 0, 3_000, 0).matrix(), yawed.matrix());
+        assertArrayEquals(expected, turned.matrix(), 1e-6);
+        // No turn gives the start back.
+        assertEquals(tilted, Placement.turnedAbout(tilted, 0, 0));
+    }
+
+    @Test
+    void typedDegreesRoundTrip() {
+        assertEquals("90", PlaceTransformPanel.degrees(9_000));
+        assertEquals("-15", PlaceTransformPanel.degrees(34_500));
+        assertEquals("12.5", PlaceTransformPanel.degrees(1_250));
+        assertEquals("180", PlaceTransformPanel.degrees(18_000));
+        assertEquals(1_250, PlaceTransformPanel.parseDegrees(" 12.5° ").getAsInt());
+        assertEquals(-2_250, PlaceTransformPanel.parseDegrees("-22,5").getAsInt());
+        assertEquals(4_557, PlaceTransformPanel.parseDegrees("45.567").getAsInt());
+        assertTrue(PlaceTransformPanel.parseDegrees("north").isEmpty());
+        assertTrue(PlaceTransformPanel.parseDegrees("").isEmpty());
+        assertTrue(PlaceTransformPanel.parseDegrees("1e9").isEmpty());
+    }
+
+    private static double[] times(double[] a, double[] b) {
+        double[] m = new double[9];
+        for (int row = 0; row < 3; row++) {
+            for (int col = 0; col < 3; col++) {
+                for (int k = 0; k < 3; k++) m[3 * row + col] += a[3 * row + k] * b[3 * k + col];
+            }
+        }
+        return m;
     }
 }

@@ -14,6 +14,7 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.region.Region;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import java.util.List;
 import java.util.UUID;
@@ -35,7 +36,10 @@ class OpLabelTest {
             new OpSpec.ScatterCommit(new UUID(3, 4)),
             new OpSpec.Overlay(BOX, STONE, 1),
             new OpSpec.Naturalize(BOX, STONE, 1, STONE, 3, STONE),
-            new OpSpec.UpdateBlocks(BOX));
+            new OpSpec.UpdateBlocks(BOX),
+            new OpSpec.PasteMany(new SourceRef.Clipboard(new UUID(1, 2)), List.of(new OpSpec.PasteMany.Placement(
+                    BlockPos.ORIGIN, Orientation.IDENTITY)), PasteOptions.DEFAULT),
+            new OpSpec.BiomeFill(BOX, "minecraft:plains", true));
 
     /** Each label fits exactly the op kind its tool sends; NONE fits every op. */
     @Test
@@ -50,6 +54,13 @@ class OpLabelTest {
         assertEquals(List.of(OpSpec.Fill.class), fitting(OpLabel.DRAIN));
         assertEquals(List.of(OpSpec.Paste.class), fitting(OpLabel.LINE));
         assertEquals(List.of(OpSpec.Paste.class), fitting(OpLabel.SHAPE_LINE));
+        assertEquals(List.of(OpSpec.Paste.class), fitting(OpLabel.PATH_EXTRUDE));
+        assertEquals(List.of(OpSpec.Paste.class), fitting(OpLabel.TAPER));
+        assertEquals(List.of(OpSpec.Paste.class), fitting(OpLabel.SWEEP));
+        assertEquals(List.of(OpSpec.Paste.class), fitting(OpLabel.HEIGHTMAP));
+        assertEquals(List.of(OpSpec.PasteMany.class), fitting(OpLabel.STAMP));
+        assertEquals(List.of(OpSpec.Move.class), fitting(OpLabel.ROTATE));
+        assertEquals(List.of(OpSpec.BiomeFill.class), fitting(OpLabel.BIOME_FILL));
     }
 
     @Test
@@ -64,6 +75,13 @@ class OpLabelTest {
         assertEquals("Drain", OpLabel.DRAIN.text());
         assertEquals("Line", OpLabel.LINE.text());
         assertEquals("Shape line", OpLabel.SHAPE_LINE.text());
+        assertEquals("Extrude path", OpLabel.PATH_EXTRUDE.text());
+        assertEquals("Taper", OpLabel.TAPER.text());
+        assertEquals("Sweep", OpLabel.SWEEP.text());
+        assertEquals("Heightmap", OpLabel.HEIGHTMAP.text());
+        assertEquals("Stamp", OpLabel.STAMP.text());
+        assertEquals("Rotate", OpLabel.ROTATE.text());
+        assertEquals("Biome fill", OpLabel.BIOME_FILL.text());
         for (OpLabel label : OpLabel.values()) {
             if (label != OpLabel.NONE) assertFalse(label.text().isBlank(), label.name());
         }

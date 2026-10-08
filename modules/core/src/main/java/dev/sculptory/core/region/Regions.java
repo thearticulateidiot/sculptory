@@ -6,6 +6,7 @@ import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.edit.SectionOrder;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -308,6 +309,90 @@ public final class Regions {
             }
             case Region.Uploaded uploaded -> throw unresolved();
         };
+    }
+
+    /**
+     * {@link #moved(Region, Box, BlockPos, Transform)} for an orientation: an exact one moves as its transform does; a
+     * free one turns {@code pivot} (the box the move turns: its result box lands with its minimum corner on
+     * {@code destinationMin}) and gives the cells of the result box whose source cell
+     * ({@link Orientation.Sampler#source}) is a cell of {@code region}: the cells a free move writes, as a cell set
+     * ({@link #moved(Region, Box, BlockPos, Orientation.Sampler, int, int, long, long)}, every height, no caps).
+     *
+     * @throws IllegalArgumentException if a cell would leave the coordinate range, or a free move would have no cell
+     */
+    public static Region moved(Region region, Box pivot, BlockPos destinationMin, Orientation orientation) {
+        Objects.requireNonNull(orientation);
+        if (orientation.isExact()) return moved(region, pivot, destinationMin, orientation.transform());
+        return moved(region, pivot, destinationMin, orientation.sampler(pivot.sizeX(), pivot.sizeY(), pivot.sizeZ()),
+                Integer.MIN_VALUE, Integer.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
+    }
+
+    /**
+     * The cells a free move writes: the result cells (the result box of {@code sampler}, made for {@code pivot}'s size,
+     * starting at {@code destinationMin}) whose source cell is a cell of {@code region} between heights {@code minY}
+     * and {@code maxY} (the build height: cells outside it do not move), as a cell set.
+     *
+     * <p>Mapped forwards, cell by cell: each region cell keeps the result cells around where it lands that take it
+     * ({@link Orientation.Sampler#takers}, at most 27 looked at), so the work is at most 27 per cell whatever the angle
+     * or the spread of the cells. Regions of more than {@code maxCells} cells (between those heights) or
+     * {@code maxSections} sections are refused before anything is mapped.
+     *
+     * @throws RegionTooLargeException past {@code maxSections} sections or {@code maxCells} cells
+     * @throws IllegalArgumentException if a cell would leave the coordinate range, or no cell is left
+     */
+    public static Region moved(Region region, Box pivot, BlockPos destinationMin, Orientation.Sampler sampler,
+                               int minY, int maxY, long maxSections, long maxCells) {
+        Objects.requireNonNull(region);
+        Objects.requireNonNull(pivot);
+        Objects.requireNonNull(destinationMin);
+        if (region instanceof Region.Uploaded) throw unresolved();
+        BlockPos size = sampler.size();
+        long maxX = (long) destinationMin.x() + size.x() - 1, topY = (long) destinationMin.y() + size.y() - 1;
+        long maxZ = (long) destinationMin.z() + size.z() - 1;
+        if (maxX > Integer.MAX_VALUE || topY > Integer.MAX_VALUE || maxZ > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("The moved region leaves the coordinate range");
+        }
+        int lo = Math.max(minY, pivot.min().y()), hi = Math.min(maxY, pivot.max().y());
+        if (lo > hi) throw new IllegalArgumentException("The turned region has no cells");
+        long cells = cellsBetween(region, lo, hi, maxCells);
+        if (cells > maxCells) {
+            throw new RegionTooLargeException("Turning " + cells + " cells by a free angle > " + maxCells, cells, maxCells);
+        }
+        CellSet.Builder builder = CellSet.builder();
+        int[] takers = new int[81];
+        double[] point = new double[3];
+        int[] cell = new int[3];
+        int[] rows = new int[ROWS];
+        BlockPos from = pivot.min();
+        for (long key : sectionKeysBetween(region, lo, hi, maxSections)) {
+            if (rows(region, key, lo, hi, rows) == 0) continue;
+            int ox = BlockBuffer.keyX(key) << 4, oy = BlockBuffer.keyY(key) << 4, oz = BlockBuffer.keyZ(key) << 4;
+            for (int r = 0; r < ROWS; r++) {
+                int ly = oy + (r >>> 4) - from.y(), lz = oz + (r & 15) - from.z();
+                for (int bits = rows[r]; bits != 0; bits &= bits - 1) {
+                    int lx = ox + Integer.numberOfTrailingZeros(bits) - from.x();
+                    int n = sampler.takers(lx, ly, lz, takers, point, cell);
+                    for (int i = 0; i < n; i++) {
+                        builder.add(destinationMin.x() + takers[3 * i], destinationMin.y() + takers[3 * i + 1],
+                                destinationMin.z() + takers[3 * i + 2]);
+                    }
+                }
+            }
+        }
+        if (builder.size() == 0) throw new IllegalArgumentException("The turned region has no cells");
+        return new Region.Cells(builder.build());
+    }
+
+    /**
+     * {@link #movedColumns(Long2ObjectMap, Box, BlockPos, Transform)} for an orientation: a free one gives the columns
+     * of {@code moved} (the region {@link #moved(Region, Box, BlockPos, Orientation)} gives), between its bounds' heights.
+     */
+    public static Long2ObjectOpenHashMap<long[]> movedColumns(Long2ObjectMap<long[]> columns, Box pivot,
+                                                              BlockPos destinationMin, Orientation orientation,
+                                                              Region moved) {
+        if (orientation.isExact()) return movedColumns(columns, pivot, destinationMin, orientation.transform());
+        Box b = moved.bounds();
+        return columns(moved, b.min().y(), b.max().y());
     }
 
     /**

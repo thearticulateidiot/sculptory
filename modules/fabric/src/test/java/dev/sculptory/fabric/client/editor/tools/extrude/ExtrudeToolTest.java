@@ -106,8 +106,8 @@ class ExtrudeToolTest {
         ToolRegistry registry = new ToolRegistry();
         EditorToolSet.register(registry, new PlaceholderTool(new ToolDescriptor(ToolId.SELECT, "sculptory.tool.select",
                 "minecraft:stone", Perm.REGION), "sculptory.hint.select.drag"));
-        assertEquals(15, registry.paletteOrder().size(), "the Fluid tool follows in slot 13, Tinker in 14, Weather in 15");
-        assertEquals(15, ToolRegistry.PALETTE_SLOTS);
+        assertEquals(17, registry.paletteOrder().size(), "the Fluid tool follows in slot 13, Tinker in 14, Weather in 15, Heightmap in 16, Biome in 17");
+        assertEquals(17, ToolRegistry.PALETTE_SLOTS);
         Tool extrude = registry.slot(12).orElseThrow();
         assertInstanceOf(ExtrudeTool.class, extrude);
         assertEquals(ToolId.EXTRUDE, extrude.descriptor().id());

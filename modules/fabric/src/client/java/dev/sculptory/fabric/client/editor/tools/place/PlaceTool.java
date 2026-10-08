@@ -13,6 +13,7 @@ import dev.sculptory.core.entity.EntityPlacement;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.Regions;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.render.OverlayColors;
@@ -300,17 +301,17 @@ public final class PlaceTool implements Tool {
 
     // Baked ghost (states turned for real) and the bake in progress.
     private @Nullable GhostVolume baked;
-    private @Nullable Transform bakedFor;
+    private @Nullable Orientation bakedFor;
     private @Nullable GhostVolume bakedFrom;
     private @Nullable CompletableFuture<GhostVolume> baking;
-    private @Nullable Transform bakingFor;
+    private @Nullable Orientation bakingFor;
     private @Nullable GhostVolume bakingFrom;
     /** What the bake in progress counts of a flipped volume, or null. */
     private @Nullable GhostBaker.FlipTally bakingTally;
     /** Whether the blocks the flip upside down keeps have had their toast since the flip last went on. */
     private boolean flipCounted;
     /** The (volume, transform) whose bake failed, shown as outlines only. */
-    private @Nullable Transform bakeFailedFor;
+    private @Nullable Orientation bakeFailedFor;
     private @Nullable GhostVolume bakeFailedFrom;
     private long lastFrameNanos;
     private long transformChangedAt;
@@ -318,9 +319,8 @@ public final class PlaceTool implements Tool {
     // Gizmo
     private @Nullable GizmoPick.Handle hovered;
     private @Nullable GizmoPick.AxisDrag axisDrag;
-    private boolean ringDrag;
-    private double grabAngle;
-    private Transform grabTransform = Transform.IDENTITY;
+    private @Nullable GizmoPick.RingDrag ringDrag;
+    private Orientation grabOrientation = Orientation.IDENTITY;
     private BlockPos grabPivot = BlockPos.ORIGIN;
 
     /** @param physicsAllowed whether the player may paste with physics (shows the setting) */
@@ -458,7 +458,7 @@ public final class PlaceTool implements Tool {
 
     /** The baked volume (states turned for the current transform), once built. */
     public Optional<GhostVolume> bakedVolume() {
-        return baked != null && volume == bakedFrom && placement != null && placement.transform().equals(bakedFor)
+        return baked != null && volume == bakedFrom && placement != null && placement.orientation().equals(bakedFor)
                 ? Optional.of(baked) : Optional.empty();
     }
 
@@ -606,7 +606,7 @@ public final class PlaceTool implements Tool {
         bakeFailedFor = null;
         bakeFailedFrom = null;
         axisDrag = null;
-        ringDrag = false;
+        ringDrag = null;
         hovered = null;
         services.clearGizmo();
         services.showGhosts(List.of());
@@ -650,13 +650,13 @@ public final class PlaceTool implements Tool {
         if (following) {
             followCursor(f.cursor());
             hovered = null;
-        } else if (axisDrag == null && !ringDrag) {
+        } else if (axisDrag == null && ringDrag == null) {
             hovered = pickGizmo(f.mouseX(), f.mouseY()).orElse(null);
         }
         if (positioned && !following) {
             double[] g = gizmoOrigin();
             services.showGizmo(g[0], g[1], g[2], axisDrag != null ? GizmoPick.Handle.ofAxis(axisDrag.axis())
-                    : ringDrag ? GizmoPick.Handle.ROTATE_Y : hovered);
+                    : ringDrag != null ? GizmoPick.Handle.ofRing(ringDrag.axis()) : hovered);
         } else {
             services.clearGizmo();
         }
@@ -699,7 +699,7 @@ public final class PlaceTool implements Tool {
     private void updateBake(ToolContext c, long now) {
         if (baking != null && baking.isDone()) {
             GhostVolume result = GhostBaker.finished(baking);
-            boolean current = placement != null && volume == bakingFrom && placement.transform().equals(bakingFor);
+            boolean current = placement != null && volume == bakingFrom && placement.orientation().equals(bakingFor);
             if (result != null && current) {
                 releaseBaked();
                 baked = result;
@@ -707,7 +707,7 @@ public final class PlaceTool implements Tool {
                 bakedFrom = bakingFrom;
                 if (bakingTally != null && !flipCounted) {
                     flipCounted = true;
-                    announceFlip(c, bakingTally);
+                    announceFlip(c, bakingTally, !bakingFor.isExact());
                 }
             } else if (result != null) {
                 services.releaseGhost(result);
@@ -719,22 +719,56 @@ public final class PlaceTool implements Tool {
             baking = null;
             bakingTally = null;
         }
-        Transform transform = placement.transform();
-        if (volume == null || transform.isIdentity() || baking != null) return;
-        if (volume == bakedFrom && transform.equals(bakedFor)) return;
+        updateCopyBakes(c, now);
+        Orientation orientation = placement.orientation();
+        if (volume == null || orientation.isIdentity() || baking != null) return;
+        if (volume == bakedFrom && orientation.equals(bakedFor)) return;
         if (bakeFailed()) return;
         if (now - transformChangedAt < BAKE_IDLE_NANOS) return;
         Box frame = volume.frame();
         if (frame == null) return;
         List<GhostSection> sections = List.copyOf(volume.sections());
-        bakingFor = transform;
+        bakingFor = orientation;
         bakingFrom = volume;
         var states = c.states();
-        GhostBaker.FlipTally tally = transform.upsideDown() ? new GhostBaker.FlipTally() : null;
+        GhostBaker.FlipTally tally = orientation.transform().upsideDown() || !orientation.isExact()
+                ? new GhostBaker.FlipTally() : null;
         bakingTally = tally;
-        baking = CompletableFuture.supplyAsync(() -> GhostBaker.bake(frame, sections, transform, states, tally),
+        baking = CompletableFuture.supplyAsync(() -> GhostBaker.bake(frame, sections, orientation, states, tally),
                 services.background());
         if (baking.isDone()) updateBake(c, now);
+    }
+
+    /**
+     * A free move's symmetric copies: each resampled off the render thread once the turn has rested, as the main ghost
+     * is ({@link GhostBaker#bakeImage}), and taken when done if the turn is still the one it was made for.
+     */
+    private void updateCopyBakes(ToolContext c, long now) {
+        Orientation orientation = placement.orientation();
+        boolean wanted = placement.mode() == Placement.Mode.MOVE && !orientation.isExact()
+                && now - transformChangedAt >= BAKE_IDLE_NANOS;
+        for (CopyPreview preview : copies) {
+            if (preview.baking != null && preview.baking.isDone()) {
+                GhostVolume result = GhostBaker.finished(preview.baking);
+                if (result != null && orientation.equals(preview.bakingFor)) {
+                    if (preview.baked != null) services.releaseGhost(preview.baked);
+                    preview.baked = result;
+                    preview.bakedFor = preview.bakingFor;
+                } else if (result != null) {
+                    services.releaseGhost(result);
+                }
+                preview.baking = null;
+            }
+            if (!wanted || preview.volume == null || preview.baking != null || orientation.equals(preview.bakedFor)) {
+                continue;
+            }
+            GhostVolume copy = preview.volume;
+            Symmetry.Image image = preview.image;
+            var states = c.states();
+            preview.bakingFor = orientation;
+            preview.baking = CompletableFuture.supplyAsync(() -> GhostBaker.bakeImage(copy, image, orientation, states),
+                    services.background());
+        }
     }
 
     /**
@@ -742,15 +776,17 @@ public final class PlaceTool implements Tool {
      * modded blocks with settings the flip does not know. Nothing when
      * every block turned over.
      */
-    private void announceFlip(ToolContext c, GhostBaker.FlipTally tally) {
+    private void announceFlip(ToolContext c, GhostBaker.FlipTally tally, boolean turned) {
         long kept = tally.kept();
         long unknown = tally.unknown();
         if (kept == 0 && unknown == 0) return;
+        // A free turn: the blocks it cannot turn (no tipped form, or a stair on its side); else the flip's.
+        String prefix = turned ? "sculptory.notice.turn_" : "sculptory.notice.flip_";
         Notice notice = unknown == 0
-                ? Notice.of(Notice.Level.INFO, "sculptory.notice.flip_kept", SessionNotices.count(kept))
+                ? Notice.of(Notice.Level.INFO, prefix + "kept", SessionNotices.count(kept))
                 : kept == 0
-                ? Notice.of(Notice.Level.INFO, "sculptory.notice.flip_unknown", SessionNotices.count(unknown))
-                : Notice.of(Notice.Level.INFO, "sculptory.notice.flip_kept_unknown", SessionNotices.count(kept),
+                ? Notice.of(Notice.Level.INFO, prefix + "unknown", SessionNotices.count(unknown))
+                : Notice.of(Notice.Level.INFO, prefix + "kept_unknown", SessionNotices.count(kept),
                         SessionNotices.count(unknown));
         c.notify(notice);
     }
@@ -758,7 +794,7 @@ public final class PlaceTool implements Tool {
     /** Whether baking the current transform failed (the placement then shows outlines only). */
     boolean bakeFailed() {
         return placement != null && volume != null && volume == bakeFailedFrom
-                && placement.transform().equals(bakeFailedFor);
+                && placement.orientation().equals(bakeFailedFor);
     }
 
     /** The ghost previews for this frame: none (outlines only) when the current transform could not be baked. */
@@ -788,27 +824,31 @@ public final class PlaceTool implements Tool {
         Optional<GhostVolume> turned = bakedVolume();
         list.add(turned.isPresent()
                 ? GhostPlacement.of(turned.get(), min.x(), min.y(), min.z())
-                : GhostPlacement.of(volume, min.x(), min.y(), min.z()).withTransform(placement.transform()));
+                : GhostPlacement.of(volume, min.x(), min.y(), min.z()).withOrientation(placement.orientation()));
         Box target = placement.targetBox();
         if (placement.mode() == Placement.Mode.PASTE) {
-            // The same source, placed with the op's transform then the image (the baked volume with the image alone).
+            // The same source, placed with the op's orientation then the image (the baked volume with the image alone: the
+            // server writes a free paste's copies as exact images of what it writes).
             for (Symmetry.Image image : pasteImages(symmetry)) {
                 Box imaged = symmetry.imageBox(image, target);
                 list.add(turned.isPresent()
                         ? GhostPlacement.of(turned.get(), imaged.min().x(), imaged.min().y(), imaged.min().z())
                                 .withTransform(image.transform())
                         : GhostPlacement.of(volume, imaged.min().x(), imaged.min().y(), imaged.min().z())
-                                .withTransform(placement.transform().compose(image.transform())));
+                                .withOrientation(placement.orientation().then(image.transform())));
             }
             return list;
         }
         for (CopyPreview preview : copies) {
             if (preview.volume == null) continue;
             Box imaged = symmetry.imageBox(preview.image, target);
-            Transform conjugated = preview.image.inverse().transform().compose(placement.transform())
-                    .compose(preview.image.transform());
+            if (preview.baked != null && placement.orientation().equals(preview.bakedFor)) {
+                list.add(GhostPlacement.of(preview.baked, imaged.min().x(), imaged.min().y(), imaged.min().z()));
+                continue;
+            }
+            Orientation conjugated = placement.orientation().conjugated(preview.image.transform());
             list.add(GhostPlacement.of(preview.volume, imaged.min().x(), imaged.min().y(), imaged.min().z())
-                    .withTransform(conjugated));
+                    .withOrientation(conjugated));
         }
         return list;
     }
@@ -822,6 +862,11 @@ public final class PlaceTool implements Tool {
         @Nullable GhostBaker.Capture capture;
         @Nullable CompletableFuture<GhostVolume> build;
         @Nullable GhostVolume volume;
+        /** A free move's copy resampled as the server writes it ({@link GhostBaker#bakeImage}), and for what. */
+        @Nullable GhostVolume baked;
+        @Nullable Orientation bakedFor;
+        @Nullable CompletableFuture<GhostVolume> baking;
+        @Nullable Orientation bakingFor;
 
         CopyPreview(Symmetry.Image image, Region region) {
             this.image = image;
@@ -863,7 +908,7 @@ public final class PlaceTool implements Tool {
         if (symmetry.isOff() || placement == null) return List.of();
         try {
             List<Symmetry.Image> images = OpSymmetry.images(new OpSpec.Paste(placement.source(), placement.pasteOrigin(),
-                    placement.transform(), PasteOptions.DEFAULT, symmetry));
+                    placement.orientation(), PasteOptions.DEFAULT, symmetry));
             return images.subList(1, images.size());
         } catch (IllegalArgumentException | ArithmeticException beyondTheWorld) {
             return List.of();
@@ -896,6 +941,11 @@ public final class PlaceTool implements Tool {
     }
 
     private void clearCopies() {
+        for (CopyPreview preview : copies) {
+            if (preview.baked != null) services.releaseGhost(preview.baked);
+            // A bake still running is dropped: its volume was never shown, so the renderer holds no meshes for it.
+            if (preview.baking != null) preview.baking.cancel(false);
+        }
         copies.clear();
         copiesFor = null;
         copiesOutlineOnly = false;
@@ -1037,10 +1087,19 @@ public final class PlaceTool implements Tool {
         if (entities.isEmpty()) return;
         BlockPos min = placement.targetMin();
         BlockPos dims = placement.dims();
-        Transform t = placement.transform();
+        Orientation orientation = placement.orientation();
+        Transform t = orientation.transform();
         int drawn = 0;
         for (PreviewPayload.Entity entity : entities) {
             if (drawn++ >= MAX_ENTITY_OUTLINES) break;
+            if (!orientation.isExact()) {
+                // A free turn moves its position as the server does (its box stays upright).
+                double[] p = orientation.mapPoint(entity.x(), entity.y(), entity.z(), dims.x(), dims.y(), dims.z());
+                double half = entity.width() / 2.0;
+                outline(d, min.x() + p[0] - half, min.y() + p[1], min.z() + p[2] - half, min.x() + p[0] + half,
+                        min.y() + p[1] + entity.height(), min.z() + p[2] + half, ENTITY_COLOUR);
+                continue;
+            }
             double x = min.x() + EntityPlacement.mapX(entity.x(), entity.z(), t, dims.x(), dims.z());
             // Flipped, its box turns over within the placement's height, as the server lowers it by its height (a hanging
             // entity, placed by its centre, is drawn the same way here).
@@ -1082,12 +1141,12 @@ public final class PlaceTool implements Tool {
             case MOVE -> false;
             case PRESS -> e.button() == PointerEvent.LEFT && press(c, e);
             case DRAG -> {
-                if (e.button() != PointerEvent.LEFT || (axisDrag == null && !ringDrag)) yield false;
+                if (e.button() != PointerEvent.LEFT || (axisDrag == null && ringDrag == null)) yield false;
                 drag();
                 yield true;
             }
             case RELEASE -> {
-                if (e.button() != PointerEvent.LEFT || (axisDrag == null && !ringDrag)) yield false;
+                if (e.button() != PointerEvent.LEFT || (axisDrag == null && ringDrag == null)) yield false;
                 endDrag(c, true);
                 yield true;
             }
@@ -1115,15 +1174,14 @@ public final class PlaceTool implements Tool {
     private boolean beginDrag(GizmoPick.Handle handle, Ray ray) {
         double[] g = gizmoOrigin();
         grabPivot = placement.pivotWorld();
-        grabTransform = placement.transform();
+        grabOrientation = placement.orientation();
         if (handle.isAxis()) {
             axisDrag = GizmoPick.AxisDrag.begin(handle, g[0], g[1], g[2], ray).orElse(null);
             return axisDrag != null;
         }
         if (placement.mode() == Placement.Mode.STACK) return false;
-        grabAngle = GizmoPick.ringAngle(g[0], g[1], g[2], ray);
-        ringDrag = !Double.isNaN(grabAngle);
-        return ringDrag;
+        ringDrag = GizmoPick.RingDrag.begin(handle, g[0], g[1], g[2], ray).orElse(null);
+        return ringDrag != null;
     }
 
     private void drag() {
@@ -1133,29 +1191,30 @@ public final class PlaceTool implements Tool {
             int blocks = axisDrag.update(ray.get());
             int axis = axisDrag.axis();
             placement.moveTo(grabPivot.offset(axis == 0 ? blocks : 0, axis == 1 ? blocks : 0, axis == 2 ? blocks : 0));
-        } else if (ringDrag) {
-            double[] g = gizmoOrigin();
-            int turns = GizmoPick.snapQuarterTurns(grabAngle, GizmoPick.ringAngle(g[0], g[1], g[2], ray.get()));
-            Transform next = grabTransform.compose(Transform.rotation(turns));
-            if (!next.equals(placement.transform())) {
-                placement.setTransform(next);
-                transformChanged();
-            }
+        } else if (ringDrag != null) {
+            // Snaps every 15 degrees; Ctrl turns freely. The turn is about the ring's world axis, from where it was grabbed.
+            boolean free = context != null && Modifiers.control(context.modifiers());
+            int turn = ringDrag.update(ray.get(), free);
+            Orientation next = Placement.turnedAbout(grabOrientation, ringDrag.axis(), turn);
+            if (!next.equals(placement.orientation()) && placement.setOrientation(next)) transformChanged();
         }
     }
 
     /** Ends a gizmo drag; {@code keep} false puts the placement back where the drag started. */
     private void endDrag(ToolContext c, boolean keep) {
-        if (axisDrag == null && !ringDrag) return;
+        if (axisDrag == null && ringDrag == null) return;
+        if (keep && ringDrag != null && placement != null && !placement.orientation().equals(grabOrientation)) {
+            flipCounted = false; // the turned ghost counts the blocks it keeps once it is baked
+        }
         if (!keep && placement != null) {
             placement.moveTo(grabPivot);
-            if (!placement.transform().equals(grabTransform)) {
-                placement.setTransform(grabTransform);
+            if (!placement.orientation().equals(grabOrientation)) {
+                placement.setOrientation(grabOrientation);
                 transformChanged();
             }
         }
         axisDrag = null;
-        ringDrag = false;
+        ringDrag = null;
         c.setPointerCapture(false);
     }
 
@@ -1186,7 +1245,7 @@ public final class PlaceTool implements Tool {
                 return true;
             }
             case CANCEL -> {
-                if (axisDrag != null || ringDrag) {
+                if (axisDrag != null || ringDrag != null) {
                     endDrag(c, false);
                 } else {
                     done();
@@ -1209,7 +1268,7 @@ public final class PlaceTool implements Tool {
                 return flip(c);
             }
             case NUDGE_FORWARD, NUDGE_BACK, NUDGE_LEFT, NUDGE_RIGHT, NUDGE_UP, NUDGE_DOWN -> {
-                if (placement == null || !positioned || axisDrag != null || ringDrag) return true;
+                if (placement == null || !positioned || axisDrag != null || ringDrag != null) return true;
                 int step = Modifiers.shift(c.modifiers()) ? 10 : 1;
                 Nudge.direction(a, services.cameraYaw()).ifPresent(d -> placement.nudge(d[0] * step, d[1] * step, d[2] * step));
                 following = false;
@@ -1237,6 +1296,26 @@ public final class PlaceTool implements Tool {
     }
 
     /**
+     * The placement's turn as yaw, pitch and roll in 1/100 degree ({@link Placement#angles}), for Tool Settings; empty
+     * without a placement or for a stack.
+     */
+    public Optional<int[]> angles() {
+        if (placement == null || placement.mode() == Placement.Mode.STACK) return Optional.empty();
+        return Optional.of(placement.angles());
+    }
+
+    /**
+     * Sets the placement's turn to typed angles in 1/100 degree ({@link Placement#setAngles}); false without a
+     * placement, during a gizmo drag, or for a stack (which says so).
+     */
+    public boolean setAngles(int yaw, int pitch, int roll) {
+        if (context == null || placement == null || axisDrag != null || ringDrag != null) return false;
+        boolean handled = turn(context, () -> placement.setAngles(yaw, pitch, roll));
+        flipCounted = false;
+        return handled;
+    }
+
+    /**
      * Flips the placement upside down or back; the next flipped bake counts the blocks that stay as they are. A lambda,
      * not a method reference: while a preview is loading there is no placement yet, and {@link #turn} checks that.
      */
@@ -1248,7 +1327,7 @@ public final class PlaceTool implements Tool {
 
     private boolean turn(ToolContext c, java.util.function.BooleanSupplier change) {
         if (placement == null) return true;
-        if (axisDrag != null || ringDrag) return true;
+        if (axisDrag != null || ringDrag != null) return true;
         if (change.getAsBoolean()) {
             transformChanged();
         } else {
@@ -1342,11 +1421,11 @@ public final class PlaceTool implements Tool {
         // Where the selection goes after a move is worked out only once the move is sent (after any confirmation).
         Region source = placement.region();
         BlockPos targetMin = placement.targetMin();
-        Transform transform = placement.transform();
+        Orientation orientation = placement.orientation();
         Runnable send = () -> {
             send(c, op, physics, mode);
             if (mode == Placement.Mode.MOVE) {
-                selectMoved(c, source, targetMin, transform);
+                selectMoved(c, source, targetMin, orientation);
                 done();
             }
         };
@@ -1389,23 +1468,28 @@ public final class PlaceTool implements Tool {
 
     /**
      * Selects where a move put the selection. The same cells moved cost nothing (a cell set keeps its outline and moves
-     * its offset); a box or shape turns at once; a turned or mirrored cell set is mapped cell by cell off the client
-     * thread and selected then, if the selection is still the one moved. A move out of range leaves the selection.
+     * its offset); a box or shape turns at once; a turned or mirrored cell set, and anything turned by free angles (it
+     * becomes the cell set of the cells the move writes), is mapped cell by cell off the client thread and selected
+     * then, if the selection is still the one moved. A move out of range leaves the selection.
+     *
+     * @param targetMin the minimum corner of the result box
      */
-    static void selectMoved(ToolContext c, Region source, BlockPos targetMin, Transform transform) {
+    static void selectMoved(ToolContext c, Region source, BlockPos targetMin, Orientation orientation) {
         Selection before = c.selectionState().orElse(null);
         try {
-            if (transform.isIdentity()) {
+            if (orientation.isIdentity()) {
                 boolean same = before != null && before.region() == source;
                 c.setSelectionState((same ? before : Selection.of(source)).movedTo(targetMin));
-            } else if (!(source instanceof Region.Cells)) {
-                c.setSelectionRegion(SelectionModel.moved(source, targetMin, transform));
+            } else if (orientation.isExact() && !(source instanceof Region.Cells)) {
+                c.setSelectionRegion(SelectionModel.moved(source, targetMin, orientation.transform()));
             } else {
-                c.regionWork().supply(() -> SelectionModel.moved(source, targetMin, transform)).thenAccept(moved -> {
-                    if (c.selectionState().orElse(null) == before) {
-                        c.setSelectionRegion(moved);
-                    }
-                });
+                int bottom = c.world().bottomY(), top = c.world().topYExclusive() - 1;
+                c.regionWork().supply(() -> SelectionModel.moved(source, targetMin, orientation, bottom, top))
+                        .thenAccept(moved -> {
+                            if (c.selectionState().orElse(null) == before) {
+                                c.setSelectionRegion(moved);
+                            }
+                        });
             }
         } catch (IllegalArgumentException | ArithmeticException outOfRange) {
             // The server refuses such a move anyway; the selection stays where it was.
@@ -1474,6 +1558,12 @@ public final class PlaceTool implements Tool {
         if (outlineOnly) hints.add(KeyHint.text("sculptory.hint.place.outline_only"));
         String status = services.ghostStatus();
         if (!status.isEmpty()) hints.add(KeyHint.text("sculptory.hint.place.status", status));
+        if (ringDrag != null) {
+            int[] angles = placement.angles();
+            hints.add(KeyHint.text("sculptory.hint.place.angles", PlaceTransformPanel.degrees(angles[0]),
+                    PlaceTransformPanel.degrees(angles[1]), PlaceTransformPanel.degrees(angles[2])));
+            hints.add(new KeyHint("Ctrl", "sculptory.hint.place.ring_free"));
+        }
         if (placement.mode() != Placement.Mode.STACK) {
             hints.add(new KeyHint(services.keyLabel(KeyAction.ROTATE_CW), "sculptory.hint.place.rotate"));
             hints.add(new KeyHint(services.keyLabel(KeyAction.FLIP_LEFT_RIGHT), "sculptory.hint.place.flip"));

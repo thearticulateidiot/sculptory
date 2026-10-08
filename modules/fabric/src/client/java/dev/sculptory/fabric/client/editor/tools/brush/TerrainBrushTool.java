@@ -208,6 +208,8 @@ public final class TerrainBrushTool implements Tool {
             case PALETTE -> ToolId.PALETTE;
             case SHAPE -> ToolId.SHAPE;
             case WEATHER -> ToolId.WEATHER;
+            case HEIGHTMAP -> ToolId.HEIGHTMAP;
+            case BIOME -> ToolId.BIOME;
         };
     }
 
@@ -222,6 +224,8 @@ public final class TerrainBrushTool implements Tool {
             case PALETTE -> 0xFFA58BF2;
             case SHAPE -> 0xFF4FD6C4;
             case WEATHER -> 0xFF9FB4C7;
+            case HEIGHTMAP -> 0xFFC9A26B;
+            case BIOME -> 0xFF7BC96B;
         };
     }
 
@@ -256,6 +260,11 @@ public final class TerrainBrushTool implements Tool {
         return kind.name().toLowerCase(Locale.ROOT);
     }
 
+    /** The Heightmap tool's palette icon (protocol 6; its placeholder uses it too). */
+    public static final String HEIGHTMAP_ICON = "minecraft:filled_map";
+    /** The Biome tool's palette icon (protocol 6; its placeholder uses it too). */
+    public static final String BIOME_ICON = "minecraft:globe_banner_pattern";
+
     /** The palette icon of each brush (an item id). */
     static String icon(BrushTool kind) {
         return switch (kind) {
@@ -267,6 +276,8 @@ public final class TerrainBrushTool implements Tool {
             case PALETTE -> "minecraft:painting";
             case SHAPE -> "minecraft:heart_of_the_sea";
             case WEATHER -> "minecraft:wind_charge";
+            case HEIGHTMAP -> HEIGHTMAP_ICON;
+            case BIOME -> BIOME_ICON;
         };
     }
 

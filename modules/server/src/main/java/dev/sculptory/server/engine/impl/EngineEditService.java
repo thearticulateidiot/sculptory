@@ -46,6 +46,7 @@ import dev.sculptory.core.mask.MaskedProgram;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.RegionTooLargeException;
 import dev.sculptory.core.region.Regions;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.protocol.v2.C2S;
@@ -274,6 +275,12 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     private static final int SCAN_MARGIN = 8;
     /** Most copies one stack may make. */
     public static final int MAX_STACK_COUNT = 256;
+
+    /**
+     * The detail of the protocol 6 contract stubs' refusals ({@code INVALID}): a multi-paste, a biome fill, a paste or
+     * move with a free orientation, a paste of biomes, and Heightmap and Biome strokes, until their streams land.
+     */
+    public static final String NOT_IMPLEMENTED = "not implemented";
     /** Server ticks between re-checks of the permissions of players with admitted jobs ({@link #revalidate}). */
     public static final int PERMISSION_RECHECK_TICKS = 40;
     /**
@@ -294,6 +301,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * thread only.
      */
     private BoundMask compileSourceMask = BoundMask.ALL;
+    /** The landing cells of the free Move {@link #run} is compiling (worked out at admission), else null. */
+    private Region compileFreeMoved;
     private final PlatformPermissions<P, W> permissions;
     private final Function<P, JobListener> listeners;
     private final AckSink<P> acks;
@@ -452,9 +461,17 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         Perm opNode = switch (s) {
             case OpSpec.Paste paste -> Perm.CLIPBOARD;
             case OpSpec.ScatterCommit commit -> Perm.SCATTER;
+            case OpSpec.PasteMany many -> Perm.CLIPBOARD;
+            case OpSpec.BiomeFill fill -> Perm.BIOME;
             default -> Perm.REGION;
         };
         require(p, opNode);
+        // Contract stubs (protocol 6): ws/extrude-paths (the multi-paste) and ws/biomes (the biome fill and pasted
+        // biomes) remove their refusals here.
+        if (s instanceof OpSpec.PasteMany || s instanceof OpSpec.BiomeFill
+                || (s instanceof OpSpec.Paste paste && paste.o().biomes())) {
+            throw new EditRejected(RejectReason.INVALID, NOT_IMPLEMENTED);
+        }
         Region region = OpRegions.region(s);
         boolean bypass = permissions.has(p, Perm.LIMIT_BYPASS);
         if (region != null) admitRegion(region, bypass);
@@ -502,6 +519,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         boolean copying = true;
         boolean trustSource = true;
         EntityWork entityWork = extraEntities;
+        // A free move's landing cells, worked out at admission and handed to the compiler.
+        Region freeLandingCells = null;
         int maxEntities = config().entities.maxPerJob;
         switch (s) {
             case OpSpec.Paste paste -> {
@@ -520,8 +539,13 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                     for (OpSymmetry.Copy copy : copies) {
                         OpSpec.Paste pasteCopy = (OpSpec.Paste) copy.op();
                         try {
-                            requireInsideWorld(PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(),
-                                    pasteCopy.t(), pasteCopy.origin()), "a symmetric copy");
+                            // A free paste's copy writes the image of the original's box (OpCompiler).
+                            Box copyTarget = paste.orientation().isExact()
+                                    ? PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(), pasteCopy.t(),
+                                            pasteCopy.origin())
+                                    : paste.symmetry().imageBox(copy.image(), PasteGeometry.pasteTarget(clipboard.size(),
+                                            clipboard.anchor(), paste.orientation(), paste.origin()));
+                            requireInsideWorld(copyTarget, "a symmetric copy");
                         } catch (IllegalArgumentException e) {
                             throw new EditRejected(RejectReason.INVALID, e.getMessage());
                         }
@@ -535,11 +559,13 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                             runtime.entityRules(world)::operator);
                     Box target;
                     try {
-                        target = PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(), paste.t(), paste.origin());
+                        target = PasteGeometry.pasteTarget(clipboard.size(), clipboard.anchor(), paste.orientation(),
+                                paste.origin());
                     } catch (IllegalArgumentException e) {
                         throw new EditRejected(RejectReason.INVALID, e.getMessage());
                     }
-                    entityWork = EntityJobs.paste(clipboard.entities(), clipboard.size(), paste.t(), target.min());
+                    entityWork = EntityJobs.paste(clipboard.entities(), clipboard.size(), paste.orientation(),
+                            target.min());
                 }
             }
             case OpSpec.Move move -> {
@@ -550,10 +576,35 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 // A move vacates its source, so it must be able to write all of it and all of its destination:
                 // skipping protected destination cells would destroy what they should have received. A region other
                 // than a box needs only the columns its cells are in and land in. Every symmetric copy alike.
+                boolean free = !move.orientation().isExact();
+                // A free move's cells land on a cell set, worked out once here (the work follows its cells, refused past
+                // the bound) and handed to the compiler and the entities; its copies write the images of what it writes
+                // (OpCompiler), so their boxes and cells are the images of the original's.
+                Region freeMoved = null;
+                if (free) {
+                    OpSpec.Move single = (OpSpec.Move) copies.get(0).op();
+                    freeMoved = freeLanding(single, world, bypass ? Long.MAX_VALUE : limit);
+                    freeLandingCells = freeMoved;
+                }
                 for (OpSymmetry.Copy copy : copies) {
                     OpSpec.Move moveCopy = (OpSpec.Move) copy.op();
-                    Box copyFrom = inBuildHeight(moveCopy.box(), world);
-                    Box copyTo = moveDestination(moveCopy, copyFrom, world);
+                    Box copyFrom;
+                    Box copyTo;
+                    Region copyMoved = null;
+                    if (free) {
+                        try {
+                            copyFrom = move.symmetry().imageBox(copy.image(), from);
+                            copyTo = move.symmetry().imageBox(copy.image(), to);
+                            if (!(moveCopy.region() instanceof Region.Cuboid)) {
+                                copyMoved = Regions.image(freeMoved, move.symmetry(), copy.image());
+                            }
+                        } catch (IllegalArgumentException e) {
+                            throw new EditRejected(RejectReason.INVALID, e.getMessage());
+                        }
+                    } else {
+                        copyFrom = inBuildHeight(moveCopy.box(), world);
+                        copyTo = moveDestination(moveCopy, copyFrom, world);
+                    }
                     if (copyCount > 1) requireInsideWorld(copyTo, "a symmetric copy's destination");
                     if (moveCopy.region() instanceof Region.Cuboid) {
                         requireWritable(p, world, copyFrom, "source");
@@ -562,14 +613,19 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                         Long2ObjectOpenHashMap<long[]> columns = regionColumns(moveCopy.region(), copyFrom.min().y(),
                                 copyFrom.max().y());
                         requireWritable(p, world, columns, copyFrom, "source");
-                        requireWritable(p, world, Regions.movedColumns(columns, copyFrom, copyTo.min(), moveCopy.t()),
-                                copyTo, "destination");
+                        Long2ObjectOpenHashMap<long[]> landing = free
+                                ? regionColumns(copyMoved, copyTo.min().y(), copyTo.max().y())
+                                : Regions.movedColumns(columns, copyFrom, copyTo.min(), moveCopy.t());
+                        requireWritable(p, world, landing, copyTo, "destination");
                     }
                 }
                 if (move.entities() != EntityFilter.NONE) {
                     bypassed |= checkEntities(takenEntities(world, move.region(), move.entities()), maxEntities, bypass);
-                    entityWork = EntityJobs.move(move.region(), move.entities(), from, move.t(), to.min(),
-                            bypass ? Long.MAX_VALUE : maxEntities);
+                    entityWork = free
+                            ? EntityJobs.move(move.region(), move.entities(), move.box(), move.orientation(), to.min(),
+                                    freeMoved, bypass ? Long.MAX_VALUE : maxEntities)
+                            : EntityJobs.move(move.region(), move.entities(), from, move.orientation(), to.min(),
+                                    bypass ? Long.MAX_VALUE : maxEntities);
                 }
             }
             case OpSpec.Stack stack -> {
@@ -640,12 +696,14 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         // A Move is masked where its blocks are lifted (compiled in), every other op where its cells land.
         boolean sourceMasked = MaskedProgram.sideOf(s) == MaskSide.SOURCE;
         compileSourceMask = sourceMasked ? editMask : BoundMask.ALL;
+        compileFreeMoved = freeLandingCells;
         EditProgram compiled;
         try {
             compiled = compile(s, copies, world, pasteSource, scatter, copying && !bypass ? limit : Long.MAX_VALUE,
                     bypass);
         } finally {
             compileSourceMask = BoundMask.ALL;
+            compileFreeMoved = null;
         }
         // A scatter commit was masked whole placement by whole placement above.
         if (!sourceMasked && scatter == null) compiled = MaskedProgram.wrap(compiled, editMask);
@@ -764,6 +822,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * it would be lost).
      */
     Box moveDestination(OpSpec.Move move, Box from, W world) throws EditRejected {
+        if (!move.orientation().isExact()) return freeMoveDestination(move, from, world);
         BlockPos size = move.t().size(from.sizeX(), from.sizeY(), from.sizeZ());
         Box image = from;
         if (move.t().upsideDown()) {
@@ -782,6 +841,50 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             throw new EditRejected(RejectReason.INVALID, "the moved box would leave the world");
         }
         return new Box(new BlockPos((int) x0, (int) y0, (int) z0), new BlockPos((int) x1, (int) y1, (int) z1));
+    }
+
+    /**
+     * {@link #moveDestination} of a free orientation: the selection's whole bounds ({@code move.box()}, the pivot the
+     * client shows, as for the flip; only the cells inside the build height move) turn about their middle cell, and the
+     * result box ({@code Orientation.bounds}) lands with its minimum corner on {@code box.min() + bounds.offset() +
+     * offset}, as {@code MoveProgram} writes it. {@code INVALID}
+     * when it leaves the coordinate range or the build height.
+     */
+    private Box freeMoveDestination(OpSpec.Move move, Box cut, W world) throws EditRejected {
+        Box from = move.box();
+        Orientation.Bounds turned;
+        try {
+            turned = move.orientation().bounds(from.sizeX(), from.sizeY(), from.sizeZ());
+        } catch (IllegalArgumentException e) {
+            throw new EditRejected(RejectReason.INVALID, "the turned box is too large");
+        }
+        long x0 = (long) from.min().x() + turned.offset().x() + move.offset().x();
+        long y0 = (long) from.min().y() + turned.offset().y() + move.offset().y();
+        long z0 = (long) from.min().z() + turned.offset().z() + move.offset().z();
+        long x1 = x0 + turned.size().x() - 1, y1 = y0 + turned.size().y() - 1, z1 = z0 + turned.size().z() - 1;
+        if (x0 < Integer.MIN_VALUE || z0 < Integer.MIN_VALUE || x1 > Integer.MAX_VALUE || z1 > Integer.MAX_VALUE
+                || y0 < runtime.bottomY(world) || y1 >= runtime.topY(world)) {
+            throw new EditRejected(RejectReason.INVALID, "the turned box would leave the world");
+        }
+        return new Box(new BlockPos((int) x0, (int) y0, (int) z0), new BlockPos((int) x1, (int) y1, (int) z1));
+    }
+
+    /**
+     * The cells a free move (without symmetry) writes: its result cells whose source is a region cell inside the build
+     * height ({@link OpCompiler#freeLanding}), at most 27 cells looked at per region cell. {@code TOO_LARGE} past the
+     * sections a job may hold or the cells allowed for {@code budget} ({@link OpCompiler#maxFreeMoveCells}: the op limit,
+     * and never past {@link OpCompiler#MAX_FREE_MOVE_CELLS}, even with {@code limit.bypass}), {@code INVALID} when it
+     * leaves the world.
+     */
+    private Region freeLanding(OpSpec.Move move, W world, long budget) throws EditRejected {
+        int bottom = runtime.bottomY(world), top = runtime.topY(world) - 1;
+        try {
+            return OpCompiler.freeLanding(move, bottom, top, budget, maxSections(bottom, top));
+        } catch (EditTooLargeException e) {
+            throw new EditRejected(RejectReason.TOO_LARGE, e.getMessage());
+        } catch (IllegalArgumentException e) {
+            throw new EditRejected(RejectReason.INVALID, e.getMessage());
+        }
     }
 
     // ================================================================== sources (M2)
@@ -1315,7 +1418,12 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         Objects.requireNonNull(spec);
         requireEditing();
         require(p, Perm.USE);
-        require(p, Perm.BRUSH);
+        // The Biome brush needs the biome node instead of the brush node (protocol 6).
+        require(p, spec.tool() == BrushTool.BIOME ? Perm.BIOME : Perm.BRUSH);
+        // Contract stubs (protocol 6): ws/heightmap and ws/biomes remove these refusals with their kernels.
+        if (spec.tool() == BrushTool.HEIGHTMAP || spec.tool() == BrushTool.BIOME) {
+            throw new EditRejected(RejectReason.INVALID, NOT_IMPLEMENTED);
+        }
         String over = overBrushLimit(spec, config().limits.maxBrushRadius);
         if (over != null && !permissions.has(p, Perm.LIMIT_BYPASS)) throw new EditRejected(RejectReason.TOO_LARGE, over);
         // The Shape brush: every valid shape fits the step cap; it stands as a backstop, for everyone.
@@ -2923,6 +3031,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     private EditProgram compile(OpSpec spec, List<OpSymmetry.Copy> copies, W world, SourceBlocks pasteSource,
                                 MultiPaste scatter, long maxCells, boolean bypass) throws EditRejected {
         BoundMask sourceMask = compileSourceMask;
+        Region freeLanding = compileFreeMoved;
         StateSpace states = runtime.states();
         int bottom = runtime.bottomY(world);
         int top = runtime.topY(world);
@@ -2941,6 +3050,12 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             @Override
             public BoundMask sourceMask() {
                 return sourceMask;
+            }
+
+            /** The landing cells of the free Move being compiled, worked out at admission ({@link #compileFreeMoved}). */
+            @Override
+            public Region movedRegion(OpSpec.Move move) {
+                return freeLanding;
             }
 
             @Override

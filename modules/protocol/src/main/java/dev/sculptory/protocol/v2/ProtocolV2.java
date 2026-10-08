@@ -18,8 +18,13 @@ public final class ProtocolV2 {
      * v5 is the version of the batch after 2026-09-29, frozen when that batch is released.
      * Builder mode joins v5 ({@code BuilderPowers}, {@code BuilderPlace}, {@code BuilderBreak}, {@code BuilderDragEnd};
      * codes 44-47; 40-43 are Tinker's).
+     * 6: the batch after 0.3.0-alpha (path extrusion, heightmaps, free rotation, biomes): a {@code Paste} or {@code Move}
+     * carries an orientation (the transform byte with bit 5 for three free angles) in place of the transform byte, the
+     * {@code PasteMany} and {@code BiomeFill} ops (tags 12 and 13), the paste options' biomes bit, the {@code HEIGHTMAP}
+     * and {@code BIOME} brushes with their specs, and the {@code OpLabel}s {@code PATH_EXTRUDE} to {@code BIOME_FILL}. A
+     * v5 peer decodes none of these, so the two refuse each other at the handshake.
      */
-    public static final int VERSION = 5;
+    public static final int VERSION = 6;
     /** Client-to-server frame cap; vanilla rejects custom payloads over 32,767 bytes. */
     public static final int MAX_C2S_FRAME = 32_000;
     /** Server-to-client frame cap, kept well under vanilla's 1 MiB so control messages interleave. */

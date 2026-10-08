@@ -9,8 +9,9 @@ import org.junit.jupiter.api.Test;
 class GizmoPickTest {
     /**
      * Oblique fake projection, 20 px per block: X to the right, Y up, Z down-screen at half rate.
-     * With scale 1 the arrows run from (100,100) to X (120,100), Y (100,80), Z (100,110), and the
-     * ring is the ellipse (100 + 15 cos a, 100 + 7.5 sin a).
+     * With scale 1 the arrows run from (100,100) to X (120,100), Y (100,80), Z (100,110); the up ring is the ellipse
+     * (100 + 15 cos a, 100 + 7.5 sin a), the north-south ring the circle (100 + 15 cos a, 100 - 15 sin a) and the
+     * east-west ring the segment x = 100 from y = 83.2 to 116.8.
      */
     private static final ScreenProjector OBLIQUE = (x, y, z, out) -> {
         out[0] = 100 + 20 * x;
@@ -39,15 +40,15 @@ class GizmoPickTest {
 
     @Test
     void picksTheRotationRing() {
-        GizmoPick.Picked ring = pick(84, 101);
+        GizmoPick.Picked ring = pick(89, 105);
         assertEquals(GizmoPick.Handle.ROTATE_Y, ring.handle());
         assertTrue(ring.distancePx() < 1.5);
     }
 
     @Test
     void respectsThePickRadius() {
-        assertEquals(GizmoPick.Handle.AXIS_Y, pick(95, 85).handle()); // 5 px from the Y arrow
-        assertTrue(GizmoPick.pick(OBLIQUE, 0, 0, 0, 1.0, 93, 85, 6).isEmpty()); // 7 px
+        assertEquals(GizmoPick.Handle.AXIS_Y, pick(96, 79).handle()); // 4.1 px from the Y arrow, farther from the rings
+        assertTrue(GizmoPick.pick(OBLIQUE, 0, 0, 0, 1.0, 93, 78, 6).isEmpty()); // 7.3 px
         assertTrue(GizmoPick.pick(OBLIQUE, 0, 0, 0, 1.0, 160, 160, 6).isEmpty());
     }
 
@@ -114,5 +115,57 @@ class GizmoPickTest {
         assertEquals(2, Math.abs(GizmoPick.snapQuarterTurns(east, west)));
         assertEquals(0, GizmoPick.snapQuarterTurns(0.9 * Math.PI, -0.9 * Math.PI)); // across the ±π seam
         assertTrue(Double.isNaN(GizmoPick.ringAngle(0, 64, 0, new Ray(0, 70, 0, 1, 0, 0))));
+    }
+
+    @Test
+    void picksTheEastWestAndNorthSouthRings() {
+        // The north-south ring: the circle, here at 200 degrees (85.9, 105.1), away from the up ring.
+        assertEquals(GizmoPick.Handle.ROTATE_Z, pick(86, 105).handle());
+        // The east-west ring: the segment x = 100, below the Z arrow's tip.
+        assertEquals(GizmoPick.Handle.ROTATE_X, pick(101, 113).handle());
+        assertEquals(1, GizmoPick.Handle.ROTATE_Y.ringAxis());
+        assertEquals(GizmoPick.Handle.ROTATE_X, GizmoPick.Handle.ofRing(0));
+        assertTrue(GizmoPick.Handle.ROTATE_Z.isRing() && !GizmoPick.Handle.ROTATE_Z.isAxis());
+    }
+
+    @Test
+    void eachRingMeasuresItsAngleTheWayItsOrientationAngleTurns() {
+        // Up ring: east 0, south +90 (yaw: east to south).
+        assertEquals(Math.PI / 2, GizmoPick.ringAngle(1, 0, 64, 0, new Ray(0, 70, 1, 0, -1, 0)), 1e-9);
+        // East-west ring (pitch: up to south): from the east, up is 0 and south +90.
+        assertEquals(0, GizmoPick.ringAngle(0, 0, 64, 0, new Ray(5, 65, 0, -1, 0, 0)), 1e-9);
+        assertEquals(Math.PI / 2, GizmoPick.ringAngle(0, 0, 64, 0, new Ray(5, 64, 1, -1, 0, 0)), 1e-9);
+        // North-south ring (roll: east to up): from the south, east is 0 and up +90.
+        assertEquals(0, GizmoPick.ringAngle(2, 0, 64, 0, new Ray(1, 64, 5, 0, 0, -1)), 1e-9);
+        assertEquals(Math.PI / 2, GizmoPick.ringAngle(2, 0, 64, 0, new Ray(0, 65, 5, 0, 0, -1)), 1e-9);
+        // A ray along the plane, or pointing away from it, gives none.
+        assertTrue(Double.isNaN(GizmoPick.ringAngle(0, 0, 64, 0, new Ray(5, 65, 0, 0, 0, 1))));
+        assertTrue(Double.isNaN(GizmoPick.ringAngle(0, 0, 64, 0, new Ray(5, 65, 0, 1, 0, 0))));
+    }
+
+    @Test
+    void ringDragsSnapEveryFifteenDegreesAndTurnFreelyWithControl() {
+        assertEquals(1_500, GizmoPick.snapTurn(Math.toRadians(14), false));
+        assertEquals(0, GizmoPick.snapTurn(Math.toRadians(7), false));
+        assertEquals(-4_500, GizmoPick.snapTurn(Math.toRadians(-47), false));
+        assertEquals(1_423, GizmoPick.snapTurn(Math.toRadians(14.23), true));
+        // Grabbed east of the up ring, dragged round past a half turn: the turn keeps counting.
+        GizmoPick.RingDrag drag = GizmoPick.RingDrag.begin(GizmoPick.Handle.ROTATE_Y, 0, 64, 0,
+                new Ray(1, 70, 0, 0, -1, 0)).orElseThrow();
+        assertEquals(1, drag.axis());
+        assertEquals(3_000, drag.update(ray(29), false));
+        assertEquals(2_900, drag.update(ray(29), true));
+        assertEquals(9_000, drag.update(ray(90), false));
+        assertEquals(18_000, drag.update(ray(178), false));
+        assertEquals(27_000, drag.update(ray(268), false));
+        // A ray missing the plane keeps the last turn.
+        assertEquals(27_000, drag.update(new Ray(0, 70, 0, 1, 0, 0), false));
+        assertTrue(GizmoPick.RingDrag.begin(GizmoPick.Handle.AXIS_X, 0, 64, 0, new Ray(1, 70, 0, 0, -1, 0)).isEmpty());
+    }
+
+    /** Straight down onto the up ring at {@code degrees} from east towards south. */
+    private static Ray ray(double degrees) {
+        double a = Math.toRadians(degrees);
+        return new Ray(Math.cos(a), 70, Math.sin(a), 0, -1, 0);
     }
 }

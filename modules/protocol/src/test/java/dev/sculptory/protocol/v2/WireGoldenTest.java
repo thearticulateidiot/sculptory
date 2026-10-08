@@ -12,7 +12,9 @@ import dev.sculptory.core.Sha256;
 import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
+import dev.sculptory.core.brush.BiomeSpec;
 import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.SculptMode;
 import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.ShapeSpec;
@@ -47,6 +49,7 @@ import dev.sculptory.core.tinker.EntityEdit;
 import dev.sculptory.core.tinker.EntityEdits;
 import dev.sculptory.core.tinker.SignText;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -67,16 +70,18 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
 /**
- * Protocol v5 is the version of the batch after 2026-09-29 and is frozen when that batch is released: these tests hold the exact bytes of every message type (and of every variant a
+ * Protocol v6 is the version of the batch after 0.3.0-alpha (path extrusion, heightmaps, free rotation, biomes) and is
+ * frozen when that batch is released: these tests hold the exact bytes of every message type (and of every variant a
  * message can carry), the order of every enum that crosses the wire, and the wire caps, against the committed fixture
- * {@code golden-v5.txt}. Until the release, streams of that batch add their messages to v5 and update the fixture
- * with them; after it, any change here (a field, a tag, an appended enum value, a cap) is a new protocol: raise
- * {@link ProtocolV2#VERSION} to 6, keep this fixture as it is, and add a {@code golden-v6.txt} with the new bytes.
+ * {@code golden-v6.txt}. v5 shipped with 0.3.0-alpha; its fixture {@code golden-v5.txt} stays as it was, unread. Until
+ * the release, streams of this batch add their messages to v6 and update the fixture with them; after it, any change
+ * here (a field, a tag, an appended enum value, a cap) is a new protocol: raise {@link ProtocolV2#VERSION} to 7, keep
+ * this fixture as it is, and add a {@code golden-v7.txt} with the new bytes.
  *
  * <p>A failure prints the lines the fixture would need, to copy into the next version's file.
  */
 class WireGoldenTest {
-    private static final String FIXTURE = "golden-v5.txt";
+    private static final String FIXTURE = "golden-v6.txt";
     private static final FakeStateSpace STATES = new FakeStateSpace();
     private static final HexFormat HEX = HexFormat.of();
     private static final UUID ID = new UUID(0x0123456789abcdefL, 0xfedcba9876543210L);
@@ -86,10 +91,10 @@ class WireGoldenTest {
 
     /** The frozen protocol. */
     @Test
-    void theProtocolIsFive() {
-        assertEquals(5, ProtocolV2.VERSION, "v5 is this fixture's version: a new protocol gets its own golden file");
-        assertEquals(5, Handshake.MIN_PROTOCOL);
-        assertEquals(5, Handshake.MAX_PROTOCOL);
+    void theProtocolIsSix() {
+        assertEquals(6, ProtocolV2.VERSION, "v6 is this fixture's version: a new protocol gets its own golden file");
+        assertEquals(6, Handshake.MIN_PROTOCOL);
+        assertEquals(6, Handshake.MAX_PROTOCOL);
     }
 
     /** Every sample encodes to its fixture bytes, and the fixture bytes decode to the sample. */
@@ -111,7 +116,7 @@ class WireGoldenTest {
         }
         List<String> stale = fixture.keySet().stream().filter(name -> !samples.containsKey(name)).toList();
         if (!wanted.isEmpty() || !stale.isEmpty()) {
-            fail("Protocol v5's wire bytes changed. Before v5 is released, update golden-v5.txt; after, a wire change needs protocol 6 (see WireGoldenTest).\n"
+            fail("Protocol v6's wire bytes changed. Before v6 is released, update golden-v6.txt; after, a wire change needs protocol 7 (see WireGoldenTest).\n"
                     + String.join("\n", wanted) + (stale.isEmpty() ? "" : "\nIn the fixture but not sampled: " + stale));
         }
     }
@@ -131,7 +136,7 @@ class WireGoldenTest {
     }
 
     /**
-     * The value order of every enum written by ordinal: a v5 peer refuses an ordinal past its own last value, so
+     * The value order of every enum written by ordinal: a v6 peer refuses an ordinal past its own last value, so
      * appending one is a wire change too.
      */
     @Test
@@ -144,7 +149,7 @@ class WireGoldenTest {
         assertEquals(new TreeMap<>(fixture("enum")), actual, "a wire enum changed:\n" + lines("enum", actual));
     }
 
-    /** The caps a v5 decoder enforces. */
+    /** The caps a v6 decoder enforces. */
     @Test
     void wireCapsKeepTheirValues() {
         Map<String, String> actual = new TreeMap<>();
@@ -172,6 +177,9 @@ class WireGoldenTest {
         actual.put("TINKER_ID_BYTES", Integer.toString(TinkerCodec.ID_BYTES));
         actual.put("TINKER_TEXT_BYTES", Integer.toString(TinkerCodec.TEXT_BYTES));
         actual.put("PROPERTY_NAME_BYTES", Integer.toString(CoreCodec.PROPERTY_NAME_BYTES));
+        actual.put("MAX_PASTE_PLACEMENTS", Integer.toString(OpSpec.PasteMany.MAX_PLACEMENTS));
+        actual.put("HEIGHTMAP_MAX_SIDE", Integer.toString(HeightmapSpec.MAX_SIDE));
+        actual.put("HEIGHTMAP_MAX_HEIGHT_BLOCKS", Integer.toString(HeightmapSpec.MAX_HEIGHT_BLOCKS));
         assertEquals(new TreeMap<>(fixture("cap")), actual, "a wire cap changed:\n" + lines("cap", actual));
     }
 
@@ -202,8 +210,8 @@ class WireGoldenTest {
 
     /**
      * Named samples: every message type, and every variant of the values messages carry. Never edit one in place once
-     * v5 is released. Until v5 is released (no v5 build has shipped), a
-     * change may update a sample and the fixture in place; after the release a change is protocol 6.
+     * v6 is released. Until v6 is released (no v6 build has shipped), a change may update a sample and the fixture in
+     * place; after the release a change is protocol 7.
      */
     static Map<String, Message> samples() {
         Map<String, Message> s = new LinkedHashMap<>();
@@ -231,13 +239,13 @@ class WireGoldenTest {
         Transform turned = new Transform(1, Mirror.X);
 
         // Handshake
-        s.put("hello", new C2S.Hello(5, 5, BUILD, Features.of(Features.STROKES, Features.REGION_OPS, Features.HISTORY)));
-        s.put("welcome", new S2C.Welcome(5, Features.of(Features.STROKES, Features.MODDED_FACING_FALLBACK),
+        s.put("hello", new C2S.Hello(6, 6, BUILD, Features.of(Features.STROKES, Features.REGION_OPS, Features.HISTORY)));
+        s.put("welcome", new S2C.Welcome(6, Features.of(Features.STROKES, Features.MODDED_FACING_FALLBACK),
                 new Limits(2_097_152, 1_000_000, 32, 20, 16L << 20, 2, 2_097_152, 65_536),
                 new PermissionMask(0b1010_0111L), 1234567890123L, BUILD));
-        s.put("welcome_no_build", new S2C.Welcome(5, Features.NONE, Limits.DEFAULTS, PermissionMask.NONE, -5L));
-        s.put("incompatible", new S2C.Incompatible(5, 5, BUILD));
-        s.put("incompatible_for_old_clients", new S2C.Incompatible(5, 5));
+        s.put("welcome_no_build", new S2C.Welcome(6, Features.NONE, Limits.DEFAULTS, PermissionMask.NONE, -5L));
+        s.put("incompatible", new S2C.Incompatible(6, 6, BUILD));
+        s.put("incompatible_for_old_clients", new S2C.Incompatible(6, 6));
         s.put("permissions_changed", new S2C.PermissionsChanged(new PermissionMask(3), Limits.DEFAULTS));
 
         // Brushes
@@ -494,6 +502,37 @@ class WireGoldenTest {
                 List.of(new C2S.ScatterPreview.Variant(new ScatterSource.Feature("minecraft:fancy_oak"), 2),
                         new C2S.ScatterPreview.Variant(new ScatterSource.Feature("minecraft:forest_rock"), 1)),
                 ScatterSettings.Transforms.ALL));
+
+        // The batch after 0.3.0-alpha (protocol 6): orientations, the multi-paste, biomes, the new brushes and labels
+        s.put("run_op_paste_free_orientation", new C2S.RunOp(41, new OpSpec.Paste(new SourceRef.Clipboard(ID),
+                new BlockPos(1, 2, 3), Orientation.free(turned, 1_500, 9_000, 35_999), new PasteOptions(false, false, true,
+                PasteOptions.Into.EVERYTHING, true)), false, ConflictPolicy.SKIP_CONFLICTS));
+        s.put("run_op_move_rotate", new C2S.RunOp(42, new OpSpec.Move(cuboid, BlockPos.ORIGIN,
+                Orientation.free(Transform.IDENTITY, 4_500, 0, 0), single, EntityFilter.values()[1], Symmetry.NONE,
+                PasteOptions.Into.EVERYTHING), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.ROTATE));
+        s.put("run_op_paste_many_stamp", new C2S.RunOp(43, new OpSpec.PasteMany(new SourceRef.Asset(HASH), List.of(
+                new OpSpec.PasteMany.Placement(new BlockPos(10, 64, -20), Orientation.IDENTITY),
+                new OpSpec.PasteMany.Placement(new BlockPos(14, 65, -18), Orientation.of(turned)),
+                new OpSpec.PasteMany.Placement(new BlockPos(18, 66, -16), Orientation.free(Transform.IDENTITY, 2_250, 0, 0))),
+                new PasteOptions(false, false, true, PasteOptions.Into.AIR, true), mirror), false,
+                ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP));
+        s.put("run_op_biome_fill", new C2S.RunOp(44, new OpSpec.BiomeFill(cuboid, "minecraft:cherry_grove", true), false,
+                ConflictPolicy.SKIP_CONFLICTS, OpLabel.BIOME_FILL));
+        s.put("run_op_biome_fill_3d_symmetric", new C2S.RunOp(45, new OpSpec.BiomeFill(sphere, "minecraft:desert", false,
+                rotate), false, ConflictPolicy.SKIP_CONFLICTS));
+        for (OpLabel label : List.of(OpLabel.PATH_EXTRUDE, OpLabel.TAPER, OpLabel.SWEEP, OpLabel.HEIGHTMAP)) {
+            s.put("run_op_paste_" + label.name().toLowerCase(java.util.Locale.ROOT), new C2S.RunOp(46,
+                    new OpSpec.Paste(new SourceRef.Clipboard(ID), new BlockPos(1, 2, 3), Transform.IDENTITY,
+                    new PasteOptions(true, false, false)), false, ConflictPolicy.SKIP_CONFLICTS, label));
+        }
+        byte[] heights = new byte[13 * 13];
+        for (int i = 0; i < heights.length; i++) heights[i] = (byte) (i * 37);
+        s.put("stroke_begin_heightmap", new C2S.StrokeBegin(8, new BrushSpec(BrushTool.HEIGHTMAP, 6, 1f, Falloff.SMOOTH,
+                Shape.SQUARE, null, SurfaceMask.ANY, 0, 0, 10L, null, mirror, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(13, heights, 24, true), null)));
+        s.put("stroke_begin_biome", new C2S.StrokeBegin(9, new BrushSpec(BrushTool.BIOME, 9, 1f, Falloff.CONSTANT,
+                Shape.CIRCLE, null, everySurface, 0, 0, 11L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
+                null, new BiomeSpec("minecraft:mushroom_fields", false))));
 
         // Notices
         s.put("notice", new S2C.Notice(S2C.Notice.Level.WARN, "sculptory.notice.test", List.of("a", "b")));

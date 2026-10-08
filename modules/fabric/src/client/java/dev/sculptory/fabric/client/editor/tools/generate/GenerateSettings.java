@@ -13,6 +13,7 @@ import dev.sculptory.fabric.client.editor.settings.SettingsSchema;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tools.brush.BrushSettings;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Predicate;
 
 /**
@@ -23,8 +24,18 @@ import java.util.function.Predicate;
  * save them all.
  */
 public final class GenerateSettings {
-    /** What the tool generates. */
-    public enum Kind { PATH, ROOF, LINE }
+    /**
+     * What the tool generates. Protocol 6 appends Sweep (the selection swept along a path), Stamp (the clipboard or an
+     * asset copied at each clicked point) and Heightmap (a height image over the selection); they are shown but
+     * unavailable ({@link #KIND}) until ws/extrude-paths and ws/heightmap build them. Presets save the name.
+     */
+    public enum Kind { PATH, ROOF, LINE, SWEEP, STAMP, HEIGHTMAP }
+
+    /** The kinds not built yet, with why they can't be chosen (contract placeholders, protocol 6). */
+    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of(
+            Kind.SWEEP, "sculptory.setting.generate.kind.coming_soon",
+            Kind.STAMP, "sculptory.setting.generate.kind.coming_soon",
+            Kind.HEIGHTMAP, "sculptory.setting.generate.kind.coming_soon");
 
     /** What a road is paved with: one block, or a weighted mix. */
     public enum Material { BLOCK, PALETTE }
@@ -34,7 +45,8 @@ public final class GenerateSettings {
     private static final Predicate<SettingsValues> ROOF = values -> values.get(GenerateSettings.KIND) == Kind.ROOF;
     private static final Predicate<SettingsValues> LINE = values -> values.get(GenerateSettings.KIND) == Kind.LINE;
 
-    public static final SettingDef.Enum<Kind> KIND = new SettingDef.Enum<>("kind", PREFIX + "kind", Kind.class, Kind.PATH);
+    public static final SettingDef.Enum<Kind> KIND = new SettingDef.Enum<>("kind", PREFIX + "kind", Kind.class, Kind.PATH,
+            SettingDef.ALWAYS, KINDS_NOT_BUILT);
 
     // Path
     public static final SettingDef.Int WIDTH = new SettingDef.Int("path.width", PREFIX + "width", 3, RoadKernel.MIN_WIDTH,

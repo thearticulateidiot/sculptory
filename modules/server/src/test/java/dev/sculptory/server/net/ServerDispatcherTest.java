@@ -188,8 +188,8 @@ class ServerDispatcherTest {
 
     /**
      * A client of another protocol is refused with a readable answer: clients of protocol 5 or newer get the server's
-     * build too; older ones (a v4 build from before build ids) exactly the two protocol numbers they decode, 65 | 10 | 10
-     * (the build would be trailing bytes to them).
+     * build too; older ones (a v4 build from before build ids) exactly the two protocol numbers they decode, 65 | 12 | 12
+     * (this build's range 6-6; the build would be trailing bytes to them).
      */
     @Test
     void protocolRefusalsCarryTheServerBuildOnlyToClientsThatReadIt() throws ProtocolException {
@@ -204,8 +204,8 @@ class ServerDispatcherTest {
         transport.sent.clear();
         dispatcher.receive(old, Codec.encodeC2S(new C2S.Hello(4, 4, "0.2.0-dev", Features.NONE), STATES));
         assertEquals("", transport.first(S2C.Incompatible.class).serverBuild());
-        byte[] v4Body = {(byte) MessageType.INCOMPATIBLE.code(), 10, 10};
-        assertArrayEquals(v4Body, transport.lastFrame, "what a protocol 4 client decodes: the range 5-5 and nothing more");
+        byte[] v4Body = {(byte) MessageType.INCOMPATIBLE.code(), 12, 12};
+        assertArrayEquals(v4Body, transport.lastFrame, "what a protocol 4 client decodes: the range 6-6 and nothing more");
         assertEquals(NetSession.Stage.INCOMPATIBLE, old.stage());
     }
 

@@ -63,7 +63,8 @@ final class GhostFilter {
         Set<Key> wanted = new HashSet<>();
         for (GhostPlacement placement : placements) {
             GhostMapping mapping = placement.mapping();
-            Key key = mapping == null ? null
+            // A ghost turned by free angles is a passing preview (it is resampled once it rests): shown whole.
+            Key key = mapping == null || mapping.free() ? null
                     : new Key(placement.volume(), placement.volume().version(), mapping, into, maskRevision);
             keys.add(key);
             if (key != null) wanted.add(key);
@@ -98,7 +99,7 @@ final class GhostFilter {
             GhostVolume filtered = key == null ? null : ready.get(key);
             shown.add(filtered == null || filtered == placement.volume() ? placement
                     : new GhostPlacement(filtered, placement.originX(), placement.originY(), placement.originZ(),
-                            placement.transform(), placement.alpha(), placement.lightMode()));
+                            placement.orientation(), placement.alpha(), placement.lightMode()));
         }
         return shown;
     }

@@ -34,7 +34,7 @@ class SettingTooltipsTest {
     void everySettingOfEveryToolHasATooltip() throws IOException {
         JsonObject lang = lang();
         List<Tool> tools = new EditorTestRig().ctx.tools().paletteOrder();
-        assertEquals(15, tools.size(), "all fifteen palette tools");
+        assertEquals(17, tools.size(), "all seventeen palette tools");
         Set<String> missing = new TreeSet<>();
         int settings = 0;
         for (Tool tool : tools) {

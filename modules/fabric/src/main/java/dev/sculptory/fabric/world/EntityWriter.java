@@ -4,8 +4,10 @@ import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.entity.EntityNbt;
 import dev.sculptory.core.entity.EntityPlacement;
 import dev.sculptory.core.entity.EntitySnapshot;
+import dev.sculptory.core.entity.EntityTurn;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.nbt.NbtIo;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.server.platform.EntityPlacer;
 import dev.sculptory.server.platform.WriteOptions;
@@ -131,8 +133,10 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      * if {@code allowed} accepts it as it would be spawned.
      */
     @Override
-    public Spawn<Entity> place(EntitySnapshot entity, EntityPlacement.Placed where, Transform t,
+    public Spawn<Entity> place(EntitySnapshot entity, EntityPlacement.Placed where, Orientation orientation,
                                Predicate<Entity> allowed) {
+        Transform t = orientation.transform();
+        boolean free = !orientation.isExact();
         dev.sculptory.core.nbt.NbtCompound data;
         try {
             data = EntityNbt.decode(entity.nbt());
@@ -147,7 +151,13 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         }
         // Flipped upside down, an item frame on a floor hangs from the ceiling (a shulker on one clings to the other).
         int hangsFacing = -1;
-        if (t.upsideDown()) {
+        if (free) {
+            // A free turn: the faces it hangs by and a display's own rotation are turned in its data, from the yaw and
+            // pitch the exact part gives it.
+            data = EntityTurn.turnedData(entity.typeId(), data, EntityPlacement.yaw(entity.yaw(), t),
+                    EntityPlacement.pitch(entity.pitch(), t), orientation.matrix(), orientation.rotationMatrix());
+            if (data == null) return failed(entity.typeId(), "it cannot hang on a floor or ceiling");
+        } else if (t.upsideDown()) {
             data = EntityNbt.flippedAttachment(data);
             hangsFacing = EntityNbt.verticalFace(data, "Facing");
         }
@@ -175,13 +185,24 @@ public final class EntityWriter implements EntityPlacer<Entity> {
             notFlipped++;
             return failed(entity.typeId(), "it cannot hang upside down");
         }
-        turn(root, t);
-        for (Entity rider : root.getPassengersDeep()) turn(rider, t);
+        if (free) {
+            double[] rotation = orientation.rotationMatrix();
+            turnFree(root, t, rotation);
+            for (Entity rider : root.getPassengersDeep()) turnFree(rider, t, rotation);
+        } else {
+            turn(root, t);
+            for (Entity rider : root.getPassengersDeep()) turn(rider, t);
+        }
         if (root instanceof BlockAttachedEntity hanging) {
             hang(hanging, where, guess);
+            // Turned by a free angle, the block it hung on may not be behind it any more: it would drop off (and its item
+            // with it) once the game checks, so it is left out instead.
+            if (free && !hanging.canStayAttached()) {
+                return failed(entity.typeId(), "it has no wall to hang on once turned");
+            }
         } else {
             // Flipped, where is the image of its feet: the top of where its box goes.
-            double y = t.upsideDown() ? EntityPlacement.flippedFeet(where.y(), root.getHeight()) : where.y();
+            double y = t.upsideDown() && !free ? EntityPlacement.flippedFeet(where.y(), root.getHeight()) : where.y();
             root.refreshPositionAndAngles(where.x(), y, where.z(), root.getYaw(), root.getPitch());
             root.setHeadYaw(root.getYaw());
             root.setBodyYaw(root.getYaw());
@@ -309,6 +330,18 @@ public final class EntityWriter implements EntityPlacer<Entity> {
             };
             entity.setYaw(entity.applyRotation(rotation));
         }
+    }
+
+    /**
+     * A free turn: a decoration's face is already turned in its data; anything else turns by the exact part as
+     * {@link #turn} does, then a heading turns by the free rotation ({@link EntityTurn#yaw}), except a display's, whose
+     * own rotation took the turn.
+     */
+    private static void turnFree(Entity entity, Transform t, double[] rotation) {
+        if (entity instanceof AbstractDecorationEntity) return;
+        turn(entity, t);
+        if (entity instanceof net.minecraft.entity.decoration.DisplayEntity) return;
+        entity.setYaw(EntityTurn.yaw(entity.getYaw(), rotation));
     }
 
     /**

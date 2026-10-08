@@ -2,6 +2,7 @@ package dev.sculptory.protocol.v2;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.schem.SchematicFormat;
 import dev.sculptory.core.testing.FakeStateSpace;
@@ -29,7 +30,7 @@ class ExportFormatProtocolTest {
             assertEquals(format.ordinal(), frame[frame.length - 1], "the format is the last byte");
         }
         assertEquals(SchematicFormat.SPONGE, new C2S.ExportClipboard(1, ID).format(), "the default is .schem");
-        assertEquals(5, ProtocolV2.VERSION, "the export format is new in protocol 5");
+        assertTrue(ProtocolV2.VERSION >= 5, "the export format is new in protocol 5");
     }
 
     @Test

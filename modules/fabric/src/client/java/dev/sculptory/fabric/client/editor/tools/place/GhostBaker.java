@@ -7,15 +7,19 @@ import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.mask.BoundMask;
 import dev.sculptory.core.generate.GeneratedSource;
+import dev.sculptory.core.state.OrientedStates;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.state.StateTips;
 import dev.sculptory.core.state.VerticalFlip;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostMapping;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostSection;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -146,6 +150,77 @@ public final class GhostBaker {
         BlockPos size = transform.size(sx, frame.sizeY(), sz);
         volume.setFrame(new Box(BlockPos.ORIGIN, new BlockPos(size.x() - 1, size.y() - 1, size.z() - 1)));
         return volume;
+    }
+
+    /**
+     * {@link #bake(Box, Collection, Transform, StateSpace, FlipTally)} for an orientation: an exact one bakes as its
+     * transform does; a free one resamples exactly as the server's paste and move do: each cell of the result box
+     * ({@link Orientation#bounds}, local cells {@code 0..size-1}) takes the source cell
+     * {@link Orientation.Sampler#source} gives, its state turned by {@link OrientedStates}. The tally then counts the
+     * blocks the turn keeps as they are (no tipped or upside-down form) and the modded ones it only partly knows.
+     */
+    public static GhostVolume bake(Box frame, Collection<GhostSection> sections, Orientation orientation,
+                                   StateSpace states, FlipTally tally) {
+        Objects.requireNonNull(orientation);
+        if (orientation.isExact()) return bake(frame, sections, orientation.transform(), states, tally);
+        Objects.requireNonNull(frame);
+        Objects.requireNonNull(states);
+        Long2ObjectOpenHashMap<GhostSection> byKey = new Long2ObjectOpenHashMap<>();
+        for (GhostSection section : List.copyOf(sections)) {
+            byKey.put(BlockBuffer.key(section.sectionX(), section.sectionY(), section.sectionZ()), section);
+        }
+        Orientation.Sampler sampler = orientation.sampler(frame.sizeX(), frame.sizeY(), frame.sizeZ());
+        OrientedStates oriented = new OrientedStates(states, orientation);
+        BlockPos size = sampler.size();
+        BlockPos min = frame.min();
+        BlockBuffer out = new BlockBuffer();
+        int[] cell = new int[3];
+        long kept = 0;
+        long unknown = 0;
+        // Mapped forwards, cell by cell: each source cell fills the result cells that take it (at most 27 looked at), so
+        // the work follows the cells, not the turned box (a sparse selection over a large box costs its cells).
+        int[] takers = new int[81];
+        double[] point = new double[3];
+        for (GhostSection source : byKey.values()) {
+            int baseX = (source.sectionX() << 4) - min.x();
+            int baseY = (source.sectionY() << 4) - min.y();
+            int baseZ = (source.sectionZ() << 4) - min.z();
+            for (int i = 0; i < SectionBuffer.SIZE; i++) {
+                int handle = source.handle(i);
+                if (handle < 0) continue;
+                int n = sampler.takers(baseX + SectionBuffer.localX(i), baseY + SectionBuffer.localY(i),
+                        baseZ + SectionBuffer.localZ(i), takers, point, cell);
+                if (n == 0) continue;
+                int state = oriented.map(handle);
+                for (int k = 0; k < n; k++) out.set(takers[3 * k], takers[3 * k + 1], takers[3 * k + 2], state);
+                if (tally != null) {
+                    int kind = oriented.kind(handle);
+                    if (kind == StateTips.KEPT) kept += n;
+                    else if (kind == StateTips.UNKNOWN_PROPERTIES) unknown += n;
+                }
+            }
+        }
+        if (tally != null) {
+            tally.kept = kept;
+            tally.unknown = unknown;
+        }
+        GhostVolume volume = GhostVolume.of(out, air(states));
+        volume.setFrame(new Box(BlockPos.ORIGIN, new BlockPos(size.x() - 1, size.y() - 1, size.z() - 1)));
+        return volume;
+    }
+
+    /**
+     * The ghost of a symmetric copy of a free move, as the server writes it: {@code copy} (the copy's own selection,
+     * read from the world in its box) turned back into the original's frame by the image's inverse, resampled with
+     * {@code orientation} (the original's), then turned by the image, so it shows the exact image of what the original
+     * would write from those blocks. In the copy's result box: place it at the image of the original's result box.
+     */
+    public static GhostVolume bakeImage(GhostVolume copy, dev.sculptory.core.brush.Symmetry.Image image,
+                                        Orientation orientation, StateSpace states) {
+        Box frame = Objects.requireNonNull(copy.frame());
+        GhostVolume back = bake(frame, copy.sections(), image.inverse().transform(), states);
+        GhostVolume turned = bake(Objects.requireNonNull(back.frame()), back.sections(), orientation, states, null);
+        return bake(Objects.requireNonNull(turned.frame()), turned.sections(), image.transform(), states);
     }
 
     /**

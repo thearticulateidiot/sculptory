@@ -30,7 +30,12 @@ public enum Perm {
      * Jump and Through, in the editor and in normal play (needs {@link #USE} and Creative or
      * Spectator); granted like {@link #BRUSH}, by the op-level fallback.
      */
-    NAVIGATE("sculptory.navigate");
+    NAVIGATE("sculptory.navigate"),
+    /**
+     * Biome painting and filling (protocol 6: the Biome brush and {@code BiomeFill}; needs {@link #USE}); granted like
+     * {@link #BRUSH}, by the op-level fallback. Pasting a clipboard's biomes needs it too.
+     */
+    BIOME("sculptory.biome");
 
     private final String node;
 

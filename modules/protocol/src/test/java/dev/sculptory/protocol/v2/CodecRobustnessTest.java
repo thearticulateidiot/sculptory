@@ -144,7 +144,7 @@ class CodecRobustnessTest {
     /**
      * A client before protocol 5 (a v4 build from before build ids) decodes {@code Incompatible} as its two protocol
      * numbers and nothing after them, so the server leaves its build id out for such clients (and for everyone when it
-     * has none): the body is then exactly what such clients read, {@code 65 | zigzag 5 | zigzag 5}.
+     * has none): the body is then exactly what such clients read, {@code 65 | zigzag 6 | zigzag 6} (this build's range).
      */
     @Test
     void incompatibleForOldClientsIsJustTheProtocolRange() throws ProtocolException {
@@ -152,7 +152,7 @@ class CodecRobustnessTest {
         S2C.Incompatible toOld = (S2C.Incompatible) Handshake.answer(v4, Features.NONE, Limits.DEFAULTS,
                 PermissionMask.NONE, 1L, "0.2.0-dev+new");
         assertEquals("", toOld.serverBuild());
-        assertArrayEquals(frame(MessageType.INCOMPATIBLE.code(), 10, 10), Codec.encodeS2C(toOld, STATES));
+        assertArrayEquals(frame(MessageType.INCOMPATIBLE.code(), 12, 12), Codec.encodeS2C(toOld, STATES));
 
         C2S.Hello v9 = new C2S.Hello(9, 9, "9.0.0", Features.NONE);
         S2C.Incompatible toNew = (S2C.Incompatible) Handshake.answer(v9, Features.NONE, Limits.DEFAULTS,
@@ -288,11 +288,12 @@ class CodecRobustnessTest {
         assertEquals((1 | (Mirror.Z.ordinal() << 2)), paste[transformAt]);
         paste[transformAt] = (byte) 0xFC;
         assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(C2S_DECODER, paste));
-        // Protocol 5: bit 4 is the flip upside down; bits 5-7 must be zero.
+        // Protocol 5: bit 4 is the flip upside down; bits 6-7 must be zero (bit 5, protocol 6: free angles follow;
+        // ProtocolSixTest).
         paste[transformAt] = (byte) (1 | (Mirror.Z.ordinal() << 2) | 0x10);
         C2S.RunOp flipped = (C2S.RunOp) Codec.decodeC2S(paste, STATES);
         assertEquals(new dev.sculptory.core.transform.Transform(1, Mirror.Z, true), ((OpSpec.Paste) flipped.op()).t());
-        for (int high : new int[] {0x20, 0x40, 0x80}) {
+        for (int high : new int[] {0x40, 0x80}) {
             paste[transformAt] = (byte) (1 | high);
             assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(C2S_DECODER, paste), "bit " + high);
         }

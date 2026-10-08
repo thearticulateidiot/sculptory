@@ -11,21 +11,33 @@ import dev.sculptory.core.edit.CopySupport.StateMapper;
 import dev.sculptory.core.mask.BoundMask;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.Regions;
+import dev.sculptory.core.state.OrientedStates;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.core.world.WorldReader;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.Objects;
 
 /**
- * Moves a region's cells: the region's bounds (cut to the build height) are the box the transform turns, landing with
- * their minimum corner on {@code bounds.min() + offset}; a flip upside down turns the cells over within the region's
- * whole (uncut) height, the pivot the client shows, so a cut selection's cells land where their image there would (cells
- * flipped out of the build height are lost, as by a move out of it); every region
+ * Moves a region's cells: the region's bounds (cut to the build height) are the box an exact transform turns, landing
+ * with their minimum corner on {@code bounds.min() + offset}; a flip upside down turns the cells over within the
+ * region's whole (uncut) height, the pivot the client shows, so a cut selection's cells land where their image there
+ * would (cells flipped out of the build height are lost, as by a move out of it); every region
  * cell is written there transformed (air included), then the vacated cells (region cells no moved cell lands on) are set
  * from the {@code leave} pattern. Cells outside the region are neither moved nor touched. Every read comes from the
  * pre-write snapshot of the region's sections, so an overlapping source and destination are handled exactly. Only the
  * region's cells inside the build height move, and only the moved cells inside it are written.
+ *
+ * <p>A <b>free orientation</b> turns the region's whole bounds (the pivot the client shows, as the flip's) about their
+ * middle cell, and only its cells inside the build height move; the result box
+ * ({@link dev.sculptory.core.transform.Orientation#bounds}) lands with its minimum corner on
+ * {@code bounds.min() + turned.offset() + offset}, and a destination leaving the build height is refused. The landing
+ * cells are the result cells whose source cell ({@link dev.sculptory.core.transform.Orientation.Sampler#source}, the
+ * nearest) is such a region cell, a cell set worked out cell by cell ({@link #landing}; the server works it out once, at
+ * admission, and passes it in); states take the nearest cube turn
+ * ({@link dev.sculptory.core.state.OrientedStates}). A symmetric copy is the exact image of the original
+ * ({@link #compileImage}).
  *
  * <p>{@link OpSpec.Move#into()} filters the landing cells by their content right before the write: a landing cell it leaves out is neither written nor claimed, and the
  * region cell whose block would have landed there is vacated all the same, so that block is lost (undo brings it
@@ -39,7 +51,7 @@ import java.util.Objects;
  * decided the same way whenever it is asked.
  */
 final class MoveProgram implements ClaimingProgram {
-    /** The region's bounds cut to the build height: the box the transform turns. */
+    /** The region's bounds cut to the build height (an exact transform turns them; a free one the whole bounds). */
     private final Box source;
     /** Where {@link #source} lands: shifted, or with the flip its image within the region's uncut height, shifted. */
     private final Box destination;
@@ -72,10 +84,13 @@ final class MoveProgram implements ClaimingProgram {
     private final LongOpenHashSet snapshotColumns;
     private final long[] sourceSections;
     private final long[] order;
+    /** A free orientation's cell and state maps; null for an exact one. */
+    private final FreeMap free;
 
     private MoveProgram(Region region, Region moved, Box source, Box destination, Box written, RegionProgram.Height height,
                         Pattern leave, StateSpace states, Transform t, PasteOptions.Into into, long[] sourceSections,
-                        long[] movedSections, CopyFrame frame, BoundMask lift) {
+                        long[] movedSections, CopyFrame frame, BoundMask lift, FreeMap free) {
+        this.free = free;
         this.region = region;
         this.lift = lift;
         this.moved = moved;
@@ -122,7 +137,7 @@ final class MoveProgram implements ClaimingProgram {
             this.sourceSections = sourceSections;
             this.snapshotColumns = null;
         }
-        if (region instanceof Region.Cuboid) {
+        if (region instanceof Region.Cuboid && free == null) {
             Box overlap = CopySupport.intersection(source, written);
             this.estimatedCells = written.volume() + source.volume() - (overlap == null ? 0 : overlap.volume());
         } else {
@@ -151,10 +166,13 @@ final class MoveProgram implements ClaimingProgram {
      */
     static MoveProgram compile(OpSpec.Move op, Pattern leave, StateSpace states, RegionProgram.Height height,
                                long maxSections, CopyFrame frame, BoundMask lift) {
+        if (!op.orientation().isExact()) {
+            return compileFree(op, leave, states, height, maxSections, frame, lift, false, null, Long.MAX_VALUE);
+        }
         Region region = op.region();
         Box uncut = region.bounds();
         Box source = height.bounds(uncut);
-        Transform t = op.t();
+        Transform t = op.orientation().transform();
         BlockPos size = t.size(source.sizeX(), source.sizeY(), source.sizeZ());
         // The flip's pivot is the selection's whole bounds, as the client shows them: the cut source turns over within
         // the uncut height, so it lands where its image there would, shifted by the offset.
@@ -186,7 +204,130 @@ final class MoveProgram implements ClaimingProgram {
                     new RegionProgram.Height(written.min().y(), written.max().y()), cap);
         }
         return new MoveProgram(region, moved, source, destination, written, height, leave, states, t, op.into(),
-                sourceSections, movedSections, frame, Objects.requireNonNull(lift));
+                sourceSections, movedSections, frame, Objects.requireNonNull(lift), null);
+    }
+
+    /**
+     * A symmetric copy of a move with a free orientation: the exact image under {@code frame} of what {@code original}
+     * (the move without symmetry) does. Its region is the image of the original's, its cells land on the images of
+     * where the original's land, each taking the block at the image of the original's source cell, turned by
+     * {@code image · orientation · image⁻¹}; the leave pattern is the copy's, as for an exact copy.
+     *
+     * @throws IllegalArgumentException as {@link #compile(OpSpec.Move, Pattern, StateSpace, RegionProgram.Height, long)},
+     *     or if the image leaves the coordinate range
+     */
+    static MoveProgram compileImage(OpSpec.Move original, Pattern leave, StateSpace states, RegionProgram.Height height,
+                                    long maxSections, CopyFrame frame, BoundMask lift, Region moved, long maxCells) {
+        if (original.orientation().isExact()) throw new IllegalArgumentException("An exact move's copy is a move");
+        return compileFree(original, leave, states, height, maxSections, Objects.requireNonNull(frame), lift, true, moved,
+                maxCells);
+    }
+
+    /**
+     * The landing cells of a move with a free orientation: the result cells whose source cell is a region cell inside the
+     * build height, the region's whole bounds turning about their middle cell (see {@link #compileFree}).
+     *
+     * @throws IllegalArgumentException if the destination leaves the coordinate range or the build height
+     * @throws EditTooLargeException past {@code maxSections} sections or {@code maxCells} region cells
+     */
+    static Region landing(OpSpec.Move op, RegionProgram.Height height, long maxSections, long maxCells) {
+        Region region = op.region();
+        Box pivot = region.bounds();
+        Orientation.Sampler sampler = op.orientation().sampler(pivot.sizeX(), pivot.sizeY(), pivot.sizeZ());
+        BlockPos at = sampler.offset();
+        Box destination = CopySupport.boxAt((long) pivot.min().x() + at.x() + op.offset().x(),
+                (long) pivot.min().y() + at.y() + op.offset().y(), (long) pivot.min().z() + at.z() + op.offset().z(),
+                sampler.size());
+        Box written = height.clip(destination);
+        if (written == null || !written.equals(destination)) {
+            throw new IllegalArgumentException("The turned move would leave the build height: " + destination);
+        }
+        try {
+            return Regions.moved(region, pivot, destination.min(), sampler, height.bottom(), height.top(),
+                    Math.min(maxSections, RegionProgram.MAX_SECTIONS) / 2, maxCells);
+        } catch (dev.sculptory.core.region.RegionTooLargeException e) {
+            throw new EditTooLargeException(e.getMessage(), e.cells(), e.limit());
+        }
+    }
+
+    /**
+     * A move with a free orientation, its landing cells ({@code moved}) worked out already (the server does that once,
+     * at admission), or {@code null} to work them out here, refusing a region of more than {@code maxCells} cells
+     * ({@link Regions#moved(Region, Box, BlockPos, Orientation.Sampler, int, int, long, long)}).
+     *
+     * @throws IllegalArgumentException as {@link #compile(OpSpec.Move, Pattern, StateSpace, RegionProgram.Height, long)}
+     * @throws EditTooLargeException if the region has more than {@code maxCells} cells (or sections than allowed)
+     */
+    static MoveProgram compileFree(OpSpec.Move op, Pattern leave, StateSpace states, RegionProgram.Height height,
+                                   long maxSections, BoundMask lift, Region moved, long maxCells) {
+        if (op.orientation().isExact()) throw new IllegalArgumentException("Not a free move");
+        return compileFree(op, leave, states, height, maxSections, null, lift, false, moved, maxCells);
+    }
+
+    /**
+     * A free orientation: the region's whole bounds are the box it turns about its middle cell (only the cells inside the
+     * build height move), the result box landing with its minimum corner on {@code bounds.min() + turned.offset() +
+     * offset}. The moved region is {@code precomputed} or {@link #landing}, a cell set. A destination leaving the build
+     * height is refused, as a flipped one is.
+     */
+    private static MoveProgram compileFree(OpSpec.Move op, Pattern leave, StateSpace states, RegionProgram.Height height,
+                                           long maxSections, CopyFrame frame, BoundMask lift, boolean image,
+                                           Region precomputed, long maxCells) {
+        Region region = op.region();
+        // The whole bounds turn (the pivot the client shows, as the flip's); only the cells inside the build height move.
+        Box pivot = region.bounds();
+        Box source = height.bounds(pivot);
+        Orientation.Sampler sampler = op.orientation().sampler(pivot.sizeX(), pivot.sizeY(), pivot.sizeZ());
+        BlockPos at = sampler.offset();
+        Box destination = CopySupport.boxAt((long) pivot.min().x() + at.x() + op.offset().x(),
+                (long) pivot.min().y() + at.y() + op.offset().y(), (long) pivot.min().z() + at.z() + op.offset().z(),
+                sampler.size());
+        Box written = height.clip(destination);
+        if (written == null || !written.equals(destination)) {
+            throw new IllegalArgumentException("The turned move would leave the build height: " + destination);
+        }
+        long cap = Math.min(maxSections, RegionProgram.MAX_SECTIONS) / 2;
+        Region moved = precomputed != null ? precomputed : landing(op, height, maxSections, maxCells);
+        FreeMap free = new FreeMap(sampler, new OrientedStates(states, op.orientation()), pivot.min(),
+                destination.min(), image ? frame : null);
+        if (image) {
+            region = Regions.image(region, frame.symmetry(), frame.image());
+            moved = Regions.image(moved, frame.symmetry(), frame.image());
+            source = frame.imageBox(source);
+            destination = frame.imageBox(destination);
+            written = destination;
+        }
+        long[] sourceSections = RegionProgram.regionSections(region, height, cap);
+        long[] movedSections = RegionProgram.regionSections(moved,
+                new RegionProgram.Height(written.min().y(), written.max().y()), cap);
+        return new MoveProgram(region, moved, source, destination, written, height, leave, states, Transform.IDENTITY,
+                op.into(), sourceSections, movedSections, frame, Objects.requireNonNull(lift), free);
+    }
+
+    /**
+     * Where a free move's landing cells take their blocks from, and how it turns them: through the sampler of the
+     * original's boxes, and for a symmetric copy through the image (its landing cell's pre-image, the image of the
+     * original's source cell, the state turned back, oriented and turned again).
+     */
+    private record FreeMap(Orientation.Sampler sampler, OrientedStates oriented, BlockPos sourceMin,
+                           BlockPos destinationMin, CopyFrame image) {
+        /** The world source cell of landing cell (x, y, z) into {@code out}; false when it takes none. */
+        boolean source(int x, int y, int z, int[] out) {
+            int px = image == null ? x : image.preX(x, z), pz = image == null ? z : image.preZ(x, z);
+            if (!sampler.source(px - destinationMin.x(), y - destinationMin.y(), pz - destinationMin.z(), out)) {
+                return false;
+            }
+            int sx = sourceMin.x() + out[0], sz = sourceMin.z() + out[2];
+            out[0] = image == null ? sx : image.imageX(sx, sz);
+            out[1] += sourceMin.y();
+            out[2] = image == null ? sz : image.imageZ(sx, sz);
+            return true;
+        }
+
+        int state(int state) {
+            if (image == null) return oriented.map(state);
+            return image.mapState(oriented.map(image.unmapState(state)));
+        }
     }
 
     @Override
@@ -230,6 +371,7 @@ final class MoveProgram implements ClaimingProgram {
         int left = Regions.rows(region, key, height.bottom(), height.top(), leaving);
         if (landed == 0 && left == 0) return;
         SectionCursor snapshot = new SectionCursor(ctx::source);
+        int[] cell = new int[3];
         // The world before the move, for the source mask: the cell alone (a cell-only mask), or the snapshots only.
         WorldReader beforeMove = lift.acceptsAll() ? null : new Frozen(ctx, snapshotColumns);
         for (int r = 0; r < Regions.ROWS; r++) {
@@ -250,7 +392,7 @@ final class MoveProgram implements ClaimingProgram {
             ClaimingProgram.claimRow(claimed, r, covered);
             for (int bits = lands & free; bits != 0; bits &= bits - 1) {
                 int lx = Integer.numberOfTrailingZeros(bits);
-                copyCell(before, out, snapshot, base | lx, ox + lx, y, z);
+                copyCell(before, out, snapshot, base | lx, ox + lx, y, z, cell);
             }
             for (int bits = vacated & free; bits != 0; bits &= bits - 1) {
                 int lx = Integer.numberOfTrailingZeros(bits);
@@ -272,6 +414,17 @@ final class MoveProgram implements ClaimingProgram {
      */
     private int liftedSources(WorldReader beforeMove, int bits, int ox, int y, int z) {
         int lifted = 0;
+        if (free != null) {
+            int[] cell = new int[3];
+            for (int b = bits; b != 0; b &= b - 1) {
+                int lx = Integer.numberOfTrailingZeros(b);
+                if (!free.source(ox + lx, y, z, cell)) continue;
+                if (lift.test(cell[0], cell[1], cell[2], beforeMove.get(cell[0], cell[1], cell[2]), beforeMove)) {
+                    lifted |= 1 << lx;
+                }
+            }
+            return lifted;
+        }
         for (int b = bits; b != 0; b &= b - 1) {
             int lx = Integer.numberOfTrailingZeros(b);
             int tx = ox + lx - destination.min().x(), tz = z - destination.min().z();
@@ -354,7 +507,18 @@ final class MoveProgram implements ClaimingProgram {
     }
 
     /** Writes the moved cell landing on (x, y, z) from its source cell in the snapshot. */
-    private void copyCell(SectionBuffer before, SectionBuffer out, SectionCursor snapshot, int i, int x, int y, int z) {
+    private void copyCell(SectionBuffer before, SectionBuffer out, SectionCursor snapshot, int i, int x, int y, int z,
+                          int[] cell) {
+        if (free != null) {
+            if (!free.source(x, y, z, cell)) return;
+            SectionBuffer section = snapshot.at(cell[0], cell[1], cell[2]);
+            if (section == null) return;
+            int si = SectionBuffer.index(cell[0] & 15, cell[1] & 15, cell[2] & 15);
+            int state = section.get(si);
+            if (state < 0) return;
+            CopySupport.copyCell(before, out, i, free.state(state), section.tile(si));
+            return;
+        }
         int tx = x - destination.min().x(), tz = z - destination.min().z();
         int sx = source.min().x() + inverse.x(tx, tz), sz = source.min().z() + inverse.z(tx, tz);
         // The destination's y range is the source's shifted, turned upside down with the flip.

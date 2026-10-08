@@ -19,6 +19,10 @@ public record ToolId(String value) {
     public static final ToolId FLUID = new ToolId("fluid");
     public static final ToolId TINKER = new ToolId("tinker");
     public static final ToolId WEATHER = new ToolId("weather");
+    /** Protocol 6: the Heightmap brush (palette slot 16). */
+    public static final ToolId HEIGHTMAP = new ToolId("heightmap");
+    /** Protocol 6: the Biome tool (palette slot 17). */
+    public static final ToolId BIOME = new ToolId("biome");
 
     public ToolId {
         Objects.requireNonNull(value);

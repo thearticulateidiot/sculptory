@@ -124,10 +124,10 @@ class RegionProtocolTest {
             byte[] frame = encode(run);
             assertEquals(run, Codec.decodeC2S(frame, STATES));
             // type, reqId, empty palette, op tag, source tag, 16-byte id, origin (3), transform, options, into,
-            // symmetry (Off: one byte), physics, policy, label
+            // symmetry (Off: one byte), physics, policy, label. Bit 3 is biomes (protocol 6: ProtocolSixContractsTest).
             int at = frame.length - 6;
             assertEquals(bits, frame[at]);
-            for (int unknown : new int[] {8, 9, 16, 0x80, 0xFF}) {
+            for (int unknown : new int[] {16, 17, 0x20, 0x80, 0xFF}) {
                 assertEquals(ProtocolException.Reason.MALFORMED, c2sReason(patched(frame, at, unknown)), "bits " + unknown);
             }
         }

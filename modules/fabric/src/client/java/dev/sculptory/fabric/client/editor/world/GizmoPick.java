@@ -3,7 +3,8 @@ package dev.sculptory.fabric.client.editor.world;
 import java.util.Optional;
 
 /**
- * Picking and dragging for the placement gizmo: X/Y/Z arrows and a Y rotation ring around an origin.
+ * Picking and dragging for the placement gizmo: X/Y/Z arrows and three rotation rings around an origin: around up (Y),
+ * around east-west (X) and around north-south (Z).
  * Pure maths; {@code GizmoRenderer} draws exactly this geometry.
  *
  * <p>The gizmo keeps a constant screen size: one gizmo unit is {@link #scale(double)} blocks, which
@@ -31,24 +32,50 @@ public final class GizmoPick {
 
     /** A gizmo part. */
     public enum Handle {
-        AXIS_X(0),
-        AXIS_Y(1),
-        AXIS_Z(2),
-        ROTATE_Y(-1);
+        AXIS_X(0, -1),
+        AXIS_Y(1, -1),
+        AXIS_Z(2, -1),
+        /** The ring around up: turns the yaw. */
+        ROTATE_Y(-1, 1),
+        /** The ring around east-west: turns about the X axis (pitch). */
+        ROTATE_X(-1, 0),
+        /** The ring around north-south: turns about the Z axis (roll). */
+        ROTATE_Z(-1, 2);
 
         private final int axis;
+        private final int ringAxis;
 
-        Handle(int axis) {
+        Handle(int axis, int ringAxis) {
             this.axis = axis;
+            this.ringAxis = ringAxis;
         }
 
-        /** 0 = X, 1 = Y, 2 = Z; -1 for the rotation ring. */
+        /** 0 = X, 1 = Y, 2 = Z; -1 for a rotation ring. */
         public int axis() {
             return axis;
         }
 
         public boolean isAxis() {
             return axis >= 0;
+        }
+
+        /** The axis a rotation ring turns about (0 = X, 1 = Y, 2 = Z); -1 for an arrow. */
+        public int ringAxis() {
+            return ringAxis;
+        }
+
+        public boolean isRing() {
+            return ringAxis >= 0;
+        }
+
+        /** The ring around {@code axis}. */
+        public static Handle ofRing(int axis) {
+            return switch (axis) {
+                case 0 -> ROTATE_X;
+                case 1 -> ROTATE_Y;
+                case 2 -> ROTATE_Z;
+                default -> throw new IllegalArgumentException("axis must be 0, 1 or 2: " + axis);
+            };
         }
 
         public static Handle ofAxis(int axis) {
@@ -126,22 +153,26 @@ public final class GizmoPick {
         }
 
         double ringRadius = RING_RADIUS * scale;
-        boolean previousVisible = projector.project(originX + ringRadius, originY, originZ, a);
-        for (int i = 1; i <= RING_SEGMENTS; i++) {
-            double angle = 2 * Math.PI * i / RING_SEGMENTS;
-            boolean visible = projector.project(
-                    originX + ringRadius * Math.cos(angle), originY, originZ + ringRadius * Math.sin(angle), b);
-            if (previousVisible && visible) {
-                double distance = distanceToSegment(cursorX, cursorY, a[0], a[1], b[0], b[1]);
-                if (distance < bestDistance) {
-                    bestDistance = distance;
-                    best = Handle.ROTATE_Y;
+        double[] p = new double[3];
+        // The up ring first: where rings cross, it wins.
+        for (int ringAxis : new int[] {1, 0, 2}) {
+            ringPoint(ringAxis, ringRadius, 0, p);
+            boolean previousVisible = projector.project(originX + p[0], originY + p[1], originZ + p[2], a);
+            for (int i = 1; i <= RING_SEGMENTS; i++) {
+                ringPoint(ringAxis, ringRadius, 2 * Math.PI * i / RING_SEGMENTS, p);
+                boolean visible = projector.project(originX + p[0], originY + p[1], originZ + p[2], b);
+                if (previousVisible && visible) {
+                    double distance = distanceToSegment(cursorX, cursorY, a[0], a[1], b[0], b[1]);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = Handle.ofRing(ringAxis);
+                    }
                 }
+                double[] swap = a;
+                a = b;
+                b = swap;
+                previousVisible = visible;
             }
-            double[] swap = a;
-            a = b;
-            b = swap;
-            previousVisible = visible;
         }
 
         if (best == null || bestDistance > radiusPx) {
@@ -211,6 +242,117 @@ public final class GizmoPick {
             return Double.NaN;
         }
         return Math.atan2(ray.pointZ(t) - originZ, ray.pointX(t) - originX);
+    }
+
+    /**
+     * The offset from the origin of the point at {@code angle} (radians) on the ring of {@code radius} around
+     * {@code axis}, into {@code out}: angle 0 lies on the next axis round (X ring: +Y, Y ring: +X, Z ring: +X) and positive
+     * angles turn as the orientation's angles do (X ring: up to south, Y ring: east to south, Z ring: east to up).
+     * {@code GizmoRenderer} draws the rings with it.
+     */
+    public static void ringPoint(int axis, double radius, double angle, double[] out) {
+        double c = radius * Math.cos(angle), s = radius * Math.sin(angle);
+        switch (axis) {
+            case 0 -> {
+                out[0] = 0;
+                out[1] = c;
+                out[2] = s;
+            }
+            case 1 -> {
+                out[0] = c;
+                out[1] = 0;
+                out[2] = s;
+            }
+            default -> {
+                out[0] = c;
+                out[1] = s;
+                out[2] = 0;
+            }
+        }
+    }
+
+    /**
+     * Angle (radians) of where the ray crosses the plane of the ring around {@code axis}, measured around the origin as
+     * {@link #ringPoint} measures it (so a positive change turns the way the orientation's angle about that axis does).
+     * {@code NaN} when the ray runs along the plane or away from it.
+     */
+    public static double ringAngle(int axis, double originX, double originY, double originZ, Ray ray) {
+        double[] origin = {originX, originY, originZ};
+        double[] from = {ray.originX(), ray.originY(), ray.originZ()};
+        double[] direction = {ray.dirX(), ray.dirY(), ray.dirZ()};
+        if (Math.abs(direction[axis]) < 1e-9) return Double.NaN;
+        double t = (origin[axis] - from[axis]) / direction[axis];
+        if (t < 0) return Double.NaN;
+        double dx = ray.pointX(t) - originX, dy = ray.pointY(t) - originY, dz = ray.pointZ(t) - originZ;
+        return switch (axis) {
+            case 0 -> Math.atan2(dz, dy);
+            case 1 -> Math.atan2(dz, dx);
+            default -> Math.atan2(dy, dx);
+        };
+    }
+
+    /** Snaps a ring drag of every {@link #RING_SNAP} 1/100 degree. */
+    public static final int RING_SNAP = 1_500;
+
+    /**
+     * A turn of {@code radians} as a whole number of 1/100 degree: snapped to {@link #RING_SNAP} (15°) steps, or to the
+     * nearest 1/100 degree when {@code free} (Ctrl held).
+     */
+    public static int snapTurn(double radians, boolean free) {
+        double centidegrees = Math.toDegrees(radians) * 100;
+        if (free) return (int) Math.round(centidegrees);
+        return (int) Math.round(centidegrees / RING_SNAP) * RING_SNAP;
+    }
+
+    /**
+     * An in-progress drag of a rotation ring. {@link #update} returns the turn since the ring was grabbed, in 1/100
+     * degree, followed round past a half turn (each move adds the change since the last one); a ray that misses the
+     * ring's plane keeps the last turn.
+     */
+    public static final class RingDrag {
+        private final int axis;
+        private final double originX;
+        private final double originY;
+        private final double originZ;
+        private double last;
+        private double total;
+        private int turn;
+
+        private RingDrag(int axis, double originX, double originY, double originZ, double grab) {
+            this.axis = axis;
+            this.originX = originX;
+            this.originY = originY;
+            this.originZ = originZ;
+            this.last = grab;
+        }
+
+        /** Starts a drag; empty when the handle is not a ring or the ray misses its plane. */
+        public static Optional<RingDrag> begin(Handle handle, double originX, double originY, double originZ, Ray ray) {
+            if (!handle.isRing()) return Optional.empty();
+            double grab = ringAngle(handle.ringAxis(), originX, originY, originZ, ray);
+            if (Double.isNaN(grab)) return Optional.empty();
+            return Optional.of(new RingDrag(handle.ringAxis(), originX, originY, originZ, grab));
+        }
+
+        /** The turn so far, in 1/100 degree: snapped to 15° unless {@code free}. */
+        public int update(Ray ray, boolean free) {
+            double angle = ringAngle(axis, originX, originY, originZ, ray);
+            if (!Double.isNaN(angle)) {
+                total += Math.IEEEremainder(angle - last, 2 * Math.PI);
+                last = angle;
+                turn = snapTurn(total, free);
+            }
+            return turn;
+        }
+
+        public int turn() {
+            return turn;
+        }
+
+        /** 0 = X, 1 = Y, 2 = Z. */
+        public int axis() {
+            return axis;
+        }
     }
 
     /** Quarter turns (-2..2) between two ring angles, rounded; 0 when either is NaN. */

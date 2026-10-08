@@ -118,15 +118,15 @@ class EditorHudTest {
             }
         }
         assertEquals(List.of(2, 8, 10, 15), EditorCommands.TOOL_GROUP_STARTS.stream().sorted().toList(),
-                "Select · Terrain 2-7 · Place and scatter 8-9 · Build 10-14 · Weather 15");
+                "Select · Terrain 2-7 · Place and scatter 8-9 · Build 10-14 · Weather, Heightmap and Biome 15-17");
     }
 
     @Test
     void eachSlotShowsItsKeyAsBoundAndFollowsTheKeysWindow() {
         frame();
         List<String> labels = palette();
-        assertEquals(List.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "[", "]", "\\"), labels,
-                "slots 11-15 read -, =, [, ], \\ (not 1-5)");
+        assertEquals(List.of("1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "[", "]", "\\", ";", "'"),
+                labels, "slots 11-17 read -, =, [, ], \\, ;, ' (not 1-7)");
 
         rig.keymap.bind(KeyAction.TOOL_11, List.of(KeyChord.parse("ctrl+1")));
         rig.keymap.bind(KeyAction.TOOL_12, List.of());

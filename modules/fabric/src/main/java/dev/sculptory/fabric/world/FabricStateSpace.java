@@ -5,7 +5,9 @@ import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.state.ModdedFacingFallback;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.state.StateTips;
 import dev.sculptory.core.state.VerticalFlip;
+import dev.sculptory.core.transform.CubeTurn;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.protocol.v2.Features;
 import java.util.ArrayList;
@@ -128,6 +130,8 @@ public final class FabricStateSpace implements StateSpace {
     private final int[] columnTops, columnBodies;
     /** The upside-down flip's tables ({@link #flip}), built with the space. */
     private final VerticalFlip verticalFlip;
+    /** The tip tables ({@link #tip}), built with the space; modded states tip only while the fallback is on. */
+    private final StateTips tips;
 
     private FabricStateSpace(BlockState[] states, int[] flags, int[] fluidSources, NamespacedId[] blockIds, int air,
                              Set<String> signTypes, int[] columnTops, int[] columnBodies) {
@@ -143,10 +147,12 @@ public final class FabricStateSpace implements StateSpace {
         this.columnTops = columnTops;
         this.columnBodies = columnBodies;
         this.verticalFlip = VerticalFlip.NONE;
+        this.tips = StateTips.NONE;
     }
 
-    /** {@code from} with another fallback and flip tables: the same handles, flags and caches. */
-    private FabricStateSpace(FabricStateSpace from, ModdedFacingFallback fallback, VerticalFlip verticalFlip) {
+    /** {@code from} with other fallback, flip and tip tables: the same handles, flags and caches. */
+    private FabricStateSpace(FabricStateSpace from, ModdedFacingFallback fallback, VerticalFlip verticalFlip,
+                             StateTips tips) {
         this.states = from.states;
         this.flags = from.flags;
         this.fluidSources = from.fluidSources;
@@ -159,6 +165,7 @@ public final class FabricStateSpace implements StateSpace {
         this.columnBodies = from.columnBodies;
         this.fallback = Objects.requireNonNull(fallback);
         this.verticalFlip = Objects.requireNonNull(verticalFlip);
+        this.tips = Objects.requireNonNull(tips).moddedEnabled(fallback.enabled());
     }
 
     /**
@@ -218,7 +225,14 @@ public final class FabricStateSpace implements StateSpace {
             LOG.warn("Could not build the upside-down flip; blocks keep their states when flipped", e);
             flip = VerticalFlip.NONE;
         }
-        return new FabricStateSpace(own, fallback, flip);
+        StateTips tips;
+        try {
+            tips = StateTips.build(own, own.propertyAccess(), new FlipHints(states), new TipShapes(states));
+        } catch (RuntimeException e) {
+            LOG.warn("Could not build the tip tables; blocks keep their states when a free turn tips them", e);
+            tips = StateTips.NONE;
+        }
+        return new FabricStateSpace(own, fallback, flip, tips);
     }
 
     /**
@@ -226,7 +240,7 @@ public final class FabricStateSpace implements StateSpace {
      * already is). Each call makes a new view, so callers that compare spaces by identity keep the one they got.
      */
     public FabricStateSpace withModdedFacingFallback(boolean on) {
-        return on == fallback.enabled() ? this : new FabricStateSpace(this, fallback.enabled(on), verticalFlip);
+        return on == fallback.enabled() ? this : new FabricStateSpace(this, fallback.enabled(on), verticalFlip, tips);
     }
 
     /**
@@ -430,6 +444,24 @@ public final class FabricStateSpace implements StateSpace {
         return verticalFlip;
     }
 
+    /** The {@link StateTips} tables: vanilla and (with the fallback on) modded blocks by their properties. */
+    @Override
+    public int tip(int h, CubeTurn.Tip tip) {
+        check(h);
+        return tips.tip(h, tip);
+    }
+
+    @Override
+    public int tipKind(int h, CubeTurn.Tip tip) {
+        check(h);
+        return tips.kind(h, tip);
+    }
+
+    /** The tip tables and counts (modded states switched as this view is). */
+    public StateTips tipTables() {
+        return tips;
+    }
+
     @Override
     public int withWaterlogged(int h, boolean on) {
         check(h);
@@ -573,6 +605,52 @@ public final class FabricStateSpace implements StateSpace {
                         VoxelShapes.cuboid(box.minX, 1.0 - box.maxY, box.minZ, box.maxX, 1.0 - box.minY, box.maxZ));
             }
             return VoxelShapes.matchesAnywhere(shape, flipped, BooleanBiFunction.NOT_SAME);
+        }
+    }
+
+    /**
+     * Whether a state's outline is its own when tipped ({@link StateTips.Shapes}): its boxes turned by the tip about the
+     * cell's centre, joined, against the outline itself, exactly ({@code VoxelShapes.matchesAnywhere}, as
+     * {@link FlipHints} compares a flip), so thin parts (panes, bars, candles) count. Empty and full cells always are.
+     * Per outline shape instance and tip, cached (the tables are built on one thread); one that throws counts as the
+     * same.
+     */
+    private static final class TipShapes implements StateTips.Shapes {
+        private final BlockState[] states;
+        private final Map<VoxelShape, Boolean> pitch = new IdentityHashMap<>();
+        private final Map<VoxelShape, Boolean> roll = new IdentityHashMap<>();
+
+        TipShapes(BlockState[] states) {
+            this.states = states;
+        }
+
+        @Override
+        public boolean keepsShape(int h, CubeTurn.Tip tip) {
+            if (tip == CubeTurn.Tip.NONE) return true;
+            try {
+                VoxelShape shape = states[h].getOutlineShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN);
+                if (shape.isEmpty() || shape == VoxelShapes.fullCube()) return true;
+                return (tip == CubeTurn.Tip.PITCH ? pitch : roll).computeIfAbsent(shape, s -> sameTipped(s, tip));
+            } catch (RuntimeException e) {
+                return true;
+            }
+        }
+
+        private static boolean sameTipped(VoxelShape shape, CubeTurn.Tip tip) {
+            int[] m = tip.matrix();
+            VoxelShape[] turned = {VoxelShapes.empty()};
+            shape.forEachBox((x0, y0, z0, x1, y1, z1) -> {
+                double[] a = turn(m, x0 - 0.5, y0 - 0.5, z0 - 0.5), b = turn(m, x1 - 0.5, y1 - 0.5, z1 - 0.5);
+                turned[0] = VoxelShapes.union(turned[0], VoxelShapes.cuboid(Math.min(a[0], b[0]) + 0.5,
+                        Math.min(a[1], b[1]) + 0.5, Math.min(a[2], b[2]) + 0.5, Math.max(a[0], b[0]) + 0.5,
+                        Math.max(a[1], b[1]) + 0.5, Math.max(a[2], b[2]) + 0.5));
+            });
+            return !VoxelShapes.matchesAnywhere(shape, turned[0], BooleanBiFunction.NOT_SAME);
+        }
+
+        private static double[] turn(int[] m, double x, double y, double z) {
+            return new double[] {m[0] * x + m[1] * y + m[2] * z, m[3] * x + m[4] * y + m[5] * z,
+                    m[6] * x + m[7] * y + m[8] * z};
         }
     }
 

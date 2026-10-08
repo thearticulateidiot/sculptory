@@ -4,7 +4,9 @@ import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.state.StateTips;
 import dev.sculptory.core.state.VerticalFlip;
+import dev.sculptory.core.transform.CubeTurn;
 import dev.sculptory.core.transform.Mirror;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -57,6 +59,8 @@ public final class FakeStateSpace implements StateSpace {
     private final int[] flags;
     /** Built on first use. */
     private volatile VerticalFlip flip;
+    /** Built on first use. */
+    private volatile StateTips tips;
 
     public FakeStateSpace() {
         int solid = StateFlags.TERRAIN_SOLID;
@@ -287,28 +291,53 @@ public final class FakeStateSpace implements StateSpace {
         return verticalFlip().kind(h);
     }
 
+    /** {@link StateTips}' rules with the same hints as the flip. */
+    @Override
+    public int tip(int h, CubeTurn.Tip tip) {
+        return stateTips().tip(h, tip);
+    }
+
+    @Override
+    public int tipKind(int h, CubeTurn.Tip tip) {
+        return stateTips().kind(h, tip);
+    }
+
+    private StateTips stateTips() {
+        StateTips built = tips;
+        if (built == null) {
+            built = StateTips.build(this, hints());
+            tips = built;
+        }
+        return built;
+    }
+
     private VerticalFlip verticalFlip() {
         VerticalFlip built = flip;
         if (built == null) {
-            Set<String> upright = Set.of("minecraft:poppy", "minecraft:tall_grass", "minecraft:pink_petals",
-                    "minecraft:seagrass", "minecraft:kelp", "minecraft:kelp_plant", "minecraft:tall_seagrass",
-                    "minecraft:short_grass", "minecraft:torch");
-            Set<String> lopsided = Set.of("minecraft:chest", "minecraft:lily_pad", "minecraft:sea_pickle",
-                    "minecraft:tube_coral_fan");
-            built = VerticalFlip.build(this, new VerticalFlip.Hints() {
-                @Override
-                public boolean upright(int h) {
-                    return upright.contains(blockId(h).value());
-                }
-
-                @Override
-                public boolean lopsided(int h) {
-                    return lopsided.contains(blockId(h).value());
-                }
-            });
+            built = VerticalFlip.build(this, hints());
             flip = built;
         }
         return built;
+    }
+
+    /** The plants and the torch upright; the chest, lily pad, sea pickle and coral fan lopsided. */
+    private VerticalFlip.Hints hints() {
+        Set<String> upright = Set.of("minecraft:poppy", "minecraft:tall_grass", "minecraft:pink_petals",
+                "minecraft:seagrass", "minecraft:kelp", "minecraft:kelp_plant", "minecraft:tall_seagrass",
+                "minecraft:short_grass", "minecraft:torch");
+        Set<String> lopsided = Set.of("minecraft:chest", "minecraft:lily_pad", "minecraft:sea_pickle",
+                "minecraft:tube_coral_fan");
+        return new VerticalFlip.Hints() {
+            @Override
+            public boolean upright(int h) {
+                return upright.contains(blockId(h).value());
+            }
+
+            @Override
+            public boolean lopsided(int h) {
+                return lopsided.contains(blockId(h).value());
+            }
+        };
     }
 
     /** Kelp grows as kelp on top of kelp_plant, sugar cane as itself. */

@@ -61,7 +61,9 @@
       "dev.sculptory.fabric.gametest.ReplaceOpsGameTest",
       "dev.sculptory.fabric.gametest.WeatherGameTest",
       "dev.sculptory.fabric.gametest.LineNavGameTest",
-      "dev.sculptory.fabric.gametest.ScatterFeatureGameTest"
+      "dev.sculptory.fabric.gametest.ScatterFeatureGameTest",
+      "dev.sculptory.fabric.gametest.ContractStubsGameTest",
+      "dev.sculptory.fabric.gametest.FreeRotationGameTest"
     ]
   },
   "mixins": ["sculptory-gametest.mixins.json"],

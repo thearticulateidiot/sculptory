@@ -9,13 +9,13 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The registered tools, their palette order (slots 1-15 are the first fifteen; slot 10 is on key 0, slot 11 on -,
- * slot 12 on =, slot 13 on [, slot 14 on ] and slot 15 on \) and which one is active.
+ * The registered tools, their palette order (slots 1-17 are the first seventeen; slot 10 is on key 0, slot 11 on -,
+ * slot 12 on =, slot 13 on [, slot 14 on ], slot 15 on \, slot 16 on ; and slot 17 on ') and which one is active.
  * At most one tool is active; switching deactivates the old tool before activating the new one.
  * Client thread only.
  */
 public final class ToolRegistry {
-    public static final int PALETTE_SLOTS = 15;
+    public static final int PALETTE_SLOTS = 17;
 
     private final Map<ToolId, Tool> tools = new LinkedHashMap<>();
     private final List<ToolId> order = new ArrayList<>();
@@ -49,7 +49,7 @@ public final class ToolRegistry {
         order.addAll(copy);
     }
 
-    /** The tool in palette slot {@code slot} (1-based, 1-15). */
+    /** The tool in palette slot {@code slot} (1-based, 1-{@value #PALETTE_SLOTS}). */
     public Optional<Tool> slot(int slot) {
         if (slot < 1 || slot > PALETTE_SLOTS || slot > order.size()) return Optional.empty();
         return Optional.of(tools.get(order.get(slot - 1)));

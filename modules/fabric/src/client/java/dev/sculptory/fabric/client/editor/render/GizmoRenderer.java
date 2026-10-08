@@ -4,7 +4,8 @@ import dev.sculptory.fabric.client.editor.world.GizmoPick;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Draws the placement gizmo: X/Y/Z arrows and a Y rotation ring at constant screen size, using the
+ * Draws the placement gizmo: X/Y/Z arrows and three rotation rings (around up, east-west and north-south, each in its
+ * axis's colour; {@code rings} false leaves them out, for a stack) at constant screen size, using the
  * geometry {@link GizmoPick} picks against. The gizmo is drawn see-through so it stays usable when
  * buried in terrain; the hovered handle is highlighted.
  */
@@ -19,6 +20,11 @@ public final class GizmoRenderer {
     private GizmoRenderer() {}
 
     public static void render(LineBatch lines, double originX, double originY, double originZ, @Nullable GizmoPick.Handle hovered) {
+        render(lines, originX, originY, originZ, hovered, true);
+    }
+
+    public static void render(LineBatch lines, double originX, double originY, double originZ,
+                              @Nullable GizmoPick.Handle hovered, boolean rings) {
         double dx = originX - lines.cameraX();
         double dy = originY - lines.cameraY();
         double dz = originZ - lines.cameraZ();
@@ -29,8 +35,12 @@ public final class GizmoRenderer {
             int color = handle == hovered ? COLOR_HOVERED : axisColor(axis);
             arrow(lines, originX, originY, originZ, axis, scale, color);
         }
-        int ringColor = hovered == GizmoPick.Handle.ROTATE_Y ? COLOR_HOVERED : COLOR_RING;
-        ring(lines, originX, originY, originZ, GizmoPick.RING_RADIUS * scale, ringColor);
+        if (!rings) return;
+        for (int axis = 0; axis < 3; axis++) {
+            GizmoPick.Handle handle = GizmoPick.Handle.ofRing(axis);
+            int color = handle == hovered ? COLOR_HOVERED : axisColor(axis);
+            ring(lines, originX, originY, originZ, axis, GizmoPick.RING_RADIUS * scale, color);
+        }
     }
 
     static int axisColor(int axis) {
@@ -68,16 +78,17 @@ public final class GizmoRenderer {
         }
     }
 
-    private static void ring(LineBatch lines, double ox, double oy, double oz, double radius, int color) {
-        double previousX = ox + radius;
-        double previousZ = oz;
+    private static void ring(LineBatch lines, double ox, double oy, double oz, int axis, double radius, int color) {
+        double[] previous = new double[3];
+        double[] next = new double[3];
+        GizmoPick.ringPoint(axis, radius, 0, previous);
         for (int i = 1; i <= GizmoPick.RING_SEGMENTS; i++) {
-            double angle = 2 * Math.PI * i / GizmoPick.RING_SEGMENTS;
-            double x = ox + radius * Math.cos(angle);
-            double z = oz + radius * Math.sin(angle);
-            lines.line(previousX, oy, previousZ, x, oy, z, color, true);
-            previousX = x;
-            previousZ = z;
+            GizmoPick.ringPoint(axis, radius, 2 * Math.PI * i / GizmoPick.RING_SEGMENTS, next);
+            lines.line(ox + previous[0], oy + previous[1], oz + previous[2], ox + next[0], oy + next[1], oz + next[2],
+                    color, true);
+            double[] swap = previous;
+            previous = next;
+            next = swap;
         }
     }
 

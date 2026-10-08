@@ -70,7 +70,7 @@ class ToolSettingsFitTest {
             cut.addAll(cutTexts(ui, window, tool.descriptor().id() + " with reset buttons "));
             tools++;
         }
-        assertEquals(15, tools);
+        assertEquals(17, tools);
         assertEquals(List.of(), cut);
         assertEquals(List.of(), unevenOptions, "options that wrap share their lines evenly (no \"Sphere\" alone)");
     }
