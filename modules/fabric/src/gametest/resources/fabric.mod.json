@@ -60,6 +60,8 @@
       "dev.sculptory.fabric.gametest.MaskGameTest",
       "dev.sculptory.fabric.gametest.ReplaceOpsGameTest",
       "dev.sculptory.fabric.gametest.WeatherGameTest",
+      "dev.sculptory.fabric.gametest.HeightmapGameTest",
+      "dev.sculptory.fabric.gametest.HeightmapLaneGameTest",
       "dev.sculptory.fabric.gametest.LineNavGameTest",
       "dev.sculptory.fabric.gametest.ScatterFeatureGameTest",
       "dev.sculptory.fabric.gametest.ContractStubsGameTest",

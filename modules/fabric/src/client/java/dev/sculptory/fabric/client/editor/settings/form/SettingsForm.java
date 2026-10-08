@@ -8,6 +8,9 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.fabric.client.editor.Translator;
 import dev.sculptory.fabric.client.editor.blocks.BlockCatalog;
 import dev.sculptory.fabric.client.editor.blocks.BlockChip;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapChip;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapView;
 import dev.sculptory.fabric.client.editor.mask.MaskSummary;
 import dev.sculptory.fabric.client.editor.settings.Section;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
@@ -51,7 +54,8 @@ import java.util.function.Function;
  *   <li>Block: a block chip that opens the picker;</li>
  *   <li>BlockList, WeightedBlocks, AssetMix: rows with add/remove (and weights);</li>
  *   <li>IntRange: min and max sliders;</li>
- *   <li>Seed: a number field with a Random button.</li>
+ *   <li>Seed: a number field with a Random button;</li>
+ *   <li>Heightmap: a chip with the picture's thumbnail and name that opens the picture picker.</li>
  * </ul>
  * Sections with a title become collapsible; whether each is open is kept by a {@link SectionMemory}. Settings hide
  * and show with their {@code visibleWhen}, and validation problems show under the setting. A setting explains itself
@@ -64,7 +68,7 @@ import java.util.function.Function;
  */
 public final class SettingsForm {
     /** The widget a setting became. */
-    public enum Kind { SLIDER, SEGMENTED, DROPDOWN, TOGGLE, BLOCK, BLOCK_LIST, WEIGHTED_BLOCKS, INT_RANGE, SEED, ASSET_MIX, MASK_RULES }
+    public enum Kind { SLIDER, SEGMENTED, DROPDOWN, TOGGLE, BLOCK, BLOCK_LIST, WEIGHTED_BLOCKS, INT_RANGE, SEED, ASSET_MIX, MASK_RULES, HEIGHTMAP }
 
     /** What the form needs from the editor. */
     public interface Services {
@@ -83,6 +87,14 @@ public final class SettingsForm {
          * {@code current}; {@code onChange} runs with each edit. Does nothing where no editor is offered.
          */
         default void editMask(Rect anchor, EditMask current, Consumer<EditMask> onChange) {}
+
+        /** Opens the height image picker below {@code anchor}; {@code onPick} runs with the picture chosen. Nothing by default. */
+        default void pickHeightmap(Rect anchor, HeightmapRef current, Consumer<HeightmapRef> onPick) {}
+
+        /** How height images show (their thumbnails); by name only by default. */
+        default HeightmapView heightmaps() {
+            return HeightmapView.NONE;
+        }
 
         /** The client's block states, for a mask setting's legacy keys ({@code null} when none). */
         default StateSpace states() {
@@ -283,6 +295,7 @@ public final class SettingsForm {
             case SettingDef.Seed d -> new SeedField(d);
             case SettingDef.AssetMix d -> new AssetField(d);
             case SettingDef.MaskRules d -> new MaskRulesField(d);
+            case SettingDef.Heightmap d -> new HeightmapField(d);
         };
     }
 
@@ -371,6 +384,7 @@ public final class SettingsForm {
             case SettingDef.AssetMix d -> describeList(d.defaultValue().stream()
                     .map(entry -> entry.asset() + " (" + entry.weight() + ")").toList());
             case SettingDef.MaskRules d -> tr("sculptory.setting.brush.mask.rules.none");
+            case SettingDef.Heightmap d -> HeightmapView.label(services.translator(), d.defaultValue());
         };
     }
 
@@ -878,6 +892,27 @@ public final class SettingsForm {
             } else {
                 summary.setText(mask.invertAll() ? tr("sculptory.setting.brush.mask.rules.inverted", rules) : rules);
             }
+        }
+    }
+
+    /** A height image: its thumbnail and name, opening the picture picker. */
+    private final class HeightmapField extends Field<HeightmapRef> {
+        private final HeightmapChip chip;
+
+        HeightmapField(SettingDef.Heightmap def) {
+            super(def, Kind.HEIGHTMAP);
+            chip = new HeightmapChip(services.heightmaps(), ref -> HeightmapView.label(services.translator(), ref), value(),
+                    null);
+            chip.setOnClick(() -> services.pickHeightmap(chip.bounds(), chip.ref(), ref -> {
+                chip.setRef(ref);
+                set(ref);
+            }));
+            finish(Column.of(heading(), chip), chip);
+        }
+
+        @Override
+        void show(HeightmapRef value) {
+            chip.setRef(value);
         }
     }
 

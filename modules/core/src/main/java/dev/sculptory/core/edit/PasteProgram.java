@@ -95,7 +95,8 @@ final class PasteProgram implements ClaimingProgram {
     }
 
     /**
-     * The exact path. With {@code scans} (a multi-paste's, per transform, of this source and include-air) a paste the
+     * The exact path. With {@code scans} (a multi-paste's, per transform, of this source and include-air: keyed by the
+     * transform alone, so one map serves one op's compile and no other) a paste the
      * build height leaves whole reuses its transform's {@link #scan}, so a multi-paste reads its source once per
      * transform instead of once per placement; null scans as usual.
      */
@@ -213,7 +214,8 @@ final class PasteProgram implements ClaimingProgram {
     /**
      * {@link #compilePlacement(SourceRef, OpSpec.PasteMany.Placement, PasteOptions, dev.sculptory.core.brush.Symmetry,
      * dev.sculptory.core.brush.Symmetry.Image, SourceBlocks, StateSpace, RegionProgram.Height)} sharing {@code scans}
-     * (per transform, see {@link #scan}) between the op's exact placements; null scans each one.
+     * (per transform, see {@link #scan}; one op's only, as its source and include-air are not in the key) between the
+     * op's exact placements; null scans each one.
      */
     static PasteProgram compilePlacement(SourceRef src, OpSpec.PasteMany.Placement placement, PasteOptions o,
                                          dev.sculptory.core.brush.Symmetry symmetry,

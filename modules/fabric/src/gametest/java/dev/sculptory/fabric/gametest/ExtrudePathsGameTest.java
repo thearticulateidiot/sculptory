@@ -41,6 +41,7 @@ import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -65,7 +66,8 @@ import net.minecraft.test.TestContext;
  * are left out and keep their contents; a stamp keeps a chest's contents and its entities, turns its copies, undoes
  * exactly (entities too); refusals without the clipboard node, over the volume limit and into unloaded chunks write
  * nothing; overlapping stamps write as their pastes in turn and undo exactly; a free-angle stamp with symmetry builds the
- * exact image and undoes exactly. Region slots 1300-1312.
+ * exact image and undoes exactly, turns its entity, gives way to the original where its image meets it, and is refused
+ * when its image leaves the world. Region slots 1300-1318.
  */
 public final class ExtrudePathsGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
@@ -581,6 +583,193 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     check(undone.result.outcome() == JobOutcome.COMPLETED && undone.result.skippedConflicts() == 0,
                             "undo " + undone.result);
                     checkSame(before, capture(world, area), "after the undo");
+                    forceChunks(world, area, false);
+                    h.close();
+                })
+                .completeIfSuccessful();
+    }
+
+    /**
+     * A free placement whose mirror image would land beyond the world limit is refused INVALID (its copy is checked by the
+     * image of its box), with nothing written or pushed.
+     */
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_free_beyond", tickLimit = LIMIT)
+    public void aFreeStampWhoseMirrorImageLeavesTheWorldIsRefused(TestContext context) {
+        Harness h = new Harness(context);
+        int[] at = regionCorner(context, 1314);
+        int x0 = at[0], z0 = at[1];
+        Box area = box(x0, 96, z0, x0 + 15, 108, z0 + 15);
+        loadAndForce(h.world, area);
+        ground(h, area);
+        int stone = h.state("minecraft:stone");
+        UUID id = h.service.clipboards().install(h.player.getUuid(), dev.sculptory.core.clipboard.Clipboard.builder(
+                h.runtime.states(), new BlockPos(3, 1, 3)).set(0, 0, 0, stone).set(2, 0, 2, stone).build()).id();
+        // Mirrored across x = 29,900,000: the copy of a placement near x0 lands near 54 million, past the 30 million limit.
+        dev.sculptory.core.brush.Symmetry far = new dev.sculptory.core.brush.Symmetry(
+                dev.sculptory.core.brush.Symmetry.Mode.MIRROR_X, 2 * 29_900_000 + 1, 0);
+        check(2L * 29_900_000 - x0 > EngineEditService.HORIZONTAL_LIMIT, "the image is beyond the limit");
+        OpSpec.PasteMany stamp = new OpSpec.PasteMany(new SourceRef.Clipboard(id), List.of(new OpSpec.PasteMany.Placement(
+                new BlockPos(x0 + 6, 100, z0 + 6), Orientation.free(Transform.IDENTITY, 4_500, 0, 0))),
+                PasteOptions.DEFAULT, far);
+        WorldSnapshot before = capture(h.world, area);
+        List<String> undoBefore = h.history().undoLabels();
+        EditRejected refused = refusal(() -> h.service.run(h.player, stamp, RunOptions.DEFAULT, null));
+        check(refused.reason() == RejectReason.INVALID && refused.detail().contains("beyond the world limit"),
+                "refused " + refused.reason() + ": " + refused.detail());
+        checkSame(before, capture(h.world, area), "after the refusal");
+        check(h.history().undoLabels().equals(undoBefore), "a refusal pushed history");
+        forceChunks(h.world, area, false);
+        h.close();
+        context.complete();
+    }
+
+    /**
+     * A copy turned freely by 30 degrees carries its armor stand: the stand lands turned by the same angle, and the undo
+     * takes it away and puts every block back.
+     */
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_free_entity", tickLimit = LIMIT)
+    public void aFreeAngleStampTurnsItsEntityAndUndoesExactly(TestContext context) {
+        Harness h = new Harness(context);
+        ServerWorld world = h.world;
+        int[] at = regionCorner(context, 1316);
+        int x0 = at[0], z0 = at[1];
+        Box area = box(x0 - 4, 96, z0 - 4, x0 + 30, 108, z0 + 20);
+        loadAndForce(world, area);
+        ground(h, area);
+        BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
+        int stone = h.state("minecraft:stone");
+        for (int x = x0; x <= x0 + 2; x++) writer.write(x, 100, z0, stone, null);
+        ArmorStandEntity stand = EntityType.ARMOR_STAND.create(world);
+        stand.refreshPositionAndAngles(x0 + 1.5, 101, z0 + 0.5, 0, 0);
+        world.spawnEntity(stand);
+        Box post = box(x0, 100, z0, x0 + 2, 102, z0);
+        var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
+        Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
+        Box targets = box(x0 + 10, 96, z0 + 6, x0 + 26, 108, z0 + 18);
+        net.minecraft.util.math.Box standArea = new net.minecraft.util.math.Box(targets.min().x(), 96, targets.min().z(),
+                targets.max().x() + 1, 110, targets.max().z() + 1);
+        WorldSnapshot[] before = new WorldSnapshot[1];
+        RecordingListener stamped = new RecordingListener(), undone = new RecordingListener();
+        context.createTimedTaskRunner()
+                .createAndAdd(() -> EntitiesGameTest.ready(world, area))
+                .createAndAdd(() -> {
+                    try {
+                        clips.copy(h.player, new Region.Cuboid(post), post.min(), false, CellMask.ANY, EntityFilter.ALL,
+                                null, copied);
+                    } catch (EditRejected e) {
+                        throw new GameTestException("copy refused: " + e.getMessage());
+                    }
+                })
+                .createAndAdd(() -> {
+                    ClipboardService.ClipboardInfo info = copied.get("the copy");
+                    check(info.entities() == 1, "the clipboard holds the stand: " + info.entities());
+                    before[0] = capture(world, targets);
+                    OpSpec.PasteMany stamp = new OpSpec.PasteMany(new SourceRef.Clipboard(info.clipboardId()), List.of(
+                            new OpSpec.PasteMany.Placement(new BlockPos(x0 + 16, 100, z0 + 12),
+                                    Orientation.free(Transform.IDENTITY, 3_000, 0, 0))), new PasteOptions(false, false, true));
+                    try {
+                        h.service.run(h.player, stamp, new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP),
+                                stamped);
+                    } catch (EditRejected e) {
+                        throw new GameTestException("the stamp was refused: " + e.getMessage());
+                    }
+                })
+                .createAndAdd(() -> check(stamped.result != null, "stamp running"))
+                .createAndAdd(() -> {
+                    check(stamped.result.outcome() == JobOutcome.COMPLETED, "stamp " + stamped.result);
+                    List<ArmorStandEntity> stands = world.getEntitiesByClass(ArmorStandEntity.class, standArea, e -> true);
+                    check(stands.size() == 1, "one stamped stand, found " + stands.size());
+                    float turned = net.minecraft.util.math.MathHelper.wrapDegrees(stands.get(0).getYaw() - 30f);
+                    check(Math.abs(turned) < 1f, "the stand turned by 30 degrees: its yaw is " + stands.get(0).getYaw());
+                    h.undo(undone);
+                })
+                .createAndAdd(() -> check(undone.result != null, "undo running"))
+                .createAndAdd(() -> {
+                    check(undone.result.outcome() == JobOutcome.COMPLETED, "undo " + undone.result);
+                    checkSame(before[0], capture(world, targets), "after the undo");
+                    check(world.getEntitiesByClass(ArmorStandEntity.class, standArea, e -> true).isEmpty(),
+                            "the undo took the stamped stand away");
+                    check(!stand.isRemoved(), "the original stand stays");
+                    forceChunks(world, area, false);
+                    h.close();
+                })
+                .completeIfSuccessful();
+    }
+
+    /**
+     * A free placement whose mirror image overlaps another placement of the original: where they meet, the original
+     * copy wins over the image (copies are applied original first). Checked against the same placement pasted alone,
+     * with the free placement's image alone showing that they do meet, on cells it would write differently.
+     */
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_original_wins", tickLimit = LIMIT)
+    public void whereAFreePlacementsImageMeetsAnOriginalPlacementTheOriginalWins(TestContext context) {
+        Harness h = new Harness(context);
+        ServerWorld world = h.world;
+        int[] at = regionCorner(context, 1318);
+        int x0 = at[0], z0 = at[1];
+        int c = x0 + 20;
+        Box area = box(x0, 96, z0, x0 + 40, 108, z0 + 100);
+        loadAndForce(world, area);
+        ground(h, area);
+        List<Integer> palette = List.of(h.state("minecraft:stone"), h.state("minecraft:dirt"), h.state("minecraft:glass"),
+                h.state("minecraft:stone_bricks"), h.state("minecraft:oak_planks"));
+        dev.sculptory.core.clipboard.Clipboard.Builder blocks = dev.sculptory.core.clipboard.Clipboard.builder(
+                h.runtime.states(), new BlockPos(4, 2, 3));
+        for (int x = 0; x < 4; x++) {
+            for (int y = 0; y < 2; y++) {
+                for (int z = 0; z < 3; z++) blocks.set(x, y, z, palette.get((x + 2 * y + 3 * z) % palette.size()));
+            }
+        }
+        UUID id = h.service.clipboards().install(h.player.getUuid(), blocks.build()).id();
+        SourceRef source = new SourceRef.Clipboard(id);
+        dev.sculptory.core.brush.Symmetry mirror = new dev.sculptory.core.brush.Symmetry(
+                dev.sculptory.core.brush.Symmetry.Mode.MIRROR_X, 2 * c + 1, 0);
+        // A east of the mirror; B (free) west of it, its image falling over A. Each check in its own row of the area.
+        OpSpec.PasteMany.Placement a = new OpSpec.PasteMany.Placement(new BlockPos(c + 1, 100, z0 + 5), Orientation.IDENTITY);
+        OpSpec.PasteMany.Placement b = new OpSpec.PasteMany.Placement(new BlockPos(c - 5, 100, z0 + 5),
+                Orientation.free(Transform.IDENTITY, 3_000, 0, 0));
+        int aloneRow = 40, imageRow = 80;
+        List<RecordingListener> jobs = new ArrayList<>();
+        WorldSnapshot before = capture(world, area);
+        try {
+            RecordingListener both = new RecordingListener(), aAlone = new RecordingListener();
+            RecordingListener bImage = new RecordingListener();
+            h.service.run(h.player, new OpSpec.PasteMany(source, List.of(a, b), PasteOptions.DEFAULT, mirror),
+                    RunOptions.DEFAULT, both);
+            h.service.run(h.player, new OpSpec.Paste(source, a.origin().offset(0, 0, aloneRow), a.orientation(),
+                    PasteOptions.DEFAULT), RunOptions.DEFAULT, aAlone);
+            h.service.run(h.player, new OpSpec.PasteMany(source, List.of(new OpSpec.PasteMany.Placement(
+                    b.origin().offset(0, 0, imageRow), b.orientation())), PasteOptions.DEFAULT, mirror), RunOptions.DEFAULT,
+                    bImage);
+            jobs.addAll(List.of(both, aAlone, bImage));
+        } catch (EditRejected e) {
+            throw new GameTestException("refused: " + e.getMessage());
+        }
+        context.createTimedTaskRunner()
+                .createAndAdd(() -> {
+                    for (RecordingListener job : jobs) check(job.result != null, "jobs running");
+                })
+                .createAndAdd(() -> {
+                    for (RecordingListener job : jobs) check(job.result.outcome() == JobOutcome.COMPLETED, "job " + job.result);
+                    WorldSnapshot now = capture(world, area);
+                    int met = 0, differing = 0;
+                    for (int y = 100; y <= 103; y++) {
+                        for (int z = z0; z <= z0 + 15; z++) {
+                            for (int x = c + 1; x <= x0 + 40; x++) {
+                                int alone = now.get(x, y, z + aloneRow);
+                                if (alone == before.get(x, y, z + aloneRow)) continue; // A does not write this cell
+                                check(now.get(x, y, z) == alone, "at " + x + "," + y + "," + z + " A lost to "
+                                        + Block.getStateFromRawId(now.get(x, y, z)));
+                                int image = now.get(x, y, z + imageRow);
+                                if (image != before.get(x, y, z + imageRow)) {
+                                    met++;
+                                    if (image != alone) differing++;
+                                }
+                            }
+                        }
+                    }
+                    check(met > 0 && differing > 0, "the image meets A on " + met + " cells, " + differing
+                            + " of them different");
                     forceChunks(world, area, false);
                     h.close();
                 })

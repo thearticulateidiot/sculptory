@@ -13,7 +13,6 @@ import dev.sculptory.core.brush.BiomeSpec;
 import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Falloff;
-import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.SculptMode;
 import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.SurfaceMask;
@@ -73,21 +72,19 @@ public final class ContractStubsGameTest implements FabricGameTest {
                 biomeFill,
                 new OpSpec.BiomeFill(region, "minecraft:desert", false, mirror),
                 new OpSpec.Paste(clipboard, new BlockPos(x0, 101, z0), Transform.IDENTITY,
-                        PasteOptions.DEFAULT.withBiomes(true)));
+                        PasteOptions.DEFAULT.withBiomes(true)),
+                new OpSpec.PasteMany(clipboard, List.of(new OpSpec.PasteMany.Placement(new BlockPos(x0, 101, z0),
+                        Orientation.IDENTITY)), PasteOptions.DEFAULT.withBiomes(true)));
         for (OpSpec op : ops) {
             EditRejected refused = refusal(() -> h.service.run(h.player, op, RunOptions.DEFAULT, null));
             check(refused.reason() == RejectReason.INVALID && EngineEditService.NOT_IMPLEMENTED.equals(refused.detail()),
                     op.getClass().getSimpleName() + " refused " + refused.reason() + ": " + refused.detail());
         }
-        // ws/heightmap and ws/biomes: their brushes.
-        BrushSpec heightmap = new BrushSpec(BrushTool.HEIGHTMAP, 2, 1f, Falloff.SMOOTH, Shape.SQUARE, null, SurfaceMask.ANY,
-                0, 0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
-                new HeightmapSpec(5, new byte[] {0, 0, 0, 0, 0, 0, 9, 9, 9, 0, 0, 9, (byte) 255, 9, 0, 0, 9, 9, 9, 0, 0, 0,
-                        0, 0, 0}, 8, false), null);
+        // ws/biomes: its brush (ws/heightmap built the Heightmap brush: HeightmapGameTest).
         BrushSpec biome = new BrushSpec(BrushTool.BIOME, 4, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
                 0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null, null,
                 new BiomeSpec("minecraft:cherry_grove", true));
-        for (BrushSpec spec : List.of(heightmap, biome)) {
+        for (BrushSpec spec : List.of(biome)) {
             EditRejected refused = refusal(() -> h.service.beginStroke(h.player, 7, spec));
             check(refused.reason() == RejectReason.INVALID && EngineEditService.NOT_IMPLEMENTED.equals(refused.detail()),
                     spec.tool() + " stroke refused " + refused.reason() + ": " + refused.detail());

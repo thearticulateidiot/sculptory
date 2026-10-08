@@ -4,6 +4,7 @@ import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.SculptMode;
 import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.SurfaceMask;
@@ -16,6 +17,7 @@ import dev.sculptory.core.mask.EditMask;
 import dev.sculptory.core.mask.MaskEntry;
 import dev.sculptory.core.mask.MaskRule;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
 import dev.sculptory.fabric.client.editor.settings.Section;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.settings.SettingsSchema;
@@ -66,6 +68,15 @@ public final class BrushSettings {
     public final SettingDef.Enum<SculptMode> mode;
     /** The Weather brush only, otherwise {@code null}: what it does (Erode, Fill in, Roughen, Melt). */
     public final SettingDef.Enum<WeatherSpec.Mode> weatherMode;
+    /**
+     * The Heightmap brush only, otherwise {@code null}: the picture it stamps, Raise or Lower, the stamp's height in
+     * blocks (1-{@value HeightmapSpec#MAX_HEIGHT_BLOCKS}) and its turn in degrees, clockwise seen from above (R and Shift+R
+     * turn it a quarter). Strength, falloff and shape are kept hidden: the picture is the brush.
+     */
+    public final SettingDef.Heightmap heightmapImage;
+    public final SettingDef.Enum<StampMode> heightmapMode;
+    public final SettingDef.Int heightmapHeight;
+    public final SettingDef.Int heightmapAngle;
     /** Paint only, otherwise {@code null}. */
     public final SettingDef.Block material;
     /** Palette Paint only, otherwise {@code null}. */
@@ -99,12 +110,24 @@ public final class BrushSettings {
     private BrushSettings(BrushTool tool) {
         Objects.requireNonNull(tool);
         boolean painting = tool == BrushTool.PAINT || tool == BrushTool.PALETTE;
-        radius = new SettingDef.Int("radius", PREFIX + "radius", painting ? 4 : 5, 1, 32, Limits::maxBrushRadius,
+        boolean stamping = tool == BrushTool.HEIGHTMAP;
+        Predicate<SettingsValues> shown = stamping ? HIDDEN : SettingDef.ALWAYS;
+        radius = new SettingDef.Int("radius", PREFIX + "radius", painting ? 4 : stamping ? 12 : 5, 1, 32, Limits::maxBrushRadius,
                 SettingDef.ALWAYS);
-        strength = new SettingDef.Decimal("strength", PREFIX + "strength", defaultStrength(tool), 0, 1, STRENGTH_STEP);
+        strength = new SettingDef.Decimal("strength", PREFIX + "strength", defaultStrength(tool), 0, 1, STRENGTH_STEP, shown);
         falloff = new SettingDef.Enum<>("falloff", PREFIX + "falloff", Falloff.class,
-                painting ? Falloff.CONSTANT : Falloff.SMOOTH);
-        shape = new SettingDef.Enum<>("shape", PREFIX + "shape", Shape.class, Shape.CIRCLE);
+                painting || stamping ? Falloff.CONSTANT : Falloff.SMOOTH, shown);
+        shape = new SettingDef.Enum<>("shape", PREFIX + "shape", Shape.class, stamping ? Shape.SQUARE : Shape.CIRCLE, shown);
+        heightmapImage = stamping
+                ? new SettingDef.Heightmap("heightmap.image", PREFIX + "heightmap.image", HeightmapLibrary.DEFAULT)
+                : null;
+        heightmapMode = stamping
+                ? new SettingDef.Enum<>("heightmap.mode", PREFIX + "heightmap.mode", StampMode.class, StampMode.RAISE)
+                : null;
+        heightmapHeight = stamping
+                ? new SettingDef.Int("heightmap.height", PREFIX + "heightmap.height", 16, 1, HeightmapSpec.MAX_HEIGHT_BLOCKS)
+                : null;
+        heightmapAngle = stamping ? new SettingDef.Int("heightmap.angle", PREFIX + "heightmap.angle", 0, 0, 359) : null;
         mode = SculptMode.surfaceTool(tool)
                 ? new SettingDef.Enum<>("mode", PREFIX + "mode", SculptMode.class, SculptMode.SURFACE)
                 : null;
@@ -139,6 +162,7 @@ public final class BrushSettings {
         List<SettingDef<?>> main = new ArrayList<>(List.of(radius, strength, falloff, shape));
         if (mode != null) main.add(mode);
         if (weatherMode != null) main.add(weatherMode);
+        if (stamping) main.addAll(List.of(heightmapImage, heightmapMode, heightmapHeight, heightmapAngle));
         if (material != null) main.add(material);
         if (palette != null) main.add(palette);
         if (mixPattern != null) main.addAll(mixPattern.defs());
@@ -149,6 +173,9 @@ public final class BrushSettings {
                         List.of(maskRules, insideSelection, maskBlocks, maskExactStates, maskY, maskSlope, maskInvert), true),
                 new Section(PREFIX + "symmetry_section", List.of(symmetry), true)));
     }
+
+    /** The Heightmap brush's Mode: raise the terrain by the picture, or cut it down. */
+    public enum StampMode { RAISE, LOWER }
 
     public static BrushSettings forTool(BrushTool tool) {
         return new BrushSettings(tool);
@@ -266,8 +293,10 @@ public final class BrushSettings {
         return switch (tool) {
             case RAISE, LOWER -> 0.5;
             case SMOOTH, FLATTEN, WEATHER -> 0.6;
-            // Protocol 6 placeholders: ws/heightmap and ws/biomes set their own.
-            case PAINT, PALETTE, SHAPE, HEIGHTMAP, BIOME -> 1.0;
+            // The Heightmap brush has no strength (the picture and its height are the brush): 1, hidden.
+            case HEIGHTMAP -> 1.0;
+            // Protocol 6 placeholder: ws/biomes sets its own.
+            case PAINT, PALETTE, SHAPE, BIOME -> 1.0;
         };
     }
 

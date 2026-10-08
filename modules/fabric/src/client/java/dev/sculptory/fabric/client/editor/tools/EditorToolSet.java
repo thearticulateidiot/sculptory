@@ -119,7 +119,7 @@ public final class EditorToolSet {
     }
 
     /**
-     * Registers the seventeen palette tools in slot order, the eight brushes and the Fluid tool sharing {@code centre}
+     * Registers the seventeen palette tools in slot order, the nine brushes and the Fluid tool sharing {@code centre}
      * (the editor gives the Select, Place and Extrude tools the same one, so M sets it for every
      * tool); the Shape brush places {@code activeBlock} (the editor's
      * active block) unless it is set to a mix.
@@ -143,9 +143,8 @@ public final class EditorToolSet {
                 fluid,
                 tinker,
                 new TerrainBrushTool(BrushTool.WEATHER, brushes, centre),
-                // Contract placeholders (protocol 6): ws/heightmap and ws/biomes replace them with their tools.
-                new PlaceholderTool(new ToolDescriptor(ToolId.HEIGHTMAP, "sculptory.tool.heightmap",
-                        TerrainBrushTool.HEIGHTMAP_ICON, Perm.BRUSH), PLACEHOLDER_HINT),
+                new TerrainBrushTool(BrushTool.HEIGHTMAP, brushes, centre),
+                // Contract placeholder (protocol 6): ws/biomes replaces it with its tool.
                 new PlaceholderTool(new ToolDescriptor(ToolId.BIOME, "sculptory.tool.biome", TerrainBrushTool.BIOME_ICON,
                         Perm.BIOME), PLACEHOLDER_HINT))) {
             registry.register(tool);

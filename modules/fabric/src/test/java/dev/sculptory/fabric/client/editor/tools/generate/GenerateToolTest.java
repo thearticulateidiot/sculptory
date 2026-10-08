@@ -12,9 +12,12 @@ import com.google.gson.JsonParser;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
+import dev.sculptory.core.brush.HeightImage;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.SourceRef;
+import dev.sculptory.core.generate.GeneratedSource;
+import dev.sculptory.core.generate.HeightmapAreaKernel;
 import dev.sculptory.core.generate.RoadKernel;
 import dev.sculptory.core.generate.RoofKernel;
 import dev.sculptory.core.region.Region;
@@ -25,6 +28,8 @@ import dev.sculptory.core.transform.Transform;
 import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.fabric.client.editor.EditorBackend;
 import dev.sculptory.fabric.client.editor.EditorContext;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
 import dev.sculptory.fabric.client.editor.hud.HelpSheet;
 import dev.sculptory.fabric.client.editor.input.EditorKeymap;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
@@ -673,6 +678,93 @@ class GenerateToolTest {
             }
         }
         for (String key : keys) assertTrue(lang.has(key), key);
+    }
+
+    // ---------------------------------------------------------------- the Heightmap import
+
+    /**
+     * Heightmap: it needs a selection; Min Y and Max Y start at the selection's bottom and top (and keep what the player
+     * types until the selection changes); the preview is the kernel's import of the stretched picture; Turn and Invert
+     * change it; Enter uploads it and pastes it as one job labelled Heightmap; a missing picture is said in a toast.
+     */
+    @Test
+    void theHeightmapImportStretchesThePictureOverTheSelection() {
+        Rig rig = new Rig();
+        rig.set(GenerateSettings.KIND, GenerateSettings.Kind.HEIGHTMAP);
+        rig.frame(top(0, 0));
+        assertTrue(rig.tool.preview().isEmpty());
+        assertEquals(KeyHint.text("sculptory.hint.generate.heightmap_needs_selection"), rig.tool.hints(rig.view).get(0));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.COMMIT));
+        assertEquals(List.of(GenerateTool.NEEDS_SELECTION), rig.noticeKeys());
+        rig.notices.clear();
+        assertFalse(rig.scroll(1, Modifiers.CONTROL), "Ctrl+Scroll sizes nothing here");
+
+        Box selection = new Box(new BlockPos(0, 60, 0), new BlockPos(11, 72, 7));
+        rig.world.set(5, 64, 3, states.state("minecraft:chest"));
+        rig.ctx.setSelection(selection);
+        rig.frame(top(0, 0));
+        rig.frame(top(0, 0));
+        assertEquals(60, rig.setting(GenerateSettings.HEIGHTMAP_MIN_Y), "Min Y from the selection's bottom");
+        assertEquals(72, rig.setting(GenerateSettings.HEIGHTMAP_MAX_Y), "Max Y from its top");
+        GenerateTool.Built built = rig.tool.preview().orElseThrow();
+        assertEquals(expected(rig, selection, 60, 72, 0, false), cellsOf(built));
+        assertTrue(built.cells() > 0);
+        assertEquals(states.air(), built.source().get(0, 61, 0), "a black corner is cut to Min Y");
+        assertEquals(states.state("minecraft:grass_block"), built.source().get(0, 60, 0));
+
+        rig.set(GenerateSettings.HEIGHTMAP_MAX_Y, 80);
+        rig.set(GenerateSettings.HEIGHTMAP_TURN, GenerateSettings.Turn.QUARTER);
+        rig.set(GenerateSettings.HEIGHTMAP_INVERT, true);
+        rig.frame(top(0, 0));
+        assertEquals(80, rig.setting(GenerateSettings.HEIGHTMAP_MAX_Y), "a typed Max Y stays while the selection does");
+        assertEquals(expected(rig, selection, 60, 80, 1, true), cellsOf(rig.tool.preview().orElseThrow()));
+        assertTrue(rig.tool.hints(rig.view).stream().anyMatch(h -> h.descriptionKey().equals("sculptory.hint.generate.build_heightmap")));
+
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.COMMIT));
+        rig.frame(top(0, 0));
+        assertEquals(1, rig.mock.calls().size());
+        ToolAction.RunOp run = assertInstanceOf(ToolAction.RunOp.class, rig.mock.sent().get(0));
+        assertEquals(OpLabel.HEIGHTMAP, run.label());
+        OpSpec.Paste paste = assertInstanceOf(OpSpec.Paste.class, run.op());
+        assertEquals(rig.tool.preview().orElseThrow().source().bounds().min(), paste.origin());
+        assertEquals(new PasteOptions(true, false, false), paste.o());
+        assertEquals(List.of(GenerateTool.SENT_HEIGHTMAP, GenerateTool.KEPT_BLOCK_ENTITIES), rig.noticeKeys(),
+                "the chest in the hill is left as it is, and the toast says so");
+        assertEquals(List.of("1"), rig.notices.get(1).args());
+        assertEquals(-1, rig.tool.preview().orElseThrow().source().get(5, 64, 3), "the chest's cell is not in the upload");
+        for (int i = 0; i < MockEditorSession.MIN_JOB_TICKS + 2; i++) rig.mock.tick();
+        assertEquals("Heightmap", rig.mock.history().undoLabel(), "one undo step named Heightmap");
+
+        // A new selection resets the range; a missing picture says so.
+        rig.ctx.setSelection(new Box(new BlockPos(20, 55, 20), new BlockPos(23, 66, 23)));
+        rig.frame(top(0, 0));
+        assertEquals(55, rig.setting(GenerateSettings.HEIGHTMAP_MIN_Y));
+        assertEquals(66, rig.setting(GenerateSettings.HEIGHTMAP_MAX_Y));
+        rig.notices.clear();
+        rig.set(GenerateSettings.HEIGHTMAP_IMAGE, HeightmapRef.file("not_here.png"));
+        rig.frame(top(0, 0));
+        assertEquals(List.of("sculptory.notice.heightmap_missing"), rig.noticeKeys());
+    }
+
+    /** The cells the kernel makes from the built-in hill over {@code box}, read from the rig's world. */
+    private java.util.Map<BlockPos, Integer> expected(Rig rig, Box box, int minY, int maxY, int turns, boolean invert) {
+        HeightImage hill = HeightmapLibrary.builtInOnly().image(HeightmapLibrary.DEFAULT).orElseThrow();
+        HeightmapAreaKernel.Spec spec = new HeightmapAreaKernel.Spec(box, minY, maxY,
+                hill.stretch(box.sizeX(), box.sizeZ(), turns, invert));
+        int[] range = HeightmapAreaKernel.range(spec, rig.world.bottomY(), rig.world.topYExclusive());
+        GeneratedSource source = HeightmapAreaKernel.generate(spec,
+                (x, z) -> HeightmapAreaKernel.capture(rig.world, x, z, range[0], range[1], minY), states,
+                rig.world.bottomY(), rig.world.topYExclusive(), 1 << 20).source();
+        java.util.Map<BlockPos, Integer> cells = new java.util.HashMap<>();
+        source.forEach((x, y, z, state) -> cells.put(new BlockPos(x, y, z), state));
+        assertFalse(cells.isEmpty());
+        return cells;
+    }
+
+    private static java.util.Map<BlockPos, Integer> cellsOf(GenerateTool.Built built) {
+        java.util.Map<BlockPos, Integer> cells = new java.util.HashMap<>();
+        built.source().forEach((x, y, z, state) -> cells.put(new BlockPos(x, y, z), state));
+        return cells;
     }
 
     // ---------------------------------------------------------------- fixtures

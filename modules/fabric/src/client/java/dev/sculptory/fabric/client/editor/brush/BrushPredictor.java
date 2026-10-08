@@ -5,6 +5,7 @@ import dev.sculptory.core.brush.BrushKernels;
 import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.SculptMode;
 import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.ShapeStamp;
@@ -182,12 +183,13 @@ public final class BrushPredictor {
             case SHAPE -> 2L * r + 1;
             // The Weather brush reworks the surface around each column, as Smooth does (a bound, not an exact count).
             case WEATHER -> r + SCAN_MARGIN + PLANT_CELLS;
-            // Contract placeholders (protocol 6): ws/heightmap sets the stamp's bound (up to its height); a biome brush
-            // writes no block.
-            case HEIGHTMAP -> r + SCAN_MARGIN + PLANT_CELLS + dev.sculptory.core.brush.HeightmapSpec.MAX_HEIGHT_BLOCKS;
+            // Without its spec, the tallest stamp ({@link #estimatedHeightmapCells} knows the height); a square footprint.
+            case HEIGHTMAP -> HeightmapSpec.MAX_HEIGHT_BLOCKS + PLANT_CELLS + 1;
+            // Contract placeholder (protocol 6): a biome brush writes no block.
             case BIOME -> 0;
         };
-        return (tool == BrushTool.SHAPE ? columns(r, Shape.SQUARE) : columns(r, shape)) * perColumn;
+        boolean square = tool == BrushTool.SHAPE || tool == BrushTool.HEIGHTMAP;
+        return (square ? columns(r, Shape.SQUARE) : columns(r, shape)) * perColumn;
     }
 
     /**
@@ -196,8 +198,18 @@ public final class BrushPredictor {
      */
     public static long estimatedCells(BrushSpec spec) {
         long one = spec.tool() == BrushTool.SHAPE ? ShapeStamp.cellCount(spec)
+                : spec.heightmap() != null ? estimatedHeightmapCells(spec.radius(), spec.heightmap().heightBlocks())
                 : estimatedCells(spec.tool(), spec.radius(), spec.shape(), spec.depth(), spec.mode());
         return one * spec.symmetry().mode().copies();
+    }
+
+    /**
+     * The bound for one Heightmap dab: its square of {@code 2 × radius + 1} columns, each moving at most the stamp's height
+     * plus its old top and plants ({@code HeightmapKernel}).
+     */
+    public static long estimatedHeightmapCells(int radius, int heightBlocks) {
+        long side = 2L * Math.max(1, radius) + 1;
+        return side * side * (Math.max(1, heightBlocks) + PLANT_CELLS + 1);
     }
 
     /** Whether a stroke with {@code spec} is predicted under a cap of {@code maxCells} per dab. */

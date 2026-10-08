@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.client.editor.tools.brush;
 
 import dev.sculptory.fabric.client.editor.brush.BrushPredictor;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
 import dev.sculptory.fabric.client.editor.input.EditorKeymap;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.input.KeyChord;
@@ -45,6 +46,14 @@ public interface BrushServices {
      */
     default Optional<Ray> cursorRay() {
         return Optional.empty();
+    }
+
+    /**
+     * The height images the Heightmap brush picks from: the built-ins alone by default (without the game); the game's
+     * adds the builder's folder.
+     */
+    default HeightmapLibrary heightmaps() {
+        return HeightmapLibrary.builtInOnly();
     }
 
     /** Services without Minecraft: no prediction or overlay, default keys, counting seeds. */

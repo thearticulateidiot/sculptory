@@ -87,11 +87,12 @@ class WikiLibraryTest {
         assertEquals(new WikiPages.Target("fluid", null), WikiPages.forTool(ToolId.FLUID));
         assertEquals(new WikiPages.Target("tinker", null), WikiPages.forTool(ToolId.TINKER));
         assertEquals(new WikiPages.Target("weather", null), WikiPages.forTool(ToolId.WEATHER));
+        assertEquals(new WikiPages.Target("heightmap", null), WikiPages.forTool(ToolId.HEIGHTMAP));
         assertEquals(new WikiPages.Target("home", null), WikiPages.forTool(new ToolId("future")));
         for (WikiPages.Target target : WikiPages.tools().values()) {
             assertTrue(WikiPages.FROZEN.contains(target.pageId()), target.pageId());
         }
-        assertEquals(32, WikiPages.FROZEN.size());
+        assertEquals(33, WikiPages.FROZEN.size());
         assertTrue(WikiPages.FROZEN.stream().allMatch(id -> WikiLink.PAGE_ID.matcher(id).matches()));
     }
 }

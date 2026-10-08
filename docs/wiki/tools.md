@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Settings and keys](home.md#settings-and-keys)
 
-The palette at the bottom of the screen holds the 15 tools. Press a tool's key or click its slot; its settings appear in Tool Settings and its keys in the hint line above the palette. Each name below links to the tool's own page.
+The palette at the bottom of the screen holds the tools. Press a tool's key or click its slot; its settings appear in Tool Settings and its keys in the hint line above the palette. Each name below links to the tool's own page.
 
 | Key | Tool | What it does | Needs |
 |---|---|---|---|
@@ -21,6 +21,7 @@ The palette at the bottom of the screen holds the 15 tools. Press a tool's key o
 | `[` | [Fluid](fluid.md) | Flood, drain, balls of water or lava | Flood, Drain `region`; ball `brush` |
 | `]` | [Tinker](tinker.md) | Change a block's properties or text, or an entity, in place | `region` |
 | `\` | [Weather](weather.md) | Erode, fill in, roughen or melt the surface | `brush` |
+| `;` | [Heightmap](heightmap.md) | Stamp or paint a height picture: hills, craters, ridges | `brush` |
 
 "Needs" is the [permission](permissions.md) node besides `use`. A tool you may not use is greyed out and its tooltip names the node. In singleplayer you have them all.
 
@@ -31,6 +32,7 @@ The palette at the bottom of the screen holds the 15 tools. Press a tool's key o
 | Change many blocks in a region at once | [Select](select.md), then the [Selection window](selection-operations.md): Fill, Replace (Keep shape, Whole family), Erase, Hollow, Walls, Overlay, Naturalize, Update blocks |
 | Keep edits off some blocks | The [Mask](masks.md) in the top bar (`Ctrl+M`) |
 | Sculpt hills, cliffs or a cave wall | The [terrain brushes](terrain-brushes.md), with a [mask](masks.md) to keep them off some blocks |
+| Make a mountain, a crater or a whole landscape from a picture | The [Heightmap brush](heightmap.md), or [Generate](generate.md#import-a-heightmap)'s Heightmap over a selection |
 | Put a dome, a pillar or a tunnel somewhere | The [Shape brush](shape-brush.md) |
 | Copy a build somewhere else, or repeat it | [Clipboard](clipboard.md) and [Place](place.md) |
 | Reuse a build in another world or share it | The [library](library.md) and [Import and export](import-export.md) |

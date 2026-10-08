@@ -41,7 +41,19 @@ final class CellPlan {
 
     private int count;
     private int[] wx = new int[64], wy = new int[64], wz = new int[64], value = new int[64], original = new int[64];
+    /**
+     * Planned cells by key, the latest plan of a key winning; built lazily (only {@link #planned} and the fluid refill
+     * look cells up, and a step that only raises never does), up to {@link #indexed} cells.
+     */
     private final Long2IntOpenHashMap index = new Long2IntOpenHashMap();
+    private int indexed;
+    /** Whether any cell is planned as {@link #FILL}. */
+    private boolean anyFill;
+    /** The fluid refill's dense lookup over the planned cells' bounds ({@link #buildLookup}), or {@code null}. */
+    private int[] dense;
+    private int denseX, denseY, denseZ, denseW, denseH, denseD;
+    /** The largest dense lookup: 2 M cells (8 MB). */
+    private static final int MAX_DENSE_CELLS = 1 << 21;
 
     /** @param clip the only cells written, or {@code null} */
     CellPlan(WorldReader world, Box clip, Layout layout) {
@@ -68,14 +80,20 @@ final class CellPlan {
         wz[count] = z;
         value[count] = next;
         original[count] = current;
-        index.put(layout.key(x, y, z), count);
+        if (next == FILL) anyFill = true;
         count++;
     }
 
     /** Whether cell (x, y, z) is planned already. */
     boolean planned(int x, int y, int z) {
+        catchUpIndex();
         long key = layout.key(x, y, z);
         return key != Long.MIN_VALUE && index.get(key) >= 0;
+    }
+
+    /** Brings the key index up to the cells planned so far, in plan order (a later plan of a key replaces the earlier). */
+    private void catchUpIndex() {
+        for (; indexed < count; indexed++) index.put(layout.key(wx[indexed], wy[indexed], wz[indexed]), indexed);
     }
 
     /** Cells planned so far. */
@@ -111,13 +129,15 @@ final class CellPlan {
         int air = states.air();
         for (int e = 0; e < count; e++) {
             int next = value[e] != FILL ? value[e] : fluid[e] >= 0 ? fluid[e] : air;
-            if (next != original[e]) out.set(wx[e], wy[e], wz[e], next);
+            if (next != original[e]) out.changed(wx[e], wy[e], wz[e], next, original[e]);
         }
     }
 
     private int[] resolveFluids() {
         int[] fluid = new int[count];
         Arrays.fill(fluid, -1);
+        if (!anyFill) return fluid;
+        buildLookup();
         int[] queue = new int[count];
         int head = 0, tail = 0;
         for (int e = 0; e < count; e++) {
@@ -141,6 +161,52 @@ final class CellPlan {
         return fluid;
     }
 
+
+    /**
+     * Readies {@link #lookup} for the fluid refill: a dense grid over the planned cells' bounds when that is at most
+     * {@value #MAX_DENSE_CELLS} cells and at most 16 for each planned cell (a deep Heightmap cut plans tens of thousands of
+     * cells, each looked up six times),
+     * else the key index.
+     */
+    private void buildLookup() {
+        int x0 = Integer.MAX_VALUE, y0 = Integer.MAX_VALUE, z0 = Integer.MAX_VALUE;
+        int x1 = Integer.MIN_VALUE, y1 = Integer.MIN_VALUE, z1 = Integer.MIN_VALUE;
+        for (int e = 0; e < count; e++) {
+            x0 = Math.min(x0, wx[e]);
+            y0 = Math.min(y0, wy[e]);
+            z0 = Math.min(z0, wz[e]);
+            x1 = Math.max(x1, wx[e]);
+            y1 = Math.max(y1, wy[e]);
+            z1 = Math.max(z1, wz[e]);
+        }
+        long volume = ((long) x1 - x0 + 1) * ((long) y1 - y0 + 1) * ((long) z1 - z0 + 1);
+        if (volume > MAX_DENSE_CELLS || volume > 16L * count) {
+            // Too large, or too sparse to be worth it (a few cells far apart): the key index.
+            dense = null;
+            catchUpIndex();
+            return;
+        }
+        denseX = x0;
+        denseY = y0;
+        denseZ = z0;
+        denseW = x1 - x0 + 1;
+        denseH = y1 - y0 + 1;
+        denseD = z1 - z0 + 1;
+        dense = new int[(int) volume];
+        // One more than the cell's plan index (0: none); a later plan of a cell replaces the earlier, as in the index.
+        for (int e = 0; e < count; e++) {
+            dense[((wx[e] - x0) * denseD + (wz[e] - z0)) * denseH + (wy[e] - y0)] = e + 1;
+        }
+    }
+
+    /** The plan index of cell (x, y, z), or -1 when it is not planned. */
+    private int lookup(int x, int y, int z) {
+        if (dense == null) return index.get(layout.key(x, y, z));
+        int dx = x - denseX, dy = y - denseY, dz = z - denseZ;
+        if (dx < 0 || dy < 0 || dz < 0 || dx >= denseW || dy >= denseH || dz >= denseD) return -1;
+        return dense[(dx * denseD + dz) * denseH + dy] - 1;
+    }
+
     private int seed(int e) {
         int own = sourceFluid(original[e]);
         if (own >= 0) return own;
@@ -155,7 +221,7 @@ final class CellPlan {
 
     /** What a neighbour's state after this step supplies; removed cells are left to the flood fill. */
     private int neighbourFluid(int x, int y, int z) {
-        int e = index.get(layout.key(x, y, z));
+        int e = lookup(x, y, z);
         if (e >= 0) return value[e] == FILL ? -1 : sourceFluid(value[e]);
         if (!layout.loaded(x, z)) return -1;
         return sourceFluid(world.get(x, y, z));
@@ -173,7 +239,7 @@ final class CellPlan {
     }
 
     private int spread(int[] fluid, int[] queue, int tail, int source, int x, int y, int z) {
-        int e = index.get(layout.key(x, y, z));
+        int e = lookup(x, y, z);
         if (e < 0 || value[e] != FILL || fluid[e] >= 0) return tail;
         fluid[e] = source;
         queue[tail] = e;

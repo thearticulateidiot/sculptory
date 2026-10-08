@@ -175,9 +175,12 @@ public record BrushSpec(BrushTool tool, int radius, float strength, Falloff fall
      * How far a dab's writes reach from the dab's block along each axis, in blocks, whatever the shape's facing: the
      * radius for the terrain brushes (horizontally; the Surface mode's ball too); for the Shape brush half its box's longest side, since a shape may
      * lie on its side, plus one for a symmetric copy whose fitted centre lies in the next block
-     * ({@link ShapeStamp#reachBox}). The resync footprints use it; the server checks a Shape dab's exact boxes.
+     * ({@link ShapeStamp#reachBox}); for the Heightmap brush the radius plus one, as a symmetric copy's stamp may lie one
+     * column off its dab ({@link HeightmapSpec}). The resync footprints use it; the server checks a Shape dab's exact
+     * boxes.
      */
     public int reach() {
+        if (heightmap != null) return radius + 1;
         return shapeSpec == null ? radius : Math.max(radius, shapeSpec.axialSize(radius) / 2) + 1;
     }
 

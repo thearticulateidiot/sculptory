@@ -5,6 +5,7 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.mask.EditMask;
 import dev.sculptory.core.mask.MaskText;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
 import dev.sculptory.protocol.v2.Limits;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,7 +24,7 @@ import java.util.function.ToIntFunction;
  */
 public sealed interface SettingDef<T> permits SettingDef.Int, SettingDef.Decimal, SettingDef.Bool, SettingDef.Enum,
         SettingDef.Block, SettingDef.BlockList, SettingDef.WeightedBlocks, SettingDef.IntRange, SettingDef.AssetMix,
-        SettingDef.Seed, SettingDef.MaskRules {
+        SettingDef.Seed, SettingDef.MaskRules, SettingDef.Heightmap {
 
     Predicate<SettingsValues> ALWAYS = values -> true;
 
@@ -502,6 +503,43 @@ public sealed interface SettingDef<T> permits SettingDef.Int, SettingDef.Decimal
         @Override
         public MaskValue decode(String text) {
             return text.isEmpty() ? MaskValue.UNSET : new MaskValue(MaskText.decode(text), true);
+        }
+    }
+
+    /**
+     * A height image to stamp or import ({@link HeightmapRef}): a built-in picture or a PNG in the builder's heightmaps
+     * folder, chosen in a picker with thumbnails. Its text is the reference's ({@code builtin:hill}, {@code file:island.png}),
+     * so a preset names the picture rather than holding it; a name this player's folder lacks is kept, and says so when
+     * used.
+     */
+    record Heightmap(String key, String labelKey, HeightmapRef defaultValue, Predicate<SettingsValues> visibleWhen)
+            implements SettingDef<HeightmapRef> {
+        public Heightmap {
+            checkCommon(key, labelKey, defaultValue, visibleWhen);
+        }
+
+        public Heightmap(String key, String labelKey, HeightmapRef defaultValue) {
+            this(key, labelKey, defaultValue, ALWAYS);
+        }
+
+        @Override
+        public Validation validate(HeightmapRef value, Limits serverLimits) {
+            return Validation.ok();
+        }
+
+        @Override
+        public HeightmapRef canonical(Object value) {
+            return cast(HeightmapRef.class, value);
+        }
+
+        @Override
+        public String encode(HeightmapRef value) {
+            return value.text();
+        }
+
+        @Override
+        public HeightmapRef decode(String text) {
+            return HeightmapRef.parse(text);
         }
     }
 

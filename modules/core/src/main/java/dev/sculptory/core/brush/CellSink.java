@@ -15,4 +15,12 @@ public interface CellSink {
     default void set(int x, int y, int z, int handle, BlockEntityData tile) {
         set(x, y, z, handle);
     }
+
+    /**
+     * A cell written over {@code before}, the state it held in the world the step read: kernels that know it pass it on
+     * ({@link CellPlan}) for sinks that keep it; by default it is written as {@link #set(int, int, int, int)} writes it.
+     */
+    default void changed(int x, int y, int z, int handle, int before) {
+        set(x, y, z, handle);
+    }
 }

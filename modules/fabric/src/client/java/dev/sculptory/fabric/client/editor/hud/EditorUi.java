@@ -18,6 +18,11 @@ import dev.sculptory.fabric.client.editor.commands.CommandMenu;
 import dev.sculptory.fabric.client.editor.commands.CommandRegistry;
 import dev.sculptory.fabric.client.editor.commands.EditorCommands;
 import dev.sculptory.fabric.client.editor.commands.SearchEntry;
+import dev.sculptory.fabric.client.editor.heightmap.GameHeightmaps;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapPicker;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapView;
 import dev.sculptory.fabric.client.editor.input.EditorKeymap;
 import dev.sculptory.fabric.client.editor.input.InputRouter;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
@@ -102,6 +107,7 @@ import dev.sculptory.fabric.client.session.ToolAction;
 import dev.sculptory.protocol.v2.Features;
 import dev.sculptory.protocol.v2.Limits;
 import dev.sculptory.server.engine.Perm;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -114,6 +120,7 @@ import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.Util;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -1719,6 +1726,29 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
             @Override
             public void editMask(Rect anchor, EditMask current, Consumer<EditMask> onChange) {
                 MaskPopup.open(windows.context(), anchor, services.blocks(), tr, current, onChange);
+            }
+
+            @Override
+            public void pickHeightmap(Rect anchor, HeightmapRef current, Consumer<HeightmapRef> onPick) {
+                GameHeightmaps pictures = GameHeightmaps.get();
+                HeightmapPicker.open(windows.context(), anchor, pictures.library(), pictures, tr, current,
+                        new HeightmapPicker.Host() {
+                            @Override
+                            public void badFile(HeightmapLibrary.BadFile bad) {
+                                ctx.notify(Notice.of(Notice.Level.WARNING,
+                                        "sculptory.notice.heightmap_bad_file." + bad.reason().key(), bad.name()));
+                            }
+
+                            @Override
+                            public void openFolder(Path folder) {
+                                Util.getOperatingSystem().open(folder);
+                            }
+                        }, onPick);
+            }
+
+            @Override
+            public HeightmapView heightmaps() {
+                return GameHeightmaps.get();
             }
 
             @Override

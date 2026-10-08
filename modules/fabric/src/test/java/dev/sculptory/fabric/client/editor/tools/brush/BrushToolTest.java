@@ -16,6 +16,7 @@ import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
 import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.SculptMode;
 import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.SurfaceMask;
@@ -40,6 +41,8 @@ import dev.sculptory.fabric.client.editor.EditorBackend;
 import dev.sculptory.fabric.client.editor.EditorContext;
 import dev.sculptory.fabric.client.editor.brush.BrushPredictor;
 import dev.sculptory.fabric.client.editor.brush.BrushTerrain;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
 import dev.sculptory.fabric.client.editor.input.EditorKeymap;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.input.KeyChord;
@@ -1496,6 +1499,145 @@ class BrushToolTest {
                 C2S.StrokeBegin begin = transport.sent.stream().filter(C2S.StrokeBegin.class::isInstance)
                         .map(C2S.StrokeBegin.class::cast).findFirst().orElseThrow();
                 assertEquals(new WeatherSpec(mode), begin.spec().weather(), what);
+                List<Dab> sent = transport.sent.stream().filter(C2S.Dabs.class::isInstance).map(C2S.Dabs.class::cast)
+                        .flatMap(b -> b.dabs().stream()).toList();
+                FakeWorld server = BrushTerrain.world(states);
+                List<BrushTerrain.Cell> expected = BrushTerrain.serverReplay(begin.spec(), sent, server);
+                assertFalse(expected.isEmpty(), what);
+                assertEquals(expected, target.cells, what + ": the client predicted exactly what the server writes");
+                assertArrayEquals(BrushTerrain.snapshot(server), BrushTerrain.snapshot(rig.world), what);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- the Heightmap brush
+
+    /** The built-in hill fitted to a brush of {@code radius}, turned {@code degrees}. */
+    private static byte[] hillStamp(int radius, int degrees) {
+        return HeightmapLibrary.builtInOnly().image(HeightmapLibrary.DEFAULT).orElseThrow().stamp(2 * radius + 1, degrees);
+    }
+
+    /**
+     * The Heightmap brush (slot 16, on ;): its defaults stamp the built-in hill at radius 12, 16 blocks tall, raising,
+     * unturned; its settings are the picture, Mode, Height and Angle (strength, falloff and shape stay hidden); it does
+     * not flow; its hints name the turn keys and no strength.
+     */
+    @Test
+    void theHeightmapBrushSendsTheHillByDefault() {
+        Rig rig = new Rig(BrushTool.HEIGHTMAP);
+        BrushSettings settings = rig.tool.settings();
+        assertEquals(ToolId.HEIGHTMAP, rig.tool.descriptor().id());
+        assertFalse(TerrainBrushTool.flows(BrushTool.HEIGHTMAP));
+        assertTrue(rig.values().isVisible(settings.heightmapImage));
+        assertTrue(rig.values().isVisible(settings.heightmapAngle));
+        assertFalse(rig.values().isVisible(settings.strength));
+        assertFalse(rig.values().isVisible(settings.falloff));
+        assertFalse(rig.values().isVisible(settings.shape));
+        assertNull(settings.mode, "no Surface mode in v1");
+        List<KeyHint> hints = rig.tool.hints(rig.view);
+        assertTrue(hints.contains(new KeyHint("R/Shift+R", "sculptory.hint.brush.heightmap_turn")), hints.toString());
+        assertTrue(hints.stream().noneMatch(h -> h.descriptionKey().equals("sculptory.hint.brush.strength")));
+        assertFalse(rig.scroll(1, Modifiers.ALT), "Alt+Scroll has no strength to change");
+
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        BrushSpec expected = new BrushSpec(BrushTool.HEIGHTMAP, 12, 1f, Falloff.CONSTANT, Shape.SQUARE, null, SurfaceMask.ANY,
+                0, 0, SEED, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(25, hillStamp(12, 0), 16, false), null);
+        assertEquals(expected, rig.session.begins.get(0).spec());
+        assertEquals(ToolId.HEIGHTMAP, rig.session.begins.get(0).tool());
+        rig.release(top(0, 0));
+        assertEquals(1, rig.session.begins.get(0).handle().dabs.size(), "a click stamps once");
+    }
+
+    /**
+     * Ctrl+Scroll sizes the stamp (the picture resampled to the new side), R and Shift+R turn it a quarter (a press
+     * restarts its stroke turned), a typed angle turns it freely, and Mode and Height go into the spec.
+     */
+    @Test
+    void sizeTurnModeAndHeightShapeTheStamp() {
+        Rig rig = new Rig(BrushTool.HEIGHTMAP);
+        BrushSettings settings = rig.tool.settings();
+        assertTrue(rig.scroll(-1, Modifiers.CONTROL));
+        assertEquals(11, rig.setting(settings.radius));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.ROTATE_CW));
+        assertEquals(90, rig.setting(settings.heightmapAngle));
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        HeightmapSpec turned = rig.session.begins.get(0).spec().heightmap();
+        assertEquals(23, turned.side());
+        assertArrayEquals(hillStamp(11, 90), turned.heights());
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.ROTATE_CCW));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.ROTATE_CCW));
+        assertEquals(270, rig.setting(settings.heightmapAngle));
+        rig.drag(top(1, 0));
+        rig.frame(top(1, 0), 300);
+        assertEquals(2, rig.session.begins.size(), "turning mid-press restarts the stroke");
+        assertArrayEquals(hillStamp(11, 270), rig.session.begins.get(1).spec().heightmap().heights());
+        rig.release(top(1, 0));
+
+        rig.set(settings.heightmapAngle, 37);
+        rig.set(settings.heightmapMode, BrushSettings.StampMode.LOWER);
+        rig.set(settings.heightmapHeight, 40);
+        rig.set(settings.radius, 32);
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        HeightmapSpec cut = rig.session.begins.get(2).spec().heightmap();
+        assertEquals(new HeightmapSpec(65, hillStamp(32, 37), 40, true), cut);
+        assertArrayEquals(rig.tool.stamp(rig.values(), 32), cut.heights());
+        assertFalse(rig.session.begins.get(2).params().predict(), "65 × 65 columns 40 tall is left to the server");
+        rig.release(top(0, 0));
+    }
+
+    @Test
+    void aMissingPictureRefusesThePressWithOneToast() {
+        Rig rig = new Rig(BrushTool.HEIGHTMAP);
+        rig.set(rig.tool.settings().heightmapImage, HeightmapRef.file("gone.png"));
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        rig.drag(top(3, 0));
+        rig.frame(top(3, 0), 300);
+        assertTrue(rig.session.begins.isEmpty());
+        assertEquals(List.of("sculptory.notice.heightmap_missing"), rig.noticeKeys());
+        assertEquals(List.of("gone"), rig.notices.get(0).args());
+        rig.release(top(3, 0));
+    }
+
+    /**
+     * Heightmap strokes, raising and lowering, plain and mirrored, are predicted through the Fabric stroke handle
+     * exactly as the server replays the dabs it was sent.
+     */
+    @Test
+    void heightmapStrokesArePredictedExactlyAsTheServerReplaysThem() throws ProtocolException {
+        for (BrushSettings.StampMode mode : BrushSettings.StampMode.values()) {
+            for (Symmetry.Mode symmetry : List.of(Symmetry.Mode.OFF, Symmetry.Mode.MIRROR_X)) {
+                String what = mode + " " + symmetry;
+                Rig rig = new Rig(BrushTool.HEIGHTMAP);
+                rig.set(rig.tool.settings().radius, 4);
+                rig.set(rig.tool.settings().heightmapHeight, 6);
+                rig.set(rig.tool.settings().heightmapMode, mode);
+                rig.set(rig.tool.settings().heightmapAngle, 30);
+                rig.set(rig.tool.settings().symmetry, symmetry);
+                FakeTransport transport = new FakeTransport(states);
+                FabricEditorSession fabric = new FabricEditorSession(transport, () -> states, new AtomicLong()::get, "test");
+                fabric.onJoin();
+                fabric.onFrame(Codec.encodeS2C(new S2C.Welcome(ProtocolV2.VERSION, Features.of(Features.STROKES),
+                        Limits.DEFAULTS, Perm.mask(EnumSet.allOf(Perm.class)), 1L), states));
+                rig.current = fabric;
+                BrushTerrain.RecordingTarget target = new BrushTerrain.RecordingTarget(rig.world);
+                rig.services.target = target;
+                rig.press(top(-6, 0), 0);
+                for (int step = 0; step <= 16; step++) {
+                    WorldCursor at = top(-6 + step * 3 / 4, step % 3 - 1);
+                    rig.drag(at);
+                    rig.frame(at, 50);
+                    fabric.tick();
+                    ack(fabric, transport);
+                }
+                rig.release(top(6, 1));
+                C2S.StrokeBegin begin = transport.sent.stream().filter(C2S.StrokeBegin.class::isInstance)
+                        .map(C2S.StrokeBegin.class::cast).findFirst().orElseThrow();
+                assertEquals(mode == BrushSettings.StampMode.LOWER, begin.spec().heightmap().lower(), what);
                 List<Dab> sent = transport.sent.stream().filter(C2S.Dabs.class::isInstance).map(C2S.Dabs.class::cast)
                         .flatMap(b -> b.dabs().stream()).toList();
                 FakeWorld server = BrushTerrain.world(states);

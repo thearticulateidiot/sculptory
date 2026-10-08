@@ -3,6 +3,8 @@ package dev.sculptory.fabric.client.editor.tools.brush;
 import dev.sculptory.fabric.client.world.ClientBlockChanges;
 import dev.sculptory.fabric.client.editor.brush.BrushPredictor;
 import dev.sculptory.fabric.client.editor.brush.ClientWorldPrediction;
+import dev.sculptory.fabric.client.editor.heightmap.GameHeightmaps;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
 import dev.sculptory.fabric.client.editor.input.EditorKeymap;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.input.KeyChord;
@@ -81,5 +83,11 @@ public final class McBrushServices implements BrushServices {
     @Override
     public Optional<Ray> cursorRay() {
         return cursorRay.get();
+    }
+
+    /** The game's pictures: the built-ins and {@code <game dir>/sculptory/heightmaps/}. */
+    @Override
+    public HeightmapLibrary heightmaps() {
+        return GameHeightmaps.get().library();
     }
 }

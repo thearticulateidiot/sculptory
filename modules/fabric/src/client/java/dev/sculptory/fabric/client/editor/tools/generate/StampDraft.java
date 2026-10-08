@@ -39,6 +39,7 @@ import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -76,6 +77,8 @@ public final class StampDraft {
     public static final String RELOADING = "sculptory.notice.asset_reloading";
     public static final String SENT = "sculptory.notice.stamp_sent";
     public static final String OP = "sculptory.op.stamp";
+    /** The most distinct turns baked at once; copies past them show the preview turned as a whole. */
+    static final int MAX_BAKES = 64;
     public static final int OUTLINE_COLOUR = OverlayColors.scaleAlpha(GenerateTool.PATH_COLOUR, 0.6f);
     /** Blocks only where the source has them (its air leaves the world as it is); its entities come too. */
     static final PasteOptions OPTIONS = new PasteOptions(false, false, true);
@@ -107,9 +110,14 @@ public final class StampDraft {
     private BlockPos previewDims;
     private BlockPos previewAnchor;
     private long previewCells;
-    /** Turned bakes of {@link #volume}, per turn, and the ones being baked. */
+    /**
+     * Turned bakes of {@link #volume}, per turn, and the ones being baked: only for turns some copy has now (the others
+     * are released each frame), at most {@value #MAX_BAKES} of them, and none started while a point is dragged.
+     */
     private final Map<Orientation, GhostVolume> baked = new HashMap<>();
     private final Map<Orientation, CompletableFuture<GhostVolume>> baking = new HashMap<>();
+    /** Bakes no longer wanted but still running: released when they finish. */
+    private final List<CompletableFuture<GhostVolume>> orphans = new ArrayList<>();
     /** Turns whose bake failed: shown unbaked, not baked again. */
     private final Set<Orientation> bakeFailed = new HashSet<>();
     /** The source whose preview was refused: not asked for again until Enter (or another asset) says to. */
@@ -358,11 +366,19 @@ public final class StampDraft {
         previewAnchor = null;
         for (GhostVolume bake : baked.values()) services.get().releaseGhost(bake);
         baked.clear();
+        orphans.addAll(baking.values()); // released when they finish
         baking.clear();
         bakeFailed.clear();
     }
 
     private void takeBakes() {
+        for (Iterator<CompletableFuture<GhostVolume>> it = orphans.iterator(); it.hasNext(); ) {
+            CompletableFuture<GhostVolume> bake = it.next();
+            if (!bake.isDone()) continue;
+            it.remove();
+            GhostVolume late = GhostBaker.finished(bake);
+            if (late != null) services.get().releaseGhost(late);
+        }
         for (Orientation turn : List.copyOf(baking.keySet())) {
             CompletableFuture<GhostVolume> bake = baking.get(turn);
             if (!bake.isDone()) continue;
@@ -381,23 +397,51 @@ public final class StampDraft {
         Optional<Source> source = source(c, null);
         if (volume == null || source.isEmpty() || points.isEmpty()) return List.of();
         List<GhostPlacement> out = new ArrayList<>(points.size());
+        Set<Orientation> used = new HashSet<>();
         for (int i = 0; i < points.size(); i++) {
             Placement placement = placement(source.get(), i);
             Orientation turn = placement.orientation();
+            used.add(turn);
             BlockPos min = placement.targetMin();
             GhostVolume turned = turn.isIdentity() ? volume : baked.get(turn);
             if (turned == null) {
-                bake(c, turn);
+                // While a point is dragged the turns change every move: the copies show turned as a whole until it rests.
+                if (dragging < 0) bake(c, turn);
                 out.add(GhostPlacement.of(volume, min.x(), min.y(), min.z()).withOrientation(turn));
             } else {
                 out.add(GhostPlacement.of(turned, min.x(), min.y(), min.z()));
             }
         }
+        forgetUnused(used);
         return out;
+    }
+
+    /** Releases the bakes of turns no copy has any more; bakes still running for them are released when they finish. */
+    private void forgetUnused(Set<Orientation> used) {
+        for (Iterator<Map.Entry<Orientation, GhostVolume>> it = baked.entrySet().iterator(); it.hasNext(); ) {
+            Map.Entry<Orientation, GhostVolume> entry = it.next();
+            if (used.contains(entry.getKey())) continue;
+            services.get().releaseGhost(entry.getValue());
+            it.remove();
+        }
+        for (Iterator<Map.Entry<Orientation, CompletableFuture<GhostVolume>>> it = baking.entrySet().iterator();
+             it.hasNext(); ) {
+            Map.Entry<Orientation, CompletableFuture<GhostVolume>> entry = it.next();
+            if (used.contains(entry.getKey())) continue;
+            orphans.add(entry.getValue());
+            it.remove();
+        }
+        bakeFailed.retainAll(used);
+    }
+
+    /** Bakes held or running (tests). */
+    int liveBakes() {
+        return baked.size() + baking.size();
     }
 
     private void bake(ToolContext c, Orientation turn) {
         if (baking.containsKey(turn) || bakeFailed.contains(turn) || volume.frame() == null) return;
+        if (baked.size() + baking.size() >= MAX_BAKES) return;
         StateSpace states = GenerateTool.statesOrNull(c);
         if (states == null) return;
         Box frame = volume.frame();
@@ -410,6 +454,7 @@ public final class StampDraft {
     public void hide(ToolContext c) {
         endDrag(c);
         dropPreview();
+        takeBakes(); // bakes already finished are released now; the others when they finish
         services.get().showGhosts(List.of());
     }
 

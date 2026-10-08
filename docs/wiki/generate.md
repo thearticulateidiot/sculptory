@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Build faster](home.md#build-faster)
 
-**Generate** (`-`) builds a **road** along points you click, a **roof** over the selection, a **line** through blocks you click, a **sweep** of the selection along a path, or **stamps** of your clipboard on blocks you click. It shows the result first, and `Enter` builds it as one undo step named **Road**, **Roof**, **Line**, **Sweep** or **Stamp**. Use it for paths that hug the land, embanked highways, roofs of stairs and slabs that would take an evening by hand, cables, pipes, arches and beams, walls with a profile of your own, and rows of lamp posts or trees.
+**Generate** (`-`) builds a **road** along points you click, a **roof** over the selection, a **line** through blocks you click, a **sweep** of the selection along a path, **stamps** of your clipboard on blocks you click, or a **heightmap**: terrain shaped from a picture over the selection. It shows the result first, and `Enter` builds it as one undo step named **Road**, **Roof**, **Line**, **Sweep**, **Stamp** or **Heightmap**. Use it for paths that hug the land, embanked highways, roofs of stairs and slabs that would take an evening by hand, cables, pipes, arches and beams, walls with a profile of your own, rows of lamp posts or trees, and whole landscapes from a picture.
 
 ![Tool Settings for Generate](images/generate-settings.png)
 
@@ -44,6 +44,16 @@ A profile thicker than one block repeats along the path: a fence profile three b
 4. Press `Enter` to build: one undo step named **Stamp**, at most 256 copies at once.
 
 Stamps are pasted by the server from its own copy, so chests keep their contents and entities such as armor stands and item frames come along.
+## Import a heightmap
+
+1. Select the area with [Select](select.md). Its footprint is where the picture goes; its bottom and top become **Min Y** and **Max Y**.
+2. Press `-` and set **Generate** to **Heightmap**.
+3. Click **Picture** and pick one: a built-in or one of your own PNGs (as for the [Heightmap brush](heightmap.md#your-own-pictures)).
+4. Set **Min Y** (the ground where the picture is black) and **Max Y** (where it is white). They start at the selection's bottom and top each time you select something new, and may reach beyond it.
+5. **Turn** the picture in quarter turns, or **Invert** it (a hill becomes a pit). The ghost shows the result.
+6. Press `Enter` to build.
+
+The picture is stretched over the whole footprint, so a wide selection makes a wide hill. In each column the ground is set to the picture's height: everything above it, up to the top of the selection (or Max Y), becomes air, trees and water included; below it the column keeps its own blocks, as with the [Heightmap brush](heightmap.md#raise-and-lower): grass stays on top, the dirt beneath grows or is cut.
 
 ## Settings
 
@@ -65,6 +75,9 @@ Stamps are pasted by the server from its own copy, so chests keep their contents
 | Path, Sag (Sweep) | The sweep's path through its points; how far a hanging span drops at its middle |
 | Follow slope | The profile tilts as the path climbs, instead of staying upright |
 | Copy | What Stamp copies: your **Clipboard**, or the **Library asset** picked with the Library's **Stamp** button |
+| Picture | The height picture of a Heightmap import |
+| Min Y, Max Y | The ground's height where the picture is black, and where it is white |
+| Turn, Invert | Turn the picture 0°, 90°, 180° or 270° clockwise; swap high and low |
 
 ## Tips
 
@@ -75,6 +88,7 @@ Stamps are pasted by the server from its own copy, so chests keep their contents
 - A line reaching into chunks your game hasn't loaded won't build: fly closer.
 - A sweep needs a selection: the profile is read when you click, so change the selection and the ghost follows.
 - Where two stamped copies overlap, the one clicked later wins.
+- A heightmap import clears everything above the new ground inside the selection: select only the land, not the houses next to it. Chests, furnaces, signs and other blocks with contents are left exactly as they are (a message counts them). A column's ground is its topmost solid block, so a tree trunk or a roof inside the selection is taken for ground (its block is what the column grows or is cut to): clear them first.
 - Generate needs the `clipboard` and `region` [permissions](permissions.md).
 - The [Shape brush](shape-brush.md#sweep-a-shape-along-a-line) sweeps any of its shapes along the same kind of line, and can carve with it.
 
@@ -85,3 +99,4 @@ Stamps are pasted by the server from its own copy, so chests keep their contents
 - [Extrude](extrude.md)
 - [Library](library.md)
 - [Mix patterns](mix-patterns.md)
+- [Heightmap brush](heightmap.md)

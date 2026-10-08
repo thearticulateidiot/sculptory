@@ -149,7 +149,7 @@ class BatchSixContractsTest {
     }
 
     @Test
-    void theHeightmapAndBiomeBrushesHaveTheirOwnSpecsAndStubKernels() {
+    void theHeightmapAndBiomeBrushesHaveTheirOwnSpecsAndTheBiomeAStubKernel() {
         assertFalse(BrushTool.HEIGHTMAP.terrain());
         assertFalse(BrushTool.BIOME.terrain());
         assertFalse(SculptMode.surfaceTool(BrushTool.HEIGHTMAP));
@@ -174,7 +174,8 @@ class BatchSixContractsTest {
                 new BiomeSpec("minecraft:desert", true));
         assertEquals(new BiomeSpec("minecraft:desert", true), biome.withSymmetry(MIRROR).biome());
         assertThrows(IllegalArgumentException.class, () -> new BiomeSpec("Desert", true));
-        for (BrushSpec spec : List.of(heightmap, biome)) {
+        // ws/heightmap built its kernel (HeightmapKernelTest); the Biome brush is still a stub.
+        for (BrushSpec spec : List.of(biome)) {
             UnsupportedOperationException stub = assertThrows(UnsupportedOperationException.class,
                     () -> BrushKernels.forTool(spec.tool()).applyStep(spec, List.of(new Dab(0, 0, 64 * 16, 0, 255)),
                             new StrokeState(), new FakeWorld(STATES), (x, y, z, s) -> {

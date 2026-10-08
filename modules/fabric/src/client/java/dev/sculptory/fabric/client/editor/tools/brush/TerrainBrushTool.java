@@ -7,6 +7,8 @@ import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
 import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightImage;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.core.brush.SculptMode;
 import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.SurfaceNormal;
@@ -22,6 +24,8 @@ import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.fabric.client.editor.brush.BrushPredictor;
 import dev.sculptory.fabric.client.editor.brush.ReaderTerrainProbe;
 import dev.sculptory.fabric.client.editor.brush.StrokeController;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.render.BrushCursor;
 import dev.sculptory.fabric.client.editor.render.OverlayColors;
@@ -60,9 +64,9 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * The terrain brushes (palette slots 2-7 and 15), one parameterized tool per {@link BrushTool}: Raise, Lower,
- * Smooth, Flatten, Paint, Palette Paint and Weather (its Weather setting picks Erode, Fill in, Roughen or Melt:
- * {@code WeatherKernel}).
+ * The terrain brushes (palette slots 2-7, 15 and 16), one parameterized tool per {@link BrushTool}: Raise, Lower,
+ * Smooth, Flatten, Paint, Palette Paint, Weather (its Weather setting picks Erode, Fill in, Roughen or Melt:
+ * {@code WeatherKernel}) and Heightmap (below).
  *
  * <p>Left-drag paints a stroke. {@link StrokeController} turns the cursor path into dabs for a server
  * stroke; on the Fabric session a {@link BrushPredictor} applies each batch to the client world just before
@@ -103,6 +107,15 @@ import java.util.Optional;
  * mode's copies in the dab rate and in the in-flight window. While the brush has symmetry on, the centre line, the
  * mirror planes and the copies' rings (on the ground each would stand on, grey where one would find none) are drawn in
  * the world.
+ *
+ * <p><b>Heightmap</b> ({@link BrushTool#HEIGHTMAP}, slot 16). It stamps a picture from the {@link HeightmapLibrary} (the
+ * built-ins and the builder's folder, picked in Tool Settings): the picture is fitted to the brush's square
+ * ({@code 2 × radius + 1} columns) and turned by the Angle setting ({@link HeightImage#stamp}) here on the client, and
+ * sent as the stroke's {@link HeightmapSpec} with the Height and Raise or Lower. A click stamps once; a drag lays a ridge
+ * ({@code HeightmapKernel}). R and Shift+R turn the stamp a quarter turn either way; Ctrl+Scroll sizes it. The cursor
+ * outlines the stamp's square on the ground and tints each column by the picture's value there, with a tick pointing to
+ * the picture's top edge. A missing picture (a preset naming a file this player lacks) refuses the press with a toast;
+ * files in the folder that can't be read are skipped with a one-line toast.
  */
 public final class TerrainBrushTool implements Tool {
     /** Dabs estimated to write more cells than this are not predicted. */
@@ -168,6 +181,12 @@ public final class TerrainBrushTool implements Tool {
     private int facingRadius;
     private long facingStamp;
 
+    // The Heightmap brush's stamp, kept while its picture, size and angle stay the same.
+    private HeightmapLibrary.Entry stampEntry;
+    private int stampSide;
+    private int stampAngle;
+    private byte[] stamp;
+
     // The current press.
     private boolean invert;
     private Integer flattenY;
@@ -177,6 +196,8 @@ public final class TerrainBrushTool implements Tool {
     private BrushSpec strokeSpec;
     private BrushPredictor predictor;
     private boolean warnedMaskState;
+    /** The press said its picture is missing (once a press, restarts included). */
+    private boolean warnedPicture;
 
     /** A brush with a symmetry centre of its own (tests and tool sets without the others). */
     public TerrainBrushTool(BrushTool kind, BrushServices services) {
@@ -329,6 +350,9 @@ public final class TerrainBrushTool implements Tool {
     @Override
     public void activate(ToolContext c) {
         context = c;
+        if (kind == BrushTool.HEIGHTMAP) {
+            refreshPictures(c);
+        }
     }
 
     @Override
@@ -427,7 +451,7 @@ public final class TerrainBrushTool implements Tool {
             c.updateSettings(values.with(settings.radius, radius));
             return true;
         }
-        if (action == KeyAction.TOOL_STRENGTH) {
+        if (action == KeyAction.TOOL_STRENGTH && kind != BrushTool.HEIGHTMAP) {
             double steps = Math.round(values.get(settings.strength) / BrushSettings.STRENGTH_STEP) + direction;
             double strength = Math.max(0, Math.min(1, steps * BrushSettings.STRENGTH_STEP));
             c.updateSettings(values.with(settings.strength, Math.round(strength * 100) / 100.0));
@@ -458,6 +482,16 @@ public final class TerrainBrushTool implements Tool {
             }
             case SET_SYMMETRY_CENTRE -> {
                 setSymmetryCentre(c);
+                return true;
+            }
+            case ROTATE_CW, ROTATE_CCW -> {
+                if (kind != BrushTool.HEIGHTMAP) {
+                    return false;
+                }
+                // A quarter turn of the stamp, clockwise seen from above (Shift: back); mid-press the stroke restarts.
+                SettingsValues values = c.settings();
+                int turn = a == EditorAction.ROTATE_CW ? 90 : 270;
+                c.updateSettings(values.with(settings.heightmapAngle, (values.get(settings.heightmapAngle) + turn) % 360));
                 return true;
             }
             default -> {
@@ -512,6 +546,9 @@ public final class TerrainBrushTool implements Tool {
         if (cursorShape == Shape.SQUARE) {
             BrushOutlines.square(d, samples, cursorRadius, cursorColor, cursorServerOnly);
         }
+        if (kind == BrushTool.HEIGHTMAP) {
+            stampPreview(c, d);
+        }
         if (kind == BrushTool.FLATTEN && controller.pressed() && flattenY != null) {
             BrushOutlines.plane(d, samples.centerX(), flattenY, samples.centerZ(), cursorRadius, cursorShape, cursorColor);
         }
@@ -541,8 +578,14 @@ public final class TerrainBrushTool implements Tool {
         if (!controller.pressed() && drawsGradientLine(c.settings())) {
             hints.add(new KeyHint(GRADIENT_DRAG, "sculptory.hint.pattern.draw_line"));
         }
+        if (kind == BrushTool.HEIGHTMAP) {
+            hints.add(new KeyHint(services.keyLabel(KeyAction.ROTATE_CW) + "/" + services.keyLabel(KeyAction.ROTATE_CCW),
+                    "sculptory.hint.brush.heightmap_turn"));
+        }
         hints.add(new KeyHint(services.keyLabel(KeyAction.TOOL_SIZE), "sculptory.hint.brush.radius"));
-        hints.add(new KeyHint(services.keyLabel(KeyAction.TOOL_STRENGTH), "sculptory.hint.brush.strength"));
+        if (kind != BrushTool.HEIGHTMAP) {
+            hints.add(new KeyHint(services.keyLabel(KeyAction.TOOL_STRENGTH), "sculptory.hint.brush.strength"));
+        }
         if (!controller.pressed() && c.settings().get(settings.symmetry) != Symmetry.Mode.OFF) {
             hints.add(new KeyHint(services.keyLabel(KeyAction.SET_SYMMETRY_CENTRE), "sculptory.hint.brush.symmetry_centre"));
         }
@@ -569,6 +612,10 @@ public final class TerrainBrushTool implements Tool {
         strokeSpec = null;
         predictor = null;
         warnedMaskState = false;
+        warnedPicture = false;
+        if (kind == BrushTool.HEIGHTMAP) {
+            refreshPictures(c);
+        }
         Limits limits = limits(c);
         controller.press(effectiveRadius(c.settings(), limits), limits.maxDabRate(), copies(c.settings()));
         c.setPointerCapture(true);
@@ -680,6 +727,20 @@ public final class TerrainBrushTool implements Tool {
             settings.unknownMaskState(values, states).ifPresent(unknown ->
                     c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.unknown_block", unknown.format())));
             warnedMaskState = true;
+        }
+        if (kind == BrushTool.HEIGHTMAP) {
+            HeightmapSpec image = heightmapSpec(c, values, radius);
+            if (image == null) {
+                return null;
+            }
+            BrushSpec spec = new BrushSpec(BrushTool.HEIGHTMAP, radius, 1f, Falloff.CONSTANT, Shape.SQUARE, null,
+                    settings.mask(values, states), 0, 0, seed, clip, press.symmetry(c, values.get(settings.symmetry), aimPos),
+                    null, SculptMode.TERRAIN, null, null, image, null);
+            if (!fitsOneFrame(spec, states)) {
+                c.notify(Notice.of(Notice.Level.WARNING, SPEC_TOO_LARGE, Integer.toString(ProtocolV2.MAX_C2S_FRAME)));
+                return null;
+            }
+            return spec;
         }
         int depth = settings.depth == null ? 0 : values.get(settings.depth);
         int targetY = kind == BrushTool.FLATTEN && flattenY != null ? flattenY : 0;
@@ -834,8 +895,10 @@ public final class TerrainBrushTool implements Tool {
         BrushTool shown = controller.pressed() ? effectiveTool(invert) : effectiveTool(invertible() && Modifiers.alt(c.modifiers()));
         boolean surface = surface(values);
         SculptMode mode = surface ? SculptMode.SURFACE : SculptMode.TERRAIN;
-        boolean serverOnly = BrushPredictor.estimatedCells(shown, radius, shape, depth, mode) * copies(values)
-                > MAX_PREDICTED_CELLS;
+        long cells = kind == BrushTool.HEIGHTMAP
+                ? BrushPredictor.estimatedHeightmapCells(radius, values.get(settings.heightmapHeight))
+                : BrushPredictor.estimatedCells(shown, radius, shape, depth, mode);
+        boolean serverOnly = cells * copies(values) > MAX_PREDICTED_CELLS;
         cursorRadius = radius;
         cursorShape = shape;
         cursorColor = color(shown);
@@ -963,6 +1026,88 @@ public final class TerrainBrushTool implements Tool {
     /** Surface-mode Flatten's plane for the current press, or {@code null} (tests). */
     public SurfacePlane surfacePlane() {
         return surfacePlane;
+    }
+
+    // ---- Heightmap ----
+
+    /** Looks at the heightmaps folder again; each file that can't be used is named once, in a one-line toast. */
+    private void refreshPictures(ToolContext c) {
+        for (HeightmapLibrary.BadFile bad : services.heightmaps().refresh()) {
+            c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.heightmap_bad_file." + bad.reason().key(),
+                    bad.name()));
+        }
+    }
+
+    /**
+     * The stroke's stamp: the chosen picture fitted to {@code 2 × radius + 1} columns and turned by the Angle setting, with
+     * the Height and Mode; {@code null} (after a toast, once a press) when the picture is missing.
+     */
+    private HeightmapSpec heightmapSpec(ToolContext c, SettingsValues values, int radius) {
+        byte[] heights = stamp(values, radius);
+        if (heights == null) {
+            if (!warnedPicture) {
+                HeightmapRef ref = values.get(settings.heightmapImage);
+                c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.heightmap_missing", ref.fileLabel()));
+                warnedPicture = true;
+            }
+            return null;
+        }
+        return new HeightmapSpec(2 * radius + 1, heights, values.get(settings.heightmapHeight),
+                values.get(settings.heightmapMode) == BrushSettings.StampMode.LOWER);
+    }
+
+    /**
+     * The stamp of the chosen picture for a brush of {@code radius}, turned by the Angle setting ({@link HeightImage#stamp}),
+     * or {@code null} when the picture is missing. Worked out again only when the picture, size or angle changes.
+     */
+    public byte[] stamp(SettingsValues values, int radius) {
+        HeightmapLibrary.Entry entry = services.heightmaps().entry(values.get(settings.heightmapImage)).orElse(null);
+        if (entry == null) {
+            return null;
+        }
+        int side = 2 * radius + 1;
+        int angle = values.get(settings.heightmapAngle);
+        if (entry != stampEntry || side != stampSide || angle != stampAngle) {
+            stamp = entry.image().stamp(side, angle);
+            stampEntry = entry;
+            stampSide = side;
+            stampAngle = angle;
+        }
+        return stamp;
+    }
+
+    /**
+     * The Heightmap cursor's picture of the stamp: each column of the square tinted by the picture's value there, on the
+     * ground the cursor sees, and a tick from the centre toward the picture's top edge (which R turns).
+     */
+    private void stampPreview(ToolContext c, WorldDraw d) {
+        int radius = cursorRadius;
+        byte[] heights = stamp(c.settings(), radius);
+        if (heights == null || samples == null) {
+            return;
+        }
+        int side = 2 * radius + 1;
+        int x0 = samples.centerX() - radius, z0 = samples.centerZ() - radius;
+        int rgb = cursorColor & 0xFFFFFF;
+        for (int v = 0; v < side; v++) {
+            for (int u = 0; u < side; u++) {
+                int value = heights[v * side + u] & 0xFF;
+                if (value == 0) {
+                    continue;
+                }
+                int ground = samples.heightAtWorld(x0 + u, z0 + v);
+                if (ground == SurfaceSampler.NONE) {
+                    continue;
+                }
+                int alpha = 0x18 + value * 0x90 / 255;
+                d.surfaceQuad(x0 + u, z0 + v, x0 + u + 1, z0 + v + 1, ground + 1 + BrushOutlines.LIFT, alpha << 24 | rgb);
+            }
+        }
+        double angle = Math.toRadians(c.settings().get(settings.heightmapAngle));
+        double cx = samples.centerX() + 0.5, cz = samples.centerZ() + 0.5;
+        double y = samples.centerY() + 1 + 2 * BrushOutlines.LIFT;
+        // The picture's top edge is north (-z) unturned; a clockwise turn takes it toward east.
+        d.line(cx, y, cz, cx + Math.sin(angle) * radius, y, cz - Math.cos(angle) * radius, cursorColor);
     }
 
     // ---- Helpers ----

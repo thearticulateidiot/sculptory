@@ -131,7 +131,9 @@ public final class OpCompiler {
         byte[] table = layerTable(s, c, states);
         if (s instanceof OpSpec.PasteMany many) {
             // Each copy is the op's own placements under its image (PasteProgram.compilePlacement), sharing one scan of
-            // the source per transform; the original first, so it wins where copies overlap.
+            // the source per transform; the original first, so it wins where copies overlap. The scans are keyed by
+            // transform alone: they also depend on the source, its include-air and the state space, which are this
+            // one op's, so the map lives for this compile only.
             Map<dev.sculptory.core.transform.Transform, PasteProgram.Scan> scans = new HashMap<>();
             List<ClaimingProgram> programs = new ArrayList<>(copies.size());
             for (OpSymmetry.Copy copy : copies) {

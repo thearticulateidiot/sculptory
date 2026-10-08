@@ -212,6 +212,44 @@ class GenerateSweepStampTest {
     }
 
     @Test
+    void aCopyTurnsByThePathsOwnAngleClockwiseSeenFromAbove() {
+        Rig rig = new Rig(GenerateSettings.Kind.STAMP);
+        clipboard(rig);
+        rig.click(on(0, GROUND, 0));
+        rig.click(on(5, GROUND, 0));
+        rig.click(on(10, GROUND, 20));
+        // The middle copy heads from (0, 0) to (10, 20): 63.43 degrees clockwise of east, the first heading.
+        assertEquals(Orientation.free(Transform.IDENTITY, 6_343, 0, 0), rig.tool.stamp().orientation(1));
+        assertEquals(Orientation.IDENTITY, rig.tool.stamp().orientation(0));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.ROTATE_CW));
+        assertEquals(Orientation.free(Transform.rotation(1), 6_343, 0, 0), rig.tool.stamp().orientation(1),
+                "R adds a quarter turn");
+    }
+
+    @Test
+    void draggingAPointNeverGrowsTheBakesHeld() {
+        Rig rig = new Rig(GenerateSettings.Kind.STAMP);
+        clipboard(rig);
+        int[][] curve = {{0, 0}, {10, 0}, {15, 8}, {20, 20}, {30, 25}};
+        for (int[] p : curve) rig.click(on(p[0], GROUND, p[1]));
+        rig.frame(on(30, GROUND, 25));
+        StampDraft stamp = rig.tool.stamp();
+        int held = stamp.liveBakes();
+        assertTrue(held > 0 && held < curve.length, "a bake per turned copy: " + held);
+        rig.press(on(0, GROUND, 0));
+        for (int k = 1; k <= 12; k++) {
+            rig.drag(on(-k, GROUND, k % 4));
+            rig.frame(on(-k, GROUND, k % 4));
+            assertTrue(stamp.liveBakes() <= held, "move " + k + ": " + stamp.liveBakes() + " bakes held");
+            assertEquals(curve.length, rig.services.shown.size(), "every copy still shows");
+        }
+        rig.release(on(-12, GROUND, 0));
+        rig.frame(on(-12, GROUND, 0));
+        assertTrue(stamp.liveBakes() < curve.length, "once it rests, only the turns the copies have: " + stamp.liveBakes());
+        assertTrue(rig.services.released > 0, "bakes no copy uses are released");
+    }
+
+    @Test
     void stampTakesALibraryAssetPickedInTheLibrary() {
         Rig rig = new Rig(GenerateSettings.Kind.STAMP);
         rig.set(GenerateSettings.STAMP_SOURCE, GenerateSettings.StampSource.LIBRARY);
@@ -382,7 +420,19 @@ class GenerateSweepStampTest {
         }
 
         void click(WorldCursor cursor) {
+            press(cursor);
+            release(cursor);
+        }
+
+        void press(WorldCursor cursor) {
             tool.onPointer(view, new PointerEvent(PointerEvent.Kind.PRESS, PointerEvent.LEFT, 0, 0, 0, cursor));
+        }
+
+        void drag(WorldCursor cursor) {
+            tool.onPointer(view, new PointerEvent(PointerEvent.Kind.DRAG, PointerEvent.LEFT, 0, 0, 0, cursor));
+        }
+
+        void release(WorldCursor cursor) {
             tool.onPointer(view, new PointerEvent(PointerEvent.Kind.RELEASE, PointerEvent.LEFT, 0, 0, 0, cursor));
         }
 
@@ -410,6 +460,7 @@ class GenerateSweepStampTest {
     private static final class FakeServices implements GenerateTool.Services {
         final EditorKeymap keymap = EditorKeymap.defaults();
         List<GhostPlacement> shown = List.of();
+        int released;
 
         @Override
         public void showGhosts(List<GhostPlacement> placements) {
@@ -417,7 +468,9 @@ class GenerateSweepStampTest {
         }
 
         @Override
-        public void releaseGhost(GhostVolume volume) {}
+        public void releaseGhost(GhostVolume volume) {
+            released++;
+        }
 
         @Override
         public Executor background() {

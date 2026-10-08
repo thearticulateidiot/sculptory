@@ -270,10 +270,13 @@ public final class FabricStrokeHandle implements StrokeHandle {
     List<Box> resyncBoxes(Iterable<Dab> dabs) {
         // The Shape brush's shapes reach half their longest side (a tall shape may lie on its side).
         int r = spec.reach();
+        // The Heightmap brush finds ground up to radius + 8 plus its stamp's height from the dab, then moves it up to that
+        // height again (HeightmapKernel); the other brushes stay within their reach.
+        int up = spec.heightmap() == null ? r : r + 8 + 2 * spec.heightmap().heightBlocks() + 3;
         // tile key -> {minCx, maxCx, minCz, maxCz, minY, maxY}
         TreeMap<Long, int[]> own = new TreeMap<>();
         TreeMap<Long, int[]> copies = new TreeMap<>();
-        for (Dab d : dabs) addFootprint(own, null, d, r);
+        for (Dab d : dabs) addFootprint(own, null, d, r, up);
         for (Dab d : dabs) {
             List<Dab> images;
             try {
@@ -281,7 +284,7 @@ public final class FabricStrokeHandle implements StrokeHandle {
             } catch (IllegalArgumentException outOfRange) {
                 continue;
             }
-            for (int i = 1; i < images.size(); i++) addFootprint(copies, own, images.get(i), r);
+            for (int i = 1; i < images.size(); i++) addFootprint(copies, own, images.get(i), r, up);
         }
         List<Box> boxes = new ArrayList<>();
         for (TreeMap<Long, int[]> tiles : List.of(own, copies)) {
@@ -297,9 +300,9 @@ public final class FabricStrokeHandle implements StrokeHandle {
      * Adds the chunks of a dab's footprint to their tiles' bounds in {@code tiles}, or in {@code first} for tiles it
      * already holds.
      */
-    private static void addFootprint(TreeMap<Long, int[]> tiles, TreeMap<Long, int[]> first, Dab d, int r) {
-        int minY = clamp((long) d.blockY() - r);
-        int maxY = clamp((long) d.blockY() + r);
+    private static void addFootprint(TreeMap<Long, int[]> tiles, TreeMap<Long, int[]> first, Dab d, int r, int up) {
+        int minY = clamp((long) d.blockY() - up);
+        int maxY = clamp((long) d.blockY() + up);
         for (int cx = (d.blockX() - r) >> 4; cx <= (d.blockX() + r) >> 4; cx++) {
             for (int cz = (d.blockZ() - r) >> 4; cz <= (d.blockZ() + r) >> 4; cz++) {
                 long tile = ((long) (cx >> 3) << 32) | ((cz >> 3) & 0xFFFFFFFFL);

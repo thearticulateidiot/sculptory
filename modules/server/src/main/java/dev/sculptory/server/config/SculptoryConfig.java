@@ -112,6 +112,11 @@ public final class SculptoryConfig {
         public long maxClipboardVolume = Limits.DEFAULTS.maxClipboardVolume();
         public int maxBrushRadius = Limits.DEFAULTS.maxBrushRadius();
         public int maxDabRate = Limits.DEFAULTS.maxDabRate();
+        /**
+         * The tallest Heightmap brush stamp, in blocks (1-128): a server-side cap (the client learns it from the refusal);
+         * {@code limit.bypass} goes past it, as past {@link #maxBrushRadius}.
+         */
+        public int maxHeightmapHeight = 128;
         /** Largest {@code .schem} upload (compressed); at most {@link #MAX_UPLOAD_BYTES}. */
         public long maxUploadBytes = DEFAULT_UPLOAD_BYTES;
         /** Also the executor's active-job cap per player. */
@@ -483,6 +488,7 @@ public final class SculptoryConfig {
         limits.maxClipboardVolume = clamp("limits.maxClipboardVolume", limits.maxClipboardVolume, 1, Long.MAX_VALUE);
         limits.maxBrushRadius = clamp("limits.maxBrushRadius", limits.maxBrushRadius, 1, 32);
         limits.maxDabRate = clamp("limits.maxDabRate", limits.maxDabRate, 1, 1000);
+        limits.maxHeightmapHeight = clamp("limits.maxHeightmapHeight", limits.maxHeightmapHeight, 1, 128);
         limits.maxUploadBytes = clamp("limits.maxUploadBytes", limits.maxUploadBytes, 1, MAX_UPLOAD_BYTES);
         limits.maxJobsPerPlayer = clamp("limits.maxJobsPerPlayer", limits.maxJobsPerPlayer, 1, 64);
         limits.maxSelectionCells = clamp("limits.maxSelectionCells", limits.maxSelectionCells, 1, 1L << 26);

@@ -3,12 +3,14 @@ package dev.sculptory.fabric.client.editor.tools.generate;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
+import dev.sculptory.core.brush.HeightImage;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.generate.FaceCells;
 import dev.sculptory.core.generate.GeneratedSource;
 import dev.sculptory.core.generate.GeneratedTooLargeException;
 import dev.sculptory.core.generate.GroundMap;
+import dev.sculptory.core.generate.HeightmapAreaKernel;
 import dev.sculptory.core.generate.LineKernel;
 import dev.sculptory.core.generate.RoadKernel;
 import dev.sculptory.core.generate.RoofKernel;
@@ -23,6 +25,8 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.render.OverlayColors;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostMasking;
@@ -92,6 +96,13 @@ import org.slf4j.LoggerFactory;
  * <p><b>Stamp</b> ({@link StampDraft}). The clipboard, or the asset picked with the Library's Stamp button, is copied
  * on each clicked block, turned along the path; Enter sends one multi-paste (named "Stamp"), not a generated upload.
  *
+ * <p><b>Heightmap</b> ({@link HeightmapAreaKernel}). A picture from the {@link HeightmapLibrary} is stretched over the
+ * selection's footprint, turned in quarter turns and inverted if set; each column's surface goes to Min Y plus the
+ * picture's value times (Max Y - Min Y), cleared above and filled with its own layers below. Min Y and Max Y take the
+ * selection's bottom and top whenever the selection changes, and can then be set. The columns are read on the client
+ * thread when the preview starts; the kernel runs off it. Enter builds it as one undo step named "Heightmap"
+ * ({@link OpLabel#HEIGHTMAP}).
+ *
  * <p><b>Previews</b> run on the background executor: the Path generator first snapshots the ground of the footprint's
  * columns from the client world on the client thread ({@link GroundMap}), the kernel and the ghost bake then run off
  * it; a result of an older change is dropped. A source over {@link #MAX_GHOST_CELLS} shows its bounds as an outline;
@@ -135,6 +146,14 @@ public final class GenerateTool implements Tool {
     public static final String SWEEP_LEFT_OUT = "sculptory.notice.sweep_left_out";
     /** The largest selection box a Sweep profile is read from. */
     static final long MAX_PROFILE_BOX = 262_144;
+    public static final String OP_HEIGHTMAP = "sculptory.op.generate_heightmap";
+    public static final String SENT_HEIGHTMAP = "sculptory.notice.generate_heightmap_sent";
+    /** The Heightmap import left block entities as they are ([count]). */
+    public static final String KEPT_BLOCK_ENTITIES = "sculptory.notice.generate_heightmap_kept";
+    /** The most footprint columns a Heightmap import reads (a 1,024 × 1,024 selection). */
+    public static final long MAX_HEIGHTMAP_COLUMNS = 1L << 20;
+    /** The most cells a Heightmap import keeps of its columns (64 MB): past it the preview says it is too large. */
+    public static final long MAX_HEIGHTMAP_CELLS = 16L << 20;
 
     /** What the tool needs from the client. */
     public interface Services {
@@ -151,6 +170,19 @@ public final class GenerateTool implements Tool {
 
         /** Asks the player to confirm a large build; {@code onConfirm} runs only if they do. */
         void confirm(String opNameKey, long blocks, Runnable onConfirm);
+
+        /** The pictures the Heightmap import picks from: the built-ins alone by default; the game's adds the folder. */
+        default HeightmapLibrary heightmaps() {
+            return HeightmapLibrary.builtInOnly();
+        }
+
+        /**
+         * Changes whenever client blocks may have changed (the Heightmap import reads its columns again then); 0, never,
+         * by default.
+         */
+        default long changeStamp() {
+            return 0;
+        }
 
         /** Services without Minecraft: no ghosts, default key names, work on the caller's thread, confirms at once. */
         static Services headless() {
@@ -182,13 +214,19 @@ public final class GenerateTool implements Tool {
     /**
      * A preview made: the cells, the road's unloaded columns, the ghost (null when over the cap or empty), the road's
      * centre line, ground and footprint (null for a roof, or a road over {@link RoadFootprint#MAX_COLUMNS} columns), or
-     * {@code tooLarge} when the kernel passed the cap.
+     * {@code tooLarge} when the kernel passed the cap; and the block-entity cells a Heightmap import leaves as they are.
      */
     public record Built(GeneratedSource source, List<RoadKernel.Column> unloaded, GhostVolume ghost, RoadKernel.Path path,
-                        GroundMap ground, RoadFootprint footprint, boolean tooLarge, long cap) {
+                        GroundMap ground, RoadFootprint footprint, boolean tooLarge, long cap, long keptBlockEntities) {
         public Built {
             Objects.requireNonNull(source);
             unloaded = List.copyOf(unloaded);
+        }
+
+        /** A preview that left no block entity out (every kind but the Heightmap import). */
+        public Built(GeneratedSource source, List<RoadKernel.Column> unloaded, GhostVolume ghost, RoadKernel.Path path,
+                     GroundMap ground, RoadFootprint footprint, boolean tooLarge, long cap) {
+            this(source, unloaded, ghost, path, ground, footprint, tooLarge, cap, 0);
         }
 
         static Built tooLarge(RoadKernel.Path path, GroundMap ground, long cap) {
@@ -232,6 +270,14 @@ public final class GenerateTool implements Tool {
     private Box roofFootprint;
     /** The selection bounds the sweep's preview was made for. */
     private Box sweepProfile;
+    /** The selection the Heightmap import's Min Y and Max Y were last set from. */
+    private Box rangeFrom;
+    /** The Heightmap import's last capture of the footprint's columns, and what it was made for ({@link #capture}). */
+    private HeightmapAreaKernel.Column[] captured;
+    private Box capturedBox;
+    private int capturedHi;
+    private int capturedMinY;
+    private long capturedStamp;
     /** Enter came while the preview was being made: build as soon as it lands. */
     private boolean buildWhenReady;
     /** Builds the road's and the roof's sources. */
@@ -311,6 +357,13 @@ public final class GenerateTool implements Tool {
     public void activate(ToolContext c) {
         context = c;
         dirty = true;
+        if (c.settings().get(GenerateSettings.KIND) == GenerateSettings.Kind.HEIGHTMAP) refreshPictures(c);
+        SettingsValues values = c.settings();
+        if (!values.get(GenerateSettings.HEIGHTMAP_MIN_Y).equals(GenerateSettings.HEIGHTMAP_MIN_Y.defaultValue())
+                || !values.get(GenerateSettings.HEIGHTMAP_MAX_Y).equals(GenerateSettings.HEIGHTMAP_MAX_Y.defaultValue())) {
+            // Min Y and Max Y were set (by hand or a preset): they stay until the selection changes.
+            rangeFrom = c.selection().orElse(null);
+        }
     }
 
     @Override
@@ -437,6 +490,11 @@ public final class GenerateTool implements Tool {
 
     @Override
     public void onSettingsChanged(ToolContext c, SettingsValues before, SettingsValues after) {
+        if (!before.get(GenerateSettings.HEIGHTMAP_MIN_Y).equals(after.get(GenerateSettings.HEIGHTMAP_MIN_Y))
+                || !before.get(GenerateSettings.HEIGHTMAP_MAX_Y).equals(after.get(GenerateSettings.HEIGHTMAP_MAX_Y))) {
+            // Set here (typed, or a preset loaded): kept until the selection changes.
+            rangeFrom = c.selection().orElse(null);
+        }
         if (!before.get(GenerateSettings.STAIRS).equals(after.get(GenerateSettings.STAIRS))) {
             StateSpace states = statesOrNull(c);
             if (states != null) {
@@ -471,6 +529,7 @@ public final class GenerateTool implements Tool {
                 }
             }
             if (dragging >= 0) endDrag(c);
+            if (kind == GenerateSettings.Kind.HEIGHTMAP && lastKind != null) refreshPictures(c);
             dirty = true;
             lastKind = kind;
         }
@@ -501,11 +560,19 @@ public final class GenerateTool implements Tool {
             default -> {
             }
         }
-        if (kind == GenerateSettings.Kind.ROOF) {
+        if (kind == GenerateSettings.Kind.ROOF || kind == GenerateSettings.Kind.HEIGHTMAP) {
             Box footprint = c.selection().orElse(null);
             if (!Objects.equals(footprint, roofFootprint)) {
                 roofFootprint = footprint;
                 changed();
+            }
+            if (kind == GenerateSettings.Kind.HEIGHTMAP && footprint != null && !footprint.equals(rangeFrom)) {
+                // A new selection: Min Y and Max Y start at its bottom and top.
+                rangeFrom = footprint;
+                SettingsValues values = c.settings();
+                SettingsValues ranged = values.with(GenerateSettings.HEIGHTMAP_MIN_Y, clampY(footprint.min().y()))
+                        .with(GenerateSettings.HEIGHTMAP_MAX_Y, clampY(footprint.max().y()));
+                if (!ranged.equals(values)) c.updateSettings(ranged);
             }
         }
         pollPreview();
@@ -581,7 +648,7 @@ public final class GenerateTool implements Tool {
         GhostVolume baked = visible.isEmpty() ? null : GhostBaker.fromSparse(visible, states);
         ghostOrigin = visible.isEmpty() ? null : visible.bounds().min();
         return new Built(built.source(), built.unloaded(), baked, built.path(), built.ground(), built.footprint(),
-                built.tooLarge(), built.cap());
+                built.tooLarge(), built.cap(), built.keptBlockEntities());
     }
 
     private void dropPreview() {
@@ -637,6 +704,9 @@ public final class GenerateTool implements Tool {
         }
         Box footprint = c.selection().orElse(null);
         if (footprint == null) return null;
+        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.HEIGHTMAP) {
+            return heightmapTask(c, values, footprint, world, cap);
+        }
         RoofKernel.Spec spec = roofSpec(values, footprint, states.air());
         RoofStates roof;
         try {
@@ -657,6 +727,98 @@ public final class GenerateTool implements Tool {
                 return Built.tooLarge(null, null, cap);
             }
         };
+    }
+
+    /**
+     * The Heightmap import's preview work: the footprint's columns are read here, on the client thread, and the picture
+     * stretched and the kernel run off it. {@code null} (after a toast) when the picture is missing; too large past
+     * {@link #MAX_HEIGHTMAP_COLUMNS} columns.
+     */
+    private Supplier<Built> heightmapTask(ToolContext c, SettingsValues values, Box footprint, WorldReader world, long cap) {
+        HeightmapRef ref = values.get(GenerateSettings.HEIGHTMAP_IMAGE);
+        HeightImage image = services.heightmaps().image(ref).orElse(null);
+        if (image == null) {
+            c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.heightmap_missing", ref.fileLabel()));
+            return null;
+        }
+        long columns = (long) footprint.sizeX() * footprint.sizeZ();
+        if (columns > MAX_HEIGHTMAP_COLUMNS) {
+            long tooMany = Math.min(cap, columns);
+            return () -> Built.tooLarge(null, null, tooMany);
+        }
+        int minY = Math.min(values.get(GenerateSettings.HEIGHTMAP_MIN_Y), values.get(GenerateSettings.HEIGHTMAP_MAX_Y));
+        int maxY = Math.max(values.get(GenerateSettings.HEIGHTMAP_MIN_Y), values.get(GenerateSettings.HEIGHTMAP_MAX_Y));
+        int turns = values.get(GenerateSettings.HEIGHTMAP_TURN).quarterTurns();
+        boolean invert = values.get(GenerateSettings.HEIGHTMAP_INVERT);
+        int bottom = world.bottomY(), top = world.topYExclusive();
+        StateSpace states = world.states();
+        HeightmapAreaKernel.Column[] read = capture(world, footprint, minY, maxY);
+        if (read == null) {
+            long tooMany = Math.min(cap, MAX_HEIGHTMAP_CELLS + 1);
+            return () -> Built.tooLarge(null, null, tooMany);
+        }
+        int x0 = footprint.min().x(), z0 = footprint.min().z(), width = footprint.sizeX();
+        return () -> {
+            byte[] heights = image.stretch(width, footprint.sizeZ(), turns, invert);
+            HeightmapAreaKernel.Spec spec = new HeightmapAreaKernel.Spec(footprint, minY, maxY, heights);
+            try {
+                HeightmapAreaKernel.Result result = HeightmapAreaKernel.generate(spec,
+                        (x, z) -> read[(z - z0) * width + (x - x0)], states, bottom, top, cap);
+                List<RoadKernel.Column> unloaded = new ArrayList<>();
+                for (long[] column : result.unloaded()) {
+                    unloaded.add(new RoadKernel.Column((int) column[0], (int) column[1], 0, 0, false));
+                }
+                return new Built(result.source(), unloaded, ghostOf(result.source(), states), null, null, null, false, cap,
+                        result.keptBlockEntities());
+            } catch (GeneratedTooLargeException e) {
+                return Built.tooLarge(null, null, cap);
+            }
+        };
+    }
+
+    /**
+     * The footprint's columns for an import from {@code minY} to {@code maxY}, read on this thread: the last capture
+     * when it still serves (the same footprint and top of the range, no block changed since, made for this Min Y or a lower one), else a
+     * new one. {@code null} when the columns would hold more than {@link #MAX_HEIGHTMAP_CELLS} cells.
+     */
+    private HeightmapAreaKernel.Column[] capture(WorldReader world, Box footprint, int minY, int maxY) {
+        int[] range = HeightmapAreaKernel.range(footprint, minY, maxY, world.bottomY(), world.topYExclusive());
+        long stamp = services.changeStamp();
+        if (captured != null && footprint.equals(capturedBox) && range[1] == capturedHi && minY >= capturedMinY
+                && stamp == capturedStamp) {
+            return captured;
+        }
+        captured = null;
+        int width = footprint.sizeX(), x0 = footprint.min().x(), z0 = footprint.min().z();
+        HeightmapAreaKernel.Column[] read = new HeightmapAreaKernel.Column[width * footprint.sizeZ()];
+        long cells = 0;
+        for (int z = 0; z < footprint.sizeZ(); z++) {
+            for (int x = 0; x < width; x++) {
+                HeightmapAreaKernel.Column column = HeightmapAreaKernel.capture(world, x0 + x, z0 + z, range[0], range[1],
+                        minY);
+                read[z * width + x] = column;
+                if (column != null) cells += column.cells().length;
+                if (cells > MAX_HEIGHTMAP_CELLS) return null;
+            }
+        }
+        captured = read;
+        capturedBox = footprint;
+        capturedHi = range[1];
+        capturedMinY = minY;
+        capturedStamp = stamp;
+        return read;
+    }
+
+    /** Looks at the heightmaps folder again; each file that can't be used is named once, in a one-line toast. */
+    private void refreshPictures(ToolContext c) {
+        for (HeightmapLibrary.BadFile bad : services.heightmaps().refresh()) {
+            c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.heightmap_bad_file." + bad.reason().key(),
+                    bad.name()));
+        }
+    }
+
+    private static int clampY(int y) {
+        return Math.max(GenerateSettings.MIN_HEIGHTMAP_Y, Math.min(GenerateSettings.MAX_HEIGHTMAP_Y, y));
     }
 
     private static GhostVolume ghostOf(GeneratedSource source, StateSpace states) {
@@ -834,7 +996,7 @@ public final class GenerateTool implements Tool {
             c.notify(Notice.of(Notice.Level.INFO, NEEDS_NODES));
             return;
         }
-        if (kind == GenerateSettings.Kind.ROOF && c.selection().isEmpty()) {
+        if ((kind == GenerateSettings.Kind.ROOF || kind == GenerateSettings.Kind.HEIGHTMAP) && c.selection().isEmpty()) {
             c.notify(Notice.of(Notice.Level.INFO, NEEDS_SELECTION));
             return;
         }
@@ -876,9 +1038,18 @@ public final class GenerateTool implements Tool {
             c.notify(Notice.of(Notice.Level.INFO, NOTHING));
             return;
         }
-        boolean road = kind == GenerateSettings.Kind.PATH;
-        commit.send(c, new GeneratedCommit.Request(built.source(), road ? OpLabel.ROAD : OpLabel.ROOF,
-                road ? OP_PATH : OP_ROOF, road ? SENT_PATH : SENT_ROOF, new PasteOptions(true, false, false)));
+        PasteOptions options = new PasteOptions(true, false, false);
+        GeneratedCommit.Request request = switch (kind) {
+            case PATH -> new GeneratedCommit.Request(built.source(), OpLabel.ROAD, OP_PATH, SENT_PATH, options);
+            case HEIGHTMAP -> new GeneratedCommit.Request(built.source(), OpLabel.HEIGHTMAP, OP_HEIGHTMAP, SENT_HEIGHTMAP,
+                    options);
+            default -> new GeneratedCommit.Request(built.source(), OpLabel.ROOF, OP_ROOF, SENT_ROOF, options);
+        };
+        commit.send(c, request);
+        if (built.keptBlockEntities() > 0) {
+            // Chests, signs and the like stay as they are: the import says how many.
+            c.notify(Notice.of(Notice.Level.INFO, KEPT_BLOCK_ENTITIES, SessionNotices.count(built.keptBlockEntities())));
+        }
     }
 
     // ---- Drawing and hints ----
@@ -1019,6 +1190,21 @@ public final class GenerateTool implements Tool {
         }
         Built built = shown;
         String enter = services.keyLabel(KeyAction.COMMIT);
+        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.HEIGHTMAP) {
+            if (c.selection().isEmpty()) {
+                hints.add(KeyHint.text("sculptory.hint.generate.heightmap_needs_selection"));
+                return hints;
+            }
+            if (built != null && built.tooLarge()) {
+                hints.add(KeyHint.text("sculptory.hint.generate.too_large", SessionNotices.count(built.cap())));
+            } else if (built != null && !built.unloaded().isEmpty()) {
+                hints.add(KeyHint.text("sculptory.hint.generate.unloaded", Integer.toString(built.unloaded().size())));
+            } else if (built != null && !built.source().isEmpty()) {
+                hints.add(new KeyHint(enter, "sculptory.hint.generate.build_heightmap",
+                        List.of(SessionNotices.count(built.cells()))));
+            }
+            return hints;
+        }
         if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.ROOF) {
             if (c.selection().isEmpty()) {
                 hints.add(KeyHint.text("sculptory.hint.generate.roof_needs_selection"));

@@ -5,13 +5,15 @@ import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 /**
  * Per-stroke mutable state shared by the dabs of one stroke: per-column fractional displacement
  * accumulators keyed by packed (x, z), and for the Surface mode ({@link SculptMode#SURFACE}) per-line accumulators
- * keyed by the line's direction and position, and per-cell accumulators keyed by packed (x, y, z). Create one per
- * stroke, on client and server alike.
+ * keyed by the line's direction and position, and per-cell accumulators keyed by packed (x, y, z); for the Heightmap
+ * brush each column's height before the stroke and the furthest height asked of it. Create one per stroke, on client
+ * and server alike.
  *
  * <p>Accumulators are fixed point, {@link #ONE} per block, so the client and server agree exactly. The maps
  * are only ever read and written by key, never iterated, so their hash order cannot leak into kernel output.
@@ -26,6 +28,11 @@ public final class StrokeState {
     /** The Surface-mode lines Flatten has moved (or found level) so far in the stroke. */
     private final LongOpenHashSet startedLines = new LongOpenHashSet();
     private final Long2IntOpenHashMap cells = new Long2IntOpenHashMap();
+    /**
+     * The Heightmap brush's columns ({@link HeightmapKernel}): each column's surface before the stroke and the furthest
+     * height the stroke has asked of it so far, packed by {@link #heightmapColumn}.
+     */
+    private final Long2LongOpenHashMap heightmapColumns = new Long2LongOpenHashMap();
 
     private SurfaceMask maskSource;
     private StateSpace maskStates;
@@ -37,7 +44,29 @@ public final class StrokeState {
     /** The Surface kernel's arrays, reused from step to step (never read across steps). */
     private SurfaceKernel.Scratch surfaceScratch;
 
-    public StrokeState() {}
+    public StrokeState() {
+        heightmapColumns.defaultReturnValue(NO_HEIGHTMAP_COLUMN);
+    }
+
+    /** What {@link #heightmapColumn} returns for a column the stroke has not met. */
+    static final long NO_HEIGHTMAP_COLUMN = Long.MIN_VALUE;
+
+    /**
+     * The Heightmap brush's record of column (x, z): its surface before the stroke in the high 32 bits and the furthest
+     * height asked of it in the low 32 ({@link HeightmapKernel}), or {@link #NO_HEIGHTMAP_COLUMN}.
+     */
+    long heightmapColumn(int x, int z) {
+        return heightmapColumns.get(column(x, z));
+    }
+
+    void setHeightmapColumn(int x, int z, long record) {
+        heightmapColumns.put(column(x, z), record);
+    }
+
+    /** Number of columns the Heightmap brush has met in the stroke. */
+    public int trackedHeightmapColumns() {
+        return heightmapColumns.size();
+    }
 
     SurfaceKernel.Scratch surfaceScratch() {
         if (surfaceScratch == null) surfaceScratch = new SurfaceKernel.Scratch();
@@ -54,6 +83,8 @@ public final class StrokeState {
         startedLines.trim();
         cells.clear();
         cells.trim();
+        heightmapColumns.clear();
+        heightmapColumns.trim();
         maskSource = null;
         maskStates = null;
         maskFilter = null;

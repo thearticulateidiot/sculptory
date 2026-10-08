@@ -7,6 +7,7 @@ import dev.sculptory.core.generate.RoadKernel;
 import dev.sculptory.core.generate.RoofKernel;
 import dev.sculptory.core.path.PathKind;
 import dev.sculptory.core.path.PathSpec;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
 import dev.sculptory.fabric.client.editor.settings.Section;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.settings.SettingsSchema;
@@ -20,20 +21,34 @@ import java.util.function.Predicate;
  * The Generate tool's settings ({@link GenerateTool}): which generator, then the Path generator's (width, material or
  * mix, border, height mode, level across, fill below, clear above) and the Roof generator's (style, ridge or low side,
  * pitch, overhang, thickness, gable walls, inside, the three materials) and the Line's (path: straight, curve or hanging,
- * with its sag; thickness and profile; a block or a mix). Each generator's settings show only while it is chosen; presets
+ * with its sag; thickness and profile; a block or a mix) and the Heightmap import's (picture, Min Y and Max Y, turn,
+ * invert). Each generator's settings show only while it is chosen; presets
  * save them all.
  */
 public final class GenerateSettings {
     /**
      * What the tool generates. Protocol 6 appends Sweep (the selection swept along a path), Stamp (the clipboard or an
-     * asset copied at each clicked point) and Heightmap (a height image over the selection); Heightmap is shown but
-     * unavailable ({@link #KIND}) until ws/heightmap builds it. Presets save the name.
+     * asset copied at each clicked point) and Heightmap (a height image over the selection), all built now. Presets save
+     * the name.
      */
     public enum Kind { PATH, ROOF, LINE, SWEEP, STAMP, HEIGHTMAP }
 
-    /** The kinds not built yet, with why they can't be chosen (contract placeholders, protocol 6). */
-    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of(
-            Kind.HEIGHTMAP, "sculptory.setting.generate.kind.coming_soon");
+    /** The kinds not built yet, with why they can't be chosen: none since protocol 6's were built. */
+    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of();
+
+    /** The Heightmap import's turn of its picture, clockwise seen from above, in quarter turns. */
+    public enum Turn {
+        NONE, QUARTER, HALF, THREE_QUARTERS;
+
+        /** The quarter turns clockwise. */
+        public int quarterTurns() {
+            return ordinal();
+        }
+    }
+
+    /** The lowest and highest surface the Heightmap import's Min Y and Max Y can name. */
+    public static final int MIN_HEIGHTMAP_Y = -2048;
+    public static final int MAX_HEIGHTMAP_Y = 2047;
 
     /** What a road is paved with: one block, or a weighted mix. */
     public enum Material { BLOCK, PALETTE }
@@ -47,6 +62,7 @@ public final class GenerateSettings {
     private static final Predicate<SettingsValues> LINE = values -> values.get(GenerateSettings.KIND) == Kind.LINE;
     private static final Predicate<SettingsValues> SWEEP = values -> values.get(GenerateSettings.KIND) == Kind.SWEEP;
     private static final Predicate<SettingsValues> STAMP = values -> values.get(GenerateSettings.KIND) == Kind.STAMP;
+    private static final Predicate<SettingsValues> HEIGHTMAP_KIND = values -> values.get(GenerateSettings.KIND) == Kind.HEIGHTMAP;
 
     public static final SettingDef.Enum<Kind> KIND = new SettingDef.Enum<>("kind", PREFIX + "kind", Kind.class, Kind.PATH,
             SettingDef.ALWAYS, KINDS_NOT_BUILT);
@@ -136,6 +152,19 @@ public final class GenerateSettings {
     // Stamp
     public static final SettingDef.Enum<StampSource> STAMP_SOURCE = new SettingDef.Enum<>("stamp.source",
             PREFIX + "stamp_source", StampSource.class, StampSource.CLIPBOARD, STAMP);
+    // Heightmap
+    public static final SettingDef.Heightmap HEIGHTMAP_IMAGE = new SettingDef.Heightmap("heightmap.image",
+            PREFIX + "heightmap_image", HeightmapLibrary.DEFAULT, HEIGHTMAP_KIND);
+    /** The surface where the picture is black; set to the selection's bottom whenever the selection changes. */
+    public static final SettingDef.Int HEIGHTMAP_MIN_Y = new SettingDef.Int("heightmap.min_y", PREFIX + "heightmap_min_y", 60,
+            MIN_HEIGHTMAP_Y, MAX_HEIGHTMAP_Y, null, HEIGHTMAP_KIND);
+    /** The surface where the picture is white; set to the selection's top whenever the selection changes. */
+    public static final SettingDef.Int HEIGHTMAP_MAX_Y = new SettingDef.Int("heightmap.max_y", PREFIX + "heightmap_max_y", 80,
+            MIN_HEIGHTMAP_Y, MAX_HEIGHTMAP_Y, null, HEIGHTMAP_KIND);
+    public static final SettingDef.Enum<Turn> HEIGHTMAP_TURN = new SettingDef.Enum<>("heightmap.turn",
+            PREFIX + "heightmap_turn", Turn.class, Turn.NONE, HEIGHTMAP_KIND);
+    public static final SettingDef.Bool HEIGHTMAP_INVERT = new SettingDef.Bool("heightmap.invert", PREFIX + "heightmap_invert",
+            false, HEIGHTMAP_KIND);
 
     public static final SettingsSchema SCHEMA = new SettingsSchema(List.of(
             new Section("", List.of(KIND)),
@@ -146,7 +175,9 @@ public final class GenerateSettings {
             new Section(PREFIX + "line_section", List.of(LINE_PATH, LINE_SAG, LINE_THICKNESS, LINE_PROFILE, LINE_MATERIAL,
                     LINE_BLOCK, LINE_PALETTE)),
             new Section(PREFIX + "sweep_section", List.of(SWEEP_PATH, SWEEP_SAG, SWEEP_FOLLOW_SLOPE)),
-            new Section(PREFIX + "stamp_section", List.of(STAMP_SOURCE))));
+            new Section(PREFIX + "stamp_section", List.of(STAMP_SOURCE)),
+            new Section(PREFIX + "heightmap_section", List.of(HEIGHTMAP_IMAGE, HEIGHTMAP_MIN_Y, HEIGHTMAP_MAX_Y,
+                    HEIGHTMAP_TURN, HEIGHTMAP_INVERT))));
 
     private GenerateSettings() {}
 

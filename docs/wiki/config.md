@@ -68,7 +68,7 @@ Saved history is in `<world>/sculptory/history/`, one file per player, so it tra
 
 ## Limits: what players may do at once
 
-The `limits` section. Each client learns these when it connects, so the editor can check them before sending anything. Players with `limit.bypass` may go over `maxOpVolume`, `maxClipboardVolume` and `maxBrushRadius`.
+The `limits` section. Each client learns these when it connects, so the editor can check them before sending anything. Players with `limit.bypass` may go over `maxOpVolume`, `maxClipboardVolume`, `maxBrushRadius` and `maxHeightmapHeight`.
 
 | Key | Default | Range | What it does |
 |---|---|---|---|
@@ -76,6 +76,7 @@ The `limits` section. Each client learns these when it connects, so the editor c
 | `maxClipboardVolume` | `2097152` | 1 or more | The largest copy, cut, library load, imported file or generated clipboard, in blocks. A copy counts the box around the selection. |
 | `maxBrushRadius` | `32` | 1–32 | The largest brush radius. The editor's slider stops there. |
 | `maxDabRate` | `20` | 1–1000 | Brush dabs per second a client sends at most. |
+| `maxHeightmapHeight` | `128` | 1–128 | The tallest (or deepest) stamp of the [Heightmap brush](heightmap.md), in blocks. The server checks it when a stroke begins; players with `limit.bypass` may go over it. |
 | `maxUploadBytes` | `16777216` | 1 B to 64 MiB | The largest schematic file a player may import, compressed. |
 | `maxJobsPerPlayer` | `2` | 1–64 | Jobs one player may have running at once. More wait. |
 | `maxSelectionCells` | `2097152` | 1–67108864 | The most blocks in one magic selection sent to the server. |

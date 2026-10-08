@@ -34,8 +34,8 @@ import org.lwjgl.glfw.GLFW;
 
 /**
  * The client contracts of the batch after 0.3.0-alpha (protocol 6) before its streams land: palette slots 16 and 17
- * (the Heightmap brush on ; and the Biome tool on '), placeholders until ws/heightmap and ws/biomes register their tools,
- * and Generate's Sweep, Stamp and Heightmap kinds, listed but not yet offered.
+ * (the Heightmap brush on ;, built by ws/heightmap, and the Biome tool on ', a placeholder until ws/biomes registers it),
+ * and Generate's Sweep and Stamp kinds, listed but not yet offered (Heightmap is built).
  */
 class BatchSixPaletteTest {
     private static Tool slot(int slot) {
@@ -53,7 +53,7 @@ class BatchSixPaletteTest {
     }
 
     @Test
-    void slotsSixteenAndSeventeenAreTheHeightmapAndBiomePlaceholdersOnSemicolonAndApostrophe() throws IOException {
+    void slotSixteenIsTheHeightmapBrushAndSeventeenTheBiomePlaceholderOnSemicolonAndApostrophe() throws IOException {
         assertEquals(17, ToolRegistry.PALETTE_SLOTS);
         JsonObject lang = lang();
         Tool heightmap = slot(16);
@@ -62,7 +62,10 @@ class BatchSixPaletteTest {
                 Perm.BRUSH), heightmap.descriptor());
         assertEquals(new ToolDescriptor(ToolId.BIOME, "sculptory.tool.biome", TerrainBrushTool.BIOME_ICON, Perm.BIOME),
                 biome.descriptor());
-        for (Tool tool : List.of(heightmap, biome)) {
+        assertEquals(dev.sculptory.core.brush.BrushTool.HEIGHTMAP,
+                assertInstanceOf(TerrainBrushTool.class, heightmap, "ws/heightmap built it").kind());
+        assertTrue(lang.has("sculptory.tool.heightmap.tooltip"));
+        for (Tool tool : List.of(biome)) {
             assertInstanceOf(PlaceholderTool.class, tool, "a placeholder until its stream lands");
             assertEquals(SettingsSchema.EMPTY, tool.schema());
             assertEquals(List.of(new KeyHint("", "sculptory.hint.coming_soon")), tool.hints(null));
@@ -95,11 +98,12 @@ class BatchSixPaletteTest {
                     kind.name());
         }
         assertEquals(List.of(GenerateSettings.Kind.PATH, GenerateSettings.Kind.ROOF, GenerateSettings.Kind.LINE,
-                GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP), offered, "Sweep and Stamp are built (ws/extrude-paths)");
+                GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP), offered,
+                "Sweep and Stamp (ws/extrude-paths) and Heightmap (ws/heightmap) are built");
         assertEquals(List.of(GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP),
                 List.of(GenerateSettings.Kind.values()).subList(3, 6), "appended, in this order");
-        assertFalse(GenerateSettings.KIND.validate(GenerateSettings.Kind.HEIGHTMAP, null).isValid());
-        assertTrue(lang.has(GenerateSettings.KIND.unavailable().get(GenerateSettings.Kind.HEIGHTMAP)));
+        assertTrue(GenerateSettings.KIND.unavailable().isEmpty(), "every kind is built");
+        assertTrue(GenerateSettings.KIND.validate(GenerateSettings.Kind.HEIGHTMAP, null).isValid());
     }
 
     @Test

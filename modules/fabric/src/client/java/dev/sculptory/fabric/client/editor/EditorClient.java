@@ -11,6 +11,8 @@ import dev.sculptory.fabric.SculptoryMod;
 import dev.sculptory.fabric.client.builder.BuilderClient;
 import dev.sculptory.fabric.client.editor.blocks.BlockPicker;
 import dev.sculptory.fabric.client.editor.clipboard.ClipboardActions;
+import dev.sculptory.fabric.client.editor.heightmap.GameHeightmaps;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
 import dev.sculptory.fabric.client.editor.hud.EditorUi;
 import dev.sculptory.fabric.client.editor.hud.QuickStart;
 import dev.sculptory.fabric.client.editor.hud.ToastStack;
@@ -718,6 +720,16 @@ public final class EditorClient implements EditorMode.Host {
                 public void confirm(String opNameKey, long blocks, Runnable onConfirm) {
                     ui().confirm(translator.translate("sculptory.confirm.large_op", translator.translate(opNameKey),
                             SessionNotices.count(blocks)), onConfirm);
+                }
+
+                @Override
+                public HeightmapLibrary heightmaps() {
+                    return GameHeightmaps.get().library();
+                }
+
+                @Override
+                public long changeStamp() {
+                    return ClientBlockChanges.stamp();
                 }
             };
         }

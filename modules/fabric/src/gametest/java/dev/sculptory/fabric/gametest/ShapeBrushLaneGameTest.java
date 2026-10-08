@@ -91,7 +91,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
     };
 
     /** An edit service saving history in its own folder, over its own executor (as the server runs it). */
-    private static final class Saved implements AutoCloseable {
+    static final class Saved implements AutoCloseable {
         final Harness h;
         final Path dir;
         final EditExecutor<ServerWorld> executor;
@@ -178,7 +178,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
     }
 
     /** A fresh folder for saved history, in the GameTest server's temporary history folder. */
-    private static Path folder() {
+    static Path folder() {
         String root = System.getProperty(EditServiceHost.HISTORY_DIR_PROPERTY);
         Path base = root != null ? Path.of(root) : Path.of(System.getProperty("java.io.tmpdir"), "sculptory-gametest-history");
         return base.resolve("shape-lane-tests").resolve(UUID.randomUUID().toString()).normalize();

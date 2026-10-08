@@ -10,6 +10,8 @@ import dev.sculptory.core.brush.CellSink;
 import dev.sculptory.core.brush.ColumnFilter;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.brush.Dab;
+import dev.sculptory.core.brush.HeightmapSpec;
+import dev.sculptory.core.brush.PlannedStep;
 import dev.sculptory.core.brush.ShapeStamp;
 import dev.sculptory.core.brush.ShapeStep;
 import dev.sculptory.core.brush.StrokeState;
@@ -49,6 +51,7 @@ import dev.sculptory.core.region.Regions;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
@@ -184,6 +187,10 @@ import org.slf4j.LoggerFactory;
  * earlier parts wrote stays in the stroke's record (undoable). The batch is acknowledged after the last part, and
  * {@link EditEvents#dabsApplied} tells the network layer, which paces the client on it.
  *
+ * <p><b>Heightmap steps</b> are worked out whole against the world before the step, as the client predicts them
+ * ({@link PlannedStep}), then written in the same way in parts of at most {@link PlannedStep#PART_CELLS} cells, with
+ * the same checks before each part after the first; a cell the world changed between parts is left as it is.
+ *
  * <p><b>Symmetry.</b> The spec's {@link Symmetry} centre must lie within the world ({@code INVALID} otherwise). The
  * server replicates each dab itself ({@link Symmetry#copies}), stands each copy on the ground where it lands and
  * applies the dab and its copies as one kernel step ({@link SymmetricStep}: the copies are located in the lane against
@@ -257,6 +264,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * request is refused {@code QUEUE_FULL} ({@link EditRejected#STROKE_PENDING}) while the lane catches up.
      */
     static final long HEAVY_NANOS = 15_000_000L;
+    /**
+     * What a Heightmap dab of a stroke none of whose steps has been worked out yet is predicted to take: heavier than
+     * {@link #HEAVY_NANOS}, so it is never done whole in a packet handler, and a turn of its own on the lane.
+     */
+    static final long UNKNOWN_HEIGHTMAP_NANOS = 2 * HEAVY_NANOS;
     public static final int STROKE_IDLE_SECONDS = 5;
     /** A stroke with queued-dab activity this long ago has its record committed to history. */
     public static final long STROKE_IDLE_NANOS = STROKE_IDLE_SECONDS * 1_000_000_000L;
@@ -321,6 +333,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * a Shape cell read and written, and a record section prepared (and journaled).
      */
     private double shapeCellNanos = 250;
+    /** Nanoseconds a cell of a planned step's part (the Heightmap brush) takes to write: measured, as for the Shape brush. */
+    private double plannedCellNanos = 1_000;
     private long sectionNanos = 50_000;
     private final Map<UUID, TrackedJob> jobs = new LinkedHashMap<>();
     private final PlayerClipboards clipboards = new PlayerClipboards();
@@ -1472,11 +1486,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         require(p, Perm.USE);
         // The Biome brush needs the biome node instead of the brush node (protocol 6).
         require(p, spec.tool() == BrushTool.BIOME ? Perm.BIOME : Perm.BRUSH);
-        // Contract stubs (protocol 6): ws/heightmap and ws/biomes remove these refusals with their kernels.
-        if (spec.tool() == BrushTool.HEIGHTMAP || spec.tool() == BrushTool.BIOME) {
+        // Contract stub (protocol 6): ws/biomes removes this refusal with its kernel.
+        if (spec.tool() == BrushTool.BIOME) {
             throw new EditRejected(RejectReason.INVALID, NOT_IMPLEMENTED);
         }
-        String over = overBrushLimit(spec, config().limits.maxBrushRadius);
+        String over = overBrushLimit(spec, config().limits.maxBrushRadius, config().limits.maxHeightmapHeight);
         if (over != null && !permissions.has(p, Perm.LIMIT_BYPASS)) throw new EditRejected(RejectReason.TOO_LARGE, over);
         // The Shape brush: every valid shape fits the step cap; it stands as a backstop, for everyone.
         long shapeCells = spec.shapeSpec() == null ? 0 : ShapeStamp.cellCount(spec);
@@ -1973,6 +1987,12 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         final long shapeCells;
         /** How long this stroke's terrain dabs took, on average (0 before the first): the lane's prediction. */
         long dabNanos;
+        /**
+         * The Heightmap brush: how long working out one of this stroke's steps took, and the cells a step wrote, on
+         * average (0 before the first: an unknown step is predicted heavy).
+         */
+        long planNanos;
+        long planCells;
         /** Set when the lane refused one of its dabs: later dabs are skipped or refused with this reason. */
         RejectReason rejected;
         /** A copy that found no ground was reported (once per stroke). */
@@ -2079,11 +2099,19 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             dropDab(this);
         }
 
-        /** A Shape part: its cells at the measured rate. A terrain dab: the stroke's dabs so far, on average. */
+        /**
+         * A Shape part, or a Heightmap part: its cells at the measured rate. A Heightmap dab not worked out yet: the
+         * stroke's planning turns so far, on average ({@link #UNKNOWN_HEIGHTMAP_NANOS} before the first). A terrain dab:
+         * the stroke's dabs so far, on average.
+         */
         @Override
         public long nextPieceNanos() {
             if (done) return 0;
             StrokeSession stroke = batch.stroke;
+            if (stroke.spec.tool() == BrushTool.HEIGHTMAP) {
+                if (shapeRun == null) return stroke.planNanos == 0 ? UNKNOWN_HEIGHTMAP_NANOS : stroke.planNanos;
+                return shapeRun.step.done() ? 0 : partNanos(shapeRun.step, shapeRun.step.nextCells());
+            }
             if (stroke.spec.tool() != BrushTool.SHAPE) return stroke.dabNanos;
             long cells = shapeRun != null && !shapeRun.step.done() ? shapeRun.step.nextCells()
                     : Math.min(ShapeStep.PART_CELLS, stroke.shapeCells);
@@ -2091,27 +2119,124 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         }
 
         /**
-         * How long finishing it is predicted to take: a Shape step's cells left at the measured rate; a terrain dab the
-         * stroke's dabs so far, on average (0 before its first: a terrain dab is one piece of a few milliseconds at most).
+         * How long finishing it is predicted to take: a Shape step's cells left at the measured rate; a Heightmap step's
+         * cells left at the measured rate, or not worked out yet the stroke's planning and cells so far on average (heavy,
+         * {@link #UNKNOWN_HEIGHTMAP_NANOS}, before the first); a terrain dab the stroke's dabs so far, on average (0
+         * before its first: a terrain dab is one piece of a few milliseconds at most).
          */
         long remainingNanos() {
             if (done) return 0;
             StrokeSession stroke = batch.stroke;
+            if (stroke.spec.tool() == BrushTool.HEIGHTMAP) {
+                if (shapeRun != null) return partNanos(shapeRun.step, shapeRun.step.remainingCells());
+                if (stroke.planNanos == 0) return UNKNOWN_HEIGHTMAP_NANOS;
+                return stroke.planNanos + (long) (stroke.planCells * plannedCellNanos);
+            }
             if (stroke.spec.tool() != BrushTool.SHAPE) return stroke.dabNanos;
             if (shapeRun != null) return shapeNanos(shapeRun.step.remainingCells());
             return shapeNanos(ShapeStamp.placements(stroke.spec, dab).size() * stroke.shapeCells);
         }
     }
 
-    /** A Shape step being written in parts: the parts left, and the writer of the whole step. */
+    /**
+     * A step written in parts: a Shape step's placements' layers ({@link ShapeStep}), or a planned step's cells (the
+     * Heightmap brush: {@link PlannedStep}, worked out at once and checked cell by cell against the live world).
+     */
+    interface StepParts {
+        boolean done();
+
+        long nextCells();
+
+        long remainingCells();
+
+        /** What the next part writes, as boxes the loaded and lock checks are made on (a Shape part's one box). */
+        List<Box> nextAreas();
+
+        void runNext(CellSink out);
+
+        /** Whether these are a planned step's parts (their write rate is measured apart from the Shape brush's). */
+        boolean planned();
+
+        static StepParts of(ShapeStep step) {
+            return new StepParts() {
+                @Override
+                public boolean done() {
+                    return step.done();
+                }
+
+                @Override
+                public long nextCells() {
+                    return step.nextCells();
+                }
+
+                @Override
+                public long remainingCells() {
+                    return step.remainingCells();
+                }
+
+                @Override
+                public List<Box> nextAreas() {
+                    return List.of(step.nextArea());
+                }
+
+                @Override
+                public void runNext(CellSink out) {
+                    step.runNext(out);
+                }
+
+                @Override
+                public boolean planned() {
+                    return false;
+                }
+            };
+        }
+
+        /** {@code step}'s parts, each cell written only while {@code live} still shows the state the step saw. */
+        static StepParts of(PlannedStep step, WorldReader live) {
+            return new StepParts() {
+                @Override
+                public boolean done() {
+                    return step.done();
+                }
+
+                @Override
+                public long nextCells() {
+                    return step.nextCells();
+                }
+
+                @Override
+                public long remainingCells() {
+                    return step.remainingCells();
+                }
+
+                @Override
+                public List<Box> nextAreas() {
+                    // Per chunk column: a part crossing from one copy's area to another's spans no gap between them.
+                    return step.nextAreas();
+                }
+
+                @Override
+                public void runNext(CellSink out) {
+                    step.runNext(live, out);
+                }
+
+                @Override
+                public boolean planned() {
+                    return true;
+                }
+            };
+        }
+    }
+
+    /** A step being written in parts (Shape, or Heightmap): the parts left, and the writer of the whole step. */
     final class ShapeRun {
-        final ShapeStep step;
+        final StepParts step;
         final DabWriter writer;
         final SymmetricStep symmetric;
         /** What the parts write to: {@link #writer}, through the global mask when it is on. */
         final CellSink sink;
 
-        ShapeRun(ShapeStep step, DabWriter writer, SymmetricStep symmetric, CellSink sink) {
+        ShapeRun(StepParts step, DabWriter writer, SymmetricStep symmetric, CellSink sink) {
             this.step = step;
             this.writer = writer;
             this.symmetric = symmetric;
@@ -2244,7 +2369,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             if (stroke.rejected == null) {
                 long start = System.nanoTime();
                 finished = applyDab(lane, stroke, work, deadline);
-                if (stroke.spec.tool() != BrushTool.SHAPE) {
+                if (stroke.spec.tool() != BrushTool.SHAPE && stroke.spec.tool() != BrushTool.HEIGHTMAP) {
+                    // A Heightmap turn is a planning turn or a part: measured apart (planNanos, plannedCellNanos).
                     long took = System.nanoTime() - start;
                     stroke.dabNanos = stroke.dabNanos == 0 ? took : (3 * stroke.dabNanos + took) / 4;
                 }
@@ -2327,6 +2453,9 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         // The latest entity is fine after a respawn or disconnect: permissions and protection go by profile.
         P player = lane.player;
         Dab dab = work.dab;
+        // A Heightmap step worked out in this turn: its first part waits for the next turn unless it fits the budget left.
+        boolean plannedNow = false;
+        boolean createdNow = work.shapeRun == null;
         if (work.shapeRun == null) {
             // An admitted dab stops only on a definite no: a permissions mod that fails (throws) stops nothing admitted.
             if (deniedBrush(player)) {
@@ -2349,7 +2478,17 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 }
             }
             DabWriter writer = new DabWriter(stroke, player, writeBoxes(stroke, dab, step));
-            if (stroke.spec.tool() != BrushTool.SHAPE) {
+            if (stroke.spec.tool() == BrushTool.HEIGHTMAP) {
+                // Worked out at once against the world before the step (the client predicts the same), then written in
+                // parts: one dab may move a hundred thousand blocks.
+                long planStart = System.nanoTime();
+                PlannedStep planned = PlannedStep.of(stroke.kernel, stroke.spec, step.dabs(), stroke.state, stroke.reader);
+                long planTook = Math.max(1, System.nanoTime() - planStart);
+                stroke.planNanos = stroke.planNanos == 0 ? planTook : (3 * stroke.planNanos + planTook) / 4;
+                stroke.planCells = stroke.planCells == 0 ? planned.cells() : (3 * stroke.planCells + planned.cells()) / 4;
+                work.shapeRun = new ShapeRun(StepParts.of(planned, stroke.reader), writer, step, writer);
+                plannedNow = true;
+            } else if (stroke.spec.tool() != BrushTool.SHAPE) {
                 try {
                     stroke.kernel.applyStep(stroke.spec, step.dabs(), stroke.state, stroke.reader, writer);
                 } finally {
@@ -2357,29 +2496,37 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 }
                 endStep(lane, stroke, dab, writer, step);
                 return true;
+            } else {
+                work.shapeRun = new ShapeRun(StepParts.of(ShapeStep.of(stroke.spec, step.dabs(), stroke.state, stroke.reader)),
+                        writer, step,
+                        stroke.mask.acceptsAll() ? writer : new EditMasks.ShapeMaskSink(writer, stroke.mask, stroke.reader));
             }
-            work.shapeRun = new ShapeRun(ShapeStep.of(stroke.spec, step.dabs(), stroke.state, stroke.reader), writer, step,
-                    stroke.mask.acceptsAll() ? writer : new EditMasks.ShapeMaskSink(writer, stroke.mask, stroke.reader));
         }
         ShapeRun run = work.shapeRun;
-        boolean first = true;
+        boolean first = !plannedNow;
         while (!run.step.done()) {
             long cells = run.step.nextCells();
-            if (!first && System.nanoTime() + shapeNanos(cells) > deadline) return false;
-            if (run.writer.parts > 0) {
-                // The world may have changed since the last part.
+            if (!first && System.nanoTime() + partNanos(run.step, cells) > deadline) return false;
+            if (run.writer.parts > 0 || !createdNow) {
+                // The world may have changed since the step was worked out or its last part ran.
                 if (deniedBrush(player)) {
                     reject(lane, stroke, dab, RejectReason.NO_PERMISSION);
                     break;
                 }
                 stroke.reader.invalidate();
-                Box area = run.step.nextArea();
-                if (!loaded(stroke.reader, area)) {
-                    reject(lane, stroke, dab, RejectReason.UNLOADED);
-                    break;
+                RejectReason refused = null;
+                for (Box area : run.step.nextAreas()) {
+                    if (!loaded(stroke.reader, area)) {
+                        refused = RejectReason.UNLOADED;
+                        break;
+                    }
+                    if (executor.isLockedFor(stroke.world, area, runtime.id(player))) {
+                        refused = RejectReason.AREA_BUSY;
+                        break;
+                    }
                 }
-                if (executor.isLockedFor(stroke.world, area, runtime.id(player))) {
-                    reject(lane, stroke, dab, RejectReason.AREA_BUSY);
+                if (refused != null) {
+                    reject(lane, stroke, dab, refused);
                     break;
                 }
             }
@@ -2394,7 +2541,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             if (cells >= 1024) {
                 // Small parts are dominated by their fixed costs; they would skew the rate.
                 double rate = (double) (System.nanoTime() - start) / cells;
-                shapeCellNanos = (3 * shapeCellNanos + rate) / 4;
+                if (run.step.planned()) {
+                    plannedCellNanos = (3 * plannedCellNanos + rate) / 4;
+                } else {
+                    shapeCellNanos = (3 * shapeCellNanos + rate) / 4;
+                }
             }
             first = false;
         }
@@ -2405,6 +2556,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     /** How long reading and writing {@code cells} Shape cells is predicted to take. */
     private long shapeNanos(long cells) {
         return (long) (cells * shapeCellNanos);
+    }
+
+    /** How long the next {@code cells} cells of {@code parts} are predicted to take, at the rate measured for their kind. */
+    private long partNanos(StepParts parts, long cells) {
+        return parts.planned() ? (long) (cells * plannedCellNanos) : shapeNanos(cells);
     }
 
     /** Whether the player definitely lost {@code use} or {@code brush} (a failing permissions mod is not a no). */
@@ -2789,7 +2945,9 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * the surface scan window plus the largest move (FLATTEN/SMOOTH up to {@code radius + 8}), paint depth and plants,
      * clamped to the world ({@code [bottomY, topYExclusive)}). It also holds everything the Surface mode reads and
      * writes: {@code radius + 2} around the dab's block on every axis, {@code radius + 10} across for Surface Raise, Lower
-     * and Flatten ({@code SurfaceKernel}, the cylinder along any of six directions).
+     * and Flatten ({@code SurfaceKernel}, the cylinder along any of six directions). The Heightmap brush stays within
+     * {@code radius + 2} across too (a symmetric copy's stamp may lie a column off its block) and reaches
+     * {@code radius + 8} plus the stamp's height, and a little, above and below ({@code HeightmapKernel}).
      */
     static Box dabBox(BrushSpec spec, int bottomY, int topYExclusive, Dab dab) {
         int r = spec.radius();
@@ -2801,8 +2959,17 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         int across = lines ? (int) reach + 2 : r + 2;
         int bx = dab.blockX(), by = dab.blockY(), bz = dab.blockZ();
         int bottom = bottomY, top = topYExclusive - 1;
-        int y0 = (int) Math.max(bottom, Math.min(top, by - 2 * reach - BrushSpec.MAX_DEPTH - 1));
-        int y1 = (int) Math.max(bottom, Math.min(top, by + 2 * reach + 3));
+        long low = by - 2 * reach - BrushSpec.MAX_DEPTH - 1;
+        long high = by + 2 * reach + 3;
+        if (spec.heightmap() != null) {
+            // The Heightmap brush scans a stamp's height further below (raising) or above (lowering) and moves a column
+            // up to that height in one dab, plus plants and the fluid refill's look above (HeightmapKernel).
+            long stamp = spec.heightmap().heightBlocks();
+            low = Math.min(low, by - reach - stamp - 1);
+            high = Math.max(high, by + reach + stamp + 3);
+        }
+        int y0 = (int) Math.max(bottom, Math.min(top, low));
+        int y1 = (int) Math.max(bottom, Math.min(top, high));
         return new Box(new BlockPos(bx - across, y0, bz - across), new BlockPos(bx + across, y1, bz + across));
     }
 
@@ -2858,9 +3025,17 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     /**
      * Why a stroke of {@code spec} is larger than {@code maxBrushRadius} allows ({@code TOO_LARGE} without
      * {@code limit.bypass}), or {@code null}: a radius over it, or a Shape brush taller than the largest diameter,
-     * {@code 2 × maxBrushRadius + 1}.
+     * {@code 2 × maxBrushRadius + 1}. A Heightmap stamp may be the tallest a stamp can be.
      */
     static String overBrushLimit(BrushSpec spec, int maxBrushRadius) {
+        return overBrushLimit(spec, maxBrushRadius, HeightmapSpec.MAX_HEIGHT_BLOCKS);
+    }
+
+    /** {@link #overBrushLimit(BrushSpec, int)}, a Heightmap stamp also over {@code maxHeightmapHeight} blocks tall. */
+    static String overBrushLimit(BrushSpec spec, int maxBrushRadius, int maxHeightmapHeight) {
+        if (spec.heightmap() != null && spec.heightmap().heightBlocks() > maxHeightmapHeight) {
+            return "stamp height " + spec.heightmap().heightBlocks() + " > " + maxHeightmapHeight;
+        }
         if (spec.radius() > maxBrushRadius) return "radius " + spec.radius() + " > " + maxBrushRadius;
         int maxHeight = 2 * maxBrushRadius + 1;
         // The size along the facing: a sphere's is its diameter, whatever height it carries.

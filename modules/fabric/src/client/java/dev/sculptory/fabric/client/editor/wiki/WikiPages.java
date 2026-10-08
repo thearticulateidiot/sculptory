@@ -42,12 +42,13 @@ public final class WikiPages {
     public static final String BUILDER_MODE = "builder-mode";
     public static final String WEATHER = "weather";
     public static final String NAVIGATION = "navigation";
+    public static final String HEIGHTMAP = "heightmap";
 
     /** Every frozen page id. */
     public static final List<String> FROZEN = List.of(HOME, GETTING_STARTED, EDITOR_MODE, SCREEN_AND_WINDOWS,
             FINDING_THINGS, TUTORIAL, TOOL_SETTINGS, PRESETS, SELECT, SELECTION_OPERATIONS, TERRAIN_BRUSHES, MASKS,
             SHAPE_BRUSH, GENERATE, EXTRUDE, FLUID, SCATTER, CLIPBOARD, PLACE, LIBRARY, PALETTES, SYMMETRY, HISTORY, KEYS,
-            SERVER_SETUP, PERMISSIONS, TROUBLESHOOTING, FAQ, TINKER, BUILDER_MODE, WEATHER, NAVIGATION);
+            SERVER_SETUP, PERMISSIONS, TROUBLESHOOTING, FAQ, TINKER, BUILDER_MODE, WEATHER, NAVIGATION, HEIGHTMAP);
 
     /** A page, and the section on it ({@code null} for its top). */
     public record Target(String pageId, String anchor) {
@@ -74,7 +75,8 @@ public final class WikiPages {
             Map.entry(ToolId.EXTRUDE, new Target(EXTRUDE, null)),
             Map.entry(ToolId.FLUID, new Target(FLUID, null)),
             Map.entry(ToolId.TINKER, new Target(TINKER, null)),
-            Map.entry(ToolId.WEATHER, new Target(WEATHER, null)));
+            Map.entry(ToolId.WEATHER, new Target(WEATHER, null)),
+            Map.entry(ToolId.HEIGHTMAP, new Target(HEIGHTMAP, null)));
 
     private WikiPages() {}
 
