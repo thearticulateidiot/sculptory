@@ -21,6 +21,8 @@ class SurfaceSamplerTest {
         private final int bottomY;
         private final int topY;
         int probes;
+        /** The height hint every column gives ({@link #topY} when unset). */
+        int hint = Integer.MAX_VALUE;
 
         FakeTerrain(int bottomY, int topY, IntBinaryOperator groundHeight) {
             this.bottomY = bottomY;
@@ -54,6 +56,11 @@ class SurfaceSamplerTest {
         @Override
         public int topY() {
             return topY;
+        }
+
+        @Override
+        public int heightHint(int x, int z) {
+            return Math.min(topY, hint);
         }
     }
 
@@ -166,5 +173,35 @@ class SurfaceSamplerTest {
         SurfaceSampler.Samples cached = sampler.sample(terrain, 2, 40, 0, 5, 8);
         sampler.invalidate();
         assertNotSame(cached, sampler.sample(terrain, 2, 40, 0, 5, 8));
+    }
+
+    /**
+     * The Heightmap brush's square: every column up to radius 32 (corners included, unlike the disc), then one column per
+     * cell of a few columns, at most 65 × 65 cells, each column of a cell reading its middle column's surface; a probe's
+     * height hint lets each scan start at the surface, so a radius-128 square takes a few probes a cell.
+     */
+    @Test
+    void theHeightmapSquareIsSampledInAtMost65By65Cells() {
+        assertEquals(1, SurfaceSampler.squareStep(32));
+        assertEquals(2, SurfaceSampler.squareStep(64));
+        assertEquals(4, SurfaceSampler.squareStep(128));
+        FakeTerrain terrain = new FakeTerrain(-64, 320, (x, z) -> 60 + Math.floorMod(x + 2 * z, 9));
+        terrain.hint = 70;
+        SurfaceSampler.Samples small = SurfaceSampler.scanSquare(terrain, 0, 61, 0, 32);
+        assertEquals(1, small.step());
+        assertEquals(60 + Math.floorMod(32 + 64, 9), small.heightAt(32, 32), "the corner is sampled");
+        assertEquals(SurfaceSampler.NONE, small.heightAt(33, 0));
+        terrain.probes = 0;
+        SurfaceSampler.Samples wide = SurfaceSampler.scanSquare(terrain, 0, 61, 0, 128);
+        assertEquals(4, wide.step());
+        assertTrue(terrain.probes <= 65 * 65 * 12, "probes " + terrain.probes);
+        for (int dz = -128; dz <= 128; dz += 9) {
+            for (int dx = -128; dx <= 128; dx++) {
+                int mx = Math.min(256, (dx + 128) / 4 * 4 + 2) - 128, mz = Math.min(256, (dz + 128) / 4 * 4 + 2) - 128;
+                assertEquals(60 + Math.floorMod(mx + 2 * mz, 9), wide.heightAt(dx, dz), dx + "," + dz);
+            }
+        }
+        assertEquals(wide.heightAt(126, 126), wide.heightAt(125, 125), "one cell");
+        assertEquals(SurfaceSampler.NONE, wide.heightAt(129, 0));
     }
 }

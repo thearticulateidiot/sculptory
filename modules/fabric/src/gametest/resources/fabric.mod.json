@@ -62,12 +62,15 @@
       "dev.sculptory.fabric.gametest.WeatherGameTest",
       "dev.sculptory.fabric.gametest.HeightmapGameTest",
       "dev.sculptory.fabric.gametest.HeightmapLaneGameTest",
+      "dev.sculptory.fabric.gametest.HeightmapWideGameTest",
+      "dev.sculptory.fabric.gametest.HeightmapPlanningGameTest",
       "dev.sculptory.fabric.gametest.LineNavGameTest",
       "dev.sculptory.fabric.gametest.ScatterFeatureGameTest",
       "dev.sculptory.fabric.gametest.ContractStubsGameTest",
       "dev.sculptory.fabric.gametest.BiomesGameTest",
       "dev.sculptory.fabric.gametest.ExtrudePathsGameTest",
-      "dev.sculptory.fabric.gametest.FreeRotationGameTest"
+      "dev.sculptory.fabric.gametest.FreeRotationGameTest",
+      "dev.sculptory.fabric.gametest.AirPathsGameTest"
     ]
   },
   "mixins": ["sculptory-gametest.mixins.json"],

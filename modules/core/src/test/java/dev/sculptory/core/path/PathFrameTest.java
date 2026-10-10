@@ -1,6 +1,7 @@
 package dev.sculptory.core.path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.BlockPos;
@@ -99,5 +100,32 @@ class PathFrameTest {
         assertEquals(1, turned[1], EPS, "a half turn about a vertical axis keeps up");
         double[] same = PathFrame.turnLeastWay(new double[] {0, 1, 0}, new double[] {0, 1, 0}, new double[] {1, 0, 0});
         assertEquals(1, same[0], EPS);
+    }
+
+    @Test
+    void aSteepStretchNeverTurnsItsHeadingBackButALevelOneDoes() {
+        double[] east = {1, 0, 0};
+        double steepWest = StrictMath.sqrt(1 - 0.1 * 0.1);
+        assertSame(east, PathFrame.nextHeading(east, new double[] {-0.1, steepWest, 0}), "steep and turning back: kept");
+        double[] northish = PathFrame.nextHeading(east, new double[] {0.05, steepWest, -0.08});
+        assertTrue(northish[2] < 0, "steep but not back: taken");
+        assertSame(east, PathFrame.nextHeading(east, new double[] {0, 1, 0}), "straight up: kept");
+        double[] west = PathFrame.nextHeading(east, new double[] {-StrictMath.sqrt(0.5), StrictMath.sqrt(0.5), 0});
+        assertEquals(-1, west[0], EPS, "a 45 degree climb back west turns the heading round");
+    }
+
+    @Test
+    void aCurveThatClimbsFirstStartsWithTheHeadingItLevelsOutTo() {
+        // Up 32, then east: the Curve overshoots a little west on the way up.
+        List<PathSample> samples = samples(PathKind.CURVE, 0, 64, 0, 0, 96, 0, 12, 96, 0);
+        double[] first = PathFrame.firstHeading(PathFrame.tangents(samples, false), null);
+        assertEquals(1, first[0], EPS, "east, not the west of the wobble");
+        for (PathFrame.Frame f : PathFrame.upright(samples, false, null)) {
+            assertTrue(f.tx() > 0.99, "never turned west at " + f.y());
+        }
+        for (PathFrame.Frame f : PathFrame.followSlope(samples, false, null)) {
+            assertSquare(f);
+            assertEquals(1, f.uz(), 1e-6, "right stays south at " + f.y());
+        }
     }
 }

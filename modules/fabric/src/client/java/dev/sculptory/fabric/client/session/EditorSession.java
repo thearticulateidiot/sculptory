@@ -44,6 +44,15 @@ public interface EditorSession {
     StrokeHandle beginStroke(ToolId tool, BrushSpec spec, StrokeParams p);
 
     /**
+     * The units of brush dabs sent in this session that the server has not reported written, over every stroke (a
+     * Heightmap or Shape stroke's dabs, {@code FabricStrokeHandle.paceUnits} each): the server's queue holds them for the
+     * player whatever brush comes next, so every brush's press waits for room after them. 0 without such reports.
+     */
+    default int unwrittenUnits() {
+        return 0;
+    }
+
+    /**
      * Undoes one entry. While an undo or redo is still in flight the press is queued (as a signed step count with
      * any other queued presses) and sent once the running one finishes. The "Undo: label" toast comes from the
      * session when the server accepts the step, not from the caller.
@@ -69,8 +78,9 @@ public interface EditorSession {
     }
 
     /**
-     * True while a brush stroke hasn't finished on the server: not yet ended, or a Shape stroke whose dabs are still
-     * being written. Its history entry arrives once it has (the tutorial waits for strokes begun before a lesson).
+     * True while a brush stroke hasn't finished on the server: not yet ended, or a Shape or Heightmap stroke whose dabs
+     * are still being written. Its history entry arrives once it has (the tutorial waits for strokes begun before a
+     * lesson).
      */
     default boolean strokesPending() {
         return false;

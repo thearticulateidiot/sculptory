@@ -16,13 +16,23 @@ same build.
   - Sweep carries the selection as a profile along a path.
   - Stamp places the clipboard or a library asset at each point you click, turned along the path.
   - Heightmap shapes a selected area from a grayscale picture.
+- **Points in the air**: Extrude along a path and to a point, and Generate's Road, Line, Sweep and Stamp, take points
+  in the sky. Aim at open sky and click the marker; `Alt+Scroll` sets how far ahead it floats, and a point dragged into
+  the sky keeps its distance. Aiming at a point in the sky lights it up instead of the marker (a click picks it).
+  - A road through the air is a floating deck: with Height **Straight between points**, Fill below only reaches down
+    where something lies under the deck within its depth, and over chunks your game hasn't loaded the road is a bare
+    deck (a message counts those columns) instead of refusing to build. Follow terrain fills as before.
+  - Paths climbing straight up no longer flip what they carry, nor turn its stairs late.
 - **Heightmap brush** (`;`): stamp or paint terrain from grayscale pictures, using the built-in set or your own PNGs in
-  `sculptory/heightmaps`.
+  `sculptory/heightmaps`, up to radius 128 (stamps 257 blocks wide; the server builds big stamps over several seconds,
+  a little each tick).
 - **Biome tool** (`'`): paint biomes, or fill the selection with one, as whole columns or in 3D.
-  - Biomes travel with copy, move, stack and `.schem`; Paste has a Biomes toggle.
+  - Biomes travel with copy and `.schem`; Paste, Move and Stack share a Biomes tick box (off by default) that carries
+    them along.
   - View > Biome view tints the ground by biome.
   - Needs the new `sculptory.biome` permission.
-- Servers can cap the Heightmap brush's height with `limits.maxHeightmapHeight`.
+- Servers can cap the Heightmap brush's size and height with `limits.maxHeightmapRadius` and
+  `limits.maxHeightmapHeight`; a stamp's blocks count against `limits.maxOpVolume`.
 - Network protocol 6: this build and 0.3.0-alpha refuse each other at the handshake (client and server need the same
   protocol).
 

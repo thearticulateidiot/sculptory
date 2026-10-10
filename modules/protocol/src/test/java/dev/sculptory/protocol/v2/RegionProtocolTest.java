@@ -227,9 +227,10 @@ class RegionProtocolTest {
         assertEquals(ProtocolException.Reason.MALFORMED, c2sReason(patched(op, 4, 3)));
         byte[] stack = encode(new C2S.RunOp(1, new OpSpec.Stack(new Region.Cuboid(BOX), 1, 0, 0, 2, EntityFilter.ALL),
                 false, ConflictPolicy.SKIP_CONFLICTS));
-        // ..., count, entities, symmetry (Off: one byte), into, upside down (protocol 5), physics, policy, label
-        assertEquals(EntityFilter.ALL.ordinal(), stack[stack.length - 7]);
-        assertEquals(ProtocolException.Reason.MALFORMED, c2sReason(patched(stack, stack.length - 7, 3)));
+        // ..., count, entities, symmetry (Off: one byte), into, upside down (protocol 5), biomes (protocol 6), physics,
+        // policy, label
+        assertEquals(EntityFilter.ALL.ordinal(), stack[stack.length - 8]);
+        assertEquals(ProtocolException.Reason.MALFORMED, c2sReason(patched(stack, stack.length - 8, 3)));
     }
 
     /**
@@ -255,9 +256,10 @@ class RegionProtocolTest {
                     byte[] frame = encode(run);
                     assertEquals(run, Codec.decodeC2S(frame, STATES), op.toString());
                     // A paste's into sits before its symmetry (Off: one byte; the mirror: three); a move's right after it,
-                    // before physics, policy and label; a stack's before its upside-down flag (protocol 5).
+                    // before its biomes flag (protocol 6), physics, policy and label; a stack's before its upside-down flag
+                    // (protocol 5) and biomes flag.
                     int at = op instanceof OpSpec.Paste ? frame.length - (symmetry.isOff() ? 5 : 7)
-                            : op instanceof OpSpec.Stack ? frame.length - 5 : frame.length - 4;
+                            : op instanceof OpSpec.Stack ? frame.length - 6 : frame.length - 5;
                     assertEquals(into.ordinal(), frame[at], op.toString());
                     for (int unknown : new int[] {PasteOptions.Into.values().length, 0x7F}) {
                         assertEquals(ProtocolException.Reason.MALFORMED, c2sReason(patched(frame, at, unknown)),
@@ -269,10 +271,10 @@ class RegionProtocolTest {
         // The field is required: a move or stack cut after its symmetry, or a paste cut after its options byte, is refused.
         byte[] move = encode(new C2S.RunOp(1, new OpSpec.Move(region, BlockPos.ORIGIN, Transform.IDENTITY, stone, EntityFilter.NONE),
                 false, ConflictPolicy.SKIP_CONFLICTS));
-        assertEquals(PasteOptions.Into.EVERYTHING.ordinal(), move[move.length - 4]);
+        assertEquals(PasteOptions.Into.EVERYTHING.ordinal(), move[move.length - 5]);
         byte[] cut = new byte[move.length - 1];
-        System.arraycopy(move, 0, cut, 0, move.length - 4);
-        System.arraycopy(move, move.length - 3, cut, move.length - 4, 3);
+        System.arraycopy(move, 0, cut, 0, move.length - 5);
+        System.arraycopy(move, move.length - 4, cut, move.length - 5, 4);
         assertEquals(ProtocolException.Reason.MALFORMED, c2sReason(cut), "a move without its into");
         byte[] paste = encode(new C2S.RunOp(1, new OpSpec.Paste(new SourceRef.Clipboard(new UUID(1, 2)), BlockPos.ORIGIN,
                 Transform.IDENTITY, PasteOptions.DEFAULT), false, ConflictPolicy.SKIP_CONFLICTS));
@@ -316,8 +318,8 @@ class RegionProtocolTest {
                 assertEquals(run, Codec.decodeC2S(encode(run), STATES), op.toString());
             }
         }
-        // Each op without symmetry ends "... 0 | physics | policy" (a move "... 0 | into | physics | policy", a stack
-        // "... 0 | into | upside down | physics | policy"): splice a tail in place of the 0.
+        // Each op without symmetry ends "... 0 | physics | policy" (a move "... 0 | into | biomes | physics | policy", a
+        // stack "... 0 | into | upside down | biomes | physics | policy"): splice a tail in place of the 0.
         List<OpSpec> plain = List.of(
                 new OpSpec.Fill(region, stone, CellMask.ANY),
                 new OpSpec.Replace(region, CellMask.ANY, stone),
@@ -339,8 +341,8 @@ class RegionProtocolTest {
                 new int[] {Symmetry.Mode.OFF.ordinal(), 21, -7});                  // Off carries no centre: trailing bytes
         for (OpSpec op : plain) {
             byte[] frame = encode(new C2S.RunOp(1, op, false, ConflictPolicy.SKIP_CONFLICTS));
-            int at = op instanceof OpSpec.Stack ? frame.length - 6
-                    : op instanceof OpSpec.Move ? frame.length - 5 : frame.length - 4;
+            int at = op instanceof OpSpec.Stack ? frame.length - 7
+                    : op instanceof OpSpec.Move ? frame.length - 6 : frame.length - 4;
             assertEquals(0, frame[at], op.toString());
             WireWriter mirror = new WireWriter(16);
             mirror.varint(Symmetry.Mode.MIRROR_X.ordinal());

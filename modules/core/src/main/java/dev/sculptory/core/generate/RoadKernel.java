@@ -1,7 +1,9 @@
 package dev.sculptory.core.generate;
 
 import dev.sculptory.core.BlockPos;
+import dev.sculptory.core.brush.SurfaceScan;
 import dev.sculptory.core.edit.Pattern;
+import dev.sculptory.core.world.WorldReader;
 import it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.ArrayList;
@@ -29,7 +31,10 @@ public final class RoadKernel {
     public enum HeightMode {
         /** Each column's ground from the world, the centre line smoothed along the path. */
         FOLLOW_TERRAIN,
-        /** The nodes' heights interpolated along the path; no world is read. */
+        /**
+         * The nodes' heights interpolated along the path, through the air if they are there; the world is read only for
+         * fill below (to see where it meets the ground).
+         */
         STRAIGHT
     }
 
@@ -42,7 +47,8 @@ public final class RoadKernel {
      * @param material the surface (and fill) blocks
      * @param border the outermost column on each side, or {@code null} for the material
      * @param levelAcross Follow terrain: one height across the width (else each column hugs its own ground)
-     * @param fillBelow cells of material written under the surface, 0-8
+     * @param fillBelow cells of material written under the surface, 0-8; Straight: only where it meets the ground (see
+     *     {@link #deckGround}), so a road through the air is a deck standing alone
      * @param clearAbove cells of air written over the surface, 0-8
      * @param air the air state handle
      */
@@ -80,11 +86,19 @@ public final class RoadKernel {
      */
     public record Column(int x, int z, double along, double distance, boolean border) {}
 
-    /** What {@link #generate} made: the cells, and the footprint columns whose ground was unloaded (nothing written). */
-    public record Result(GeneratedSource source, List<Column> unloaded) {
+    /**
+     * What {@link #generate} made: the cells, the footprint columns whose ground was unloaded (Follow terrain: nothing
+     * written), and how many columns of a Straight road with fill below were unloaded (written as a bare deck).
+     */
+    public record Result(GeneratedSource source, List<Column> unloaded, int bareColumns) {
         public Result {
             Objects.requireNonNull(source);
             unloaded = List.copyOf(unloaded);
+            if (bareColumns < 0) throw new IllegalArgumentException("Negative bare columns");
+        }
+
+        public Result(GeneratedSource source, List<Column> unloaded) {
+            this(source, unloaded, 0);
         }
     }
 
@@ -319,9 +333,52 @@ public final class RoadKernel {
         return generate(spec, path(spec), ground, bottomY, topYExclusive, maxCells);
     }
 
+    /** A Straight road's deck height in a footprint column: the nodes' heights interpolated at its arc length. */
+    public static int deckHeight(Path path, Column column) {
+        return (int) Math.floor(path.nodeHeightAt(column.along()) + 0.5);
+    }
+
+    /**
+     * What a Straight road's fill below meets ({@link #generate}'s {@code ground} for that mode): per footprint column, the
+     * y of the first cell under the deck that is not open ({@link SurfaceScan#open}: air, replaceable, plants, fluid),
+     * looking at most {@code fillBelow + 1} cells down; {@link SurfaceReader#NONE} when there is none within that (or
+     * no fill below), {@link SurfaceReader#UNLOADED} for a chunk {@code world} does not hold. Read on the world's thread.
+     */
+    public static GroundMap deckGround(Spec spec, Path path, WorldReader world) {
+        Objects.requireNonNull(spec);
+        Objects.requireNonNull(path);
+        Objects.requireNonNull(world);
+        GroundMap map = new GroundMap();
+        if (spec.fillBelow() == 0) return map;
+        int bottom = world.bottomY(), top = world.topYExclusive();
+        for (Column column : path.columns()) {
+            int x = column.x(), z = column.z();
+            if (!world.isLoaded(x >> 4, z >> 4)) {
+                map.put(x, z, SurfaceReader.UNLOADED);
+                continue;
+            }
+            int deck = deckHeight(path, column);
+            int found = SurfaceReader.NONE;
+            for (int y = deck - 1; y >= deck - spec.fillBelow() - 1 && y >= bottom; y--) {
+                if (y >= top) continue;
+                if (!SurfaceScan.open(world.states().flags(world.get(x, y, z)))) {
+                    found = y;
+                    break;
+                }
+            }
+            map.put(x, z, found);
+        }
+        return map;
+    }
+
     /**
      * The road's cells: per footprint column the surface at the column's height, {@code fillBelow} cells of material
      * under it and {@code clearAbove} cells of air over it, within {@code [bottomY, topYExclusive)}.
+     *
+     * <p>Follow terrain reads {@code ground} as each column's surface ({@link SurfaceReader}); an unloaded column is
+     * listed in {@link Result#unloaded} and left out. Straight reads it only for its fill below, as {@link #deckGround}
+     * gives it: the fill reaches down only where something under the deck lies within its depth, else the deck stands
+     * alone (a road through the air); an unloaded column is a bare deck, counted in {@link Result#bareColumns}.
      *
      * @throws GeneratedTooLargeException over {@code maxCells}
      */
@@ -335,10 +392,18 @@ public final class RoadKernel {
         double[] centre = spec.heightMode() == HeightMode.FOLLOW_TERRAIN ? centreHeights(spec, path, ground) : null;
         GeneratedSource.Builder out = GeneratedSource.builder(maxCells);
         List<Column> unloaded = new ArrayList<>();
+        int bare = 0;
         for (Column column : columns) {
             int y;
+            int fill = spec.fillBelow();
             if (centre == null) {
-                y = (int) Math.floor(path.nodeHeightAt(column.along()) + 0.5);
+                y = deckHeight(path, column);
+                if (fill > 0) {
+                    int under = ground.ground(column.x(), column.z());
+                    if (under == SurfaceReader.UNLOADED) bare++;
+                    // Fill below reaches down only where it meets the ground within its depth: else the deck stands alone.
+                    if (!SurfaceReader.known(under) || under < y - fill - 1) fill = 0;
+                }
             } else {
                 int own = ground.ground(column.x(), column.z());
                 if (own == SurfaceReader.UNLOADED) {
@@ -350,7 +415,7 @@ public final class RoadKernel {
                         : own;
             }
             Pattern material = spec.materialFor(column);
-            for (int k = -spec.fillBelow(); k <= spec.clearAbove(); k++) {
+            for (int k = -fill; k <= spec.clearAbove(); k++) {
                 int yy = y + k;
                 if (yy < bottomY || yy >= topYExclusive) continue;
                 // The Spec admits only Single and Weighted, which read neither the state space nor the cell.
@@ -358,7 +423,7 @@ public final class RoadKernel {
                 out.set(column.x(), yy, column.z(), state);
             }
         }
-        return new Result(out.build(), unloaded);
+        return new Result(out.build(), unloaded, bare);
     }
 
     /**

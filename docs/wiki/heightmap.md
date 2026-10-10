@@ -11,14 +11,14 @@ The **Heightmap** brush (`;`) stamps a height picture onto the terrain: white pa
 3. Point at the ground. The stamp's square follows the cursor, tinted where the picture lifts the ground, with a tick pointing to the picture's top edge.
 4. Click to stamp it, or left-drag to paint.
 
-Each press is one undo step. Changing a setting mid-press starts a new one; so does holding the button still for 5 seconds, and a very large stroke (around a million blocks, a few tall stamps at the largest size) is saved as several steps.
+Each press is one undo step. Changing a setting mid-press starts a new one; so does holding the button still for 5 seconds, and a very large stroke (around a million blocks) is saved as several steps: at radius 128 each tall stamp is a step of its own.
 
 | Key | What it does |
 |---|---|
 | Left-click | Stamp the picture once |
 | Left-drag | Paint: a ridge (or a trench) the height of the picture along the drag |
 | `R`, `Shift+R` | Turn the picture a quarter turn clockwise, or back |
-| `Ctrl+Scroll` | Size (radius 1–32; `Shift`: steps of 4) |
+| `Ctrl+Scroll` | Size (radius 1–128; `Shift`: steps of 4) |
 | `Esc` | Stop the stroke (what it did stays, one undo step) |
 
 ## Raise and Lower
@@ -28,14 +28,23 @@ Each press is one undo step. Changing a setting mid-press starts a new one; so d
 
 A drag never goes higher (or deeper) than one stamp above the ground the stroke started on: going over the same spot again doesn't pile up, so you can paint a long, even ridge by dragging back and forth. To build higher, start a new stroke on top.
 
+## Big stamps
+
+The Heightmap brush goes up to radius 128, a stamp 257 columns wide; every other brush stops at 32.
+
+- A big stamp moves millions of blocks, so the server builds it a little each tick, keeping the game smooth for everyone. A tall radius-128 stamp takes about 15 seconds in single player and about 30 on a server with the default settings. You don't see a preview of it moving the ground first: the ground changes as the server writes it.
+- When you drag a big stamp, the next stamp waits until the server has written the last one, then lands where the cursor is by then. Drag slowly for an even ridge. Clicks wait the same way: a click while a big stamp is still being written does nothing.
+- A big picture is squeezed to send it to the server. A very noisy picture can't be squeezed enough at the largest sizes: a message says so, and a smaller size or a smoother picture works.
+- Servers can set their own limits: a smaller largest size, a lower largest Height, and how many blocks one stamp may move (`maxHeightmapRadius`, `maxHeightmapHeight` and `maxOpVolume` on [Server configuration](config.md)); a stamp over one is refused with a message naming it, with the numbers. By default a player without `limit.bypass` may move about 2 million blocks with one stamp, so the tallest radius-128 stamps need it; in single player you have it. No stamp moves more than one full-size, full-height stamp's worth of blocks (about 8.7 million), symmetric copies included.
+
 ## Settings
 
 | Setting | What it does |
 |---|---|
-| Radius | Half the stamp's width: the picture covers `2 × radius + 1` columns square (1–32; the server may allow less) |
+| Radius | Half the stamp's width: the picture covers `2 × radius + 1` columns square (1–128, so up to 257 columns; type it or use `Ctrl+Scroll`; the server may allow less) |
 | Picture | The height picture |
 | Mode | **Raise** or **Lower** |
-| Height (blocks) | How far a white pixel moves the ground, 1–128 |
+| Height (blocks) | How far a white pixel moves the ground, 1–128 (the server may allow less) |
 | Angle (degrees) | How far the picture is turned, clockwise seen from above; `R` adds a quarter turn, or type any angle |
 | Mask, Symmetry | Where the brush may work ([Masks](masks.md)), and mirrored copies ([Symmetry](symmetry.md)): each copy stamps the mirrored or turned picture |
 
@@ -47,7 +56,7 @@ A file that can't be read (not a PNG, damaged, or larger than 4096 pixels a side
 
 ## Tips
 
-- A small radius and a low height make bumps, mounds and boulders; radius 32 and a height of 60 or more make a mountain in one click.
+- A small radius and a low height make bumps, mounds and boulders; radius 32 and a height of 60 or more make a mountain in one click, and radius 128 a whole mountain range or valley.
 - Drag the **Ridge** picture along its length for a long mountain chain; turn it with `R` to follow your path.
 - **Lower** with the **Crater** or **Hill** picture digs a basin; fill it with the [Fluid](fluid.md) tool for a lake.
 - Smooth the result with the [terrain brushes](terrain-brushes.md), and weather it with the [Weather brush](weather.md).

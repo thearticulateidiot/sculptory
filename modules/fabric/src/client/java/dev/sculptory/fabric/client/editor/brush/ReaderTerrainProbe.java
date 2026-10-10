@@ -40,6 +40,12 @@ public final class ReaderTerrainProbe implements TerrainProbe {
         return world.topYExclusive();
     }
 
+    /** The reader's height hint ({@link WorldReader#heightHint}: the client's surface heightmap); the top when unloaded. */
+    @Override
+    public int heightHint(int x, int z) {
+        return loaded(x >> 4, z >> 4) ? world.heightHint(x, z) : world.topYExclusive();
+    }
+
     private boolean loaded(int cx, int cz) {
         if (cx != loadedCx || cz != loadedCz) {
             loadedCx = cx;

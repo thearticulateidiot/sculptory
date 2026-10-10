@@ -297,12 +297,13 @@ class CodecRobustnessTest {
             paste[transformAt] = (byte) (1 | high);
             assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(C2S_DECODER, paste), "bit " + high);
         }
-        // A stack op ends with its upside-down bool; any other byte there is malformed.
+        // A stack op ends with its upside-down bool, then its biomes bool (protocol 6); any other byte there is malformed.
         byte[] stack = Codec.encodeC2S(new C2S.RunOp(2, new OpSpec.Stack(new dev.sculptory.core.region.Region.Cuboid(
                 new Box(BlockPos.ORIGIN, new BlockPos(2, 2, 2))), 3, 0, 0, 2, dev.sculptory.core.entity.EntityFilter.NONE,
                 Symmetry.NONE, dev.sculptory.core.edit.PasteOptions.Into.EVERYTHING, true), false,
                 ConflictPolicy.SKIP_CONFLICTS), STATES);
-        int flagAt = stack.length - 4; // upside down, physics, policy, label
+        int flagAt = stack.length - 5; // upside down, biomes, physics, policy, label
+        assertEquals(0, stack[flagAt + 1]);
         assertEquals(1, stack[flagAt]);
         assertTrue(((OpSpec.Stack) ((C2S.RunOp) Codec.decodeC2S(stack, STATES)).op()).upsideDown());
         stack[flagAt] = 2;

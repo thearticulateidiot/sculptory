@@ -37,6 +37,7 @@ import dev.sculptory.protocol.v2.StreamCredit;
 import dev.sculptory.protocol.v2.StreamEnd;
 import dev.sculptory.protocol.v2.StreamKind;
 import dev.sculptory.protocol.v2.StreamOpen;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -148,11 +149,6 @@ public final class FabricEditorSession implements EditorSession {
     public static final int MAX_INBOUND_STREAMS = ClipboardTransfers.MAX_INBOUND_STREAMS;
     /** Resync requests sent per acknowledgement timeout (each covers at most 64 chunks). */
     public static final int MAX_RESYNC_REQUESTS = 8;
-    /**
-     * Ended Shape strokes kept while the server still writes them (it reports the writes of its last 8 Shape strokes,
-     * the current one included).
-     */
-    static final int MAX_ENDED_STROKES = 7;
     /** Spacing of undo/redo steps, kept under the server's 5 ops/s limit. */
     public static final long JUMP_STEP_NANOS = 220_000_000L;
     /** A step with no answer (or job progress) for this long abandons it and the steps queued behind it. */
@@ -723,7 +719,8 @@ public final class FabricEditorSession implements EditorSession {
                 FabricStrokeHandle stroke = strokes.get(m.strokeId());
                 if (stroke != null) {
                     stroke.onStatus(m, now);
-                    // An ended Shape stroke stays while the server still writes its dabs (it reports each batch).
+                    // An ended Shape or Heightmap stroke stays while the server still writes its dabs (it reports
+                    // each batch).
                     if (stroke.ended() && stroke.unapplied() == 0) strokes.remove(m.strokeId());
                 }
             }
@@ -1335,16 +1332,18 @@ public final class FabricEditorSession implements EditorSession {
             return stroke;
         }
         strokes.put(stroke.strokeId(), stroke);
-        // Ended strokes wait here for the server to finish writing them; it reports only its last few Shape strokes.
-        List<FabricStrokeHandle> waiting = new ArrayList<>();
-        for (FabricStrokeHandle open : strokes.values()) {
-            if (open.ended()) waiting.add(open);
-        }
-        for (int i = 0; i < waiting.size() - MAX_ENDED_STROKES; i++) {
-            waiting.get(i).forgetWrites();
-            strokes.remove(waiting.get(i).strokeId());
-        }
+        // Ended strokes wait here for the server to finish writing them. It keeps reporting a stroke's writes while it
+        // has dabs in the brush lane (ServerDispatcher: only an entry with everything written is ever dropped), so a
+        // stroke is forgotten here only once nothing of it is unwritten, as the server would drop it.
+        strokes.values().removeIf(open -> open != stroke && open.ended() && open.unapplied() == 0);
         return stroke;
+    }
+
+    @Override
+    public int unwrittenUnits() {
+        int units = 0;
+        for (FabricStrokeHandle stroke : strokes.values()) units += stroke.unwrittenUnits();
+        return units;
     }
 
     /** Whether the server offers builder mode on this connection (ready, {@link Features#BUILDER} negotiated). */
@@ -2009,6 +2008,13 @@ public final class FabricEditorSession implements EditorSession {
 
     void strokeRejected(FabricStrokeHandle stroke, RejectReason reason) {
         if (reason == RejectReason.DISABLED && state != SessionState.READY) return;
+        if (reason == RejectReason.TOO_LARGE && stroke.spec().heightmap() != null) {
+            // A Heightmap stroke has limits of its own (radius, height, its stamp's blocks): name the one it passes.
+            Notice named = SessionNotices.heightmapLimit(stroke.spec(), permissions.limits(),
+                    permissions.has(Perm.LIMIT_BYPASS));
+            notice(named != null ? named : Notice.of(Notice.Level.WARNING, SessionNotices.reasonKey(reason)));
+            return;
+        }
         notice(SessionNotices.rejection(reason, SessionNotices.Subject.STROKE, permissions.limits()));
     }
 

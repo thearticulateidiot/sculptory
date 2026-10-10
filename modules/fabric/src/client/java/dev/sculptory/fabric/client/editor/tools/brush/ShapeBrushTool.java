@@ -995,6 +995,19 @@ public final class ShapeBrushTool implements Tool {
         return units;
     }
 
+    /** The session's unwritten units ({@link EditorSession#unwrittenUnits}), and at least this tool's own shapes'. */
+    private int unwrittenBefore() {
+        int session = 0;
+        if (context != null) {
+            try {
+                session = context.session().unwrittenUnits();
+            } catch (IllegalStateException noSession) {
+                session = 0;
+            }
+        }
+        return Math.max(session, unwritten());
+    }
+
     /**
      * Faded boxes over the shapes the server is still writing that the player did not see predicted (the others are
      * already on screen), so a large shape shows where it will appear until it does.
@@ -1031,19 +1044,20 @@ public final class ShapeBrushTool implements Tool {
         }
 
         /**
-         * Dabs queued, and dabs of this press or earlier ones the server has not reported written yet, each counted as
-         * its work units.
+         * Dabs queued, and dabs the server has not reported written yet, each counted as its work units: this press's and
+         * earlier ones', and every stroke of the session's ({@link EditorSession#unwrittenUnits}: a Heightmap stamp's
+         * too), as the server's queue holds them all for the player.
          */
         @Override
         public int inFlight(StrokeHandle stroke) {
             int units = stroke instanceof FabricStrokeHandle fabric ? fabric.queued() * strokeUnits : 0;
-            return units + unwritten();
+            return units + unwrittenBefore();
         }
 
-        /** Earlier presses' dabs the server has not written: a new press's first shape waits for them. */
+        /** Dabs the server has not written, of earlier presses and other brushes: a new press's first shape waits. */
         @Override
         public int inFlightBeforeStroke() {
-            return unwritten();
+            return unwrittenBefore();
         }
 
         @Override

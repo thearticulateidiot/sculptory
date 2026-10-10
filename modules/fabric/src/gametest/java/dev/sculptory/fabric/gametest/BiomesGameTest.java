@@ -58,7 +58,8 @@ import net.minecraft.test.TestContext;
  * Biome brush paints quarts around its dabs, each one undo step that undoes and redoes exactly; a quart painted since is
  * kept and counted, and Undo anyway takes it back; biome history survives a restart; a player without the biome node, or
  * an unknown biome, is refused with nothing written; copy and paste with Biomes on (off pastes none), move and stack
- * carry biomes; and a watching client receives the game's biome packets. Region slots 1500-1512.
+ * carry biomes with their Biomes box ticked (unticked they leave biomes where they are; ticked without the biome node
+ * they are refused); and a watching client receives the game's biome packets. Region slots 1500-1512 and 1800-1802.
  */
 public final class BiomesGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
@@ -482,7 +483,7 @@ public final class BiomesGameTest implements FabricGameTest {
             run.load(h.player);
             RecordingListener move = start(run, h.player, new OpSpec.Move(new Region.Cuboid(source),
                     new BlockPos(4, 0, 0), Transform.IDENTITY, new Pattern.Single(h.state("minecraft:air")),
-                    EntityFilter.NONE));
+                    EntityFilter.NONE).withBiomes(true));
             int[] most = {0};
             tickUntil(run.executor, () -> {
                 most[0] = Math.max(most[0], run.executor.ticketsInFlight());
@@ -509,8 +510,8 @@ public final class BiomesGameTest implements FabricGameTest {
             far.add(29_000_000, 100, 29_000_000);
             Region cells = new Region.Cells(far.build());
             for (OpSpec op : List.of(new OpSpec.Move(cells, new BlockPos(4, 0, 0), Transform.IDENTITY,
-                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE),
-                    new OpSpec.Stack(cells, 0, 0, 8, 2, EntityFilter.NONE))) {
+                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE).withBiomes(true),
+                    new OpSpec.Stack(cells, 0, 0, 8, 2, EntityFilter.NONE).withBiomes(true))) {
                 long started = System.nanoTime();
                 try {
                     run.service.run(h.player, op, RunOptions.DEFAULT, new RecordingListener());
@@ -586,7 +587,7 @@ public final class BiomesGameTest implements FabricGameTest {
             Run run = s.run(s.dir, 64, StorageIo.SYSTEM);
             run.load(h.player);
             OpSpec move = new OpSpec.Move(new Region.Cuboid(source), new BlockPos(128, 0, 0), Transform.IDENTITY,
-                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE);
+                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE).withBiomes(true);
             // The destination quarts at y 100..103 that hold cherry grove (all 20 × 40 once the move is done).
             java.util.function.IntSupplier carried = () -> {
                 int n = 0;
@@ -661,7 +662,7 @@ public final class BiomesGameTest implements FabricGameTest {
             Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * x + 48, 0);
             run(run, h.player, new OpSpec.Move(new Region.Cuboid(box(x, 100, z, x + 7, 103, z + 7)),
                     new BlockPos(8, 0, 0), dev.sculptory.core.transform.Orientation.IDENTITY, air, EntityFilter.NONE,
-                    mirror, PasteOptions.Into.EVERYTHING));
+                    mirror, PasteOptions.Into.EVERYTHING, true));
             check(biome(h, (x + 8) >> 2, 25, z >> 2).equals(CHERRY) && biome(h, (x + 15) >> 2, 25, (z + 7) >> 2)
                     .equals(CHERRY), "the original carried its cherry grove");
             check(biome(h, (x + 32) >> 2, 25, z >> 2).equals("minecraft:plains")
@@ -681,7 +682,7 @@ public final class BiomesGameTest implements FabricGameTest {
                     dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
             BlockPos offset = new BlockPos(64, 0, 0);
             run(run, h.player, new OpSpec.Move(new Region.Cuboid(free), offset, turned, air, EntityFilter.NONE,
-                    Symmetry.NONE, PasteOptions.Into.EVERYTHING));
+                    Symmetry.NONE, PasteOptions.Into.EVERYTHING, true));
             Map<Long, String> expected = carriedByFreeMove(beforeFree, free, offset, turned, h.world.getBottomY(),
                     h.world.getTopY());
             check(!expected.equals(beforeFree), "the free move carries nothing");
@@ -893,7 +894,8 @@ public final class BiomesGameTest implements FabricGameTest {
                     dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
             BlockPos offset = new BlockPos(32, 0, 0);
             run(run, h.player, new OpSpec.Move(new Region.Cuboid(source), offset, turned,
-                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE, mirror, PasteOptions.Into.EVERYTHING));
+                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE, mirror, PasteOptions.Into.EVERYTHING,
+                    true));
             Map<Long, String> expected = carriedByFreeMove(before, source, offset, turned, h.world.getBottomY(),
                     h.world.getTopY());
             carriedByFreeMoveCopy(before, expected, source, offset, turned, mirror, mirror.images().get(1),
@@ -1074,22 +1076,286 @@ public final class BiomesGameTest implements FabricGameTest {
             int x = s.x, z = s.z;
             Run run = s.runs.get(0);
             Box source = box(x, 100, z, x + 7, 103, z + 7);
-            // A move by 16 east carries the cherry grove; the source keeps its biomes (biomes are never "air").
+            // A move by 32 east with Biomes ticked carries the cherry grove; the source keeps its biomes (biomes are
+            // never "air").
             run(run, h.player, new OpSpec.Move(new Region.Cuboid(source), new BlockPos(32, 0, 0), Transform.IDENTITY,
-                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE));
+                    new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE).withBiomes(true));
             int mx = (x + 32) >> 2;
             check(biome(h, mx, 25, z >> 2).equals(CHERRY) && biome(h, mx + 1, 25, (z >> 2) + 1).equals(CHERRY),
                     "the moved biomes");
             check(biome(h, x >> 2, 25, z >> 2).equals(CHERRY), "the move's source keeps its biomes");
             run.step(h.player, true);
             check(biome(h, mx, 25, z >> 2).equals(DESERT), "the move's undo");
-            // A stack of two copies 8 south.
-            run(run, h.player, new OpSpec.Stack(new Region.Cuboid(source), 0, 0, 8, 2, EntityFilter.NONE));
+            // A stack of two copies 8 south, Biomes ticked.
+            run(run, h.player, new OpSpec.Stack(new Region.Cuboid(source), 0, 0, 8, 2, EntityFilter.NONE).withBiomes(true));
             check(biome(h, x >> 2, 25, (z >> 2) + 2).equals(CHERRY) && biome(h, x >> 2, 25, (z >> 2) + 5).equals(CHERRY)
                     && biome(h, x >> 2, 25, (z >> 2) + 6).equals(DESERT), "the stacked biomes");
             run.stop();
             clips.shutdown();
             s.close();
         }).completeIfSuccessful();
+    }
+
+    // ---- The Biomes box on Move and Stack (slots 1800-1802) ----
+
+    /** The mirror plane x + 24 of the Biomes-box tests' exact ops (sources x..x+7 and x+40..x+47). */
+    private static Symmetry mirrorAt24(int x) {
+        return new Symmetry(Symmetry.Mode.MIRROR_X, 2 * x + 48, 0);
+    }
+
+    /** The mirror plane x + 60.5 of their free mirrored move (sources x+1..x+14 and x+106..x+119). */
+    private static Symmetry mirrorAt60(int x) {
+        return new Symmetry(Symmetry.Mode.MIRROR_X, 2 * x + 121, 0);
+    }
+
+    /**
+     * The scene of the Biomes-box tests, in {@code s.region} (x..x+127, z..z+63): desert everywhere; cherry grove in the
+     * quarts at y 100..103 over x..x+15, z..z+11 and x..x+15, z+32..z+47 (the originals' sources), plains over the mirror
+     * images x+40..x+47, z..z+7 and x+106..x+119, z+1..z+10; stone at y 100 over all of them, so every op moves blocks.
+     */
+    private static void biomeBoxScene(Scene s) {
+        Harness h = s.h;
+        int x = s.x, z = s.z;
+        s.area(box(x, 96, z, x + 127, 111, z + 63), 99);
+        paintAll(h, s.region, DESERT);
+        WorldBiomes world = h.runtime.biomes(h.world);
+        List<Box> cherry = List.of(box(x, 100, z, x + 15, 103, z + 11), box(x, 100, z + 32, x + 15, 103, z + 47));
+        List<Box> plains = List.of(box(x + 40, 100, z, x + 47, 103, z + 7), box(x + 106, 100, z + 1, x + 119, 103, z + 10));
+        for (Box b : cherry) setQuarts(world, b, CHERRY);
+        for (Box b : plains) setQuarts(world, b, "minecraft:plains");
+        world.flush();
+        for (Box b : List.of(cherry.get(0), cherry.get(1), plains.get(0), plains.get(1))) {
+            for (int bx = b.min().x(); bx <= b.max().x(); bx++) {
+                for (int bz = b.min().z(); bz <= b.max().z(); bz++) {
+                    h.world.setBlockState(new net.minecraft.util.math.BlockPos(bx, 100, bz),
+                            net.minecraft.block.Blocks.STONE.getDefaultState());
+                }
+            }
+        }
+    }
+
+    private static void setQuarts(WorldBiomes world, Box b, String id) {
+        for (int qx = b.min().x() >> 2; qx <= b.max().x() >> 2; qx++) {
+            for (int qy = b.min().y() >> 2; qy <= b.max().y() >> 2; qy++) {
+                for (int qz = b.min().z() >> 2; qz <= b.max().z() >> 2; qz++) world.set(qx, qy, qz, world.handle(id));
+            }
+        }
+    }
+
+    /**
+     * With the Biomes box unticked (the default, and the flag every constructor without it sends) a move or stack moves
+     * its blocks and leaves every biome where it was: exact, mirrored, turned 30° freely, turned and mirrored, and a
+     * mirrored upside-down stack. Each is one undo step without biome cells that undoes and redoes its blocks exactly,
+     * biomes untouched throughout.
+     */
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_box_unticked", tickLimit = LIMIT)
+    public void untickedMovesAndStacksLeaveBiomesWhereTheyAre(TestContext context) {
+        try (Scene s = new Scene(context, 1800)) {
+            Harness h = s.h;
+            int x = s.x, z = s.z;
+            biomeBoxScene(s);
+            Box blocks = box(x, 96, z, x + 127, 111, z + 63);
+            EditTestSupport.WorldSnapshot initial = EditTestSupport.capture(h.world, blocks);
+            Map<Long, String> before = biomes(h, s.region);
+            Run run = s.run();
+            run.load(h.player);
+            Pattern air = new Pattern.Single(h.state("minecraft:air"));
+            dev.sculptory.core.transform.Orientation turned =
+                    dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
+            Region small = new Region.Cuboid(box(x, 100, z, x + 7, 103, z + 7));
+            Map<String, OpSpec> ops = new java.util.LinkedHashMap<>();
+            // 48 south, onto desert: a carried biome would show.
+            ops.put("the move", new OpSpec.Move(small, new BlockPos(0, 0, 48), Transform.IDENTITY, air,
+                    EntityFilter.NONE));
+            ops.put("the mirrored move", new OpSpec.Move(small, new BlockPos(8, 0, 0),
+                    dev.sculptory.core.transform.Orientation.IDENTITY, air, EntityFilter.NONE, mirrorAt24(x),
+                    PasteOptions.Into.EVERYTHING, false));
+            ops.put("the free move", new OpSpec.Move(new Region.Cuboid(box(x, 100, z + 32, x + 15, 103, z + 47)),
+                    new BlockPos(64, 0, 0), turned, air, EntityFilter.NONE, Symmetry.NONE, PasteOptions.Into.EVERYTHING,
+                    false));
+            ops.put("the mirrored free move", new OpSpec.Move(new Region.Cuboid(box(x + 1, 100, z + 1, x + 14, 103,
+                    z + 10)), new BlockPos(32, 0, 0), turned, air, EntityFilter.NONE, mirrorAt60(x),
+                    PasteOptions.Into.EVERYTHING, false));
+            ops.put("the mirrored upside-down stack", new OpSpec.Stack(small, 0, 0, 8, 2, EntityFilter.NONE,
+                    mirrorAt24(x), PasteOptions.Into.EVERYTHING, true, false));
+            for (Map.Entry<String, OpSpec> op : ops.entrySet()) {
+                String what = op.getKey();
+                run(run, h.player, op.getValue());
+                EditTestSupport.WorldSnapshot after = EditTestSupport.capture(h.world, blocks);
+                check(EditTestSupport.difference(initial, after) != null, what + " moved no block");
+                checkBiomes(before, biomes(h, s.region), what + " (unticked)");
+                String label = undoLabels(run, h.player).get(0);
+                check(!label.contains("biome"), what + " recorded biomes: " + label);
+                run.step(h.player, true);
+                check(EditTestSupport.difference(initial, EditTestSupport.capture(h.world, blocks)) == null,
+                        what + "'s undo: " + EditTestSupport.difference(initial, EditTestSupport.capture(h.world, blocks)));
+                checkBiomes(before, biomes(h, s.region), what + "'s undo");
+                run.step(h.player, false);
+                check(EditTestSupport.difference(after, EditTestSupport.capture(h.world, blocks)) == null,
+                        what + "'s redo: " + EditTestSupport.difference(after, EditTestSupport.capture(h.world, blocks)));
+                checkBiomes(before, biomes(h, s.region), what + "'s redo");
+                run.step(h.player, true);
+            }
+            run.stop();
+        }
+        context.complete();
+    }
+
+    /**
+     * With the Biomes box ticked a move and a stack carry biomes exactly as before the box (a mirrored upside-down stack
+     * into every copy, each copy its own source's; a mirrored free move through the sampler), and each undoes and redoes
+     * its biomes exactly.
+     */
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_box_ticked", tickLimit = LIMIT)
+    public void tickedMovesAndStacksCarryBiomesAndUndoAndRedoExactly(TestContext context) {
+        try (Scene s = new Scene(context, 1801)) {
+            Harness h = s.h;
+            int x = s.x, z = s.z;
+            biomeBoxScene(s);
+            Map<Long, String> before = biomes(h, s.region);
+            Run run = s.run();
+            run.load(h.player);
+            Pattern air = new Pattern.Single(h.state("minecraft:air"));
+            Region small = new Region.Cuboid(box(x, 100, z, x + 7, 103, z + 7));
+
+            // The move 48 south carries its cherry grove onto desert.
+            Map<Long, String> moved = new HashMap<>(before);
+            for (int qx = x >> 2; qx <= (x + 7) >> 2; qx++) {
+                for (int qz = (z + 48) >> 2; qz <= (z + 55) >> 2; qz++) moved.put(quartKey(qx, 25, qz), CHERRY);
+            }
+            OpSpec move = new OpSpec.Move(small, new BlockPos(0, 0, 48), Transform.IDENTITY, air, EntityFilter.NONE)
+                    .withBiomes(true);
+            checkCarried(run, h, s, move, before, moved, "the move");
+
+            // The mirrored upside-down stack: two copies 8 south of each source (z+8..z+23), cherry under the original's
+            // and plains under its mirror image's; the copies' one quart layer stays at y 100..103.
+            Map<Long, String> stacked = new HashMap<>(before);
+            for (int qz = (z + 8) >> 2; qz <= (z + 23) >> 2; qz++) {
+                for (int qx = x >> 2; qx <= (x + 7) >> 2; qx++) stacked.put(quartKey(qx, 25, qz), CHERRY);
+                for (int qx = (x + 40) >> 2; qx <= (x + 47) >> 2; qx++) stacked.put(quartKey(qx, 25, qz), "minecraft:plains");
+            }
+            OpSpec stack = new OpSpec.Stack(small, 0, 0, 8, 2, EntityFilter.NONE, mirrorAt24(x),
+                    PasteOptions.Into.EVERYTHING, true, true);
+            checkCarried(run, h, s, stack, before, stacked, "the mirrored upside-down stack");
+
+            // The mirrored free move, 30° and 32 east.
+            dev.sculptory.core.transform.Orientation turned =
+                    dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
+            Box source = box(x + 1, 100, z + 1, x + 14, 103, z + 10);
+            BlockPos offset = new BlockPos(32, 0, 0);
+            Map<Long, String> free = carriedByFreeMove(before, source, offset, turned, h.world.getBottomY(),
+                    h.world.getTopY());
+            carriedByFreeMoveCopy(before, free, source, offset, turned, mirrorAt60(x), mirrorAt60(x).images().get(1),
+                    h.world.getBottomY(), h.world.getTopY());
+            check(!free.equals(before), "the free expectation carries nothing");
+            checkCarried(run, h, s, new OpSpec.Move(new Region.Cuboid(source), offset, turned, air, EntityFilter.NONE,
+                    mirrorAt60(x), PasteOptions.Into.EVERYTHING, true), before, free, "the mirrored free move");
+            run.stop();
+        }
+        context.complete();
+    }
+
+    /** Runs {@code op}, expecting {@code expected} biomes after it, {@code before} after its undo and again after redo. */
+    private static void checkCarried(Run run, Harness h, Scene s, OpSpec op, Map<Long, String> before,
+                                     Map<Long, String> expected, String what) {
+        check(!expected.equals(before), what + ": the expectation carries nothing");
+        run(run, h.player, op);
+        checkBiomes(expected, biomes(h, s.region), what + " (ticked)");
+        String label = undoLabels(run, h.player).get(0);
+        check(label.contains("biome cell"), what + " recorded no biomes: " + label);
+        run.step(h.player, true);
+        checkBiomes(before, biomes(h, s.region), what + "'s undo");
+        run.step(h.player, false);
+        checkBiomes(expected, biomes(h, s.region), what + "'s redo");
+        run.step(h.player, true);
+        checkBiomes(before, biomes(h, s.region), what + "'s second undo");
+    }
+
+    /**
+     * A move or stack sending the Biomes flag from a player without the biome node is refused NO_PERMISSION, asked
+     * before anything else, with nothing written and nothing in the history (as a paste with Biomes ticked). A ticked
+     * move is held to the node while it runs (losing it cancels the move, which then undoes exactly); an unticked one
+     * is not.
+     */
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_box_refused", tickLimit = LIMIT)
+    public void theBiomesFlagNeedsTheBiomeNodeAndHoldsTheMoveToIt(TestContext context) {
+        try (Scene s = new Scene(context, 1802)) {
+            Harness h = s.h;
+            int x = s.x, z = s.z;
+            biomeBoxScene(s);
+            Box blocks = box(x, 96, z, x + 127, 111, z + 63);
+            EditTestSupport.WorldSnapshot initial = EditTestSupport.capture(h.world, blocks);
+            Map<Long, String> before = biomes(h, s.region);
+            Run run = s.run(s.dir, 64, StorageIo.SYSTEM);
+            Pattern air = new Pattern.Single(h.state("minecraft:air"));
+            Region small = new Region.Cuboid(box(x, 100, z, x + 7, 103, z + 7));
+            dev.sculptory.core.transform.Orientation turned =
+                    dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
+
+            ServerPlayerEntity builder = h.addPlayer(false);
+            EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
+            run.load(builder);
+            for (OpSpec op : List.of(
+                    new OpSpec.Move(small, new BlockPos(8, 0, 0), Transform.IDENTITY, air, EntityFilter.NONE)
+                            .withBiomes(true),
+                    new OpSpec.Stack(small, 0, 0, 8, 2, EntityFilter.NONE).withBiomes(true),
+                    new OpSpec.Move(new Region.Cuboid(box(x + 1, 100, z + 1, x + 14, 103, z + 10)), new BlockPos(32, 0, 0),
+                            turned, air, EntityFilter.NONE, mirrorAt60(x), PasteOptions.Into.EVERYTHING, true))) {
+                EditRejected refused = ClipboardGameTest.refusal(() -> run.service.run(builder, op, RunOptions.DEFAULT,
+                        null));
+                check(refused.reason() == RejectReason.NO_PERMISSION && Perm.BIOME.node().equals(refused.detail()),
+                        op.getClass().getSimpleName() + " with biomes without the node: " + refused.reason() + " "
+                                + refused.detail());
+                check(run.service.jobs(builder.getUuid()).isEmpty(), "a refused op left a job");
+            }
+            check(undoLabels(run, builder).isEmpty(), "refused ops left history: " + undoLabels(run, builder));
+            check(EditTestSupport.difference(initial, EditTestSupport.capture(h.world, blocks)) == null,
+                    "a refused op wrote blocks");
+            checkBiomes(before, biomes(h, s.region), "the refused ops");
+
+            // A ticked move whose player loses the biome node part way: cancelled, and undone exactly.
+            ServerPlayerEntity painter = h.addPlayer(false);
+            EditTestSupport.grant(painter, Perm.USE, Perm.REGION, Perm.BIOME);
+            run.load(painter);
+            // 32 × 8 × 48 cells at 64 a tick: the blocks alone take hundreds of ticks, so the revoke lands mid-job.
+            Region big = new Region.Cuboid(box(x, 100, z, x + 31, 107, z + 47));
+            OpSpec ticked = new OpSpec.Move(big, new BlockPos(64, 0, 0), Transform.IDENTITY, air, EntityFilter.NONE)
+                    .withBiomes(true);
+            RecordingListener revoked = start(run, painter, ticked);
+            tickUntil(run.executor, () -> {
+                if (revoked.result != null) return true;
+                for (int bx = x + 64; bx <= x + 79; bx++) {
+                    for (int bz = z; bz <= z + 47; bz++) {
+                        if (h.world.getBlockState(new net.minecraft.util.math.BlockPos(bx, 100, bz))
+                                .isOf(net.minecraft.block.Blocks.STONE)) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }, 2_000, "the ticked move's first block");
+            check(revoked.result == null, "the ticked move finished at once: " + revoked.result);
+            EditTestSupport.grant(painter, Perm.USE, Perm.REGION);
+            check(run.service.revalidate(painter, true) == 1, "losing the biome node cancels a ticked move");
+            awaitOutcome(run, revoked, JobOutcome.CANCELLED, "the ticked move without the node");
+            run.step(painter, true);
+            check(EditTestSupport.difference(initial, EditTestSupport.capture(h.world, blocks)) == null,
+                    "the cancelled move's undo: " + EditTestSupport.difference(initial,
+                            EditTestSupport.capture(h.world, blocks)));
+            checkBiomes(before, biomes(h, s.region), "the cancelled move's undo");
+
+            // The same move unticked is not held to the node: losing it changes nothing.
+            EditTestSupport.grant(painter, Perm.USE, Perm.REGION, Perm.BIOME);
+            RecordingListener unticked = start(run, painter, ((OpSpec.Move) ticked).withBiomes(false));
+            EditTestSupport.grant(painter, Perm.USE, Perm.REGION);
+            check(run.service.revalidate(painter, true) == 0, "an unticked move is held to the biome node");
+            awaitOutcome(run, unticked, JobOutcome.COMPLETED, "the unticked move");
+            checkBiomes(before, biomes(h, s.region), "the unticked move");
+            run.step(painter, true);
+            check(EditTestSupport.difference(initial, EditTestSupport.capture(h.world, blocks)) == null,
+                    "the unticked move's undo");
+            run.stop();
+        }
+        context.complete();
     }
 }

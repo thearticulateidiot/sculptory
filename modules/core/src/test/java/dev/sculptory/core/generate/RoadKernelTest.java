@@ -258,6 +258,104 @@ class RoadKernelTest {
     }
 
     @Test
+    void aStraightRoadThroughTheAirIsAFloatingDeckWithNoFillUnderIt() {
+        FakeWorld world = world((x, z) -> 63);
+        RoadKernel.Spec spec = spec(nodes(0, 100, 0, 10, 100, 0), 3, null, RoadKernel.HeightMode.STRAIGHT, true, 4, 0);
+        RoadKernel.Path path = RoadKernel.path(spec);
+        RoadKernel.Result result = RoadKernel.generate(spec, path, RoadKernel.deckGround(spec, path, world), -64, 320,
+                10_000);
+        assertTrue(result.unloaded().isEmpty());
+        assertEquals(0, result.bareColumns());
+        assertEquals(11 * 3, result.source().cells(), "the deck alone");
+        result.source().forEach((x, y, z, state) -> assertEquals(100, y, "nothing hangs under the deck"));
+    }
+
+    @Test
+    void straightFillBelowReachesDownOnlyWhereItMeetsTheGroundWithinItsDepth() {
+        FakeWorld world = world((x, z) -> 63);
+        // A ramp from the ground (63) up into the air (83), one block up per block along, fill 3.
+        RoadKernel.Spec spec = spec(nodes(0, 63, 0, 20, 83, 0), 1, null, RoadKernel.HeightMode.STRAIGHT, true, 3, 0);
+        RoadKernel.Path path = RoadKernel.path(spec);
+        GeneratedSource source = RoadKernel.generate(spec, path, RoadKernel.deckGround(spec, path, world), -64, 320,
+                10_000).source();
+        for (int x = 0; x <= 20; x++) {
+            int y = 63 + x;
+            assertEquals(1, source.get(x, y, 0), "surface at " + x);
+            boolean meets = y - 3 - 1 <= 63;
+            for (int k = 1; k <= 3; k++) {
+                assertEquals(meets ? 1 : -1, source.get(x, y - k, 0), "fill " + k + " under " + x);
+            }
+            assertEquals(-1, source.get(x, y - 4, 0), "fill stops at its depth at " + x);
+        }
+        // On the ground the fill is as it was: its full depth into the ground; a tunnel floor meets it too.
+        RoadKernel.Spec flat = spec(nodes(0, 63, 0, 4, 63, 0), 1, null, RoadKernel.HeightMode.STRAIGHT, true, 2, 0);
+        RoadKernel.Path flatPath = RoadKernel.path(flat);
+        assertEquals(5 * 3, RoadKernel.generate(flat, flatPath, RoadKernel.deckGround(flat, flatPath, world), -64, 320,
+                1000).source().cells());
+        RoadKernel.Spec tunnel = spec(nodes(0, 55, 0, 4, 55, 0), 1, null, RoadKernel.HeightMode.STRAIGHT, true, 2, 0);
+        RoadKernel.Path tunnelPath = RoadKernel.path(tunnel);
+        assertEquals(5 * 3, RoadKernel.generate(tunnel, tunnelPath, RoadKernel.deckGround(tunnel, tunnelPath, world), -64,
+                320, 1000).source().cells());
+    }
+
+    @Test
+    void straightFillLooksDownFromTheDeckNotDownFromTheSky() {
+        // A stone overhang at 90 over a deck at 80, ground at 63: from the sky the overhang is the surface, within the
+        // fill's depth of nothing; from the deck down there is only air within it. The deck stands alone.
+        FakeWorld world = world((x, z) -> 63);
+        for (int x = -2; x <= 12; x++) {
+            for (int z = -3; z <= 3; z++) world.set(x, 90, z, stone);
+        }
+        RoadKernel.Spec spec = spec(nodes(0, 80, 0, 10, 80, 0), 1, null, RoadKernel.HeightMode.STRAIGHT, true, 3, 0);
+        RoadKernel.Path path = RoadKernel.path(spec);
+        GeneratedSource source = RoadKernel.generate(spec, path, RoadKernel.deckGround(spec, path, world), -64, 320,
+                1000).source();
+        assertEquals(11, source.cells(), "the deck alone under the overhang");
+        // A lantern on the ground under a low deck: something under the deck within the fill's depth, so it fills
+        // (from the sky the lantern made the column surfaceless).
+        int lantern = states.state("minecraft:lantern");
+        world.set(22, 64, 0, lantern);
+        RoadKernel.Spec low = spec(nodes(20, 66, 0, 24, 66, 0), 1, null, RoadKernel.HeightMode.STRAIGHT, true, 2, 0);
+        RoadKernel.Path lowPath = RoadKernel.path(low);
+        assertEquals(SurfaceReader.NONE, SurfaceReader.of(world).ground(22, 0), "no surface from the sky");
+        GeneratedSource lit = RoadKernel.generate(low, lowPath, RoadKernel.deckGround(low, lowPath, world), -64, 320,
+                1000).source();
+        assertEquals(1, lit.get(22, 65, 0));
+        assertEquals(1, lit.get(22, 64, 0), "the fill reaches the lantern's cell");
+    }
+
+    @Test
+    void followTerrainKeepsItsFillEvenOverADrop() {
+        // A cliff across the road: z <= 0 at 63, z >= 1 at 53. Level across, the high side's height wins; the low side's
+        // columns stand over the drop and still get their fill, as Follow terrain always did.
+        FakeWorld world = world((x, z) -> z <= 0 ? 63 : 53);
+        RoadKernel.Spec spec = spec(nodes(0, 63, 0, 6, 63, 0), 3, null, RoadKernel.HeightMode.FOLLOW_TERRAIN, true, 2, 0);
+        GeneratedSource source = RoadKernel.generate(spec, SurfaceReader.of(world), -64, 320, 1000).source();
+        for (int x = 0; x <= 6; x++) {
+            assertEquals(1, source.get(x, 63, 1), "the surface over the drop at " + x);
+            assertEquals(1, source.get(x, 62, 1), "its fill at " + x);
+            assertEquals(1, source.get(x, 61, 1), "its fill at " + x);
+            assertEquals(1, source.get(x, 61, -1), "the ground side's fill at " + x);
+        }
+    }
+
+    @Test
+    void aStraightRoadWithFillOverUnloadedColumnsIsABareDeckThereAndCountsThem() {
+        RoadKernel.Spec spec = spec(nodes(0, 63, 0, 4, 63, 0), 1, null, RoadKernel.HeightMode.STRAIGHT, true, 2, 0);
+        RoadKernel.Result result = RoadKernel.generate(spec, new GroundMap(), -64, 320, 1000);
+        assertTrue(result.unloaded().isEmpty(), "nothing refused");
+        assertEquals(5, result.bareColumns(), "every column unloaded");
+        assertEquals(5, result.source().cells(), "the deck alone");
+        RoadKernel.Spec noFill = spec(nodes(0, 63, 0, 4, 63, 0), 1, null, RoadKernel.HeightMode.STRAIGHT, true, 0, 0);
+        RoadKernel.Result plain = RoadKernel.generate(noFill, new GroundMap(), -64, 320, 1000);
+        assertEquals(0, plain.bareColumns(), "without fill nothing is read");
+        assertTrue(plain.unloaded().isEmpty());
+        // Follow terrain still refuses unloaded columns.
+        RoadKernel.Spec follow = spec(nodes(0, 63, 0, 4, 63, 0), 1, null, RoadKernel.HeightMode.FOLLOW_TERRAIN, true, 2, 0);
+        assertEquals(5, RoadKernel.generate(follow, new GroundMap(), -64, 320, 1000).unloaded().size());
+    }
+
+    @Test
     void theCapRefusesTheCellOverIt() {
         RoadKernel.Spec spec = spec(nodes(0, 63, 0, 10, 63, 0), 3, null, RoadKernel.HeightMode.STRAIGHT, true, 0, 0);
         GeneratedTooLargeException e = assertThrows(GeneratedTooLargeException.class,

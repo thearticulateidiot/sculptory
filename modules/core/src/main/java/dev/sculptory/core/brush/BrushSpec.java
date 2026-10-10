@@ -7,7 +7,7 @@ import java.util.Objects;
 /**
  * Everything that fixes a stroke's output, sent once in {@code StrokeBegin}.
  *
- * @param radius 1-32 blocks
+ * @param radius 1-{@value #MAX_RADIUS} blocks; 1-{@value #MAX_HEIGHTMAP_RADIUS} for the Heightmap brush ({@link #maxRadius})
  * @param strength 0-1
  * @param material the blocks written; required for PAINT and PALETTE, and for SHAPE unless it carves, may be
  *     {@code null} otherwise; a mix laid out by steepness ({@code MixLayout.Steepness}) only for PALETTE
@@ -40,6 +40,11 @@ public record BrushSpec(BrushTool tool, int radius, float strength, Falloff fall
                         HeightmapSpec heightmap, BiomeSpec biome) {
     public static final int MIN_RADIUS = 1;
     public static final int MAX_RADIUS = 32;
+    /**
+     * The Heightmap brush's largest radius (protocol 6): its stamps are up to {@code 2 × 128 + 1} columns wide. Every other
+     * brush stops at {@link #MAX_RADIUS}.
+     */
+    public static final int MAX_HEIGHTMAP_RADIUS = 128;
     public static final int MAX_DEPTH = 32;
     /** Largest |x| or |z| of a clip corner: the kernel's dab limit, beyond the vanilla world border. */
     public static final int CLIP_MAX_HORIZONTAL = 1 << 25;
@@ -52,8 +57,8 @@ public record BrushSpec(BrushTool tool, int radius, float strength, Falloff fall
         Objects.requireNonNull(shape);
         Objects.requireNonNull(mask);
         Objects.requireNonNull(symmetry);
-        if (radius < MIN_RADIUS || radius > MAX_RADIUS) {
-            throw new IllegalArgumentException("Brush radius must be " + MIN_RADIUS + "-" + MAX_RADIUS);
+        if (radius < MIN_RADIUS || radius > maxRadius(tool)) {
+            throw new IllegalArgumentException("A " + tool + " brush's radius must be " + MIN_RADIUS + "-" + maxRadius(tool));
         }
         if (!(strength >= 0f && strength <= 1f)) throw new IllegalArgumentException("Brush strength must be 0-1");
         if (depth < 0 || depth > MAX_DEPTH) throw new IllegalArgumentException("Brush depth must be 0-" + MAX_DEPTH);
@@ -91,6 +96,14 @@ public record BrushSpec(BrushTool tool, int radius, float strength, Falloff fall
         if ((tool == BrushTool.BIOME) != (biome != null)) {
             throw new IllegalArgumentException(tool == BrushTool.BIOME ? "BIOME needs a biome" : tool + " takes no biome");
         }
+    }
+
+    /**
+     * The largest radius a brush of {@code tool} may have: {@value #MAX_HEIGHTMAP_RADIUS} for the Heightmap brush,
+     * {@value #MAX_RADIUS} for every other.
+     */
+    public static int maxRadius(BrushTool tool) {
+        return tool == BrushTool.HEIGHTMAP ? MAX_HEIGHTMAP_RADIUS : MAX_RADIUS;
     }
 
     /** A brush that is neither the Heightmap nor the Biome brush (protocol 5's fields). */

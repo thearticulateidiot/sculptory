@@ -456,12 +456,13 @@ public final class HeightmapGameTest implements FabricGameTest {
 
     /**
      * Ticks the executor and the service until {@code done}; {ticks, longest tick, ticks over
-     * {@link ShapeBrushLaneGameTest#TICK_MICROS}, GC pauses left out}, times in microseconds, each tick's time without
-     * the garbage collectors' pauses during it.
+     * {@link ShapeBrushLaneGameTest#TICK_MICROS}, GC pauses left out, the longest GC pause in a tick, the longest tick
+     * with its GC pauses}, times in microseconds, each tick's time otherwise without the garbage collectors' pauses
+     * during it.
      */
-    private static long[] timedTicks(EditExecutor<ServerWorld> executor, Harness h,
-                                     java.util.function.BooleanSupplier done, int max, String what) {
-        long ticks = 0, longest = 0, over = 0, gc = 0;
+    static long[] timedTicks(EditExecutor<ServerWorld> executor, Harness h,
+                         java.util.function.BooleanSupplier done, int max, String what) {
+        long ticks = 0, longest = 0, over = 0, gc = 0, longestPause = 0, longestRaw = 0;
         while (!done.getAsBoolean() && ticks < max) {
             long gcBefore = ShapeBrushLaneGameTest.gcMillis();
             long start = System.nanoTime();
@@ -469,14 +470,16 @@ public final class HeightmapGameTest implements FabricGameTest {
             h.service.tick();
             long took = (System.nanoTime() - start) / 1000;
             long paused = (ShapeBrushLaneGameTest.gcMillis() - gcBefore) * 1000;
+            longestRaw = Math.max(longestRaw, took);
             took = Math.max(0, took - paused);
             gc += paused;
+            longestPause = Math.max(longestPause, paused);
             longest = Math.max(longest, took);
             if (took > ShapeBrushLaneGameTest.TICK_MICROS) over++;
             ticks++;
         }
         check(done.getAsBoolean(), what + " did not finish in " + max + " ticks");
-        return new long[] {ticks, longest, over, gc};
+        return new long[] {ticks, longest, over, gc, longestPause, longestRaw};
     }
 
     // ------------------------------------------------------------------ helpers

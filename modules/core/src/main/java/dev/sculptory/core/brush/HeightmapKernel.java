@@ -67,11 +67,22 @@ final class HeightmapKernel implements BrushKernel {
 
     @Override
     public void applyStep(BrushSpec s, List<Dab> dabs, StrokeState st, WorldReader w, CellSink out) {
+        Objects.requireNonNull(out);
+        Pass pass = start(s, dabs, st, w);
+        pass.advance(Long.MAX_VALUE);
+        pass.cells().emit(out);
+    }
+
+    /**
+     * Starts working out a step a piece at a time ({@link PlannedStep#planner}): {@link Pass#advance} until it is done,
+     * then its {@link Pass#cells()} hold what {@link #applyStep} would write, however the work was cut into pieces, as long
+     * as the world did not change in between. The arguments are checked here, and the brush's mask bound.
+     */
+    static Pass start(BrushSpec s, List<Dab> dabs, StrokeState st, WorldReader w) {
         Objects.requireNonNull(s);
         Objects.requireNonNull(dabs);
         Objects.requireNonNull(st);
         Objects.requireNonNull(w);
-        Objects.requireNonNull(out);
         if (s.tool() != BrushTool.HEIGHTMAP) {
             throw new IllegalArgumentException("The Heightmap kernel cannot apply a " + s.tool() + " brush");
         }
@@ -82,7 +93,7 @@ final class HeightmapKernel implements BrushKernel {
             Objects.requireNonNull(d);
             if (!TerrainKernel.insideLimit(d)) throw new IllegalArgumentException("Dab outside the world: " + d);
         }
-        new Pass(s, dabs.get(0), TerrainKernel.sorted(dabs), st, w).run(out);
+        return new Pass(s, dabs.get(0), TerrainKernel.sorted(dabs), st, w);
     }
 
     /** The blocks a pixel of {@code value} (0-255) lifts or cuts a column under a stamp {@code heightBlocks} tall. */
@@ -169,8 +180,8 @@ final class HeightmapKernel implements BrushKernel {
                     || fz0 > clip.max().z());
         }
 
-        /** Reads the grid: the loaded chunks, then each column's surface. */
-        void snapshot(WorldReader world, StateSpace states, int[] found) {
+        /** Readies the grid: which chunks are loaded, and room for each column's surface ({@link #snapshotRow}). */
+        void prepare(WorldReader world) {
             cx0 = gx0 >> 4;
             cz0 = gz0 >> 4;
             int cw = ((gx0 + gw - 1) >> 4) - cx0 + 1;
@@ -182,17 +193,19 @@ final class HeightmapKernel implements BrushKernel {
             height = new int[gw * gd];
             surface = new int[gw * gd];
             plants = new int[gw * gd];
-            for (int x = gx0; x < gx0 + gw; x++) {
-                for (int z = gz0; z < gz0 + gd; z++) {
-                    int i = grid(x, z);
-                    height[i] = NO_SURFACE;
-                    if (!loadedAt(x, z)) continue;
-                    int y = SurfaceScan.scan(world, states, x, z, yTop, yBottom, found);
-                    if (y == NO_SURFACE) continue;
-                    height[i] = y;
-                    surface[i] = found[0];
-                    plants[i] = found[1];
-                }
+        }
+
+        /** Reads the surface of each column of grid row {@code x} (after {@link #prepare}). */
+        void snapshotRow(WorldReader world, StateSpace states, int[] found, int x) {
+            for (int z = gz0; z < gz0 + gd; z++) {
+                int i = grid(x, z);
+                height[i] = NO_SURFACE;
+                if (!loadedAt(x, z)) continue;
+                int y = SurfaceScan.scan(world, states, x, z, yTop, yBottom, found);
+                if (y == NO_SURFACE) continue;
+                height[i] = y;
+                surface[i] = found[0];
+                plants[i] = found[1];
             }
         }
 
@@ -241,8 +254,14 @@ final class HeightmapKernel implements BrushKernel {
         }
     }
 
-    /** One step: a snapshot of the columns its dabs read, then the cells it writes. */
-    private static final class Pass {
+    /**
+     * One step: a snapshot of the columns its dabs read, then the cells it writes, worked out a piece at a time
+     * ({@link #advance}): the grids' rows are read, then the footprints' columns decided, in the order a whole run takes.
+     */
+    static final class Pass {
+        /** Columns read or decided between looks at the clock. */
+        private static final int CHECK_EVERY = 64;
+
         private final BrushSpec spec;
         private final HeightmapSpec stamp;
         private final byte[] heights;
@@ -254,8 +273,17 @@ final class HeightmapKernel implements BrushKernel {
         private final Box clip;
         private final Area[] areas;
         private final CellPlan cells;
+        /** The brush's mask, bound when the step starts (so a bad mask fails whether or not it reaches the clip box). */
+        private final ColumnFilter filter;
         /** {@link SurfaceScan#scan} output: surface state and plant count. */
         private final int[] found = new int[2];
+        /** Where the work is: reading the grids (or deciding the footprints), in area {@link #area}, row {@link #row}. */
+        private boolean reading = true;
+        private int area;
+        private int row;
+        private int column;
+        private boolean prepared;
+        private boolean done;
 
         Pass(BrushSpec spec, Dab first, Dab[] dabs, StrokeState stroke, WorldReader world) {
             this.spec = spec;
@@ -278,6 +306,7 @@ final class HeightmapKernel implements BrushKernel {
                     return loadedAt(x, z);
                 }
             });
+            cells.limit(HeightmapSpec.MAX_STEP_CELLS);
             // Dabs whose footprint misses the clip box read nothing.
             Area[] reaching = new Area[dabs.length];
             int n = 0;
@@ -286,32 +315,79 @@ final class HeightmapKernel implements BrushKernel {
                 if (area.reaches(clip)) reaching[n++] = area;
             }
             areas = Arrays.copyOf(reaching, n);
+            filter = stroke.filter(spec.mask(), states, world);
+            done = areas.length == 0;
         }
 
-        void run(CellSink out) {
-            // Bound first, so a bad mask fails the same way whether or not this step reaches the clip box.
-            ColumnFilter filter = stroke.filter(spec.mask(), states, world);
-            if (areas.length == 0) return;
-            for (Area area : areas) area.snapshot(world, states, found);
-            for (int a = 0; a < areas.length; a++) {
-                Area area = areas[a];
-                for (int x = area.fx0; x <= area.fx1; x++) {
-                    for (int z = area.fz0; z <= area.fz1; z++) {
-                        if (!area.inFootprint(x, z)) continue;
-                        int i = area.grid(x, z);
-                        int h = area.height[i];
-                        if (h == NO_SURFACE || decidedBefore(a, x, z) || !insideClip(x, z)) continue;
-                        int value = area.value(stamp, heights, x, z);
-                        for (int b = a + 1; b < areas.length; b++) {
+        /** Refuses ({@link StepTooLargeException}) a step of more than {@code maxCells} cells, at most the brush's cap. */
+        void limit(long maxCells) {
+            cells.limit(Math.min(HeightmapSpec.MAX_STEP_CELLS, Math.max(0, maxCells)));
+        }
+
+        /** The cells planned: the whole step's once {@link #advance} is done. */
+        CellPlan cells() {
+            return cells;
+        }
+
+        /**
+         * Works on the step until {@code deadline} ({@code System.nanoTime}), at least a few dozen columns; returns whether
+         * every column is decided.
+         *
+         * @throws StepTooLargeException when the step plans more than {@link HeightmapSpec#MAX_STEP_CELLS} cells
+         */
+        boolean advance(long deadline) {
+            int work = 0;
+            while (!done) {
+                if (work >= CHECK_EVERY) {
+                    if (System.nanoTime() >= deadline) return false;
+                    work = 0;
+                }
+                if (reading) {
+                    Area a = areas[area];
+                    if (!prepared) {
+                        a.prepare(world);
+                        prepared = true;
+                        row = a.gx0;
+                    }
+                    a.snapshotRow(world, states, found, row);
+                    work += a.gd;
+                    if (++row < a.gx0 + a.gw) continue;
+                    prepared = false;
+                    if (++area < areas.length) continue;
+                    reading = false;
+                    area = 0;
+                    row = areas[0].fx0;
+                    column = areas[0].fz0;
+                    continue;
+                }
+                Area a = areas[area];
+                int x = row;
+                int z = column;
+                if (a.inFootprint(x, z)) {
+                    int i = a.grid(x, z);
+                    int h = a.height[i];
+                    if (h != NO_SURFACE && !decidedBefore(area, x, z) && insideClip(x, z)) {
+                        int value = a.value(stamp, heights, x, z);
+                        for (int b = area + 1; b < areas.length; b++) {
                             if (areas[b].inFootprint(x, z) && areas[b].heightAt(x, z) == h) {
                                 value = Math.max(value, areas[b].value(stamp, heights, x, z));
                             }
                         }
-                        column(area, x, z, i, value, filter);
+                        column(a, x, z, i, value, filter);
                     }
                 }
+                work++;
+                if (++column <= a.fz1) continue;
+                column = a.fz0;
+                if (++row <= a.fx1) continue;
+                if (++area < areas.length) {
+                    row = areas[area].fx0;
+                    column = areas[area].fz0;
+                    continue;
+                }
+                done = true;
             }
-            cells.emit(out);
+            return true;
         }
 
         /** Whether a dab before {@code a} holds column (x, z) in its footprint and found its surface (and so decided it). */

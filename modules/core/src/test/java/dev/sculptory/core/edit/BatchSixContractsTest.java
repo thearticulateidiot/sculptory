@@ -91,6 +91,49 @@ class BatchSixContractsTest {
         assertTrue(OpCompiler.targetVolume(freeMove, null) >= BOX.cellCount());
     }
 
+    /**
+     * A move or stack carries biomes only when asked (the Place tool's Biomes box), and every copy of it (symmetric,
+     * exact or free, a new region) asks the same.
+     */
+    @Test
+    void movesAndStacksCarryBiomesOnlyWhenAskedAndEveryCopyAsksTheSame() {
+        Orientation free = Orientation.free(Transform.IDENTITY, 3_000, 0, 0);
+        Symmetry rotate = new Symmetry(Symmetry.Mode.ROTATE_4, 40, 40);
+        Region other = new Region.Cuboid(Box.of(new BlockPos(2, 60, 2), new BlockPos(5, 61, 5)));
+        assertFalse(new OpSpec.Move(BOX, BlockPos.ORIGIN, Transform.IDENTITY, STONE, EntityFilter.NONE).biomes());
+        assertFalse(new OpSpec.Move(BOX, BlockPos.ORIGIN, free, STONE, EntityFilter.NONE, MIRROR,
+                PasteOptions.Into.EVERYTHING).biomes());
+        assertFalse(new OpSpec.Stack(BOX, 0, 4, 0, 2, EntityFilter.NONE, MIRROR, PasteOptions.Into.EVERYTHING, true)
+                .biomes());
+        for (boolean biomes : new boolean[] {false, true}) {
+            for (Orientation orientation : List.of(Orientation.IDENTITY, Orientation.of(new Transform(1, Mirror.X)),
+                    free)) {
+                OpSpec.Move move = new OpSpec.Move(BOX, new BlockPos(30, 0, 0), orientation, STONE, EntityFilter.NONE,
+                        Symmetry.NONE, PasteOptions.Into.EVERYTHING, biomes);
+                for (Symmetry symmetry : List.of(MIRROR, rotate)) {
+                    OpSpec symmetric = OpSymmetry.withSymmetry(move, symmetry);
+                    assertEquals(biomes, ((OpSpec.Move) symmetric).biomes());
+                    for (OpSymmetry.Copy copy : OpSymmetry.copies(symmetric)) {
+                        assertEquals(biomes, ((OpSpec.Move) copy.op()).biomes(), orientation + " " + copy.image());
+                    }
+                }
+                assertEquals(biomes, ((OpSpec.Move) OpRegions.withRegion(move, other)).biomes());
+            }
+            OpSpec.Stack stack = new OpSpec.Stack(BOX, 0, 4, 0, 2, EntityFilter.NONE, Symmetry.NONE,
+                    PasteOptions.Into.AIR, true, biomes);
+            for (Symmetry symmetry : List.of(MIRROR, rotate)) {
+                OpSpec symmetric = OpSymmetry.withSymmetry(stack, symmetry);
+                assertEquals(biomes, ((OpSpec.Stack) symmetric).biomes());
+                for (OpSymmetry.Copy copy : OpSymmetry.copies(symmetric)) {
+                    OpSpec.Stack copied = (OpSpec.Stack) copy.op();
+                    assertEquals(biomes, copied.biomes(), copy.image().toString());
+                    assertTrue(copied.upsideDown());
+                }
+            }
+            assertEquals(biomes, ((OpSpec.Stack) OpRegions.withRegion(stack, other)).biomes());
+        }
+    }
+
     @Test
     void thePasteOptionsPasteNoBiomesUnlessAsked() {
         assertFalse(PasteOptions.DEFAULT.biomes());

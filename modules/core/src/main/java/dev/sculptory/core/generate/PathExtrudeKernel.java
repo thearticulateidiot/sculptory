@@ -113,7 +113,7 @@ public final class PathExtrudeKernel {
         // A wall face's blocks turn from its own heading; a floor's from the line's first heading.
         double[] reference = face.wall() ? n : null;
         GeneratedSource source = SectionSweep.sweep(samples, frames, closed, new SectionSweep.Section[] {section},
-                along -> 0, SectionSweep.STEP * 1.5, length + SectionSweep.STEP / 2, reference, states,
+                along -> 0, SectionSweep.STEP * 1.5, length + SectionSweep.STEP / 2, reference, face.wall(), states,
                 (x, y, z) -> own.get(FaceCells.key(x, y, z)) >= 0, maxCells, bottomY, topYExclusive);
         return new GeneratedResult(source, face.leftOut());
     }

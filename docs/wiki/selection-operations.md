@@ -75,7 +75,7 @@ The first other block is the column's highest block. When it is water or lava (o
 2. Click **Rotate…** and set **Yaw** (around up), **Pitch** (around east-west) and **Roll** (around north-south), from -180° to 180°. Double-click a slider (or `Ctrl`+click it) to type an exact angle.
 3. Click **Rotate**.
 
-The blocks turn where they stand, around the symmetry centre at the selection's middle height, as one undo step named "Rotate". What they leave becomes air, and the entities the Select tool's **Entities** setting takes turn with them. As with a turned paste, each block takes the nearest block of the original and directional blocks snap to the nearest facing (see [Place](place.md#turn-by-any-angle)). Afterwards the selection is exactly the turned blocks.
+The blocks turn where they stand, around the symmetry centre at the selection's middle height, as one undo step named "Rotate". What they leave becomes air, and the entities the Select tool's **Entities** setting takes turn with them. As with a turned paste, each block takes the nearest block of the original and directional blocks snap to the nearest facing (see [Place](place.md#turn-by-any-angle)). Afterwards the selection is exactly the turned blocks. Biomes stay where they are (to carry them, turn a Move with **Biomes** ticked in [Place](place.md)).
 
 ## Update blocks
 

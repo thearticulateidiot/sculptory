@@ -1632,6 +1632,58 @@ class ServerDispatcherTest {
     }
 
     /**
+     * A Heightmap stroke's written batches are reported too: its client keeps a wide stamp in flight until it is
+     * written, since the server's queue holds the stamp's weight until then (admission is not enough).
+     */
+    @Test
+    void writtenHeightmapDabsAreReportedForTheClientsPacing() {
+        handshake();
+        BrushSpec stamp = new BrushSpec(dev.sculptory.core.brush.BrushTool.HEIGHTMAP, 128, 1f,
+                dev.sculptory.core.brush.Falloff.CONSTANT, dev.sculptory.core.brush.Shape.SQUARE, null,
+                dev.sculptory.core.brush.SurfaceMask.ANY, 0, 0, 1L, null, Symmetry.NONE, null,
+                dev.sculptory.core.brush.SculptMode.TERRAIN, null, null,
+                new dev.sculptory.core.brush.HeightmapSpec(257, new byte[257 * 257], 32, false), null);
+        receive(new C2S.StrokeBegin(1, stamp));
+        receive(new C2S.Dabs(1, 40, dabs(0, 1)));
+        assertEquals(new S2C.StrokeStatus(1, 0, S2C.StrokeStatus.Status.OK, null, -1), transport.last(), "admitted, not written");
+        dispatcher.dabsApplied(session, 1, 0);
+        assertEquals(new S2C.StrokeStatus(1, 0, S2C.StrokeStatus.Status.OK, null, 0), transport.last(), "written");
+        receive(new C2S.StrokeEnd(1));
+        transport.sent.clear();
+        dispatcher.dabsApplied(session, 1, 1);
+        assertEquals(List.of(new S2C.StrokeStatus(1, 1, S2C.StrokeStatus.Status.OK, null, 1)), transport.sent,
+                "an ended stroke's writes are still reported");
+    }
+
+    /**
+     * A stroke whose dabs are still in the brush lane is never dropped from the write reports, however many Shape and
+     * Heightmap strokes begin after it: its write is still reported (its client waits for it). Strokes with everything
+     * written go first, the oldest first: the list stays at {@value NetSession#MAX_WRITE_REPORTS} unless more are busy.
+     */
+    @Test
+    void aStrokeStillBeingWrittenIsNeverDroppedFromTheWriteReports() {
+        handshake();
+        BrushSpec stamp = new BrushSpec(dev.sculptory.core.brush.BrushTool.HEIGHTMAP, 128, 1f,
+                dev.sculptory.core.brush.Falloff.CONSTANT, dev.sculptory.core.brush.Shape.SQUARE, null,
+                dev.sculptory.core.brush.SurfaceMask.ANY, 0, 0, 1L, null, Symmetry.NONE, null,
+                dev.sculptory.core.brush.SculptMode.TERRAIN, null, null,
+                new dev.sculptory.core.brush.HeightmapSpec(257, new byte[257 * 257], 32, false), null);
+        receive(new C2S.StrokeBegin(1, stamp));
+        receive(new C2S.Dabs(1, 40, dabs(0, 1)));
+        for (int id = 2; id <= 14; id++) receive(new C2S.StrokeBegin(id, stamp));
+        assertTrue(session.writeReports.containsKey(1), "the busy stroke is kept: " + session.writeReports.keySet());
+        assertEquals(NetSession.MAX_WRITE_REPORTS, session.writeReports.size(), "the busy one and the newest finished ones");
+        assertFalse(session.writeReports.containsKey(2), "the oldest finished ones went first");
+        transport.sent.clear();
+        dispatcher.dabsApplied(session, 1, 0);
+        assertEquals(List.of(new S2C.StrokeStatus(1, 0, S2C.StrokeStatus.Status.OK, null, 0)), transport.sent,
+                "its write is still reported");
+        receive(new C2S.StrokeBegin(15, stamp));
+        assertFalse(session.writeReports.containsKey(1), "written, it may go");
+        assertEquals(NetSession.MAX_WRITE_REPORTS, session.writeReports.size());
+    }
+
+    /**
      * A request refused only because the player's brush stroke is still being applied ({@code STROKE_PENDING}) is marked
      * with a notice naming it before its refusal, so the client sends it again instead of reporting it; other refusals
      * are not.

@@ -929,6 +929,8 @@ public final class Codec {
         out.zigzag(limits.maxJobsPerPlayer());
         out.zigzagLong(limits.maxSelectionCells());
         out.zigzag(limits.maxSelectionSections());
+        out.zigzag(limits.maxHeightmapRadius());
+        out.zigzag(limits.maxHeightmapHeight());
     }
 
     private static Limits readLimits(WireReader in) throws ProtocolException {
@@ -939,7 +941,7 @@ public final class Codec {
         long maxUploadBytes = in.zigzagLong();
         int maxJobsPerPlayer = in.zigzag();
         return new Limits(maxOpVolume, maxClipboardVolume, maxBrushRadius, maxDabRate, maxUploadBytes, maxJobsPerPlayer,
-                in.zigzagLong(), in.zigzag());
+                in.zigzagLong(), in.zigzag(), in.zigzag(), in.zigzag());
     }
 
     private static void writeStrings(WireWriter out, List<String> values, int maxCount, int maxBytes, String what)

@@ -84,8 +84,9 @@ public final class PlaceSettings {
     }
 
     /**
-     * Whether a paste writes the clipboard's biomes too (protocol 6; off by default, as WorldEdit's {@code -b}; needs
-     * the {@code biome} node). A move or stack always carries biomes for a player who may change them.
+     * Whether a paste writes the clipboard's biomes too, and a move or stack carries the selection's biomes along
+     * (protocol 6; off by default, as WorldEdit's {@code -b}; needs the {@code biome} node). One remembered value for
+     * all three, like the other Place settings; unticked, a move or stack leaves biomes where they are.
      */
     public SettingDef.Bool biomes() {
         return biomes;

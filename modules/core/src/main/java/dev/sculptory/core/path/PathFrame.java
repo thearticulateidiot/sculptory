@@ -21,12 +21,19 @@ import java.util.Objects;
  *       than the line makes it.</li>
  * </ul>
  * Where the heading is not defined (straight up or down), the frame keeps the right of the frame before it (or the
- * fallback given, at the start).
+ * fallback given, at the start); a {@link #STEEP} stretch never turns its heading back on itself, so a curve wobbling as
+ * it climbs near the vertical carries its cross-section up without flipping it ({@link #nextHeading}).
  */
 public final class PathFrame {
     private static final double EPSILON = 1e-9;
     /** A flattened tangent shorter than this has no heading. */
     private static final double FLAT = 1e-6;
+    /**
+     * A unit tangent whose level part is shorter than this (steeper than 60 degrees) is steep: its heading may turn, but
+     * not back on itself. A curve climbing near the vertical wobbles a little either way (a Curve through a point straight
+     * above another overshoots), and taking that as the line turning round would flip what it carries half a turn.
+     */
+    public static final double STEEP = 0.5;
 
     private PathFrame() {}
 
@@ -101,8 +108,7 @@ public final class PathFrame {
         List<Frame> out = new ArrayList<>(samples.size());
         double[] heading = firstHeading(tangents, fallback);
         for (int i = 0; i < samples.size(); i++) {
-            double[] flat = unit(tangents[i][0], 0, tangents[i][2], FLAT);
-            if (flat != null) heading = flat;
+            heading = nextHeading(heading, tangents[i]);
             PathSample s = samples.get(i);
             double hx = heading[0], hz = heading[2];
             out.add(new Frame(s.x(), s.y(), s.z(), s.along(), hx, 0, hz, -hz, 0, hx, 0, 1, 0));
@@ -121,8 +127,7 @@ public final class PathFrame {
         double[] heading = firstHeading(tangents, fallback);
         for (int i = 0; i < samples.size(); i++) {
             double[] t = tangents[i];
-            double[] flat = unit(t[0], 0, t[2], FLAT);
-            if (flat != null) heading = flat;
+            heading = nextHeading(heading, t);
             double ux = -heading[2], uz = heading[0];
             PathSample s = samples.get(i);
             out.add(new Frame(s.x(), s.y(), s.z(), s.along(), t[0], t[1], t[2], ux, 0, uz,
@@ -214,17 +219,40 @@ public final class PathFrame {
         return flat != null ? flat : new double[] {1, 0, 0};
     }
 
-    /** The first heading the tangents have (flattened), else {@code fallback}, else +x. */
-    private static double[] firstHeading(double[][] tangents, double[] fallback) {
+    /**
+     * The heading the line starts with (level, unit): the first a tangent that is not {@link #STEEP} has, else
+     * {@code fallback} (when level), else the first any tangent has, else +x. A line that climbs first starts with the
+     * heading it levels out to.
+     */
+    public static double[] firstHeading(double[][] tangents, double[] fallback) {
         for (double[] t : tangents) {
-            double[] flat = unit(t[0], 0, t[2], FLAT);
-            if (flat != null) return flat;
+            if (level(t) >= STEEP) return unit(t[0], 0, t[2], FLAT);
         }
         if (fallback != null) {
             double[] flat = unit(fallback[0], 0, fallback[2], FLAT);
             if (flat != null) return flat;
         }
+        for (double[] t : tangents) {
+            double[] flat = unit(t[0], 0, t[2], FLAT);
+            if (flat != null) return flat;
+        }
         return new double[] {1, 0, 0};
+    }
+
+    /**
+     * The heading after {@code heading} at unit tangent {@code t}: the tangent's level direction, except that one straight
+     * up or down keeps {@code heading}, and so does a {@link #STEEP} one turning back on it.
+     */
+    public static double[] nextHeading(double[] heading, double[] t) {
+        double[] flat = unit(t[0], 0, t[2], FLAT);
+        if (flat == null) return heading;
+        if (level(t) < STEEP && flat[0] * heading[0] + flat[2] * heading[2] < 0) return heading;
+        return flat;
+    }
+
+    /** The length of a vector's level part. */
+    private static double level(double[] t) {
+        return StrictMath.sqrt(t[0] * t[0] + t[2] * t[2]);
     }
 
     static double[] unit(double x, double y, double z) {

@@ -50,6 +50,7 @@ import dev.sculptory.fabric.client.editor.world.SurfaceSampler;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.FabricStrokeHandle;
 import dev.sculptory.fabric.client.session.Notice;
+import dev.sculptory.fabric.client.session.SessionNotices;
 import dev.sculptory.fabric.client.session.StrokeHandle;
 import dev.sculptory.fabric.client.session.StrokeParams;
 import dev.sculptory.protocol.v2.C2S;
@@ -113,10 +114,18 @@ import java.util.Optional;
  * built-ins and the builder's folder, picked in Tool Settings): the picture is fitted to the brush's square
  * ({@code 2 × radius + 1} columns) and turned by the Angle setting ({@link HeightImage#stamp}) here on the client, and
  * sent as the stroke's {@link HeightmapSpec} with the Height and Raise or Lower. A click stamps once; a drag lays a ridge
- * ({@code HeightmapKernel}). R and Shift+R turn the stamp a quarter turn either way; Ctrl+Scroll sizes it. The cursor
- * outlines the stamp's square on the ground and tints each column by the picture's value there, with a tick pointing to
- * the picture's top edge. A missing picture (a preset naming a file this player lacks) refuses the press with a toast;
- * files in the folder that can't be read are skipped with a one-line toast.
+ * ({@code HeightmapKernel}). R and Shift+R turn the stamp a quarter turn either way; Ctrl+Scroll sizes it, up to radius
+ * 128 (a 257-wide stamp; every other brush stops at 32), within the server's {@code maxHeightmapRadius}, and the Height
+ * within its {@code maxHeightmapHeight}. The cursor outlines the stamp's square on the ground and tints it by the
+ * picture's value: each column up to radius 32, and past it each cell of a few columns by the picture stamped a pixel
+ * a cell (at most 65 × 65 quads), with a tick pointing to the picture's top edge. A stamp over the prediction cap is
+ * left to the server (at radius 128 every one is). A Heightmap dab stays in flight until the server reports it
+ * written (not merely admitted), weighing its copies times its stamp's columns in radius-32 stamps
+ * ({@link HeightmapSpec#weight}), as the server's queue counts it; so a drag or quick clicks at radius 128 send the
+ * next stamp only once the last is written, the path coalescing to the cursor meanwhile, and a new press waits for
+ * earlier presses' stamps. A picture too detailed to send at its size is refused with a toast. A missing
+ * picture (a preset naming a file this player lacks) refuses the press with a toast; files in the folder that can't be
+ * read are skipped with a one-line toast.
  */
 public final class TerrainBrushTool implements Tool {
     /** Dabs estimated to write more cells than this are not predicted. */
@@ -130,6 +139,11 @@ public final class TerrainBrushTool implements Tool {
     public static final String SELECTION_OUTSIDE_WORLD = "sculptory.notice.brush_selection_outside_world";
     /** Toast when the brush's block states are too long to send in one message ({@link #fitsOneFrame}). */
     public static final String SPEC_TOO_LARGE = "sculptory.notice.brush_blocks_too_long";
+    /**
+     * Toast when a Heightmap stamp's picture is too detailed to shrink into one message at its size (past radius 32 the
+     * picture travels deflated; noise doesn't shrink).
+     */
+    public static final String PICTURE_TOO_DETAILED = "sculptory.notice.heightmap_too_detailed";
     /** A copy's outline where it would find no ground (and change nothing). */
     static final int NO_GROUND_COLOR = 0x99A0A0A0;
     /** Vanilla's {@code World.HORIZONTAL_LIMIT}: no block exists beyond it. */
@@ -187,6 +201,13 @@ public final class TerrainBrushTool implements Tool {
     private int stampSide;
     private int stampAngle;
     private byte[] stamp;
+    /** A wide stamp's preview, one pixel a cell ({@link #previewStamp}), and what it was made for. */
+    private byte[] previewCells;
+    /** Heightmap strokes begun whose stamps the server may still be writing, oldest first (the current one last). */
+    private final List<FabricStrokeHandle> sentStamps = new ArrayList<>();
+    private HeightmapLibrary.Entry previewEntry;
+    private int previewAcross;
+    private int previewAngle;
 
     // The current press.
     private boolean invert;
@@ -507,7 +528,7 @@ public final class TerrainBrushTool implements Tool {
     public void onSettingsChanged(ToolContext c, SettingsValues before, SettingsValues after) {
         if (controller.pressed()) {
             controller.setRadius(effectiveRadius(after, limits(c)));
-            controller.setDabCost(copies(after));
+            controller.setDabCost(dabCost(after, limits(c)));
             controller.requestRestart();
         }
     }
@@ -620,7 +641,7 @@ public final class TerrainBrushTool implements Tool {
             refreshPictures(c);
         }
         Limits limits = limits(c);
-        controller.press(effectiveRadius(c.settings(), limits), limits.maxDabRate(), copies(c.settings()));
+        controller.press(effectiveRadius(c.settings(), limits), limits.maxDabRate(), dabCost(c.settings(), limits));
         c.setPointerCapture(true);
     }
 
@@ -676,6 +697,9 @@ public final class TerrainBrushTool implements Tool {
             return null;
         }
         strokeSpec = spec;
+        if (kind == BrushTool.HEIGHTMAP && handle instanceof FabricStrokeHandle fabric) {
+            sentStamps.add(fabric);
+        }
         predictor = null;
         if (predict && handle instanceof FabricStrokeHandle fabric) {
             BrushPredictor.Target target = services.predictionTarget();
@@ -741,7 +765,17 @@ public final class TerrainBrushTool implements Tool {
                     settings.mask(values, states), 0, 0, seed, clip, press.symmetry(c, values.get(settings.symmetry), aimPos),
                     null, SculptMode.TERRAIN, null, null, image, null);
             if (!fitsOneFrame(spec, states)) {
-                c.notify(Notice.of(Notice.Level.WARNING, SPEC_TOO_LARGE, Integer.toString(ProtocolV2.MAX_C2S_FRAME)));
+                // Past radius 32 the picture travels deflated: a picture too noisy to shrink is what doesn't fit.
+                c.notify(image.side() > 2 * BrushSpec.MAX_RADIUS + 1
+                        ? Notice.of(Notice.Level.WARNING, PICTURE_TOO_DETAILED)
+                        : Notice.of(Notice.Level.WARNING, SPEC_TOO_LARGE, Integer.toString(ProtocolV2.MAX_C2S_FRAME)));
+                return null;
+            }
+            // The server refuses a stamp past its limits (its blocks above all): say which, with the numbers, before
+            // sending anything.
+            Notice over = SessionNotices.heightmapLimit(spec, limits(c), bypass(c));
+            if (over != null) {
+                c.notify(over);
                 return null;
             }
             return spec;
@@ -902,7 +936,7 @@ public final class TerrainBrushTool implements Tool {
         boolean surface = surface(values);
         SculptMode mode = surface ? SculptMode.SURFACE : SculptMode.TERRAIN;
         long cells = kind == BrushTool.HEIGHTMAP
-                ? BrushPredictor.estimatedHeightmapCells(radius, values.get(settings.heightmapHeight))
+                ? BrushPredictor.estimatedHeightmapCells(radius, effectiveHeight(values, limits(c)))
                 : BrushPredictor.estimatedCells(shown, radius, shape, depth, mode);
         // The Biome brush writes no block: nothing to predict (the server's cursor shows it).
         boolean serverOnly = kind == BrushTool.BIOME || cells * copies(values) > MAX_PREDICTED_CELLS;
@@ -920,10 +954,16 @@ public final class TerrainBrushTool implements Tool {
             return;
         }
         cursorFacing = null;
-        int sampleRadius = shape == Shape.SQUARE ? (int) Math.ceil(radius * Math.sqrt(2)) : radius;
         BlockPos pos = cursor.pos();
-        samples = sampler.sample(new ReaderTerrainProbe(world), pos.x(), pos.y(), pos.z(), sampleRadius,
-                services.changeStamp());
+        if (kind == BrushTool.HEIGHTMAP) {
+            // The whole square, up to 257 wide: one column sampled per cell of a few columns once past radius 32.
+            samples = sampler.sampleSquare(new ReaderTerrainProbe(world), pos.x(), pos.y(), pos.z(), radius,
+                    services.changeStamp());
+        } else {
+            int sampleRadius = shape == Shape.SQUARE ? (int) Math.ceil(radius * Math.sqrt(2)) : radius;
+            samples = sampler.sample(new ReaderTerrainProbe(world), pos.x(), pos.y(), pos.z(), sampleRadius,
+                    services.changeStamp());
+        }
         if (shape == Shape.CIRCLE) {
             services.showCursor(new BrushCursor(samples, falloffStart(values.get(settings.falloff)), cursorColor,
                     serverOnly, true));
@@ -1059,7 +1099,7 @@ public final class TerrainBrushTool implements Tool {
             }
             return null;
         }
-        return new HeightmapSpec(2 * radius + 1, heights, values.get(settings.heightmapHeight),
+        return new HeightmapSpec(2 * radius + 1, heights, effectiveHeight(values, limits(c)),
                 values.get(settings.heightmapMode) == BrushSettings.StampMode.LOWER);
     }
 
@@ -1084,30 +1124,40 @@ public final class TerrainBrushTool implements Tool {
     }
 
     /**
-     * The Heightmap cursor's picture of the stamp: each column of the square tinted by the picture's value there, on the
-     * ground the cursor sees, and a tick from the centre toward the picture's top edge (which R turns).
+     * The Heightmap cursor's picture of the stamp: the square tinted by the picture's value, on the ground the cursor
+     * sees, and a tick from the centre toward the picture's top edge (which R turns). Up to radius 32 each column is
+     * tinted by the stamp's pixel; past it each cell of a few columns (the samples' step) by a stamp of the picture one
+     * pixel a cell (at most 65 × 65), so resizing a wide stamp never resamples the whole picture at full size each frame
+     * (from a 1,024-pixel picture that takes tens of milliseconds); the full stamp is made when a press sends it.
      */
     private void stampPreview(ToolContext c, WorldDraw d) {
         int radius = cursorRadius;
-        byte[] heights = stamp(c.settings(), radius);
-        if (heights == null || samples == null) {
+        if (samples == null || samples.radius() != radius) {
             return;
         }
         int side = 2 * radius + 1;
+        int step = samples.step();
+        int across = (side + step - 1) / step;
+        byte[] cells = step == 1 ? stamp(c.settings(), radius) : previewStamp(c.settings(), across);
+        if (cells == null) {
+            return;
+        }
         int x0 = samples.centerX() - radius, z0 = samples.centerZ() - radius;
         int rgb = cursorColor & 0xFFFFFF;
-        for (int v = 0; v < side; v++) {
-            for (int u = 0; u < side; u++) {
-                int value = heights[v * side + u] & 0xFF;
+        for (int cv = 0; cv < across; cv++) {
+            for (int cu = 0; cu < across; cu++) {
+                int value = cells[cv * across + cu] & 0xFF;
                 if (value == 0) {
                     continue;
                 }
+                int u = cu * step, v = cv * step;
                 int ground = samples.heightAtWorld(x0 + u, z0 + v);
                 if (ground == SurfaceSampler.NONE) {
                     continue;
                 }
                 int alpha = 0x18 + value * 0x90 / 255;
-                d.surfaceQuad(x0 + u, z0 + v, x0 + u + 1, z0 + v + 1, ground + 1 + BrushOutlines.LIFT, alpha << 24 | rgb);
+                d.surfaceQuad(x0 + u, z0 + v, x0 + Math.min(side, u + step), z0 + Math.min(side, v + step),
+                        ground + 1 + BrushOutlines.LIFT, alpha << 24 | rgb);
             }
         }
         double angle = Math.toRadians(c.settings().get(settings.heightmapAngle));
@@ -1115,6 +1165,25 @@ public final class TerrainBrushTool implements Tool {
         double y = samples.centerY() + 1 + 2 * BrushOutlines.LIFT;
         // The picture's top edge is north (-z) unturned; a clockwise turn takes it toward east.
         d.line(cx, y, cz, cx + Math.sin(angle) * radius, y, cz - Math.cos(angle) * radius, cursorColor);
+    }
+
+    /**
+     * The chosen picture stamped {@code across} pixels wide, turned by the Angle setting, for the preview of a wide stamp;
+     * {@code null} when the picture is missing. Kept while the picture, width and angle stay the same.
+     */
+    private byte[] previewStamp(SettingsValues values, int across) {
+        HeightmapLibrary.Entry entry = services.heightmaps().entry(values.get(settings.heightmapImage)).orElse(null);
+        if (entry == null) {
+            return null;
+        }
+        int angle = values.get(settings.heightmapAngle);
+        if (entry != previewEntry || across != previewAcross || angle != previewAngle) {
+            previewCells = entry.image().stamp(across, angle);
+            previewEntry = entry;
+            previewAcross = across;
+            previewAngle = angle;
+        }
+        return previewCells;
     }
 
     // ---- Helpers ----
@@ -1138,8 +1207,29 @@ public final class TerrainBrushTool implements Tool {
         return clamp(values.get(settings.radius), BrushSpec.MIN_RADIUS, maxRadius(limits));
     }
 
-    private static int maxRadius(Limits limits) {
-        return Math.max(BrushSpec.MIN_RADIUS, Math.min(BrushSpec.MAX_RADIUS, limits.maxBrushRadius()));
+    /** This brush's largest radius on this server: 32 (or {@code maxBrushRadius}); the Heightmap brush's 128. */
+    private int maxRadius(Limits limits) {
+        return limits.maxRadius(kind);
+    }
+
+    /**
+     * What one dab costs in the dab rate and the in-flight window: its copies, times its stamp's weight for the Heightmap
+     * brush ({@link HeightmapSpec#weight}: 16 at radius 128), as the server counts it. With Heightmap dabs counted in
+     * flight until written ({@link Host#inFlight}), the window of 16 never holds more than the server's queue of 32 takes,
+     * and a dab heavier than the window goes out alone once nothing is unwritten.
+     */
+    private int dabCost(SettingsValues values, Limits limits) {
+        int copies = copies(values);
+        if (kind != BrushTool.HEIGHTMAP) {
+            return copies;
+        }
+        return copies * HeightmapSpec.weight(2 * effectiveRadius(values, limits) + 1);
+    }
+
+    /** The Height of a Heightmap stamp on this server: the setting, at most {@code maxHeightmapHeight}. */
+    private int effectiveHeight(SettingsValues values, Limits limits) {
+        return clamp(values.get(settings.heightmapHeight), 1, Math.min(HeightmapSpec.MAX_HEIGHT_BLOCKS,
+                limits.maxHeightmapHeight()));
     }
 
     private static Limits limits(ToolContext c) {
@@ -1147,6 +1237,15 @@ public final class TerrainBrushTool implements Tool {
             return c.session().permissions().limits();
         } catch (IllegalStateException noSession) {
             return Limits.DEFAULTS;
+        }
+    }
+
+    /** Whether the player holds {@code limit.bypass} on this server (the stamp's limits don't apply to them). */
+    private static boolean bypass(ToolContext c) {
+        try {
+            return c.session().permissions().has(Perm.LIMIT_BYPASS);
+        } catch (IllegalStateException noSession) {
+            return false;
         }
     }
 
@@ -1169,13 +1268,66 @@ public final class TerrainBrushTool implements Tool {
             return beginServerStroke();
         }
 
-        /** Dabs queued or unacknowledged, each counted as its spec's mode's copies. */
+        /**
+         * Dabs in flight, each counted as its spec's mode's copies, plus the units of every stroke of the session the
+         * server has not written ({@link EditorSession#unwrittenUnits}: earlier Heightmap stamps and Shape shapes, whatever
+         * this brush is), as the server's queue holds them all for the player. A Heightmap stroke counts its queued dabs
+         * and its sent ones until written, each its copies times its stamp's weight; the other brushes count dabs queued or
+         * not acknowledged.
+         */
         @Override
         public int inFlight(StrokeHandle stroke) {
             if (!(stroke instanceof FabricStrokeHandle fabric)) {
                 return 0;
             }
-            return (fabric.unacknowledged() + fabric.queued()) * fabric.spec().symmetry().mode().copies();
+            BrushSpec spec = fabric.spec();
+            if (spec.heightmap() != null) {
+                return fabric.queued() * stampUnits(spec) + unwrittenBefore();
+            }
+            return (fabric.unacknowledged() + fabric.queued()) * spec.symmetry().mode().copies() + unwrittenBefore();
         }
+
+        /** Unwritten stamps and shapes of this session: a new press of any brush waits for room after them. */
+        @Override
+        public int inFlightBeforeStroke() {
+            return unwrittenBefore();
+        }
+    }
+
+    /** The session's unwritten units ({@link EditorSession#unwrittenUnits}), and at least this tool's own stamps'. */
+    private int unwrittenBefore() {
+        int session = 0;
+        if (context != null) {
+            try {
+                session = context.session().unwrittenUnits();
+            } catch (IllegalStateException noSession) {
+                session = 0;
+            }
+        }
+        return Math.max(session, kind == BrushTool.HEIGHTMAP ? unwrittenStamps() : 0);
+    }
+
+    /** What one dab of a Heightmap stroke of {@code spec} weighs in flight: its copies times its stamp's weight. */
+    static int stampUnits(BrushSpec spec) {
+        return spec.symmetry().mode().copies() * spec.heightmap().dabWeight();
+    }
+
+    /**
+     * The units of Heightmap dabs sent that the server has not reported written, over the strokes begun (forgetting
+     * strokes with none left that have ended).
+     */
+    private int unwrittenStamps() {
+        int units = 0;
+        for (int i = sentStamps.size() - 1; i >= 0; i--) {
+            FabricStrokeHandle handle = sentStamps.get(i);
+            int left = handle.unapplied();
+            if (left == 0 && !handle.active()) {
+                // Ended or refused: it sends nothing more.
+                sentStamps.remove(i);
+                continue;
+            }
+            units += left * stampUnits(handle.spec());
+        }
+        return units;
     }
 }

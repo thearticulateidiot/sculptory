@@ -28,10 +28,12 @@ import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.DeactivateReason;
 import dev.sculptory.fabric.client.editor.tool.EditorAction;
 import dev.sculptory.fabric.client.editor.tool.FrameInfo;
+import dev.sculptory.fabric.client.editor.tool.HudDraw;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
 import dev.sculptory.fabric.client.editor.tool.Modifiers;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
 import dev.sculptory.fabric.client.editor.tool.RaycastMode;
+import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
 import dev.sculptory.fabric.client.editor.tool.Selection;
 import dev.sculptory.fabric.client.editor.tool.Tool;
 import dev.sculptory.fabric.client.editor.tool.ToolContext;
@@ -41,6 +43,7 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.brush.BrushOutlines;
 import dev.sculptory.fabric.client.editor.tools.brush.SymmetryCentre;
+import dev.sculptory.fabric.client.editor.tools.generate.AirPoints;
 import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
 import dev.sculptory.fabric.client.editor.tools.generate.LineDraft;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
@@ -128,6 +131,11 @@ public final class ExtrudeTool implements Tool {
         /** Asks the player to confirm a large path or taper build; {@code onConfirm} runs only if they do. */
         default void confirm(String opNameKey, long blocks, Runnable onConfirm) {
             onConfirm.run();
+        }
+
+        /** Display text for a translation key (the air marker's distance label); the key itself by default. */
+        default String translate(String key, Object... args) {
+            return Translator.KEYS.translate(key, args);
         }
 
         /** Services without Minecraft: no ray, default key names, no ghosts, bakes on the caller's thread. */
@@ -267,6 +275,8 @@ public final class ExtrudeTool implements Tool {
     private final Services services;
     private final SelectionActions actions;
     private WorldCursor cursor = WorldCursor.miss(0, 0, 0);
+    /** The mouse at the last frame (scaled pixels), for the air marker's distance label. */
+    private double mouseX, mouseY;
     private HoverKey hoverKey;
     private FaceJob hoverJob;
     private Face hover;
@@ -319,6 +329,16 @@ public final class ExtrudeTool implements Tool {
             @Override
             public void confirm(String opNameKey, long blocks, Runnable onConfirm) {
                 services.confirm(opNameKey, blocks, onConfirm);
+            }
+
+            @Override
+            public Optional<Ray> cursorRay() {
+                return services.cursorRay();
+            }
+
+            @Override
+            public String translate(String key, Object... args) {
+                return services.translate(key, args);
             }
         };
     }
@@ -424,7 +444,9 @@ public final class ExtrudeTool implements Tool {
     @Override
     public void frame(ToolContext c, FrameInfo f) {
         cursor = f.cursor();
-        along.frame(c, direction(c));
+        mouseX = f.mouseX();
+        mouseY = f.mouseY();
+        along.frame(c, direction(c), cursor, services.cursorRay().orElse(null));
         if (along.lockedFace().isPresent()) return;
         if (drag != null) {
             runDragSearch(c);
@@ -474,6 +496,31 @@ public final class ExtrudeTool implements Tool {
             toldUnloaded = true;
             c.notify(Notice.of(Notice.Level.INFO, FACE_UNLOADED));
         }
+    }
+
+    // ---- Scroll ----
+
+    /**
+     * Along a path or to a point, with a face locked: Alt+Scroll moves the air marker (or the point dragged over open sky)
+     * nearer or farther ({@link AirPoints}). Straight extrusions take no scroll.
+     */
+    @Override
+    public boolean onScroll(ToolContext c, ScrollEvent e) {
+        ExtrudeSettings.Direction direction = direction(c);
+        if (direction == ExtrudeSettings.Direction.STRAIGHT) return false;
+        return along.onScroll(c, e, direction, cursor);
+    }
+
+    /** Over open sky with a face locked, the air marker's (or the dragged point's) distance beside the cursor. */
+    @Override
+    public void renderHud(ToolContext c, HudDraw d) {
+        if (along.lockedFace().isEmpty() || !along.air().labelShown(cursor)) return;
+        AirPoints.renderLabel(d, mouseX, mouseY, services.translate(AirPoints.LABEL, along.air().shownDistance()));
+    }
+
+    /** The air marker's distance, for the points and tip (tests). */
+    public AirPoints air() {
+        return along.air();
     }
 
     // ---- Pointer ----

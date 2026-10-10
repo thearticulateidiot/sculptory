@@ -14,11 +14,14 @@ import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.EditorAction;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
+import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
 import dev.sculptory.fabric.client.editor.tool.ToolContext;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
+import dev.sculptory.fabric.client.editor.tools.generate.AirPoints;
 import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
 import dev.sculptory.fabric.client.editor.tools.generate.LineDraft;
+import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.SessionNotices;
 import dev.sculptory.protocol.v2.OpLabel;
@@ -40,7 +43,9 @@ import java.util.function.Supplier;
  *   <li><b>To a point</b>: the clicked block is the tip (a click elsewhere moves it); the face tapers to it
  *   ({@link TaperKernel}); one undo step named "Taper".</li>
  * </ul>
- * Points drag as the Line's do, Delete or Backspace removes the last, Esc clears them and then lets go of the face.
+ * Once the face is locked, a click on open sky puts a point (or the tip) at the air marker ({@link AirPoints}; Alt+Scroll
+ * sets how far ahead it floats). Points drag as the Line's do, Delete or Backspace removes the last, Esc clears them and
+ * then lets go of the face.
  * Face blocks holding a block entity (chests, signs) can't travel in a generated paste: they are left out, and a toast
  * counts them when the face is locked. Client thread only.
  */
@@ -63,10 +68,19 @@ final class ExtrudeAlong {
     /** The tip the last "behind the face" toast was for, so a preview made again does not repeat it. */
     private BlockPos toldBehind;
 
+    /** Points (and the tip) in the air: one marker distance for both directions. */
+    private final AirPoints air = new AirPoints();
+
     ExtrudeAlong(Supplier<GenerateTool.Services> services) {
         this.path = new LineDraft(services, ExtrudeTool.FACE_COLOUR,
-                new LineDraft.Rules(1, PathSpec.MAX_POINTS - 1, NEEDS_POINT));
-        this.tip = new LineDraft(services, ExtrudeTool.FACE_COLOUR, new LineDraft.Rules(1, 1, NEEDS_TIP));
+                new LineDraft.Rules(1, PathSpec.MAX_POINTS - 1, NEEDS_POINT)).withAirPoints(air);
+        this.tip = new LineDraft(services, ExtrudeTool.FACE_COLOUR, new LineDraft.Rules(1, 1, NEEDS_TIP))
+                .withAirPoints(air);
+    }
+
+    /** Points in the air (the marker and its distance). */
+    AirPoints air() {
+        return air;
     }
 
     /** The locked face, if any. */
@@ -117,10 +131,17 @@ final class ExtrudeAlong {
         tip.deactivate(c);
     }
 
-    /** Once per frame while locked: the preview; a build on its way goes out either way. */
-    void frame(ToolContext c, ExtrudeSettings.Direction direction) {
+    /**
+     * Once per frame while locked: the preview, and the air marker for {@code cursor} on {@code ray} (none while no face
+     * is locked: a click on the sky locks nothing); a build on its way goes out either way.
+     */
+    void frame(ToolContext c, ExtrudeSettings.Direction direction, WorldCursor cursor, Ray ray) {
         if (locked != null) {
+            air.useWorld(c);
+            air.frame(cursor, ray, draft(direction).points().nodes());
             draft(direction).frame(c, host(direction));
+        } else {
+            air.hide();
         }
         path.pollBuild(c);
         tip.pollBuild(c);
@@ -130,6 +151,12 @@ final class ExtrudeAlong {
     boolean onPointer(ToolContext c, PointerEvent e, ExtrudeSettings.Direction direction) {
         if (locked == null) return false;
         return draft(direction).onPointer(c, e, WorldCursor::pos);
+    }
+
+    /** Alt+Scroll while locked: the air marker, or the point dragged over open sky, nearer or farther. */
+    boolean onScroll(ToolContext c, ScrollEvent e, ExtrudeSettings.Direction direction, WorldCursor cursor) {
+        if (locked == null) return false;
+        return draft(direction).onScroll(c, e, cursor, WorldCursor::pos);
     }
 
     /** Esc, Delete/Backspace and Enter while locked; Esc with nothing left to clear lets go of the face. */
@@ -191,6 +218,7 @@ final class ExtrudeAlong {
         if (locked == null) return;
         d.shapeOutlines(List.of(locked.region()), ExtrudeTool.FACE_COLOUR, ExtrudeTool.FACE_COLOUR);
         draft(direction).renderWorld(d, false);
+        air.render(d);
     }
 
     /** The hints while a face is locked (the tool gives the others). */
@@ -206,6 +234,7 @@ final class ExtrudeAlong {
             LineDraft.Built built = tip.preview().orElse(null);
             hints.add(new KeyHint(click, tip.points().isEmpty() ? "sculptory.hint.extrude.click_tip"
                     : "sculptory.hint.extrude.move_tip"));
+            hints.add(air.hint());
             if (built != null && built.tooLarge()) {
                 hints.add(KeyHint.text("sculptory.hint.generate.too_large", SessionNotices.count(built.cap())));
             } else if (built != null && !built.source().isEmpty()) {

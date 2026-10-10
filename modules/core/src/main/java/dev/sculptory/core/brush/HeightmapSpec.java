@@ -28,10 +28,17 @@ import java.util.Objects;
  * @param lower whether the stamp lowers the terrain instead of raising it
  */
 public record HeightmapSpec(int side, byte[] heights, int heightBlocks, boolean lower) {
-    /** The widest image: the footprint of the largest brush radius, {@code 2 × 32 + 1}. */
-    public static final int MAX_SIDE = 2 * BrushSpec.MAX_RADIUS + 1;
+    /** The widest image: the footprint of the Heightmap brush's largest radius, {@code 2 × 128 + 1}. */
+    public static final int MAX_SIDE = 2 * BrushSpec.MAX_HEIGHTMAP_RADIUS + 1;
     /** The tallest stamp, in blocks. */
     public static final int MAX_HEIGHT_BLOCKS = 128;
+    /**
+     * The most cells one step of the Heightmap brush may write, for everyone: one stamp of the widest image, white all
+     * over at the tallest height, moving every column {@value #MAX_HEIGHT_BLOCKS} blocks with its old top and two plants
+     * ({@value #MAX_SIDE}² × 131, about 8.7 million). A step past it is refused while it is worked out
+     * ({@link StepTooLargeException}); symmetric copies share it.
+     */
+    public static final long MAX_STEP_CELLS = (long) MAX_SIDE * MAX_SIDE * (MAX_HEIGHT_BLOCKS + 1 + TerrainKernel.MAX_PLANT_RUN);
 
     public HeightmapSpec {
         Objects.requireNonNull(heights);
@@ -49,6 +56,39 @@ public record HeightmapSpec(int side, byte[] heights, int heightBlocks, boolean 
     @Override
     public byte[] heights() {
         return heights.clone();
+    }
+
+    /**
+     * The cells one stamp of this image is expected to write on open ground: for each pixel that moves its column, the
+     * blocks it lifts or cuts ({@code value / 255 × heightBlocks}, rounded), plus the column's old top (or the floor a cut
+     * stops on) and two plants. A column a stroke could not move as far as asked before may move further in a later dab,
+     * so a step can write more than this; {@link #MAX_STEP_CELLS} bounds that. What the server counts against its op
+     * volume limit when a stroke begins, times the copies.
+     */
+    public long stampCells() {
+        long cells = 0;
+        for (byte b : heights) {
+            int lift = HeightmapKernel.lift(b & 0xFF, heightBlocks);
+            if (lift > 0) cells += lift + 1 + TerrainKernel.MAX_PLANT_RUN;
+        }
+        return cells;
+    }
+
+    /**
+     * What one dab of this stamp weighs in a player's queue of dabs, in radius-32 stamps: its columns over a radius-32
+     * stamp's ({@code 65²}), rounded up; 1 up to radius 32, 16 at radius 128. The server counts a dab's copies times this
+     * against its queued-dab budget until the dab is written, and the client counts its dabs in flight the same way until
+     * the server reports them written, so it sends a wide stamp only when the server has room for it.
+     */
+    public int dabWeight() {
+        return weight(side);
+    }
+
+    /** {@link #dabWeight()} of a stamp {@code side} pixels wide. */
+    public static int weight(int side) {
+        long columns = (long) side * side;
+        long unit = (long) (2 * BrushSpec.MAX_RADIUS + 1) * (2 * BrushSpec.MAX_RADIUS + 1);
+        return (int) Math.max(1, (columns + unit - 1) / unit);
     }
 
     /** Pixel {@code (u, v)}'s height, 0-255. */

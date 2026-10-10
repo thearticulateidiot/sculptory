@@ -614,6 +614,11 @@ public final class EditorClient implements EditorMode.Host {
                 }
 
                 @Override
+                public String translate(String key, Object... args) {
+                    return translator.translate(key, args);
+                }
+
+                @Override
                 public String keyLabel(KeyAction action) {
                     return keymap.display(action);
                 }
@@ -733,6 +738,16 @@ public final class EditorClient implements EditorMode.Host {
                 @Override
                 public long changeStamp() {
                     return ClientBlockChanges.stamp();
+                }
+
+                @Override
+                public Optional<Ray> cursorRay() {
+                    return ctx.cursor().ray();
+                }
+
+                @Override
+                public String translate(String key, Object... args) {
+                    return translator.translate(key, args);
                 }
             };
         }

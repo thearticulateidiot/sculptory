@@ -89,6 +89,39 @@ class HistoryStoreBiomesTest {
     }
 
     /**
+     * A move or stack keeps its Biomes choice in its record alone (the op is never saved): unticked, the record holds
+     * blocks only and the file keeps the header earlier builds read; ticked, its carried quarts come back exactly after
+     * a restart. A record of the always-carry builds before the Biomes box is the same ticked record, so it still
+     * undoes exactly what it changed.
+     */
+    @Test
+    void movesWithAndWithoutTheirBiomesSurviveARestart() throws IOException {
+        HistoryStore store = open(dir);
+        HistoryEntry unticked = entry(ALICE, "Move · 40 blocks", sparse(5), 1);
+        HistoryEntry unstacked = entry(ALICE, "Stack · 40 blocks", sparse(6), 2);
+        journal(store, unticked);
+        journal(store, unstacked);
+        close(store);
+        assertEquals(0, flags(ALICE), "moves and stacks without biomes write no biome record");
+
+        store = open(dir);
+        HistoryEntry ticked = entry(ALICE, "Move · 40 blocks · 12 biome cells", withBiomes(sparse(7), 12), 3);
+        journal(store, ticked);
+        close(store);
+        assertEquals(Journal.FLAG_BIOMES, flags(ALICE));
+
+        HistoryStore reopened = open(dir);
+        HistoryStore.Loaded loaded = load(reopened, ALICE);
+        assertEquals(3, loaded.entries().size(), loaded.problems().toString());
+        assertSameRecord(unticked.record(), loaded.entries().get(0).record());
+        assertTrue(loaded.entries().get(0).record().biomes().isEmpty());
+        assertTrue(loaded.entries().get(1).record().biomes().isEmpty());
+        assertSameRecord(ticked.record(), loaded.entries().get(2).record());
+        assertEquals(12, loaded.entries().get(2).record().biomes().size());
+        close(reopened);
+    }
+
+    /**
      * An open record saved in batches: a later batch of the same entry replaces an earlier batch's change of the same
      * quart, and a quart painted back (the same biome on both sides) is dropped. Interrupted, it is recovered with its
      * biome cells counted in the label.

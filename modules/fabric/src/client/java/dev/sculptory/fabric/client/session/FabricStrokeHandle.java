@@ -5,6 +5,8 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
+import dev.sculptory.core.brush.ShapeStamp;
+import dev.sculptory.fabric.client.editor.brush.StrokeController;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -45,6 +47,8 @@ public final class FabricStrokeHandle implements StrokeHandle {
     private final ToolId tool;
     private final BrushSpec spec;
     private final StrokeParams params;
+    /** What one of its dabs weighs while unwritten ({@link #paceUnits(BrushSpec)}). */
+    private final int paceUnits;
     private final ArrayDeque<Dab> queued = new ArrayDeque<>();
     private final ArrayDeque<Dab> unacked = new ArrayDeque<>();
     /** Dabs sent that the server has not reported written ({@code StrokeStatus.appliedIndex}). */
@@ -64,6 +68,7 @@ public final class FabricStrokeHandle implements StrokeHandle {
         this.tool = Objects.requireNonNull(tool);
         this.spec = Objects.requireNonNull(spec);
         this.params = Objects.requireNonNull(params);
+        this.paceUnits = paceUnits(spec);
     }
 
     public void setBatchHook(BatchHook hook) {
@@ -97,9 +102,29 @@ public final class FabricStrokeHandle implements StrokeHandle {
         return unacked.size();
     }
 
-    /** Dabs of a Shape stroke sent that the server has not reported written yet (0 for other strokes). */
+    /** Dabs of a Shape or Heightmap stroke sent that the server has not reported written yet (0 for other strokes). */
     public int unapplied() {
         return unapplied.size();
+    }
+
+    /**
+     * What one dab of a stroke of {@code spec} weighs in the dabs in flight while the server has not written it, as the
+     * server's queue counts it: a Heightmap dab its copies times its stamp's weight ({@code HeightmapSpec.dabWeight}),
+     * a Shape dab its copies' work units ({@link ShapeStamp#units}, at most the in-flight window); 0 for the other brushes,
+     * whose writes are not reported.
+     */
+    public static int paceUnits(BrushSpec spec) {
+        int copies = spec.symmetry().mode().copies();
+        if (spec.heightmap() != null) return copies * spec.heightmap().dabWeight();
+        if (spec.tool() == BrushTool.SHAPE) {
+            return Math.min(StrokeController.MAX_IN_FLIGHT, ShapeStamp.units(copies, ShapeStamp.cellCount(spec)));
+        }
+        return 0;
+    }
+
+    /** The units of this stroke's dabs the server has not reported written ({@link #paceUnits(BrushSpec)} each). */
+    public int unwrittenUnits() {
+        return unapplied.size() * paceUnits;
     }
 
     /** The sent dabs the server has not reported written yet, oldest first. */
@@ -185,8 +210,8 @@ public final class FabricStrokeHandle implements StrokeHandle {
         }
         if (unacked.isEmpty()) oldestUnackedAt = now;
         unacked.addAll(batch);
-        // Only the Shape brush's server reports written batches (and only its tool paces on them).
-        if (spec.tool() == BrushTool.SHAPE) unapplied.addAll(batch);
+        // Only the Shape and Heightmap brushes' server reports written batches (and only their tools pace on them).
+        if (spec.tool() == BrushTool.SHAPE || spec.tool() == BrushTool.HEIGHTMAP) unapplied.addAll(batch);
     }
 
     void onStatus(S2C.StrokeStatus status, long now) {
@@ -209,11 +234,6 @@ public final class FabricStrokeHandle implements StrokeHandle {
                 unacked.clear();
             }
         }
-    }
-
-    /** No more writes of this stroke will be reported: its dabs no longer count as unapplied. */
-    void forgetWrites() {
-        unapplied.clear();
     }
 
     /** The session went away: nothing more will be sent or acknowledged. */

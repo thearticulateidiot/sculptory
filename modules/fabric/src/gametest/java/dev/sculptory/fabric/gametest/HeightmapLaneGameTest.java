@@ -44,11 +44,11 @@ import net.minecraft.test.TestContext;
 /**
  * Heightmap steps written in parts on the brush lane (one part a tick): before each part after the planning turn the
  * step is checked again, so the brush permission revoked and a lock taken by another player's job each end the step
- * there, what the parts wrote staying one entry that undoes exactly; a player leaving mid-step stops
- * it at the part boundary, quickly, its parts saved and undone exactly on return; a cell someone else changes between
- * parts is left as it is, and undo and redo are exact around it; and a stroke released with deep dabs queued leaves them
- * to the lane rather than writing them whole at once. Region slots 1410-1418. (A chunk unloaded between parts
- * goes through the same check, but a GameTest world keeps its chunks loaded, so it is not driven here.)
+ * there, what the parts wrote staying one entry that undoes exactly; a player leaving mid-step stops it at the part
+ * boundary, quickly, its parts saved and undone exactly on return; a column in which someone else changes a cell
+ * between parts is left whole, and undo and redo are exact around it; and a stroke released with deep dabs queued
+ * leaves them to the lane rather than writing them whole at once. Region slots 1410-1418. (A chunk unloaded between
+ * parts goes through the same check, but a GameTest world keeps its chunks loaded, so it is not driven here.)
  */
 public final class HeightmapLaneGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
@@ -68,6 +68,14 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
         } catch (EditRejected e) {
             throw new GameTestException("stroke refused: " + e.getMessage());
         }
+    }
+
+    /**
+     * Ticks until the player's step is worked out: a piece a tick on this lane (its budget is next to nothing), and none
+     * of its parts written yet when it is.
+     */
+    private static void workedOut(EditExecutor<ServerWorld> executor, Harness h, ServerPlayerEntity player) {
+        MultiplayerGameTest.tickUntil(executor, () -> !h.service.workingOut(player.getUuid()), 2_000, "the step worked out");
     }
 
     /** Cells of {@code area} that differ between two snapshots. */
@@ -106,11 +114,11 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             WorldSnapshot before = capture(world, area);
             begin(h, builder, 1, bigStamp(false));
             check(h.service.dabs(builder, 1, 1, List.of(dabAt(world, 0, x0 + 40, z0 + 40))).accepted(), "the step");
-            executor.tick(); // worked out
+            workedOut(executor, h, builder); // a piece a tick: nothing written yet
             executor.tick(); // part 1
             executor.tick(); // part 2
             int afterTwo = changed(before, capture(world, area), area);
-            check(afterTwo > 4_000 && afterTwo <= 2 * 4_096, "two parts written: " + afterTwo);
+            check(afterTwo > 4_000 && afterTwo <= 2 * (4_096 + 200), "two parts written: " + afterTwo);
             EditTestSupport.grant(builder, Perm.USE);
             MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1, 40, "the refused step");
             check(h.events.dabRejections.equals(List.of(RejectReason.NO_PERMISSION)), "refusals " + h.events.dabRejections);
@@ -130,7 +138,7 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             begin(h, builder, 2, bigStamp(false));
             int acks = h.acks.seqs.size();
             check(h.service.dabs(builder, 2, 2, List.of(dabAt(world, 0, x0 + 40, z0 + 40))).accepted(), "the step");
-            executor.tick();
+            workedOut(executor, h, builder);
             executor.tick();
             // Stone in the air at y 111 (the terrain tops out at 110) over the whole stamp: its job locks section 6 (96-111) of
             // every column, which the next part writes in. The lane runs before the job in a tick.
@@ -165,13 +173,13 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
                 }
             }
 
-            // 3. Someone else sets a cell a later part would write: it is left alone; undo and redo are exact around it.
+            // 3. Someone else sets a cell a later part would write: its column is left whole; undo and redo are exact around it.
             WorldSnapshot beforeThree = capture(world, area);
             h.events.dabRejections.clear();
             begin(h, builder, 3, bigStamp(false));
             int acks3 = h.acks.seqs.size();
             check(h.service.dabs(builder, 3, 3, List.of(dabAt(world, 0, x0 + 40, z0 + 40))).accepted(), "the step");
-            executor.tick();
+            workedOut(executor, h, builder);
             executor.tick();
             int sx = x0 + 56, sz = z0 + 40, sy = ground(world, sx, sz) + 2;
             BlockWriter other = h.runtime.writer(world, WriteOptions.DEFAULT);
@@ -181,7 +189,11 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             check(h.events.dabRejections.isEmpty(), "refusals " + h.events.dabRejections);
             WorldSnapshot written = capture(world, area);
             check(written.get(sx, sy, sz) == sponge, "the sponge was written over");
-            check(written.get(sx, sy - 1, sz) != beforeThree.get(sx, sy - 1, sz), "the rest of its column was raised");
+            for (int y = area.min().y(); y <= area.max().y(); y++) {
+                if (y == sy) continue;
+                check(written.get(sx, y, sz) == beforeThree.get(sx, y, sz), "its column was left whole, at y " + y);
+            }
+            check(ground(world, sx + 1, sz) > sy, "the column beside it rose");
             h.service.endStroke(builder, 3);
             MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(builder.getUuid()) == 0, 40, "commit");
             RecordingListener undo3 = MultiplayerGameTest.historyStep(h, builder, true);
@@ -228,9 +240,11 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             run.load(h.player);
             run.begin(h.player, 1, bigStamp(false));
             check(run.service.dabs(h.player, 1, 1, List.of(dabAt(world, 0, x0 + 40, z0 + 40))).accepted(), "the step");
-            for (int i = 0; i < 3; i++) run.tick(); // worked out, then two parts
+            run.tickUntil(() -> !run.service.workingOut(h.player.getUuid()), 2_000, "the step worked out");
+            run.tick();
+            run.tick();
             int written = changed(before, capture(world, area), area);
-            check(written > 4_000 && written <= 2 * 4_096, "two parts: " + written);
+            check(written > 4_000 && written <= 2 * (4_096 + 200), "two parts: " + written);
             long start = System.nanoTime();
             run.service.playerLeft(h.player.getUuid());
             long took = (System.nanoTime() - start) / 1_000_000;
@@ -277,8 +291,8 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             check(h.service.queuedDabs(h.player.getUuid()) == 2, "the release wrote the dabs at once");
             check(changed(before, capture(world, area), area) == 0, "something was written at once");
             check(took < 50, "the release took " + took + " ms");
-            MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1, 400, "the dabs");
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 400, "commit");
+            MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1, 4_000, "the dabs");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 4_000, "commit");
             check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one entry");
             check(changed(before, capture(world, area), area) > 10_000, "the cut was written");
         } finally {

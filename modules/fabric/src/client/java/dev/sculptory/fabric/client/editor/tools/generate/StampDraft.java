@@ -16,12 +16,14 @@ import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
 import dev.sculptory.fabric.client.editor.tool.EditorAction;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
+import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
 import dev.sculptory.fabric.client.editor.tool.ToolContext;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
 import dev.sculptory.fabric.client.editor.tools.place.Placement;
 import dev.sculptory.fabric.client.editor.tools.select.SelectionActions;
+import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.ClipboardCache;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.LibraryFolder;
@@ -54,8 +56,9 @@ import java.util.function.Supplier;
  * block entities and entities kept: the server pastes its own copy of the source).
  *
  * <p><b>Points</b> are edited as the Line's: a click on a block adds one (each copy stands on its block, its bottom
- * middle on the block's top, as the Place tool puts a paste), a click on a point picks it and a drag moves it,
- * Delete or Backspace removes the selected (or last) one, Esc clears them. At most
+ * middle on the block's top, as the Place tool puts a paste), a click on open sky adds one at the air marker (the copy
+ * stands on the marker's cell, {@link AirPoints}), a click on a point picks it and a drag moves it (over open sky at the
+ * distance it was grabbed at), Delete or Backspace removes the selected (or last) one, Esc clears them. At most
  * {@value OpSpec.PasteMany#MAX_PLACEMENTS} copies.
  *
  * <p><b>Turning.</b> The first copy keeps the source as copied; each other copy is turned by the angle the path's
@@ -96,6 +99,8 @@ public final class StampDraft {
     private final Supplier<GenerateTool.Services> services;
     private final PathModel points = new PathModel();
     private int dragging = -1;
+    /** Whether the pointer moved since the drag's press: a release without it moves nothing. */
+    private boolean moved;
     private BlockPos dragFrom;
     /** Quarter turns R added to every copy. */
     private int turns;
@@ -125,8 +130,12 @@ public final class StampDraft {
     /** A stamp of an asset the server had let go of was retried once (its preview loads it again there). */
     private boolean assetRetried;
 
-    StampDraft(Supplier<GenerateTool.Services> services) {
+    /** Points in the air: a click on open sky puts a copy at the marker ({@link AirPoints}). */
+    private final AirPoints air;
+
+    StampDraft(Supplier<GenerateTool.Services> services, AirPoints air) {
         this.services = Objects.requireNonNull(services);
+        this.air = Objects.requireNonNull(air);
     }
 
     public PathModel points() {
@@ -196,13 +205,19 @@ public final class StampDraft {
         WorldCursor cursor = e.cursor();
         switch (e.kind()) {
             case PRESS -> {
-                if (e.button() != PointerEvent.LEFT || cursor.missed()) return false;
-                BlockPos point = cursor.pos();
-                int index = points.indexAt(point);
+                if (e.button() != PointerEvent.LEFT) return false;
+                Ray ray = services.get().cursorRay().orElse(null);
+                air.useWorld(c);
+                int index = ray != null ? AirPoints.pick(points.nodes(), ray, cursor) : -1;
+                if (index < 0 && !cursor.missed()) index = points.indexAt(cursor.pos());
+                BlockPos point = index >= 0 ? null : air.place(cursor, ray, WorldCursor::pos);
+                if (index < 0 && point == null) return false;
                 if (index >= 0) {
                     points.select(index);
                     dragging = index;
                     dragFrom = points.node(index);
+                    moved = false;
+                    air.beginDrag(ray, dragFrom);
                     c.setPointerCapture(true);
                 } else if (points.size() >= OpSpec.PasteMany.MAX_PLACEMENTS) {
                     c.notify(Notice.of(Notice.Level.INFO, TOO_MANY, Integer.toString(OpSpec.PasteMany.MAX_PLACEMENTS)));
@@ -212,13 +227,21 @@ public final class StampDraft {
                 return true;
             }
             case DRAG -> {
-                if (e.button() != PointerEvent.LEFT || dragging < 0 || cursor.missed()) return false;
-                points.move(dragging, cursor.pos());
+                if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
+                moved = true;
+                air.useWorld(c);
+                BlockPos to = air.dragTo(cursor, services.get().cursorRay().orElse(null), WorldCursor::pos);
+                if (to == null) return false;
+                points.move(dragging, to);
                 return true;
             }
             case RELEASE -> {
                 if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
-                if (!cursor.missed()) points.move(dragging, cursor.pos());
+                // A press and release with no movement between (a click on a point) moves nothing.
+                if (moved) {
+                    BlockPos to = air.dragTo(cursor, services.get().cursorRay().orElse(null), WorldCursor::pos);
+                    if (to != null) points.move(dragging, to);
+                }
                 endDrag(c);
                 return true;
             }
@@ -261,8 +284,28 @@ public final class StampDraft {
         }
     }
 
+    /** Alt+Scroll: the marker nearer or farther, or the point dragged over open sky ({@code cursor}). */
+    public boolean onScroll(ToolContext c, ScrollEvent e, WorldCursor cursor) {
+        if (!air.scroll(e)) return false;
+        air.useWorld(c);
+        if (dragging >= 0 && cursor.missed()) {
+            moved = true;
+            BlockPos to = air.dragTo(cursor, services.get().cursorRay().orElse(null), WorldCursor::pos);
+            if (to != null) points.move(dragging, to);
+        }
+        return true;
+    }
+
+    /** Whether a point is being dragged. */
+    public boolean dragging() {
+        return dragging >= 0;
+    }
+
     private void endDrag(ToolContext c) {
-        if (dragging >= 0) c.setPointerCapture(false);
+        if (dragging >= 0) {
+            c.setPointerCapture(false);
+            air.endDrag();
+        }
         dragging = -1;
         dragFrom = null;
     }
@@ -276,11 +319,28 @@ public final class StampDraft {
      */
     Orientation orientation(int i) {
         List<BlockPos> nodes = points.nodes();
-        double first = heading(nodes, 0);
-        double here = heading(nodes, i);
+        double first = settledHeading(nodes, 0);
+        double here = settledHeading(nodes, i);
         long yaw = Double.isNaN(first) || Double.isNaN(here) ? 0
                 : Math.round((here - first) * (Orientation.FULL_TURN / 2) / Math.PI);
         return Orientation.free(Transform.rotation(turns), (int) Math.floorMod(yaw, (long) Orientation.FULL_TURN), 0, 0);
+    }
+
+    /**
+     * The heading at point {@code i}, or where the path runs straight up or down there (points stacked in the air), the
+     * nearest one before it that has one, else the nearest after; NaN when no point has one. A copy on a vertical stretch
+     * keeps the turn of the path leading up to it.
+     */
+    private static double settledHeading(List<BlockPos> nodes, int i) {
+        for (int j = i; j >= 0; j--) {
+            double heading = heading(nodes, j);
+            if (!Double.isNaN(heading)) return heading;
+        }
+        for (int j = i + 1; j < nodes.size(); j++) {
+            double heading = heading(nodes, j);
+            if (!Double.isNaN(heading)) return heading;
+        }
+        return Double.NaN;
     }
 
     /** The path's heading at point {@code i} (yaw, clockwise from east seen from above), or NaN without one. */
@@ -564,14 +624,17 @@ public final class StampDraft {
         hints.add(KeyHint.text("sculptory.hint.stamp.source", source.get().name()));
         if (points.isEmpty()) {
             hints.add(new KeyHint(click, "sculptory.hint.stamp.add"));
+            hints.add(air.hint());
             return hints;
         }
         if (dragging >= 0) {
             hints.add(new KeyHint("Esc", "sculptory.hint.cancel_drag"));
+            hints.add(air.hint());
             return hints;
         }
         hints.add(new KeyHint(click, "sculptory.hint.stamp.add_or_select"));
         hints.add(new KeyHint(click + " drag", "sculptory.hint.line.move_point"));
+        hints.add(air.hint());
         hints.add(new KeyHint(s.keyLabel(KeyAction.ERASE_SELECTION) + "/" + s.keyLabel(KeyAction.REMOVE_NODE),
                 "sculptory.hint.line.remove_point"));
         hints.add(new KeyHint(s.keyLabel(KeyAction.ROTATE_CW), "sculptory.hint.stamp.turn"));

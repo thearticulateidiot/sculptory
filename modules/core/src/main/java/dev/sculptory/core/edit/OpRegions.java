@@ -41,9 +41,9 @@ public final class OpRegions {
             case OpSpec.Hollow hollow -> new OpSpec.Hollow(region, hollow.thickness(), hollow.inside(), hollow.symmetry());
             case OpSpec.Walls walls -> new OpSpec.Walls(region, walls.thickness(), walls.pattern(), walls.symmetry());
             case OpSpec.Move move -> new OpSpec.Move(region, move.offset(), move.orientation(), move.leave(), move.entities(),
-                    move.symmetry(), move.into());
+                    move.symmetry(), move.into(), move.biomes());
             case OpSpec.Stack stack -> new OpSpec.Stack(region, stack.dx(), stack.dy(), stack.dz(), stack.count(),
-                    stack.entities(), stack.symmetry(), stack.into(), stack.upsideDown());
+                    stack.entities(), stack.symmetry(), stack.into(), stack.upsideDown(), stack.biomes());
             case OpSpec.Overlay overlay -> new OpSpec.Overlay(region, overlay.pattern(), overlay.depth(),
                     overlay.symmetry());
             case OpSpec.Naturalize n -> new OpSpec.Naturalize(region, n.top(), n.topDepth(), n.middle(), n.middleDepth(),

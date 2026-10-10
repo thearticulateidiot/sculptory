@@ -16,4 +16,12 @@ public interface TerrainProbe {
 
     /** One above the highest block Y the probe can answer for (exclusive). */
     int topY();
+
+    /**
+     * A y at and above which column (x, z) holds no terrain (only air), or {@link #topY()} when the probe can't say:
+     * where a scan down may start. Never below the column's highest non-air block.
+     */
+    default int heightHint(int x, int z) {
+        return topY();
+    }
 }

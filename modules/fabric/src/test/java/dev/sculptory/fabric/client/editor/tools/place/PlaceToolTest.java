@@ -392,6 +392,49 @@ class PlaceToolTest {
         assertFalse(((OpSpec.Paste) run.op()).o().biomes(), "biomes only with the permission");
     }
 
+    /**
+     * Move and Stack carry biomes only with Place's Biomes box ticked (the one box Paste uses, unticked by default) and
+     * the biome permission; unticked, blocks move and biomes stay.
+     */
+    @Test
+    void moveAndStackCarryBiomesOnlyWithTheBoxTickedAndThePermission() {
+        biomesAllowed = true;
+        Box box = new Box(new BlockPos(0, 64, 0), new BlockPos(1, 64, 2));
+        world.set(0, 64, 0, states.state("minecraft:stone"));
+        assertFalse(view.settings().get(tool.settings().biomes()), "unticked by default");
+        assertFalse(commitMove(box).biomes());
+        assertFalse(commitStack(box).biomes());
+
+        view.updateSettings(view.settings().with(tool.settings().biomes(), true));
+        assertTrue(commitMove(box).biomes());
+        assertTrue(commitStack(box).biomes());
+
+        // A ticked box left over from before the node was taken away is not sent (the server would refuse it).
+        session.setPermissions(without(Perm.BIOME));
+        biomesAllowed = false;
+        assertFalse(view.settings().isVisible(tool.settings().biomes()), "hidden without the biome permission");
+        assertFalse(commitMove(box).biomes());
+        assertFalse(commitStack(box).biomes());
+    }
+
+    /** Selects {@code box}, moves it one block east and commits: the op sent. */
+    private OpSpec.Move commitMove(Box box) {
+        view.setSelection(box);
+        tool.request(new PlaceTool.Request.Move(box));
+        frame(WorldCursor.miss(0, 0, 0));
+        action(EditorAction.NUDGE_RIGHT, 0);
+        action(EditorAction.COMMIT, 0);
+        return assertInstanceOf(OpSpec.Move.class, lastOp());
+    }
+
+    /** Stacks {@code box} once next to itself and commits: the op sent. */
+    private OpSpec.Stack commitStack(Box box) {
+        tool.request(new PlaceTool.Request.Stack(box));
+        frame(WorldCursor.miss(0, 0, 0));
+        action(EditorAction.COMMIT, 0);
+        return assertInstanceOf(OpSpec.Stack.class, lastOp());
+    }
+
     @Test
     void escCancelsAndGivesTheToolBack() {
         ClipboardCache.Entry entry = clipboardWithPreview(new BlockPos(3, 1, 3));

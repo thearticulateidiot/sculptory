@@ -25,6 +25,7 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
+import dev.sculptory.fabric.client.editor.Translator;
 import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
 import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
@@ -38,6 +39,7 @@ import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.DeactivateReason;
 import dev.sculptory.fabric.client.editor.tool.EditorAction;
 import dev.sculptory.fabric.client.editor.tool.FrameInfo;
+import dev.sculptory.fabric.client.editor.tool.HudDraw;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
 import dev.sculptory.fabric.client.editor.tool.Modifiers;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
@@ -51,6 +53,7 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
+import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Permissions;
@@ -81,6 +84,13 @@ import org.slf4j.LoggerFactory;
  * moves it. Delete or Backspace removes the selected node, or the last one. Esc first stops a drag or a preview being
  * made, then clears the path. From two nodes on the road's ghost follows the nodes and every setting; Enter builds it.
  * The nodes stay, so the road can be adjusted and built again. Ctrl+Scroll changes the width (Shift ×4).
+ *
+ * <p><b>Points in the air</b> ({@link AirPoints}, one marker distance for the Road, Line, Sweep and Stamp): over open
+ * sky a click puts a node or point at the marker, Alt+Scroll moves the marker (or a point dragged over open sky) nearer
+ * or farther. A Road node added or dropped in the air (not one only passing the sky in a drag) turns the road's Height to
+ * Straight, with a toast: Follow terrain would lay it on the ground below; Esc clearing the road puts the Height back.
+ * The road is then a deck through the air, its fill below only where something lies under it within its depth
+ * ({@link RoadKernel#deckGround}); columns in chunks not loaded are a bare deck, counted in a toast.
  *
  * <p><b>Roof.</b> The selection's bounds are the footprint: its bottom layer is the eaves level, its height is
  * ignored. The ghost follows the selection and every setting; Enter builds it.
@@ -132,6 +142,10 @@ public final class GenerateTool implements Tool {
     public static final String NEEDS_PERMISSION_HINT = "sculptory.hint.generate.needs_permission";
     public static final String BLOCK_ENTITY = "sculptory.notice.generate_block_entity";
     public static final String SENT_PATH = "sculptory.notice.generate_path_sent";
+    /** A Road node went into the air: the road's height turned to Straight. */
+    public static final String ROAD_STRAIGHT = "sculptory.notice.generate_road_straight";
+    /** A Straight road's columns in chunks not loaded: built without their fill below ([count]). */
+    public static final String ROAD_BARE = "sculptory.notice.generate_road_bare";
     public static final String SENT_ROOF = "sculptory.notice.generate_roof_sent";
     public static final String OP_PATH = "sculptory.op.generate_path";
     public static final String OP_ROOF = "sculptory.op.generate_roof";
@@ -184,6 +198,19 @@ public final class GenerateTool implements Tool {
             return 0;
         }
 
+        /**
+         * The cursor ray of the event being handled (the crosshair ray while looking), for points in the air
+         * ({@link AirPoints}); none by default, so a click on open sky places nothing.
+         */
+        default Optional<Ray> cursorRay() {
+            return Optional.empty();
+        }
+
+        /** Display text for a translation key (the air marker's distance label); the key itself by default. */
+        default String translate(String key, Object... args) {
+            return Translator.KEYS.translate(key, args);
+        }
+
         /** Services without Minecraft: no ghosts, default key names, work on the caller's thread, confirms at once. */
         static Services headless() {
             return new Services() {
@@ -213,11 +240,14 @@ public final class GenerateTool implements Tool {
 
     /**
      * A preview made: the cells, the road's unloaded columns, the ghost (null when over the cap or empty), the road's
-     * centre line, ground and footprint (null for a roof, or a road over {@link RoadFootprint#MAX_COLUMNS} columns), or
-     * {@code tooLarge} when the kernel passed the cap; and the block-entity cells a Heightmap import leaves as they are.
+     * centre line, ground (Follow terrain's; null for a Straight road, whose centre line runs at its nodes' heights) and
+     * footprint (null for a roof, or a road over {@link RoadFootprint#MAX_COLUMNS} columns), or {@code tooLarge} when the
+     * kernel passed the cap; the block-entity cells a Heightmap import leaves as they are; and the columns of a Straight
+     * road with fill below in chunks this game has not loaded, built as a bare deck.
      */
     public record Built(GeneratedSource source, List<RoadKernel.Column> unloaded, GhostVolume ghost, RoadKernel.Path path,
-                        GroundMap ground, RoadFootprint footprint, boolean tooLarge, long cap, long keptBlockEntities) {
+                        GroundMap ground, RoadFootprint footprint, boolean tooLarge, long cap, long keptBlockEntities,
+                        int bareColumns) {
         public Built {
             Objects.requireNonNull(source);
             unloaded = List.copyOf(unloaded);
@@ -226,7 +256,13 @@ public final class GenerateTool implements Tool {
         /** A preview that left no block entity out (every kind but the Heightmap import). */
         public Built(GeneratedSource source, List<RoadKernel.Column> unloaded, GhostVolume ghost, RoadKernel.Path path,
                      GroundMap ground, RoadFootprint footprint, boolean tooLarge, long cap) {
-            this(source, unloaded, ghost, path, ground, footprint, tooLarge, cap, 0);
+            this(source, unloaded, ghost, path, ground, footprint, tooLarge, cap, 0, 0);
+        }
+
+        /** A preview with no bare road columns. */
+        public Built(GeneratedSource source, List<RoadKernel.Column> unloaded, GhostVolume ghost, RoadKernel.Path path,
+                     GroundMap ground, RoadFootprint footprint, boolean tooLarge, long cap, long keptBlockEntities) {
+            this(source, unloaded, ghost, path, ground, footprint, tooLarge, cap, keptBlockEntities, 0);
         }
 
         static Built tooLarge(RoadKernel.Path path, GroundMap ground, long cap) {
@@ -257,6 +293,10 @@ public final class GenerateTool implements Tool {
     /** The node being dragged and where it was when the drag began, or -1. */
     private int dragging = -1;
     private BlockPos dragFrom;
+    /** Whether the pointer moved since the drag's press: a release without it moves nothing. */
+    private boolean moved;
+    /** The Height before a node in the air turned it Straight (Esc clearing the road puts it back), or null. */
+    private RoadKernel.HeightMode heightBeforeAir;
     /** The preview needs making again (a node, selection or setting changed). */
     private boolean dirty = true;
     /** Bumped on every change, so a result of an older change is dropped. */
@@ -288,8 +328,14 @@ public final class GenerateTool implements Tool {
     private final LineDraft sweep;
     /** The Stamp's points, ghosts and build. */
     private final StampDraft stamp;
+    /** Points in the air for the Road, Line, Sweep and Stamp: one marker distance for them all. */
+    private final AirPoints air = new AirPoints();
+    /** The mouse at the last frame (scaled pixels), for the marker's distance label. */
+    private double mouseX, mouseY;
     /** The count of profile blocks left out the last toast told, so making the preview again does not repeat it. */
     private long toldLeftOut = -1;
+    /** The bare road columns (unloaded, no fill) the last toast told of, so a preview made again does not repeat it. */
+    private int toldBare;
     /** Where the shown ghost is placed: the source's corner, or the masked cells'. */
     private BlockPos ghostOrigin;
     /** The kind the last frame ran with: a change drops the other kind's preview. */
@@ -298,9 +344,9 @@ public final class GenerateTool implements Tool {
     public GenerateTool(Services services) {
         this.services = Objects.requireNonNull(services);
         this.commit = new GeneratedCommit(services);
-        this.line = new LineDraft(() -> services, PATH_COLOUR);
-        this.sweep = new LineDraft(() -> services, PATH_COLOUR);
-        this.stamp = new StampDraft(() -> services);
+        this.line = new LineDraft(() -> services, PATH_COLOUR).withAirPoints(air);
+        this.sweep = new LineDraft(() -> services, PATH_COLOUR).withAirPoints(air);
+        this.stamp = new StampDraft(() -> services, air);
     }
 
     /** The Sweep's points and preview (for tests and the HUD). */
@@ -369,6 +415,7 @@ public final class GenerateTool implements Tool {
     @Override
     public void deactivate(ToolContext c, DeactivateReason r) {
         endDrag(c);
+        air.hide();
         dropPreview();
         commit.cancel();
         line.deactivate(c);
@@ -389,28 +436,45 @@ public final class GenerateTool implements Tool {
         if (kind != GenerateSettings.Kind.PATH) return false;
         switch (e.kind()) {
             case PRESS -> {
-                if (e.button() != PointerEvent.LEFT || cursor.missed()) return false;
-                BlockPos hit = cursor.pos();
-                int index = path.indexAt(hit);
+                if (e.button() != PointerEvent.LEFT) return false;
+                Ray ray = services.cursorRay().orElse(null);
+                air.useWorld(c);
+                int index = ray != null ? AirPoints.pick(path.nodes(), ray, cursor) : -1;
+                if (index < 0 && !cursor.missed()) index = path.indexAt(cursor.pos());
                 if (index >= 0) {
                     path.select(index);
                     dragging = index;
                     dragFrom = path.node(index);
+                    moved = false;
+                    air.beginDrag(ray, dragFrom);
                     c.setPointerCapture(true);
-                } else {
-                    path.add(hit);
-                    changed();
+                    return true;
                 }
+                BlockPos node = air.place(cursor, ray, WorldCursor::pos);
+                if (node == null) return false;
+                path.add(node);
+                if (cursor.missed()) straightForTheAir(c);
+                changed();
                 return true;
             }
             case DRAG -> {
-                if (e.button() != PointerEvent.LEFT || dragging < 0 || cursor.missed()) return false;
-                if (path.move(dragging, cursor.pos())) changed();
+                if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
+                moved = true;
+                air.useWorld(c);
+                BlockPos to = air.dragTo(cursor, services.cursorRay().orElse(null), WorldCursor::pos);
+                if (to == null) return false;
+                if (path.move(dragging, to)) changed();
                 return true;
             }
             case RELEASE -> {
                 if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
-                if (!cursor.missed() && path.move(dragging, cursor.pos())) changed();
+                // A press and release with no movement between (a click on a node) moves nothing.
+                if (moved) {
+                    BlockPos to = air.dragTo(cursor, services.cursorRay().orElse(null), WorldCursor::pos);
+                    if (to != null && path.move(dragging, to)) changed();
+                    // Dropped in the air (the Height turns only for a node left there, not one passing the sky).
+                    if (cursor.missed() && to != null) straightForTheAir(c);
+                }
                 endDrag(c);
                 return true;
             }
@@ -421,9 +485,78 @@ public final class GenerateTool implements Tool {
         return false;
     }
 
+    /**
+     * A Road node went into the air: Follow terrain would lay the road on the ground under it, so the road's height turns
+     * to Straight (the nodes' heights), with a toast saying so.
+     */
+    private void straightForTheAir(ToolContext c) {
+        SettingsValues values = c.settings();
+        if (values.get(GenerateSettings.HEIGHT) != RoadKernel.HeightMode.FOLLOW_TERRAIN) return;
+        heightBeforeAir = RoadKernel.HeightMode.FOLLOW_TERRAIN;
+        c.updateSettings(values.with(GenerateSettings.HEIGHT, RoadKernel.HeightMode.STRAIGHT));
+        c.notify(Notice.of(Notice.Level.INFO, ROAD_STRAIGHT));
+    }
+
+    /**
+     * Esc cleared the road: a Height turned Straight for its nodes in the air goes back to what it was (when it is still
+     * Straight).
+     */
+    private void restoreHeight(ToolContext c) {
+        RoadKernel.HeightMode before = heightBeforeAir;
+        heightBeforeAir = null;
+        SettingsValues values = c.settings();
+        if (before == null || values.get(GenerateSettings.HEIGHT) != RoadKernel.HeightMode.STRAIGHT) return;
+        c.updateSettings(values.with(GenerateSettings.HEIGHT, before));
+    }
+
+    /** Whether {@code kind} makes path points (and so takes points in the air). */
+    static boolean takesPoints(GenerateSettings.Kind kind) {
+        return kind == GenerateSettings.Kind.PATH || kind == GenerateSettings.Kind.LINE
+                || kind == GenerateSettings.Kind.SWEEP || kind == GenerateSettings.Kind.STAMP;
+    }
+
+    /** The points or nodes of {@code kind} (one that {@link #takesPoints}). */
+    private List<BlockPos> pointsOf(GenerateSettings.Kind kind) {
+        return switch (kind) {
+            case LINE -> line.points().nodes();
+            case SWEEP -> sweep.points().nodes();
+            case STAMP -> stamp.points().nodes();
+            default -> path.nodes();
+        };
+    }
+
+    /** Points in the air: the marker's distance (for tests). */
+    public AirPoints air() {
+        return air;
+    }
+
     @Override
     public boolean onScroll(ToolContext c, ScrollEvent e) {
         GenerateSettings.Kind kind = c.settings().get(GenerateSettings.KIND);
+        if (takesPoints(kind) && Modifiers.alt(e.modifiers()) && !Modifiers.control(e.modifiers())) {
+            // Alt+Scroll: the air marker (or the point dragged over open sky) nearer or farther.
+            switch (kind) {
+                case LINE -> {
+                    return line.onScroll(c, e, cursor, WorldCursor::pos);
+                }
+                case SWEEP -> {
+                    return sweep.onScroll(c, e, cursor, WorldCursor::pos);
+                }
+                case STAMP -> {
+                    return stamp.onScroll(c, e, cursor);
+                }
+                default -> {
+                    if (!air.scroll(e)) return false;
+                    air.useWorld(c);
+                    if (dragging >= 0 && cursor.missed()) {
+                        moved = true;
+                        BlockPos to = air.dragTo(cursor, services.cursorRay().orElse(null), WorldCursor::pos);
+                        if (to != null && path.move(dragging, to)) changed();
+                    }
+                    return true;
+                }
+            }
+        }
         if (e.amount() == 0 || (kind != GenerateSettings.Kind.PATH && kind != GenerateSettings.Kind.LINE)) return false;
         if (!Modifiers.control(e.modifiers())) return false;
         int step = (e.amount() > 0 ? 1 : -1) * (Modifiers.shift(e.modifiers()) ? 4 : 1);
@@ -466,6 +599,7 @@ public final class GenerateTool implements Tool {
                 }
                 if (pathMode && !path.isEmpty()) {
                     path.clear();
+                    restoreHeight(c);
                     changed();
                     return true;
                 }
@@ -517,6 +651,14 @@ public final class GenerateTool implements Tool {
     public void frame(ToolContext c, FrameInfo f) {
         cursor = f.cursor();
         GenerateSettings.Kind kind = c.settings().get(GenerateSettings.KIND);
+        mouseX = f.mouseX();
+        mouseY = f.mouseY();
+        if (takesPoints(kind)) {
+            air.useWorld(c);
+            air.frame(cursor, services.cursorRay().orElse(null), pointsOf(kind));
+        } else {
+            air.hide();
+        }
         if (kind != lastKind) {
             // The Line, Sweep and Stamp show their own ghosts: the kind left hides its own (the road's or roof's comes
             // back when its kind does).
@@ -591,7 +733,10 @@ public final class GenerateTool implements Tool {
     }
 
     private void endDrag(ToolContext c) {
-        if (dragging >= 0) c.setPointerCapture(false);
+        if (dragging >= 0) {
+            c.setPointerCapture(false);
+            air.endDrag();
+        }
         dragging = -1;
         dragFrom = null;
     }
@@ -620,6 +765,12 @@ public final class GenerateTool implements Tool {
         if (ghost != null && ghost != built.ghost()) services.releaseGhost(ghost);
         ghost = built.ghost();
         shown = built;
+        if (built.bareColumns() != toldBare) {
+            toldBare = built.bareColumns();
+            if (toldBare > 0 && context != null) {
+                context.notify(Notice.of(Notice.Level.INFO, ROAD_BARE, Integer.toString(toldBare)));
+            }
+        }
         if (buildWhenReady && context != null) {
             buildWhenReady = false;
             build(context);
@@ -648,7 +799,7 @@ public final class GenerateTool implements Tool {
         GhostVolume baked = visible.isEmpty() ? null : GhostBaker.fromSparse(visible, states);
         ghostOrigin = visible.isEmpty() ? null : visible.bounds().min();
         return new Built(built.source(), built.unloaded(), baked, built.path(), built.ground(), built.footprint(),
-                built.tooLarge(), built.cap(), built.keptBlockEntities());
+                built.tooLarge(), built.cap(), built.keptBlockEntities(), built.bareColumns());
     }
 
     private void dropPreview() {
@@ -686,19 +837,26 @@ public final class GenerateTool implements Tool {
             RoadKernel.Spec spec = roadSpec(c, values, states);
             if (spec == null) return null;
             RoadKernel.Path laid = RoadKernel.path(spec);
-            GroundMap ground = new GroundMap();
-            if (spec.heightMode() == RoadKernel.HeightMode.FOLLOW_TERRAIN) {
+            boolean follow = spec.heightMode() == RoadKernel.HeightMode.FOLLOW_TERRAIN;
+            GroundMap ground;
+            if (follow) {
+                ground = new GroundMap();
                 SurfaceReader surface = SurfaceReader.of(world);
                 ground.capture(surface, laid.columnKeys());
                 ground.capture(surface, laid.sampleColumnKeys());
+            } else {
+                // Straight: the fill below reaches down only where it meets something under the deck, read here.
+                ground = RoadKernel.deckGround(spec, laid, world);
             }
+            // The centre line is drawn on the ground Follow terrain read; a Straight road's at its nodes' heights.
+            GroundMap drawn = follow ? ground : null;
             return () -> {
                 try {
                     RoadKernel.Result result = RoadKernel.generate(spec, laid, ground, bottom, top, cap);
-                    return new Built(result.source(), result.unloaded(), ghostOf(result.source(), states), laid, ground,
-                            RoadFootprint.of(result.source(), states.air()), false, cap);
+                    return new Built(result.source(), result.unloaded(), ghostOf(result.source(), states), laid, drawn,
+                            RoadFootprint.of(result.source(), states.air()), false, cap, 0, result.bareColumns());
                 } catch (GeneratedTooLargeException e) {
-                    return Built.tooLarge(laid, ground, cap);
+                    return Built.tooLarge(laid, drawn, cap);
                 }
             };
         }
@@ -1057,6 +1215,7 @@ public final class GenerateTool implements Tool {
     @Override
     public void renderWorld(ToolContext c, WorldDraw d) {
         SettingsValues values = c.settings();
+        if (takesPoints(values.get(GenerateSettings.KIND))) air.render(d);
         switch (values.get(GenerateSettings.KIND)) {
             case LINE -> {
                 line.renderWorld(d, false);
@@ -1160,6 +1319,13 @@ public final class GenerateTool implements Tool {
         return Optional.empty();
     }
 
+    /** Over open sky, the air marker's (or the dragged point's) distance beside the cursor. */
+    @Override
+    public void renderHud(ToolContext c, HudDraw d) {
+        if (!takesPoints(c.settings().get(GenerateSettings.KIND)) || !air.labelShown(cursor)) return;
+        AirPoints.renderLabel(d, mouseX, mouseY, services.translate(AirPoints.LABEL, air.shownDistance()));
+    }
+
     @Override
     public List<KeyHint> hints(ToolContext c) {
         List<KeyHint> hints = new ArrayList<>();
@@ -1220,15 +1386,18 @@ public final class GenerateTool implements Tool {
         }
         if (path.isEmpty()) {
             hints.add(new KeyHint(CLICK, "sculptory.hint.generate.add_node"));
+            hints.add(air.hint());
             hints.add(new KeyHint(services.keyLabel(KeyAction.TOOL_SIZE), "sculptory.hint.generate.width"));
             return hints;
         }
         if (dragging >= 0) {
             hints.add(new KeyHint("Esc", "sculptory.hint.cancel_drag"));
+            hints.add(air.hint());
             return hints;
         }
         hints.add(new KeyHint(CLICK, "sculptory.hint.generate.add_or_select"));
         hints.add(new KeyHint(CLICK + " drag", "sculptory.hint.generate.move_node"));
+        hints.add(air.hint());
         hints.add(new KeyHint(services.keyLabel(KeyAction.ERASE_SELECTION) + "/" + services.keyLabel(KeyAction.REMOVE_NODE),
                 "sculptory.hint.generate.remove_node"));
         if (built != null && built.tooLarge()) {

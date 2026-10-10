@@ -31,7 +31,7 @@ Sculptory used to be called Builder Suite. On its first start it moves the old `
 | `editingEnabled` | `true` | The master switch |
 | `permissionFallbackOpLevel` | `2` | Op level that may edit without a permissions mod |
 | `limits.maxOpVolume` | `2097152` | Largest edit, in blocks |
-| `limits.maxBrushRadius` | `32` | Largest brush radius |
+| `limits.maxBrushRadius` | `32` | Largest brush radius (the Heightmap brush has `limits.maxHeightmapRadius`, `128`) |
 | `limits.maxUploadBytes` | `16777216` | Largest schematic import (up to 64 MiB) |
 | `executor.tickBudgetMsDedicated` | `10` | Milliseconds per tick spent on edits |
 | `history.maxEntriesPerPlayer` | `256` | Undo steps per player (1–10,000) |

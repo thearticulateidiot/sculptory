@@ -20,7 +20,9 @@ Every editor key can be changed, and `F1` always shows the keys as you have them
 |---|---|
 | Tools 1–17 | `1`–`9`, `0`, `-`, `=`, `[`, `]`, `\`, `;`, `'` |
 | Heightmap brush: turn the picture | `R`, `Shift+R` |
-| Tool size, strength or height | `Ctrl+Scroll` (`Shift`: steps of 4), `Alt+Scroll` |
+| Tool size (Road width, Line thickness) | `Ctrl+Scroll` (`Shift`: steps of 4) |
+| Brush strength or height, Lasso height | `Alt+Scroll` |
+| Points in the air: the marker nearer or farther (Extrude along a path or to a point; Generate's Road, Line, Sweep and Stamp) | `Alt+Scroll` (`Shift`: steps of 4) |
 | Fly speed | `Scroll` over the world |
 | Tinker: next value, another property | `Scroll`, `Shift+Scroll` over a block |
 | Pick block (eyedropper) | Middle-click |

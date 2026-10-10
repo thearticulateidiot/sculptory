@@ -173,6 +173,77 @@ class HeightmapKernelTest {
         assertEquals(76, f.surface(world, 0, 0));
     }
 
+
+    /**
+     * Radius 128, a 257-wide stamp on flat ground: every column of the footprint, its corners and far edges included, rises
+     * by its own pixel and nothing outside moves; a drag of dabs 32 blocks apart (a quarter of the radius, the stroke's
+     * spacing) lays a ridge as high as the picture, the highest pixel over each column, never a pile; and the picture
+     * turned a quarter turn lays the turned heights (its odd south-east corner moves to the south-west).
+     */
+    @Test
+    void aRadius128StampDragAndTurn() {
+        int side = 257, r = 128;
+        byte[] picture = new byte[side * side];
+        for (int v = 0; v < side; v++) {
+            for (int u = 0; u < side; u++) {
+                double d = Math.sqrt((u - r) * (u - r) + (v - r) * (v - r)) / r;
+                picture[v * side + u] = (byte) Math.max(0, Math.round(200 * (1 - d)));
+            }
+        }
+        picture[side * side - 1] = (byte) 255;
+        FakeWorld world = wideFlat(60, 300);
+        dab(spec(r, picture, 32, false), new StrokeState(), world, at(0, 0, 61, 0));
+        for (int x = -r - 2; x <= r + 2; x++) {
+            for (int z = -r - 2; z <= r + 2; z++) {
+                int u = x + r, v = z + r;
+                boolean inside = u >= 0 && u < side && v >= 0 && v < side;
+                int want = inside ? HeightmapKernel.lift(picture[v * side + u] & 0xFF, 32) : 0;
+                assertEquals(60 + want, f.surface(world, x, z), "column " + x + "," + z);
+            }
+        }
+        assertEquals(92, f.surface(world, 128, 128), "the far corner's pixel");
+
+        FakeWorld dragged = wideFlat(60, 300);
+        StrokeState stroke = new StrokeState();
+        int[] centres = {-64, -32, 0, 32, 64, 32, 0};
+        for (int i = 0; i < centres.length; i++) {
+            dab(spec(r, picture, 32, false), stroke, dragged, at(i, centres[i], 61 + i % 3 * 9, 0));
+        }
+        for (int x = -200; x <= 200; x += 3) {
+            for (int z = -130; z <= 130; z += 3) {
+                int want = 0;
+                for (int c : new int[] {-64, -32, 0, 32, 64}) {
+                    int u = x - c + r, v = z + r;
+                    if (u >= 0 && u < side && v >= 0 && v < side) {
+                        want = Math.max(want, HeightmapKernel.lift(picture[v * side + u] & 0xFF, 32));
+                    }
+                }
+                assertEquals(60 + want, f.surface(dragged, x, z), "ridge column " + x + "," + z);
+            }
+        }
+
+        FakeWorld turned = wideFlat(60, 300);
+        byte[] quarter = new HeightImage(side, side, picture).stamp(side, 90);
+        dab(spec(r, quarter, 32, false), new StrokeState(), turned, at(0, 0, 61, 0));
+        assertEquals(92, f.surface(turned, -128, 128), "the odd corner turned to the south-west");
+        assertEquals(60, f.surface(turned, 128, 128));
+        for (int x = -r; x <= r; x += 7) {
+            for (int z = -r; z <= r; z += 5) {
+                assertEquals(f.surface(world, z, -x), f.surface(turned, x, z), "turned column " + x + "," + z);
+            }
+        }
+    }
+
+    /** Flat ground from the fixture's floor to a grass top at {@code surfaceY}, {@code extent} columns each way. */
+    private FakeWorld wideFlat(int surfaceY, int extent) {
+        FakeWorld world = new FakeWorld(f.states);
+        for (int x = -extent; x <= extent; x++) {
+            for (int z = -extent; z <= extent; z++) {
+                for (int y = surfaceY - 3; y <= surfaceY; y++) world.set(x, y, z, y < surfaceY ? f.stone : f.grass);
+            }
+        }
+        return world;
+    }
     /** A stamp turned 90° clockwise lays the turned heights: the corner pixel moves from south-east to south-west. */
     @Test
     void aTurnedStampLaysTheTurnedHeights() {

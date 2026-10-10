@@ -34,7 +34,7 @@ By default the brush paints **whole columns**, from the bottom of the world to t
 
 - **Copy** and **Cut** keep the biomes of the biome cells the copied blocks are in.
 - **Paste** writes them only with **Biomes** ticked in the [Place](place.md) tool's settings (off by default, like WorldEdit's `-b`). Turned or flipped pastes turn the biomes with the blocks; the paste spot is rounded to the nearest biome cell, so the pattern keeps its shape.
-- **Move** and **Stack** carry the biomes along when you may change biomes. The source keeps its own biomes (there is no "empty" biome).
+- **Move** and **Stack** carry the biomes along only with **Biomes** ticked in the [Place](place.md) tool's settings, the same box Paste uses (off by default, and remembered). Unticked, the blocks move and the biomes stay where they were. Ticked, the source keeps its own biomes too (there is no "empty" biome). **Rotate…** in the Selection window and the [Extrude](extrude.md) tool leave biomes where they are.
 - `.schem` files keep biomes both ways ([Import and export](import-export.md)). Litematica and structure files have no biomes.
 
 ## Biome view
@@ -47,7 +47,7 @@ Biome strokes and fills undo and redo exactly, also after a server restart. A bi
 
 ## Permissions
 
-Painting, filling, and pasting with Biomes ticked need the `biome` [permission](permissions.md) (op players have it). A move or stack carries biomes only for players who have it.
+Painting, filling, and pasting, moving or stacking with Biomes ticked need the `biome` [permission](permissions.md) (op players have it). Without it the Biomes box is hidden.
 
 ## Related
 

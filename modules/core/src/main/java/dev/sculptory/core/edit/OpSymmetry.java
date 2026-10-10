@@ -84,9 +84,9 @@ public final class OpSymmetry {
             case OpSpec.Paste paste -> new OpSpec.Paste(paste.src(), paste.origin(), paste.orientation(), paste.o(),
                     symmetry);
             case OpSpec.Move move -> new OpSpec.Move(move.region(), move.offset(), move.orientation(), move.leave(),
-                    move.entities(), symmetry, move.into());
+                    move.entities(), symmetry, move.into(), move.biomes());
             case OpSpec.Stack stack -> new OpSpec.Stack(stack.region(), stack.dx(), stack.dy(), stack.dz(),
-                    stack.count(), stack.entities(), symmetry, stack.into(), stack.upsideDown());
+                    stack.count(), stack.entities(), symmetry, stack.into(), stack.upsideDown(), stack.biomes());
             case OpSpec.Overlay overlay -> new OpSpec.Overlay(overlay.region(), overlay.pattern(), overlay.depth(),
                     symmetry);
             case OpSpec.Naturalize n -> new OpSpec.Naturalize(n.region(), n.top(), n.topDepth(), n.middle(),
@@ -172,7 +172,7 @@ public final class OpSymmetry {
                 BlockPos step = Symmetry.imageOffset(image, new BlockPos(stack.dx(), stack.dy(), stack.dz()));
                 yield new OpSpec.Stack(Regions.image(stack.region(), symmetry, image),
                         step.x(), step.y(), step.z(), stack.count(), stack.entities(), Symmetry.NONE, stack.into(),
-                        stack.upsideDown());
+                        stack.upsideDown(), stack.biomes());
             }
             // Columns stay vertical under every image, so a layer op's copy is the op on the image region.
             case OpSpec.Overlay overlay -> new OpSpec.Overlay(Regions.image(overlay.region(), symmetry, image),
@@ -213,7 +213,7 @@ public final class OpSymmetry {
                 move.offset().y(), Math.subtractExact(imageDestination.min().z(), imageFrom.min().z()));
         Transform turned = image.inverse().transform().compose(t).compose(image.transform());
         return new OpSpec.Move(Regions.image(move.region(), symmetry, image), offset, turned, move.leave(),
-                move.entities(), Symmetry.NONE, move.into());
+                move.entities(), Symmetry.NONE, move.into()).withBiomes(move.biomes());
     }
 
     /**
@@ -237,7 +237,7 @@ public final class OpSymmetry {
                 Math.subtractExact(imageDestination.min().y(), imageFrom.min().y() + copyTurned.offset().y()),
                 Math.subtractExact(imageDestination.min().z(), imageFrom.min().z() + copyTurned.offset().z()));
         return new OpSpec.Move(Regions.image(move.region(), symmetry, image), offset, conjugated, move.leave(),
-                move.entities(), Symmetry.NONE, move.into());
+                move.entities(), Symmetry.NONE, move.into()).withBiomes(move.biomes());
     }
 
     /** The image of a block cell. */

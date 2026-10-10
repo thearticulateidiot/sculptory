@@ -38,7 +38,7 @@ Players and dropped items never come along.
 
 ## Biomes
 
-A copy also keeps the biomes of the 4×4×4 biome cells its blocks are in. Paste writes them only with **Biomes** ticked in [Place](place.md); Move and Stack carry them along. See [Biomes](biomes.md).
+A copy also keeps the biomes of the 4×4×4 biome cells its blocks are in. Paste writes them, and Move and Stack carry them along, only with **Biomes** ticked in [Place](place.md). See [Biomes](biomes.md).
 
 ## Tips
 

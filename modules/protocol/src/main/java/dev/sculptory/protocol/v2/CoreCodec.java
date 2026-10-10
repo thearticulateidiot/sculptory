@@ -845,6 +845,7 @@ final class CoreCodec {
                 out.enumValue(move.entities());
                 writeSymmetry(out, move.symmetry());
                 out.enumValue(move.into());
+                out.bool(move.biomes());
             }
             case OpSpec.Stack stack -> {
                 out.u8(OP_STACK);
@@ -857,6 +858,7 @@ final class CoreCodec {
                 writeSymmetry(out, stack.symmetry());
                 out.enumValue(stack.into());
                 out.bool(stack.upsideDown());
+                out.bool(stack.biomes());
             }
             case OpSpec.ScatterCommit commit -> {
                 out.u8(OP_SCATTER_COMMIT);
@@ -944,6 +946,7 @@ final class CoreCodec {
                 PasteOptions options = readPasteOptions(in);
                 yield new OpSpec.Paste(source, origin, orientation, options, readSymmetry(in));
             }
+            // Protocol 6 ends a move with bool biomes (carry the region's biomes along).
             case OP_MOVE -> {
                 Region region = readRegion(in);
                 BlockPos offset = readPos(in);
@@ -951,8 +954,10 @@ final class CoreCodec {
                 Pattern leave = withoutSteepness(readPattern(in, palette), "an op");
                 EntityFilter entities = readEntityFilter(in);
                 Symmetry symmetry = readSymmetry(in);
-                yield new OpSpec.Move(region, offset, orientation, leave, entities, symmetry, readInto(in));
+                PasteOptions.Into into = readInto(in);
+                yield new OpSpec.Move(region, offset, orientation, leave, entities, symmetry, into, in.bool());
             }
+            // Protocol 6 ends a stack with bool biomes, after bool upsideDown.
             case OP_STACK -> {
                 Region region = readRegion(in);
                 int dx = in.zigzag();
@@ -962,7 +967,8 @@ final class CoreCodec {
                 EntityFilter entities = readEntityFilter(in);
                 Symmetry symmetry = readSymmetry(in);
                 PasteOptions.Into into = readInto(in);
-                yield new OpSpec.Stack(region, dx, dy, dz, count, entities, symmetry, into, in.bool());
+                boolean upsideDown = in.bool();
+                yield new OpSpec.Stack(region, dx, dy, dz, count, entities, symmetry, into, upsideDown, in.bool());
             }
             case OP_SCATTER_COMMIT -> new OpSpec.ScatterCommit(in.uuid());
             // Protocol 5: region | pattern | varint depth | symmetry. A depth outside 1-16 is MALFORMED.
@@ -1070,13 +1076,21 @@ final class CoreCodec {
 
     /**
      * The Heightmap brush's image (protocol 6, after a {@code HEIGHTMAP} brush's symmetry):
-     * {@code varint side | side × side raw bytes | varint heightBlocks | bool lower}, uncompressed (a 65 × 65 image is
-     * 4,225 bytes, well inside a {@code StrokeBegin} frame). What {@link HeightmapSpec} refuses (a side outside
-     * 1-{@value HeightmapSpec#MAX_SIDE}, a height outside 1-{@value HeightmapSpec#MAX_HEIGHT_BLOCKS}) is MALFORMED.
+     * {@code varint side | image | varint heightBlocks | bool lower}. The image is {@code side × side} raw bytes up to
+     * {@value HeightmapImages#RAW_SIDE} a side (a radius-32 stamp, 4,225 bytes); a wider one is
+     * {@code varint length | deflated bytes} ({@link HeightmapImages}: up to 257 × 257 inflated, to fit a
+     * {@code StrokeBegin} frame). What {@link HeightmapSpec} refuses (a side outside 1-{@value HeightmapSpec#MAX_SIDE}, a
+     * height outside 1-{@value HeightmapSpec#MAX_HEIGHT_BLOCKS}) is MALFORMED, and so is a deflated image that is corrupt,
+     * short, long or followed by stray bytes.
      */
     static void writeHeightmap(WireWriter out, HeightmapSpec heightmap) throws ProtocolException {
-        out.varint(heightmap.side());
-        out.raw(heightmap.heights());
+        int side = heightmap.side();
+        out.varint(side);
+        if (side <= HeightmapImages.RAW_SIDE) {
+            out.raw(heightmap.heights());
+        } else {
+            out.bytes(HeightmapImages.deflate(heightmap.heights(), side), ProtocolV2.MAX_C2S_FRAME, "heightmap image");
+        }
         out.varint(heightmap.heightBlocks());
         out.bool(heightmap.lower());
     }
@@ -1084,9 +1098,21 @@ final class CoreCodec {
     static HeightmapSpec readHeightmap(WireReader in) throws ProtocolException {
         int side = in.varint();
         if (side < 1 || side > HeightmapSpec.MAX_SIDE) throw WireReader.malformed("Heightmap side " + side);
-        byte[] heights = in.raw(side * side);
+        byte[] heights = side <= HeightmapImages.RAW_SIDE ? in.raw(side * side) : HeightmapImages.inflate(deflated(in), side);
         int heightBlocks = in.varint();
         return new HeightmapSpec(side, heights, heightBlocks, in.bool());
+    }
+
+    /**
+     * A deflated heightmap image's bytes: {@code varint length | bytes}. A length past what a client frame can hold, or
+     * past the frame's end, is MALFORMED like the rest of a bad image (not TOO_LARGE: no valid image is that long).
+     */
+    private static byte[] deflated(WireReader in) throws ProtocolException {
+        int length = in.varint();
+        if (length < 0 || length > ProtocolV2.MAX_C2S_FRAME) {
+            throw WireReader.malformed("Heightmap image of " + length + " bytes");
+        }
+        return in.raw(length);
     }
 
     /**

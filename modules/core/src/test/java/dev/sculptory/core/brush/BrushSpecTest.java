@@ -29,6 +29,28 @@ class BrushSpecTest {
         assertThrows(IllegalArgumentException.class, () -> spec(BrushTool.RAISE, 4, Float.NaN, null));
     }
 
+    /**
+     * The Heightmap brush alone goes up to radius 128 (a 257-wide image); every other brush stops at 32. The image's side
+     * must still be the footprint's.
+     */
+    @Test
+    void theHeightmapBrushHasItsOwnRadiusCap() {
+        assertEquals(128, BrushSpec.maxRadius(BrushTool.HEIGHTMAP));
+        assertEquals(257, HeightmapSpec.MAX_SIDE);
+        for (BrushTool tool : BrushTool.values()) {
+            if (tool != BrushTool.HEIGHTMAP) assertEquals(32, BrushSpec.maxRadius(tool), tool.name());
+        }
+        assertDoesNotThrow(() -> HeightmapKernelTest.spec(128, new byte[257 * 257], 128, false));
+        assertDoesNotThrow(() -> HeightmapKernelTest.spec(33, new byte[67 * 67], 8, true));
+        assertThrows(IllegalArgumentException.class, () -> new HeightmapSpec(259, new byte[259 * 259], 8, false));
+        assertThrows(IllegalArgumentException.class, () -> HeightmapKernelTest.spec(129, new byte[259 * 259], 8, false));
+        assertThrows(IllegalArgumentException.class, () -> new BrushSpec(BrushTool.HEIGHTMAP, 128, 1f, Falloff.CONSTANT,
+                Shape.SQUARE, null, SurfaceMask.ANY, 0, 0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(255, new byte[255 * 255], 8, false), null), "the side must be 2 × radius + 1");
+        assertThrows(IllegalArgumentException.class, () -> spec(BrushTool.LOWER, 64, 0.5f, null));
+        assertThrows(IllegalArgumentException.class, () -> spec(BrushTool.PAINT, 33, 0.5f, new Pattern.Single(1)));
+    }
+
     @Test
     void paintToolsNeedMaterial() {
         assertThrows(IllegalArgumentException.class, () -> spec(BrushTool.PAINT, 4, 1f, null));

@@ -173,7 +173,8 @@ final class RandomMessages {
     Limits limits() {
         return new Limits(1 + nonNegativeLong() % Long.MAX_VALUE, 1 + rnd.nextInt(Integer.MAX_VALUE), 1 + rnd.nextInt(64),
                 1 + rnd.nextInt(100), 1 + rnd.nextInt(Integer.MAX_VALUE), 1 + rnd.nextInt(8),
-                1 + nonNegativeLong() % Long.MAX_VALUE, 1 + rnd.nextInt(Integer.MAX_VALUE));
+                1 + nonNegativeLong() % Long.MAX_VALUE, 1 + rnd.nextInt(Integer.MAX_VALUE), 1 + rnd.nextInt(256),
+                1 + rnd.nextInt(256));
     }
 
     // ---------------------------------------------------------------- core values
@@ -518,9 +519,10 @@ final class RandomMessages {
             case 4 -> new OpSpec.Walls(region(), 1 + rnd.nextInt(16), pattern());
             case 5 -> new OpSpec.Paste(source(), pos(), orientation(), pasteOptions());
             case 6 -> new OpSpec.Move(region(), pos(), orientation(), pattern(), pick(EntityFilter.values()), Symmetry.NONE,
-                    pick(PasteOptions.Into.values()));
+                    pick(PasteOptions.Into.values()), rnd.nextBoolean());
             case 7 -> new OpSpec.Stack(region(), 1 + rnd.nextInt(64), anyInt(), anyInt(), 1 + rnd.nextInt(100),
-                    pick(EntityFilter.values()), Symmetry.NONE, pick(PasteOptions.Into.values()), rnd.nextBoolean());
+                    pick(EntityFilter.values()), Symmetry.NONE, pick(PasteOptions.Into.values()), rnd.nextBoolean(),
+                    rnd.nextBoolean());
             default -> new OpSpec.ScatterCommit(uuid());
         };
     }
@@ -548,9 +550,19 @@ final class RandomMessages {
         int radius = 1 + rnd.nextInt(BrushSpec.MAX_RADIUS);
         HeightmapSpec heightmap = null;
         if (tool == BrushTool.HEIGHTMAP) {
+            // A quarter are wider than every other brush, so their images travel deflated: smooth slopes, which shrink.
+            boolean wide = rnd.nextInt(4) == 0;
+            if (wide) radius = BrushSpec.MAX_RADIUS + 1 + rnd.nextInt(BrushSpec.MAX_HEIGHTMAP_RADIUS - BrushSpec.MAX_RADIUS);
             int side = 2 * radius + 1;
             byte[] heights = new byte[side * side];
-            rnd.nextBytes(heights);
+            if (wide) {
+                int gu = rnd.nextInt(5), gv = rnd.nextInt(5), base = rnd.nextInt(256);
+                for (int v = 0; v < side; v++) {
+                    for (int u = 0; u < side; u++) heights[v * side + u] = (byte) (base + gu * u + gv * v);
+                }
+            } else {
+                rnd.nextBytes(heights);
+            }
             heightmap = new HeightmapSpec(side, heights, 1 + rnd.nextInt(HeightmapSpec.MAX_HEIGHT_BLOCKS), rnd.nextBoolean());
         }
         BrushSpec spec = new BrushSpec(tool, radius, strength, pick(Falloff.values()),

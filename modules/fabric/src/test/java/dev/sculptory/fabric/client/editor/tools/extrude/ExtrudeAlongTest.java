@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
@@ -32,11 +33,14 @@ import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.tool.EditorAction;
 import dev.sculptory.fabric.client.editor.tool.FrameInfo;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
+import dev.sculptory.fabric.client.editor.tool.Modifiers;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
+import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
 import dev.sculptory.fabric.client.editor.tool.ToolContext;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tools.brush.SymmetryCentre;
+import dev.sculptory.fabric.client.editor.tools.generate.AirPoints;
 import dev.sculptory.fabric.client.editor.tools.generate.LineDraft;
 import dev.sculptory.fabric.client.editor.tools.select.MagicSelect;
 import dev.sculptory.fabric.client.editor.tools.select.SelectionActions;
@@ -287,6 +291,57 @@ class ExtrudeAlongTest {
         for (String key : keys) assertTrue(lang.has(key), key);
     }
 
+    // ---------------------------------------------------------------- points in the air
+
+    /** The ray met nothing (its end, 512 blocks out). */
+    private static WorldCursor sky(Ray ray) {
+        return WorldCursor.miss(ray.pointX(512), ray.pointY(512), ray.pointZ(512));
+    }
+
+    @Test
+    void withTheFaceLockedAClickOnOpenSkyPutsAPathPointAtTheMarker() {
+        Rig rig = new Rig(ExtrudeSettings.Direction.ALONG_PATH);
+        Ray up = new Ray(2.5, 70.5, 2.5, 0, 1, 0);
+        rig.services.ray = up;
+        rig.frame(sky(up));
+        assertNull(rig.tool.air().marker(), "no marker before a face is locked");
+        rig.click(sky(up));
+        assertTrue(rig.tool.lockedFace().isEmpty(), "a click on the sky locks nothing");
+        rig.services.ray = null;
+        rig.hoverUntilFound(top(2, 2));
+        rig.click(top(2, 2));
+        assertTrue(rig.tool.lockedFace().isPresent());
+        rig.services.ray = up;
+        rig.frame(sky(up));
+        assertEquals(new BlockPos(2, 86, 2), rig.tool.air().marker(), "16 blocks above the camera");
+        assertTrue(rig.tool.hints(rig.view).contains(new KeyHint("Alt+Scroll", AirPoints.HINT, List.of("16"))));
+        assertTrue(rig.tool.onScroll(rig.view, new ScrollEvent(1, Modifiers.ALT | Modifiers.SHIFT)));
+        assertEquals(20, rig.tool.air().distance());
+        rig.click(sky(up));
+        LineDraft draft = rig.tool.draft(ExtrudeSettings.Direction.ALONG_PATH);
+        assertEquals(List.of(new BlockPos(2, 90, 2)), draft.points().nodes());
+        rig.frame(sky(up));
+        LineDraft.Built built = draft.preview().orElseThrow();
+        assertEquals(25 * 30, built.cells(), "the floor carried thirty layers straight up into the sky");
+    }
+
+    @Test
+    void toAPointTheTipCanFloatInTheAirAndStraightTakesNoScroll() {
+        Rig rig = new Rig(ExtrudeSettings.Direction.TO_POINT);
+        rig.hoverUntilFound(top(2, 2));
+        rig.click(top(2, 2));
+        Ray up = new Ray(2.5, 70.5, 2.5, 0, 1, 0);
+        rig.services.ray = up;
+        rig.frame(sky(up));
+        rig.click(sky(up));
+        LineDraft draft = rig.tool.draft(ExtrudeSettings.Direction.TO_POINT);
+        assertEquals(List.of(new BlockPos(2, 86, 2)), draft.points().nodes(), "the tip at the marker");
+        rig.frame(sky(up));
+        assertTrue(draft.preview().orElseThrow().source().contains(2, 86, 2), "the taper reaches its tip in the sky");
+        rig.set(ExtrudeSettings.DIRECTION, ExtrudeSettings.Direction.STRAIGHT);
+        assertFalse(rig.tool.onScroll(rig.view, new ScrollEvent(1, Modifiers.ALT)), "straight extrusions take no scroll");
+    }
+
     // ---------------------------------------------------------------- fixtures
 
     private final class Rig {
@@ -360,10 +415,12 @@ class ExtrudeAlongTest {
 
         private final class FakeServices implements ExtrudeTool.Services {
             List<GhostPlacement> shown = List.of();
+            /** The cursor ray (null: none). */
+            Ray ray;
 
             @Override
             public Optional<Ray> cursorRay() {
-                return Optional.empty();
+                return Optional.ofNullable(ray);
             }
 
             @Override

@@ -91,12 +91,28 @@ public final class NetSession<P> {
     /** The open stroke's last dab the brush lane has written (-1: none), reported in its {@code StrokeStatus}. */
     int strokeAppliedIndex = -1;
     /**
-     * The last {@value #MAX_WRITE_REPORTS} Shape strokes begun, open or ended, and their last dab written: their client
-     * paces on written dabs (across strokes: a new press waits for the last one's large shapes), so each batch the
-     * brush lane finishes for them is reported.
+     * The Shape and Heightmap strokes whose writes are reported, open or ended, each with its last dab admitted and its
+     * last dab written: their client paces on written dabs (across strokes: a new press waits for earlier presses'
+     * unwritten dabs), so each batch the brush lane finishes for them is reported. Bounded: at most
+     * {@value #MAX_WRITE_REPORTS} entries, those with all their dabs written going first (the oldest first); an entry with
+     * dabs still in the brush lane is never dropped (its client waits for its report). Those are bounded by the lane:
+     * every admitted dab holds at least one unit of the player's {@code EngineEditService.MAX_QUEUED_DABS} until it is
+     * written (one step over the cap only when nothing else is queued), so at most 32 strokes are busy at once.
      */
-    final java.util.LinkedHashMap<Integer, Integer> writeReports = new java.util.LinkedHashMap<>();
+    final java.util.LinkedHashMap<Integer, WriteReport> writeReports = new java.util.LinkedHashMap<>();
     static final int MAX_WRITE_REPORTS = 8;
+
+    /** A reported stroke's last dab admitted and last dab written (-1: none). */
+    static final class WriteReport {
+        int admitted = -1;
+        int written = -1;
+
+        /** Whether the brush lane still holds dabs of the stroke. */
+        boolean busy() {
+            return written < admitted;
+        }
+    }
+
     /** Chunks the open (or last) stroke's accepted dabs could have changed, and when that stroke ended. */
     LongOpenHashSet strokeChunks = new LongOpenHashSet();
     long strokeEndedAt = Long.MIN_VALUE;

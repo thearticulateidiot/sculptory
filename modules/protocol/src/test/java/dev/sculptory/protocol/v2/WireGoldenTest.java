@@ -179,6 +179,7 @@ class WireGoldenTest {
         actual.put("PROPERTY_NAME_BYTES", Integer.toString(CoreCodec.PROPERTY_NAME_BYTES));
         actual.put("MAX_PASTE_PLACEMENTS", Integer.toString(OpSpec.PasteMany.MAX_PLACEMENTS));
         actual.put("HEIGHTMAP_MAX_SIDE", Integer.toString(HeightmapSpec.MAX_SIDE));
+        actual.put("HEIGHTMAP_RAW_SIDE", Integer.toString(HeightmapImages.RAW_SIDE));
         actual.put("HEIGHTMAP_MAX_HEIGHT_BLOCKS", Integer.toString(HeightmapSpec.MAX_HEIGHT_BLOCKS));
         assertEquals(new TreeMap<>(fixture("cap")), actual, "a wire cap changed:\n" + lines("cap", actual));
     }
@@ -520,6 +521,12 @@ class WireGoldenTest {
                 ConflictPolicy.SKIP_CONFLICTS, OpLabel.BIOME_FILL));
         s.put("run_op_biome_fill_3d_symmetric", new C2S.RunOp(45, new OpSpec.BiomeFill(sphere, "minecraft:desert", false,
                 rotate), false, ConflictPolicy.SKIP_CONFLICTS));
+        // Move and Stack end with bool biomes (the Place tool's Biomes box); every sample above sends false.
+        s.put("run_op_move_biomes", new C2S.RunOp(47, new OpSpec.Move(uploaded, new BlockPos(0, 3, 9),
+                Orientation.free(turned, 1_000, 0, 0), single, EntityFilter.NONE, mirror, PasteOptions.Into.AIR, true),
+                false, ConflictPolicy.SKIP_CONFLICTS));
+        s.put("run_op_stack_biomes", new C2S.RunOp(48, new OpSpec.Stack(cuboid, 0, 0, 16, 3, EntityFilter.NONE, rotate,
+                PasteOptions.Into.EVERYTHING, true, true), false, ConflictPolicy.SKIP_CONFLICTS));
         for (OpLabel label : List.of(OpLabel.PATH_EXTRUDE, OpLabel.TAPER, OpLabel.SWEEP, OpLabel.HEIGHTMAP)) {
             s.put("run_op_paste_" + label.name().toLowerCase(java.util.Locale.ROOT), new C2S.RunOp(46,
                     new OpSpec.Paste(new SourceRef.Clipboard(ID), new BlockPos(1, 2, 3), Transform.IDENTITY,

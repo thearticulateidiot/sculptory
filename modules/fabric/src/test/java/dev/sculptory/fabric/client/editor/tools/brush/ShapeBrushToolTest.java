@@ -17,8 +17,13 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Dab;
+import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightmapSpec;
+import dev.sculptory.core.brush.SculptMode;
+import dev.sculptory.core.brush.Shape;
 import dev.sculptory.core.brush.ShapeSpec;
 import dev.sculptory.core.brush.ShapeStamp;
+import dev.sculptory.core.brush.SurfaceMask;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.MixLayout;
 import dev.sculptory.core.edit.Pattern;
@@ -71,6 +76,7 @@ import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Permissions;
 import dev.sculptory.fabric.client.session.SessionState;
 import dev.sculptory.fabric.client.session.StrokeHandle;
+import dev.sculptory.fabric.client.session.FabricStrokeHandle;
 import dev.sculptory.fabric.client.session.StrokeParams;
 import dev.sculptory.fabric.client.session.Subscription;
 import dev.sculptory.fabric.client.session.ToolAction;
@@ -408,6 +414,47 @@ class ShapeBrushToolTest {
         assertEquals(3, sent.size(), "then its first shape goes out");
         assertTrue(sent.get(2).strokeId() != strokeId, "on the new stroke");
         rig.release(top(-40, 0));
+    }
+
+    /**
+     * After a wide Heightmap stamp the server has not written (16 units of the player's queue), a Shape press waits for
+     * it, as for its own unwritten shapes, so it is never refused RATE_LIMITED; once it is written the shape goes out.
+     */
+    @Test
+    void aShapePressWaitsForAnUnwrittenStamp() throws ProtocolException {
+        Rig rig = new Rig();
+        FakeTransport transport = new FakeTransport(states);
+        FabricEditorSession fabric = new FabricEditorSession(transport, () -> states, new AtomicLong()::get, "test");
+        fabric.onJoin();
+        fabric.onFrame(Codec.encodeS2C(new S2C.Welcome(ProtocolV2.VERSION, Features.of(Features.STROKES),
+                Limits.DEFAULTS, Perm.mask(EnumSet.allOf(Perm.class)), 1L), states));
+        rig.current = fabric;
+        BrushSpec stampSpec = new BrushSpec(BrushTool.HEIGHTMAP, 128, 1f, Falloff.CONSTANT, Shape.SQUARE, null,
+                SurfaceMask.ANY, 0, 0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(257, new byte[257 * 257], 16, false), null);
+        FabricStrokeHandle stamp = (FabricStrokeHandle) fabric.beginStroke(ToolId.HEIGHTMAP, stampSpec,
+                StrokeParams.DEFAULT);
+        stamp.dab(new Dab(0, 8, 70 * 16, 8, Dab.FULL_PRESSURE));
+        fabric.tick();
+        fabric.onFrame(Codec.encodeS2C(new S2C.StrokeStatus(stamp.strokeId(), 0, S2C.StrokeStatus.Status.OK, null),
+                states));
+        assertEquals(16, fabric.unwrittenUnits());
+        rig.press(top(3, 3));
+        for (int i = 0; i < 10; i++) {
+            rig.frame(top(3, 3), 100);
+            fabric.tick();
+        }
+        assertTrue(sentDabs(transport).stream().noneMatch(d -> d.strokeId() != stamp.strokeId()),
+                "no shape while the stamp is unwritten");
+        fabric.onFrame(Codec.encodeS2C(new S2C.StrokeStatus(stamp.strokeId(), 0, S2C.StrokeStatus.Status.OK, null, 0),
+                states));
+        for (int i = 0; i < 10; i++) {
+            rig.frame(top(3, 3), 100);
+            fabric.tick();
+        }
+        rig.release(top(3, 3));
+        assertEquals(2, sentDabs(transport).size(), "the shape once the stamp is written");
+        assertTrue(rig.notices.stream().noneMatch(n -> n.key().startsWith("sculptory.reject")), rig.notices.toString());
     }
 
     private static List<C2S.Dabs> sentDabs(FakeTransport transport) {

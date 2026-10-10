@@ -377,8 +377,8 @@ public final class Placement {
     /**
      * The op committing this placement sends. A move or stack carries the selection's region, so only its cells move
      * or repeat, takes {@code entities} along (a paste places the clipboard's entities when
-     * {@code options.entities()}), and writes the landing cells {@code options.into()} allows (a paste carries the
-     * options whole).
+     * {@code options.entities()}), writes the landing cells {@code options.into()} allows and carries the biomes along
+     * with {@code options.biomes()} (a paste carries the options whole).
      *
      * @param air the air handle a move leaves behind
      * @param entities the entities a move or stack takes along
@@ -391,11 +391,11 @@ public final class Placement {
         return switch (mode) {
             case PASTE -> new OpSpec.Paste(source, pasteOrigin(), orientation, options);
             case MOVE -> new OpSpec.Move(region, offset(), orientation, new Pattern.Single(air), entities, Symmetry.NONE,
-                    options.into());
+                    options.into(), options.biomes());
             case STACK -> {
                 BlockPos step = offset();
                 yield new OpSpec.Stack(region, step.x(), step.y(), step.z(), count, entities, Symmetry.NONE, options.into(),
-                        transform().upsideDown());
+                        transform().upsideDown(), options.biomes());
             }
         };
     }

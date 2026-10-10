@@ -20,8 +20,9 @@ import java.util.Objects;
  * section square to an axis, carried straight along that axis, lays exactly its own cells, once per block.
  *
  * <p><b>States</b> turn with the line by the nearest quarter turn: the heading's turn from {@code reference} (the
- * first heading the line has, when none is given), clockwise seen from above. A section carried straight up or down
- * keeps the turn it had.
+ * first heading the line has, when none is given), clockwise seen from above. Upright and slope-following frames give
+ * the heading themselves (their right is level), so the states turn exactly as the section does; otherwise a section
+ * carried straight up or down keeps the turn it had.
  */
 final class SectionSweep {
     /** The half block the section is set down every. */
@@ -96,12 +97,14 @@ final class SectionSweep {
      * @param closed whether the line is a loop: steps then run from {@code from} for its whole length and wrap
      * @param to the last step on an open line (unused on a loop)
      * @param reference the heading states are turned from (horizontal, unit), or null for the line's first
+     * @param levelRight whether every frame's right is level (upright and slope-following frames): the heading the
+     *     states turn by is then the frames' own (square to their right), whatever the tangent does as the line climbs
      * @throws GeneratedTooLargeException past {@code maxCells} cells, or when laying the section would take more than
      *     {@value #WORK_PER_CELL} points per cell of the cap
      */
     static GeneratedSource sweep(List<PathSample> samples, List<PathFrame.Frame> frames, boolean closed, Section[] sections,
-                                 Slices slices, double from, double to, double[] reference, StateSpace states,
-                                 Excluded excluded, long maxCells, int bottomY, int topYExclusive) {
+                                 Slices slices, double from, double to, double[] reference, boolean levelRight,
+                                 StateSpace states, Excluded excluded, long maxCells, int bottomY, int topYExclusive) {
         Objects.requireNonNull(states);
         if (samples.size() != frames.size() || samples.isEmpty()) throw new IllegalArgumentException("One frame per sample");
         Track track = new Track(frames, closed);
@@ -113,8 +116,8 @@ final class SectionSweep {
         }
         GeneratedSource.Builder out = GeneratedSource.builder(maxCells);
         long workCap = maxCells > Long.MAX_VALUE / WORK_PER_CELL ? Long.MAX_VALUE : maxCells * WORK_PER_CELL + (1 << 20);
-        Laying laying = new Laying(track, sections, slices, reference, states, excluded, out, workCap, size, bottomY,
-                topYExclusive);
+        Laying laying = new Laying(track, sections, slices, reference, levelRight, states, excluded, out, workCap, size,
+                bottomY, topYExclusive);
         double limit = closed ? from + track.length() : to;
         double[] a = new double[9], b = new double[9];
         for (long k = 0; ; k++) {
@@ -162,15 +165,21 @@ final class SectionSweep {
         private final int bottomY, topYExclusive;
         private final double[] frame = new double[9];
         private double[] reference;
+        private final boolean levelRight;
+        /** The level heading the turn was last taken from ({x, z}), or null. */
+        private double[] last;
         private int quarterTurns;
         private long work;
 
-        Laying(Track track, Section[] sections, Slices slices, double[] reference, StateSpace states, Excluded excluded,
-               GeneratedSource.Builder out, long workCap, long sectionSize, int bottomY, int topYExclusive) {
+        Laying(Track track, Section[] sections, Slices slices, double[] reference, boolean levelRight, StateSpace states,
+               Excluded excluded, GeneratedSource.Builder out, long workCap, long sectionSize, int bottomY,
+               int topYExclusive) {
             this.track = track;
             this.sections = sections;
             this.slices = slices;
             this.reference = reference;
+            this.levelRight = levelRight;
+            this.last = reference == null ? null : new double[] {reference[0], reference[2]};
             this.states = states;
             this.excluded = excluded;
             this.out = out;
@@ -205,14 +214,37 @@ final class SectionSweep {
             }
         }
 
-        /** The quarter turn of the frame's heading from the reference; kept while the frame heads straight up or down. */
+        /**
+         * The quarter turn of the frame's heading from the reference. With level rights the heading is the frame's own
+         * (its right is (-hz, 0, hx)), so the states turn exactly as the section does. Else it is the tangent's level
+         * part, kept while the frame heads straight up or down, and while it is {@link PathFrame#STEEP} and heads back
+         * the way the turn was taken from (a curve wobbling as it climbs); with no reference given, a steep heading does
+         * not set it: the line's first level heading does.
+         */
         private void turn() {
+            if (levelRight) {
+                double hx = frame[8], hz = -frame[6];
+                double length = StrictMath.sqrt(hx * hx + hz * hz);
+                if (length < 1e-3) return;
+                if (reference == null) reference = new double[] {hx / length, 0, hz / length};
+                setTurn(hx, hz);
+                return;
+            }
             double hx = frame[3], hz = frame[5];
             double length = StrictMath.sqrt(hx * hx + hz * hz);
             if (length < 1e-3) return;
             hx /= length;
             hz /= length;
+            if (length < PathFrame.STEEP) {
+                if (reference == null) return;
+                if (last != null && hx * last[0] + hz * last[1] < 0) return;
+            }
+            last = new double[] {hx, hz};
             if (reference == null) reference = new double[] {hx, 0, hz};
+            setTurn(hx, hz);
+        }
+
+        private void setTurn(double hx, double hz) {
             double yaw = StrictMath.atan2(hz, hx) - StrictMath.atan2(reference[2], reference[0]);
             quarterTurns = (int) Math.floorMod(StrictMath.round(yaw / (StrictMath.PI / 2)), 4L);
         }

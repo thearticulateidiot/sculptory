@@ -3,10 +3,19 @@ package dev.sculptory.fabric.client.session;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.sculptory.core.brush.BrushSpec;
+import dev.sculptory.core.brush.BrushTool;
+import dev.sculptory.core.brush.Falloff;
+import dev.sculptory.core.brush.HeightmapSpec;
+import dev.sculptory.core.brush.SculptMode;
+import dev.sculptory.core.brush.Shape;
+import dev.sculptory.core.brush.SurfaceMask;
+import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Limits;
 import dev.sculptory.protocol.v2.Phase;
@@ -16,6 +25,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -222,5 +232,40 @@ class SessionNoticesTest {
                 "asset_reloading")) {
             assertTranslatable(Notice.of(Notice.Level.INFO, "sculptory.notice." + key));
         }
+    }
+
+    /**
+     * A Heightmap stamp's limit is named with its numbers: the radius over maxHeightmapRadius, the height over
+     * maxHeightmapHeight, the blocks over maxOpVolume (copies included); with limit.bypass only the step cap holds.
+     */
+    @Test
+    void aHeightmapStampsLimitIsNamed() {
+        byte[] white = new byte[257 * 257];
+        Arrays.fill(white, (byte) 255);
+        Limits limits = new Limits(1_000_000L, 2_097_152L, 32, 20, 32L << 20, 2, Limits.DEFAULT_SELECTION_CELLS,
+                Limits.DEFAULT_SELECTION_SECTIONS, 100, 64);
+        BrushSpec wide = stamp(128, white, 32, Symmetry.NONE);
+        assertEquals(Notice.of(Notice.Level.WARNING, SessionNotices.TOO_LARGE_RADIUS, "100"),
+                SessionNotices.heightmapLimit(wide, limits, false));
+        assertEquals(Notice.of(Notice.Level.WARNING, SessionNotices.TOO_LARGE_STAMP_HEIGHT, "64"),
+                SessionNotices.heightmapLimit(stamp(64, new byte[129 * 129], 100, Symmetry.NONE), limits, false));
+        // 129² columns, white, 64 tall: 16,641 × 67 = 1,114,947 blocks; twice with a mirror.
+        BrushSpec mirrored = stamp(64, Arrays.copyOf(white, 129 * 129), 64,
+                new Symmetry(Symmetry.Mode.MIRROR_X, 0, 0));
+        assertEquals(Notice.of(Notice.Level.WARNING, SessionNotices.STAMP_TOO_MANY_BLOCKS, "2.2 million", "1.0 million"),
+                SessionNotices.heightmapLimit(mirrored, limits, false));
+        assertNull(SessionNotices.heightmapLimit(stamp(64, Arrays.copyOf(white, 129 * 129), 64,
+                Symmetry.NONE), new Limits(2_097_152L, 2_097_152L, 32, 20, 32L << 20, 2), false));
+        assertNull(SessionNotices.heightmapLimit(wide, limits, true), "limit.bypass passes radius and blocks");
+        BrushSpec twice = stamp(128, white, 128, new Symmetry(Symmetry.Mode.MIRROR_X, 0, 0));
+        assertEquals(Notice.of(Notice.Level.WARNING, SessionNotices.STAMP_TOO_MANY_BLOCKS, "17.3 million", "8.7 million"),
+                SessionNotices.heightmapLimit(twice, limits, true), "the step cap holds for everyone");
+        assertEquals("12,345", SessionNotices.about(12_345));
+    }
+
+    private static BrushSpec stamp(int radius, byte[] heights, int tall, Symmetry symmetry) {
+        return new BrushSpec(BrushTool.HEIGHTMAP, radius, 1f, Falloff.CONSTANT, Shape.SQUARE, null, SurfaceMask.ANY, 0, 0,
+                1L, null, symmetry, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(2 * radius + 1, heights, tall, false), null);
     }
 }

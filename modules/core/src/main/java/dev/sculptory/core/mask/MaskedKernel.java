@@ -2,6 +2,7 @@ package dev.sculptory.core.mask;
 
 import dev.sculptory.core.brush.BrushKernel;
 import dev.sculptory.core.brush.BrushSpec;
+import dev.sculptory.core.brush.CellFilter;
 import dev.sculptory.core.brush.CellSink;
 import dev.sculptory.core.brush.Dab;
 import dev.sculptory.core.brush.StrokeState;
@@ -68,6 +69,17 @@ public final class MaskedKernel implements BrushKernel {
         }
     }
 
+    /**
+     * The test this wrapper applies to each cell, against {@code before} as it is now (the world before the step): what
+     * a step worked out in pieces filters its cells with ({@code PlannedStep.planner}), so it keeps the cells
+     * {@link #applyStep} would. {@code null} when the mask is off.
+     */
+    public static Judge judge(BoundMask mask, WorldReader before) {
+        Objects.requireNonNull(mask);
+        Objects.requireNonNull(before);
+        return mask.acceptsAll() ? null : new Judge(mask, before);
+    }
+
     /** The kernel wrapped (for tests). */
     BrushKernel kernel() {
         return kernel;
@@ -88,7 +100,7 @@ public final class MaskedKernel implements BrushKernel {
      * The global mask's test of a cell against the reader as it was before the step: the cell's state there, its
      * neighbours there, and its measured slope for a slope rule.
      */
-    public static final class Judge {
+    public static final class Judge implements CellFilter {
         private final BoundMask mask;
         private final WorldReader before;
         private final BoundRules rules;
@@ -102,6 +114,7 @@ public final class MaskedKernel implements BrushKernel {
         }
 
         /** Whether the mask lets cell (x, y, z) change; call it only before the step writes. */
+        @Override
         public boolean accepts(int x, int y, int z) {
             int state = before.get(x, y, z);
             return rules != null ? rules.test(x, y, z, state, before, BoundRules.MEASURE_SLOPE, scratch)

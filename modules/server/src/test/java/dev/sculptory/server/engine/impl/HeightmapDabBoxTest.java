@@ -1,8 +1,11 @@
 package dev.sculptory.server.engine.impl;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.BrushKernels;
 import dev.sculptory.core.brush.BrushSpec;
@@ -22,6 +25,7 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
 import dev.sculptory.core.world.WorldReader;
+import dev.sculptory.protocol.v2.RejectReason;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -94,16 +98,67 @@ class HeightmapDabBoxTest {
         }
     }
 
-    /** A stamp taller than the server's {@code limits.maxHeightmapHeight} is over the brush limit. */
+    /**
+     * The Heightmap brush's own limits: {@code maxHeightmapRadius} (not {@code maxBrushRadius}), {@code maxHeightmapHeight},
+     * and its stamp's expected cells, times its copies, within {@code maxOpVolume}.
+     */
     @Test
-    void aStampTallerThanTheServersCapIsOverTheLimit() {
-        BrushSpec tall = new BrushSpec(BrushTool.HEIGHTMAP, 4, 1f, Falloff.CONSTANT, Shape.SQUARE, null, SurfaceMask.ANY, 0, 0,
-                3L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null, new HeightmapSpec(9, new byte[81], 64, false),
-                null);
-        assertTrue(EngineEditService.overBrushLimit(tall, 32, 40).contains("stamp height 64 > 40"));
-        assertTrue(EngineEditService.overBrushLimit(tall, 32, 64) == null);
-        assertTrue(EngineEditService.overBrushLimit(tall, 32) == null, "the default cap is the tallest stamp");
-        assertTrue(EngineEditService.overBrushLimit(tall, 3, 128).startsWith("radius"));
+    void aStampOverTheServersCapsIsOverTheLimit() {
+        BrushSpec tall = stamp(4, new byte[81], 64, Symmetry.NONE);
+        assertTrue(EngineEditService.overBrushLimit(tall, 32, 128, 40, Long.MAX_VALUE).contains("stamp height 64 > 40"));
+        assertNull(EngineEditService.overBrushLimit(tall, 32, 128, 64, Long.MAX_VALUE));
+        assertNull(EngineEditService.overBrushLimit(tall, 32), "the default caps are the largest stamp");
+        assertEquals("radius 4 > 3", EngineEditService.overBrushLimit(tall, 32, 3, 128, Long.MAX_VALUE));
+        assertNull(EngineEditService.overBrushLimit(tall, 3, 128, 128, Long.MAX_VALUE), "maxBrushRadius is not its cap");
+
+        // Radius 128, white all over, 128 tall: 257² columns of 128 + 3 cells.
+        byte[] white = new byte[257 * 257];
+        Arrays.fill(white, (byte) 255);
+        BrushSpec widest = stamp(128, white, 128, Symmetry.NONE);
+        assertEquals(257L * 257 * 131, EngineEditService.stampCells(widest));
+        assertEquals(HeightmapSpec.MAX_STEP_CELLS, EngineEditService.stampCells(widest), "the cap holds the largest stamp");
+        assertNull(EngineEditService.overBrushLimit(widest, 32, 128, 128, Long.MAX_VALUE));
+        assertEquals("a stamp of 8652419 blocks > 2097152",
+                EngineEditService.overBrushLimit(widest, 32, 128, 128, 2_097_152L));
+        BrushSpec mirrored = stamp(128, white, 128, new Symmetry(Symmetry.Mode.MIRROR_X, 0, 0));
+        assertEquals(2 * HeightmapSpec.MAX_STEP_CELLS, EngineEditService.stampCells(mirrored), "each copy counts");
+        // A black picture moves nothing.
+        assertEquals(0, EngineEditService.stampCells(stamp(128, new byte[257 * 257], 128, Symmetry.NONE)));
+    }
+
+    /**
+     * Between turns of working a step out, an area no longer loaded refuses it UNLOADED before a locked box refuses it
+     * AREA_BUSY; with both fine it goes on.
+     */
+    @Test
+    void aPlanningTurnIsRefusedWhenItsAreaIsUnloadedOrLocked() {
+        Box a = new Box(new BlockPos(0, 0, 0), new BlockPos(15, 15, 15));
+        Box b = new Box(new BlockPos(16, 0, 0), new BlockPos(31, 15, 15));
+        assertNull(EngineEditService.planningRefusal(List.of(a, b), box -> true, List.of(a, b), box -> false));
+        assertEquals(RejectReason.UNLOADED,
+                EngineEditService.planningRefusal(List.of(a, b), box -> box != b, List.of(a), box -> true));
+        assertEquals(RejectReason.AREA_BUSY,
+                EngineEditService.planningRefusal(List.of(a, b), box -> true, List.of(a, b), box -> box == b));
+    }
+    /**
+     * A Heightmap dab weighs its stamp's columns in radius-32 stamps in the player's queue (32 units): one up to radius
+     * 32, four at radius 64, sixteen at radius 128, so at most two radius-128 dabs are queued; copies multiply it.
+     */
+    @Test
+    void aWideStampWeighsMoreInTheQueue() {
+        assertEquals(1, EngineEditService.heightmapUnits(stamp(32, new byte[65 * 65], 8, Symmetry.NONE), 1));
+        assertEquals(1, EngineEditService.heightmapUnits(stamp(3, new byte[49], 8, Symmetry.NONE), 1));
+        assertEquals(2, EngineEditService.heightmapUnits(stamp(33, new byte[67 * 67], 8, Symmetry.NONE), 1));
+        assertEquals(4, EngineEditService.heightmapUnits(stamp(64, new byte[129 * 129], 8, Symmetry.NONE), 1));
+        assertEquals(16, EngineEditService.heightmapUnits(stamp(128, new byte[257 * 257], 8, Symmetry.NONE), 1));
+        assertEquals(64, EngineEditService.heightmapUnits(stamp(128, new byte[257 * 257], 8, Symmetry.NONE), 4));
+        assertEquals(EngineEditService.MAX_QUEUED_DABS, 2 * 16, "two radius-128 dabs fill a player's queue");
+    }
+
+    private static BrushSpec stamp(int radius, byte[] heights, int tall, Symmetry symmetry) {
+        return new BrushSpec(BrushTool.HEIGHTMAP, radius, 1f, Falloff.CONSTANT, Shape.SQUARE, null, SurfaceMask.ANY, 0, 0,
+                3L, null, symmetry, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(2 * radius + 1, heights, tall, false), null);
     }
 
     /** A reader that fails any read outside its boxes. */

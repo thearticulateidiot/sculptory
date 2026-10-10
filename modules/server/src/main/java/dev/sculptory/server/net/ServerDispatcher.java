@@ -525,10 +525,17 @@ public final class ServerDispatcher<P> {
         s.strokeSymmetry = m.spec().symmetry();
         s.strokeAckedIndex = -1;
         s.strokeAppliedIndex = -1;
-        if (m.spec().tool() == BrushTool.SHAPE) {
+        if (m.spec().tool() == BrushTool.SHAPE || m.spec().tool() == BrushTool.HEIGHTMAP) {
+            // The Shape and Heightmap brushes' clients pace their large dabs on what is written, not on admission.
             s.writeReports.remove(m.strokeId());
-            s.writeReports.put(m.strokeId(), -1);
-            if (s.writeReports.size() > NetSession.MAX_WRITE_REPORTS) s.writeReports.remove(s.writeReports.keySet().iterator().next());
+            s.writeReports.put(m.strokeId(), new NetSession.WriteReport());
+            // The oldest entries whose dabs are all written go first; one still being written never does (its client
+            // waits for the report). The new stroke's own entry stays.
+            var entries = s.writeReports.entrySet().iterator();
+            while (s.writeReports.size() > NetSession.MAX_WRITE_REPORTS && entries.hasNext()) {
+                var entry = entries.next();
+                if (entry.getKey() != m.strokeId() && !entry.getValue().busy()) entries.remove();
+            }
         }
         send(s, new S2C.StrokeStatus(m.strokeId(), -1, S2C.StrokeStatus.Status.OK, null));
     }
@@ -551,6 +558,8 @@ public final class ServerDispatcher<P> {
             // The brush lane acknowledges through ServerNet.predictionApplied once the batch is written.
             s.acks.admitted(m.seq());
             recordFootprint(s, m.dabs());
+            NetSession.WriteReport report = s.writeReports.get(m.strokeId());
+            if (report != null) report.admitted = Math.max(report.admitted, acked);
         } else {
             s.acks.refused(m.seq());
         }
@@ -584,17 +593,17 @@ public final class ServerDispatcher<P> {
     }
 
     /**
-     * The brush lane finished a stroke's dabs up to {@code lastIndex}. For a recent Shape stroke, open or ended (its
-     * client paces its large dabs on what is written, and shows the shapes still being written), this sends
-     * {@code StrokeStatus OK} with the new applied index.
+     * The brush lane finished a stroke's dabs up to {@code lastIndex}. For a recent Shape or Heightmap stroke, open or
+     * ended (its client paces its large dabs on what is written, and the Shape brush shows the shapes still being
+     * written), this sends {@code StrokeStatus OK} with the new applied index.
      */
     public void dabsApplied(NetSession<P> s, int strokeId, int lastIndex) {
         if (s.stage == Stage.CLOSED) return;
         boolean current = s.strokeOpen && s.strokeId == strokeId;
         if (current) s.strokeAppliedIndex = Math.max(s.strokeAppliedIndex, lastIndex);
-        Integer reported = s.writeReports.get(strokeId);
-        if (reported == null || lastIndex <= reported) return;
-        s.writeReports.put(strokeId, lastIndex);
+        NetSession.WriteReport report = s.writeReports.get(strokeId);
+        if (report == null || lastIndex <= report.written) return;
+        report.written = lastIndex;
         int acked = current ? s.strokeAckedIndex : lastIndex;
         send(s, new S2C.StrokeStatus(strokeId, acked, S2C.StrokeStatus.Status.OK, null, lastIndex));
     }

@@ -10,7 +10,7 @@ Every permission node is `sculptory.<name>`. A permissions mod such as LuckPerms
 |---|---|
 | `use` | Opening the editor at all; every other node needs it |
 | `brush` | The terrain brushes, the Weather brush, the Shape brush, the Fluid ball |
-| `biome` | The Biome tool (painting and filling biomes), and pasting a clipboard's biomes; a move or stack carries biomes only with it |
+| `biome` | The Biome tool (painting and filling biomes), and the Place tool's **Biomes** box: pasting a clipboard's biomes, or carrying biomes along with a move or stack |
 | `region` | Select and its operations, Move, Stack, Extrude, Flood, Drain, Tinker, Generate and the Shape brush's Line (with `clipboard`) |
 | `clipboard` | Copy, paste, the library, Generate and the Shape brush's Line (with `region`) |
 | `builder` | Builder mode's powers outside the editor |

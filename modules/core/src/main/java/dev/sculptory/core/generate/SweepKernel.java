@@ -148,17 +148,12 @@ public final class SweepKernel {
         double from = -SectionSweep.STEP / 2;
         GeneratedSource source = SectionSweep.sweep(samples, frames, closed, sections,
                 along -> (int) Math.floorMod((long) StrictMath.floor(along + 0.5), (long) depth), from,
-                length + SectionSweep.STEP / 2, forward, states, null, maxCells, bottomY, topYExclusive);
+                length + SectionSweep.STEP / 2, forward, true, states, null, maxCells, bottomY, topYExclusive);
         return new GeneratedResult(source, leftOut);
     }
 
-    /** The line's first heading (flattened), +x when it has none. */
+    /** The line's first heading (flattened; past a steep start, the one it levels out to), +x when it has none. */
     private static double[] heading(List<PathSample> samples) {
-        double[][] tangents = PathFrame.tangents(samples, false);
-        for (double[] t : tangents) {
-            double length = StrictMath.sqrt(t[0] * t[0] + t[2] * t[2]);
-            if (length > 1e-6) return new double[] {t[0] / length, 0, t[2] / length};
-        }
-        return new double[] {1, 0, 0};
+        return PathFrame.firstHeading(PathFrame.tangents(samples, false), null);
     }
 }

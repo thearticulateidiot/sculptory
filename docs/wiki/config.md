@@ -68,15 +68,16 @@ Saved history is in `<world>/sculptory/history/`, one file per player, so it tra
 
 ## Limits: what players may do at once
 
-The `limits` section. Each client learns these when it connects, so the editor can check them before sending anything. Players with `limit.bypass` may go over `maxOpVolume`, `maxClipboardVolume`, `maxBrushRadius` and `maxHeightmapHeight`.
+The `limits` section. Each client learns these when it connects, so the editor can check them before sending anything. Players with `limit.bypass` may go over `maxOpVolume`, `maxClipboardVolume`, `maxBrushRadius`, `maxHeightmapRadius` and `maxHeightmapHeight`. One Heightmap stamp never moves more than about 8.7 million blocks (one full-size, full-height stamp), even with `limit.bypass`.
 
 | Key | Default | Range | What it does |
 |---|---|---|---|
-| `maxOpVolume` | `2097152` | 1 or more | The largest operation, paste or scatter commit, in blocks. A shape counts its own blocks, not its box. |
+| `maxOpVolume` | `2097152` | 1 or more | The largest operation, paste or scatter commit, in blocks. A shape counts its own blocks, not its box. A [Heightmap brush](heightmap.md) stamp counts the blocks its picture moves (times its symmetric copies). |
 | `maxClipboardVolume` | `2097152` | 1 or more | The largest copy, cut, library load, imported file or generated clipboard, in blocks. A copy counts the box around the selection. |
-| `maxBrushRadius` | `32` | 1–32 | The largest brush radius. The editor's slider stops there. |
+| `maxBrushRadius` | `32` | 1–32 | The largest brush radius, except the Heightmap brush's. The editor's slider stops there. |
 | `maxDabRate` | `20` | 1–1000 | Brush dabs per second a client sends at most. |
-| `maxHeightmapHeight` | `128` | 1–128 | The tallest (or deepest) stamp of the [Heightmap brush](heightmap.md), in blocks. The server checks it when a stroke begins; players with `limit.bypass` may go over it. |
+| `maxHeightmapRadius` | `128` | 1–128 | The largest radius of the [Heightmap brush](heightmap.md) (its stamp is `2 × radius + 1` columns wide). The editor's size stops there. |
+| `maxHeightmapHeight` | `128` | 1–128 | The tallest (or deepest) stamp of the [Heightmap brush](heightmap.md), in blocks. The editor's Height stops there. |
 | `maxUploadBytes` | `16777216` | 1 B to 64 MiB | The largest schematic file a player may import, compressed. |
 | `maxJobsPerPlayer` | `2` | 1–64 | Jobs one player may have running at once. More wait. |
 | `maxSelectionCells` | `2097152` | 1–67108864 | The most blocks in one magic selection sent to the server. |

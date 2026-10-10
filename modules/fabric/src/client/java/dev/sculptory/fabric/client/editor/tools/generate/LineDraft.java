@@ -20,10 +20,12 @@ import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
 import dev.sculptory.fabric.client.editor.tool.EditorAction;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
+import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
 import dev.sculptory.fabric.client.editor.tool.ToolContext;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
+import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.SessionNotices;
@@ -51,7 +53,9 @@ import org.slf4j.LoggerFactory;
  * <p><b>Points.</b> A click on a block adds a point (the host says which block the click stands for: the Shape brush's
  * anchor may put it outside the block clicked). A click on a point's column selects it and a drag moves it, as the road's
  * nodes. Delete or Backspace removes the selected point, or the last one; Esc stops a drag or a preview being made, then
- * clears the points; Enter builds. The points stay after a build, so the line can be changed and built again.
+ * clears the points; Enter builds. The points stay after a build, so the line can be changed and built again. With
+ * {@link #withAirPoints} a click on open sky puts a point at the air marker, and a point can be picked and dragged in
+ * the air ({@link AirPoints}).
  *
  * <p><b>Preview.</b> Once it has its points (two, for a line) the generator runs off the client thread (it reads no world); a result of an older
  * change is dropped. The ghost shows what the global mask lets through; over {@link GenerateTool#MAX_GHOST_CELLS} the
@@ -133,7 +137,11 @@ public final class LineDraft {
     private final GeneratedCommit commit;
     /** The face the first point was clicked on (the Shape brush's "Clicked face"), or null. */
     private WorldCursor.Face firstFace;
+    /** Points in the air, or null (a click on the sky does nothing). */
+    private AirPoints air;
     private int dragging = -1;
+    /** Whether the pointer moved since the drag's press: a release without it moves nothing. */
+    private boolean moved;
     private BlockPos dragFrom;
     private boolean dirty = true;
     private int generation;
@@ -187,6 +195,16 @@ public final class LineDraft {
         });
     }
 
+    /**
+     * Lets the points go in the air ({@link AirPoints}, shared by the host's drafts): a click on open sky puts one at the
+     * marker, a press picks a point floating there, and a point dragged over open sky keeps its distance. Without it
+     * (the Shape brush's Line) a click on the sky does nothing. Returns this draft.
+     */
+    public LineDraft withAirPoints(AirPoints air) {
+        this.air = Objects.requireNonNull(air);
+        return this;
+    }
+
     /** The points, in order (for tests and the host). */
     public PathModel points() {
         return points;
@@ -221,13 +239,20 @@ public final class LineDraft {
         WorldCursor cursor = e.cursor();
         switch (e.kind()) {
             case PRESS -> {
-                if (e.button() != PointerEvent.LEFT || cursor.missed()) return false;
-                BlockPos point = pointOf.apply(cursor);
-                int index = points.indexAt(point);
+                if (e.button() != PointerEvent.LEFT) return false;
+                Ray ray = ray();
+                if (air != null) air.useWorld(c);
+                int index = air != null && ray != null ? AirPoints.pick(points.nodes(), ray, cursor) : -1;
+                if (index < 0 && !cursor.missed()) index = points.indexAt(pointOf.apply(cursor));
+                BlockPos point = index >= 0 ? null
+                        : air != null ? air.place(cursor, ray, pointOf) : cursor.missed() ? null : pointOf.apply(cursor);
+                if (index < 0 && point == null) return false;
                 if (index >= 0) {
                     points.select(index);
                     dragging = index;
                     dragFrom = points.node(index);
+                    moved = false;
+                    if (air != null) air.beginDrag(ray, dragFrom);
                     c.setPointerCapture(true);
                 } else {
                     if (points.size() >= rules.maxPoints()) {
@@ -247,13 +272,21 @@ public final class LineDraft {
                 return true;
             }
             case DRAG -> {
-                if (e.button() != PointerEvent.LEFT || dragging < 0 || cursor.missed()) return false;
-                if (points.move(dragging, pointOf.apply(cursor))) changed();
+                if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
+                moved = true;
+                if (air != null) air.useWorld(c);
+                BlockPos to = dragTarget(cursor, pointOf);
+                if (to == null) return false;
+                if (points.move(dragging, to)) changed();
                 return true;
             }
             case RELEASE -> {
                 if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
-                if (!cursor.missed() && points.move(dragging, pointOf.apply(cursor))) changed();
+                // A press and release with no movement between (a click on a point) moves nothing.
+                if (moved) {
+                    BlockPos to = dragTarget(cursor, pointOf);
+                    if (to != null && points.move(dragging, to)) changed();
+                }
                 endDrag(c);
                 return true;
             }
@@ -262,6 +295,37 @@ public final class LineDraft {
             }
         }
         return false;
+    }
+
+    /**
+     * Alt+Scroll with points in the air: the marker nearer or farther, or, while a point is dragged over open sky
+     * ({@code cursor}), that point. Returns whether the scroll was taken.
+     */
+    public boolean onScroll(ToolContext c, ScrollEvent e, WorldCursor cursor, Function<WorldCursor, BlockPos> pointOf) {
+        if (air == null || !air.scroll(e)) return false;
+        air.useWorld(c);
+        if (dragging >= 0 && cursor.missed()) {
+            moved = true;
+            BlockPos to = dragTarget(cursor, pointOf);
+            if (to != null && points.move(dragging, to)) changed();
+        }
+        return true;
+    }
+
+    /** Whether a point is being dragged. */
+    public boolean dragging() {
+        return dragging >= 0;
+    }
+
+    /** The cursor ray, when points may go in the air and the ray is known. */
+    private Ray ray() {
+        return air == null ? null : services.get().cursorRay().orElse(null);
+    }
+
+    /** Where the dragged point goes for {@code cursor}, or null (the sky, without points in the air). */
+    private BlockPos dragTarget(WorldCursor cursor, Function<WorldCursor, BlockPos> pointOf) {
+        if (air != null) return air.dragTo(cursor, ray(), pointOf);
+        return cursor.missed() ? null : pointOf.apply(cursor);
     }
 
     /** Esc, Delete/Backspace and Enter; returns whether the action was taken. */
@@ -338,7 +402,10 @@ public final class LineDraft {
     }
 
     private void endDrag(ToolContext c) {
-        if (dragging >= 0) c.setPointerCapture(false);
+        if (dragging >= 0) {
+            c.setPointerCapture(false);
+            if (air != null) air.endDrag();
+        }
         dragging = -1;
         dragFrom = null;
     }
@@ -540,15 +607,18 @@ public final class LineDraft {
         GenerateTool.Services s = services.get();
         List<KeyHint> hints = new ArrayList<>();
         if (points.isEmpty()) {
-            hints.add(new KeyHint(click, "sculptory.hint.line.add_point"));
+            hints.add(new KeyHint(click, air != null ? "sculptory.hint.line.add_point_air" : "sculptory.hint.line.add_point"));
+            if (air != null) hints.add(air.hint());
             return hints;
         }
         if (dragging >= 0) {
             hints.add(new KeyHint("Esc", "sculptory.hint.cancel_drag"));
+            if (air != null) hints.add(air.hint());
             return hints;
         }
         hints.add(new KeyHint(click, "sculptory.hint.line.add_or_select"));
         hints.add(new KeyHint(click + " drag", "sculptory.hint.line.move_point"));
+        if (air != null) hints.add(air.hint());
         hints.add(new KeyHint(s.keyLabel(KeyAction.ERASE_SELECTION) + "/" + s.keyLabel(KeyAction.REMOVE_NODE),
                 "sculptory.hint.line.remove_point"));
         Built built = shown;

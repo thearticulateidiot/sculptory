@@ -443,13 +443,21 @@ class GenerateToolTest {
         big.set(GenerateSettings.WIDTH, 32);
         big.set(GenerateSettings.FILL_BELOW, 8);
         big.set(GenerateSettings.CLEAR_ABOVE, 8);
-        big.set(GenerateSettings.HEIGHT, RoadKernel.HeightMode.STRAIGHT); // a kilometre of road reads no ground
+        // A kilometre of road, Straight, on ground all the way (its fill below reaches down only where it meets ground).
+        big.set(GenerateSettings.HEIGHT, RoadKernel.HeightMode.STRAIGHT);
+        int grass = states.state("minecraft:grass_block");
+        for (int x = -510; x <= 510; x++) {
+            for (int z = -20; z <= 20; z++) {
+                big.world.set(x, GROUND, z, grass);
+                big.world.set(x, GROUND - 1, z, grass); // under the deck (which replaces the top): what the fill meets
+            }
+        }
         big.click(top(-500, 0));
         big.click(top(500, 0));
         big.frame(top(500, 0));
         GenerateTool.Built built = big.tool.preview().orElseThrow();
         long cells = built.cells();
-        assertTrue(cells > 500_000 && cells <= 1_000_000, "cells " + cells);
+        assertEquals(1000L * 32 * (1 + 8 + 8), cells, "the deck, its fill and its clearing all along");
         assertTrue(cells > GenerateTool.MAX_GHOST_CELLS || built.ghost() != null);
         assertTrue(big.tool.onAction(big.view, EditorAction.COMMIT));
         assertEquals(List.of(GenerateTool.OP_PATH + " " + cells), big.services.confirmations, "asked first");
@@ -574,7 +582,8 @@ class GenerateToolTest {
         assertTrue(hints.contains(new KeyHint("Esc", "sculptory.hint.generate.clear")));
         rig.press(top(4, 0));
         rig.drag(top(5, 0));
-        assertEquals(List.of(new KeyHint("Esc", "sculptory.hint.cancel_drag")), rig.tool.hints(rig.view));
+        assertEquals(List.of(new KeyHint("Esc", "sculptory.hint.cancel_drag"),
+                new KeyHint("Alt+Scroll", AirPoints.HINT, List.of("16"))), rig.tool.hints(rig.view));
         rig.release(top(5, 0));
     }
 

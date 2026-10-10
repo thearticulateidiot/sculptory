@@ -2,6 +2,7 @@ package dev.sculptory.fabric.client.editor.tools.brush;
 
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.NamespacedId;
+import dev.sculptory.core.brush.BrushSpec;
 import dev.sculptory.core.brush.BrushTool;
 import dev.sculptory.core.brush.Falloff;
 import dev.sculptory.core.brush.HeightmapSpec;
@@ -32,7 +33,8 @@ import java.util.Set;
 import java.util.function.Predicate;
 
 /**
- * One brush tool's settings: radius (1-32, capped by the server's {@code maxBrushRadius}), strength (0-1),
+ * One brush tool's settings: radius (1-32, capped by the server's {@code maxBrushRadius}; the Heightmap brush 1-128,
+ * capped by {@code maxHeightmapRadius}), strength (0-1),
  * falloff and shape; the sculpting brushes' Mode ({@link SculptMode}); Paint's material block or Palette Paint's
  * weighted blocks (up to {@value #MAX_PALETTE_ENTRIES}), with the layer depth; a collapsed Mask section: the
  * brush's own rule list ({@link #maskRules}) and "only inside selection", with the
@@ -121,7 +123,8 @@ public final class BrushSettings {
         boolean painting = tool == BrushTool.PAINT || tool == BrushTool.PALETTE;
         boolean stamping = tool == BrushTool.HEIGHTMAP;
         Predicate<SettingsValues> shown = stamping ? HIDDEN : SettingDef.ALWAYS;
-        radius = new SettingDef.Int("radius", PREFIX + "radius", painting ? 4 : stamping ? 12 : 5, 1, 32, Limits::maxBrushRadius,
+        radius = new SettingDef.Int("radius", PREFIX + "radius", painting ? 4 : stamping ? 12 : 5, 1,
+                BrushSpec.maxRadius(tool), stamping ? Limits::maxHeightmapRadius : Limits::maxBrushRadius,
                 SettingDef.ALWAYS);
         // A biome is painted or not, and a height picture is its own brush: neither shows strength or falloff (other code
         // reads them); the Heightmap brush hides its shape too.
@@ -138,7 +141,8 @@ public final class BrushSettings {
                 ? new SettingDef.Enum<>("heightmap.mode", PREFIX + "heightmap.mode", StampMode.class, StampMode.RAISE)
                 : null;
         heightmapHeight = stamping
-                ? new SettingDef.Int("heightmap.height", PREFIX + "heightmap.height", 16, 1, HeightmapSpec.MAX_HEIGHT_BLOCKS)
+                ? new SettingDef.Int("heightmap.height", PREFIX + "heightmap.height", 16, 1, HeightmapSpec.MAX_HEIGHT_BLOCKS,
+                        Limits::maxHeightmapHeight, SettingDef.ALWAYS)
                 : null;
         heightmapAngle = stamping ? new SettingDef.Int("heightmap.angle", PREFIX + "heightmap.angle", 0, 0, 359) : null;
         mode = SculptMode.surfaceTool(tool)

@@ -76,6 +76,7 @@ import dev.sculptory.fabric.client.session.HistoryMirror;
 import dev.sculptory.fabric.client.session.JobTracker;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Permissions;
+import dev.sculptory.fabric.client.session.SessionNotices;
 import dev.sculptory.fabric.client.session.SessionState;
 import dev.sculptory.fabric.client.session.StrokeHandle;
 import dev.sculptory.fabric.client.session.StrokeParams;
@@ -1633,6 +1634,120 @@ class BrushToolTest {
         rig.release(top(0, 0));
     }
 
+
+    /**
+     * The Heightmap brush alone goes up to radius 128 (Ctrl+Scroll, Shift in steps of 4, or typed); every other brush
+     * still stops at 32. A radius-128 stamp is 257 wide, fits one message (sent deflated), is left to the server, and a
+     * dab of it weighs 16 in flight, so one is in flight at a time. The server's maxHeightmapRadius and
+     * maxHeightmapHeight cap the size and the Height.
+     */
+    @Test
+    void theHeightmapBrushGoesToRadius128() {
+        Rig rig = new Rig(BrushTool.HEIGHTMAP);
+        BrushSettings s = rig.tool.settings();
+        for (int i = 0; i < 40; i++) {
+            rig.scroll(1, Modifiers.CONTROL | Modifiers.SHIFT);
+        }
+        assertEquals(128, rig.setting(s.radius));
+        rig.scroll(-1, Modifiers.CONTROL);
+        assertEquals(127, rig.setting(s.radius), "steps of 1 without Shift");
+        assertTrue(s.radius.validate(128, Limits.DEFAULTS).isValid(), "typed 128");
+        assertFalse(s.radius.validate(129, Limits.DEFAULTS).isValid());
+        assertFalse(new Rig(BrushTool.RAISE).tool.settings().radius.validate(33, Limits.DEFAULTS).isValid(),
+                "every other brush stops at 32");
+        rig.set(s.radius, 128);
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        BrushSpec spec = rig.session.begins.get(0).spec();
+        assertEquals(128, spec.radius());
+        assertEquals(257, spec.heightmap().side());
+        assertArrayEquals(hillStamp(128, 0), spec.heightmap().heights());
+        assertFalse(rig.session.begins.get(0).params().predict(), "257 × 257 columns are left to the server");
+        assertTrue(rig.noticeKeys().isEmpty(), "the hill fits one message: " + rig.noticeKeys());
+        assertEquals(16, rig.tool.controller().dabCost(), "a radius-128 dab weighs 16 radius-32 stamps");
+        rig.release(top(0, 0));
+
+        rig.mock.setPermissions(new Permissions(Perm.mask(EnumSet.allOf(Perm.class)),
+                new Limits(2_097_152L, 2_097_152L, 8, 20, 32L << 20, 2, Limits.DEFAULT_SELECTION_CELLS,
+                        Limits.DEFAULT_SELECTION_SECTIONS, 64, 40)));
+        rig.scroll(1, Modifiers.CONTROL);
+        assertEquals(64, rig.setting(s.radius), "Ctrl+Scroll stops at the server's maxHeightmapRadius, not maxBrushRadius");
+        assertFalse(s.radius.validate(65, rig.mock.permissions().limits()).isValid());
+        rig.set(s.heightmapHeight, 100);
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        HeightmapSpec capped = rig.session.begins.get(1).spec().heightmap();
+        assertEquals(129, capped.side());
+        assertEquals(40, capped.heightBlocks(), "the Height stops at the server's maxHeightmapHeight");
+        assertEquals(4, rig.tool.controller().dabCost());
+        rig.release(top(0, 0));
+    }
+
+    /**
+     * A stamp expected to change more blocks than the server's {@code maxOpVolume} is refused before anything is sent,
+     * with a toast giving both numbers; with {@code limit.bypass} it goes.
+     */
+    @Test
+    void aStampOverTheServersBlocksIsRefusedWithTheNumbers() {
+        Rig rig = new Rig(BrushTool.HEIGHTMAP);
+        rig.set(rig.tool.settings().radius, 128);
+        rig.set(rig.tool.settings().heightmapHeight, 128);
+        EnumSet<Perm> noBypass = EnumSet.allOf(Perm.class);
+        noBypass.remove(Perm.LIMIT_BYPASS);
+        rig.mock.setPermissions(new Permissions(Perm.mask(noBypass), new Limits(500_000L, 2_097_152L, 32, 20, 32L << 20, 2)));
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        rig.release(top(0, 0));
+        assertTrue(rig.session.begins.isEmpty(), "nothing sent");
+        assertEquals(List.of(SessionNotices.STAMP_TOO_MANY_BLOCKS), rig.noticeKeys());
+        long cells = new HeightmapSpec(257, hillStamp(128, 0), 128, false).stampCells();
+        assertTrue(cells > 500_000, "the hill 128 tall: " + cells);
+        assertEquals(List.of(SessionNotices.about(cells), "500,000"), rig.notices.get(0).args());
+        rig.mock.setPermissions(new Permissions(Perm.mask(EnumSet.allOf(Perm.class)),
+                new Limits(500_000L, 2_097_152L, 32, 20, 32L << 20, 2)));
+        rig.press(top(0, 0), 0);
+        rig.frame(top(0, 0), 16);
+        rig.release(top(0, 0));
+        assertEquals(1, rig.session.begins.size(), "limit.bypass goes past maxOpVolume");
+    }
+
+    /**
+     * The Heightmap cursor tints the whole square, corners included: every column up to radius 32, one quad per cell of
+     * a few columns past it (at most 65 × 65 quads at radius 128), each tinted by the picture stamped a pixel a cell.
+     */
+    @Test
+    void theHeightmapCursorTintsTheSquareInAtMost65By65Cells() {
+        Rig rig = new Rig(BrushTool.HEIGHTMAP);
+        rig.set(rig.tool.settings().radius, 4);
+        rig.frame(top(0, 0), 16);
+        RecordingDraw small = new RecordingDraw();
+        rig.tool.renderWorld(rig.view, small);
+        // Ground past the rig's terrain, so every cell of the widest square finds some.
+        for (int x = -140; x <= 140; x++) {
+            for (int z = -140; z <= 140; z++) {
+                if (Math.abs(x) > BrushTerrain.EXTENT || Math.abs(z) > BrushTerrain.EXTENT) {
+                    rig.world.set(x, 62, z, states.state("minecraft:stone"));
+                }
+            }
+        }
+        assertEquals(nonZero(hillStamp(4, 0)), small.quads, "a quad per column with a value");
+        rig.set(rig.tool.settings().radius, 128);
+        rig.frame(top(0, 0), 16);
+        RecordingDraw wide = new RecordingDraw();
+        rig.tool.renderWorld(rig.view, wide);
+        assertTrue(wide.quads > 1_000 && wide.quads <= 65 * 65, "quads at radius 128: " + wide.quads);
+        assertEquals(nonZero(hillStamp(32, 0)), wide.quads, "a cell a pixel of the picture stamped 65 wide");
+    }
+
+    private static int nonZero(byte[] values) {
+        int n = 0;
+        for (byte b : values) {
+            if (b != 0) {
+                n++;
+            }
+        }
+        return n;
+    }
     @Test
     void aMissingPictureRefusesThePressWithOneToast() {
         Rig rig = new Rig(BrushTool.HEIGHTMAP);
@@ -1693,6 +1808,223 @@ class BrushToolTest {
         }
     }
 
+
+    /**
+     * A radius-128 drag, plain and mirrored, sends its next stamp only once the server reports the last one written: an
+     * admission (the server's OK, which acknowledges the dab) is not enough, as the server's queue holds the stamp's
+     * weight until it is written. Quick clicks wait the same way: a new press begins nothing while an earlier press's
+     * stamp is unwritten.
+     */
+    @Test
+    void wideStampsWaitUntilTheServerHasWrittenTheLast() throws ProtocolException {
+        for (Symmetry.Mode symmetry : List.of(Symmetry.Mode.OFF, Symmetry.Mode.MIRROR_X)) {
+            Rig rig = new Rig(BrushTool.HEIGHTMAP);
+            rig.set(rig.tool.settings().radius, 128);
+            rig.set(rig.tool.settings().symmetry, symmetry);
+            FakeTransport transport = new FakeTransport(states);
+            FabricEditorSession fabric = new FabricEditorSession(transport, () -> states, new AtomicLong()::get, "test");
+            fabric.onJoin();
+            fabric.onFrame(Codec.encodeS2C(new S2C.Welcome(ProtocolV2.VERSION, Features.of(Features.STROKES),
+                    Limits.DEFAULTS, Perm.mask(EnumSet.allOf(Perm.class)), 1L), states));
+            rig.current = fabric;
+            rig.press(top(-30, 0), 0);
+            for (int step = 0; step < 40; step++) {
+                WorldCursor at = top(step % 2 == 0 ? 30 : -30, 0);
+                rig.drag(at);
+                rig.frame(at, 50);
+                fabric.tick();
+                ack(fabric, transport);
+            }
+            assertEquals(1, sentDabs(transport).size(), symmetry + ": admitted is not written");
+            assertTrue(rig.tool.controller().emitting(), "the stroke goes on");
+            written(fabric, transport);
+            for (int step = 0; step < 40; step++) {
+                WorldCursor at = top(step % 2 == 0 ? 30 : -30, 0);
+                rig.drag(at);
+                rig.frame(at, 50);
+                fabric.tick();
+                ack(fabric, transport);
+            }
+            assertEquals(2, sentDabs(transport).size(), symmetry + ": the next stamp once the last is written");
+            rig.release(top(0, 0));
+            fabric.tick();
+
+            // Quick clicks while the last stamp is unwritten begin nothing; once it is written, the next click does.
+            int begins = beginsSent(transport);
+            for (int click = 0; click < 3; click++) {
+                rig.press(top(5, 5), 0);
+                rig.frame(top(5, 5), 400);
+                fabric.tick();
+                rig.release(top(5, 5));
+                fabric.tick();
+            }
+            assertEquals(begins, beginsSent(transport), symmetry + ": no new stroke while a stamp is unwritten");
+            written(fabric, transport);
+            rig.press(top(5, 5), 0);
+            rig.frame(top(5, 5), 400);
+            fabric.tick();
+            rig.release(top(5, 5));
+            assertEquals(begins + 1, beginsSent(transport), symmetry + ": the next click once it is written");
+            assertEquals(3, sentDabs(transport).size());
+            assertTrue(rig.noticeKeys().stream().noneMatch(k -> k.startsWith("sculptory.reject")), rig.noticeKeys().toString());
+        }
+    }
+
+    /** A FabricEditorSession over a fake transport, welcomed with every node and the default limits. */
+    private FabricEditorSession fabricSession(FakeTransport transport) throws ProtocolException {
+        FabricEditorSession fabric = new FabricEditorSession(transport, () -> states, new AtomicLong()::get, "test");
+        fabric.onJoin();
+        fabric.onFrame(Codec.encodeS2C(new S2C.Welcome(ProtocolV2.VERSION, Features.of(Features.STROKES), Limits.DEFAULTS,
+                Perm.mask(EnumSet.allOf(Perm.class)), 1L), states));
+        return fabric;
+    }
+
+    /** A radius-128 stamp begun on {@code fabric} directly, one dab sent and admitted (not written): 16 units. */
+    private FabricStrokeHandle unwrittenStamp(FabricEditorSession fabric, FakeTransport transport)
+            throws ProtocolException {
+        byte[] picture = new byte[257 * 257];
+        BrushSpec spec = new BrushSpec(BrushTool.HEIGHTMAP, 128, 1f, Falloff.CONSTANT, Shape.SQUARE, null, SurfaceMask.ANY,
+                0, 0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null,
+                new HeightmapSpec(257, picture, 16, false), null);
+        FabricStrokeHandle stamp = (FabricStrokeHandle) fabric.beginStroke(ToolId.HEIGHTMAP, spec, StrokeParams.DEFAULT);
+        stamp.dab(new Dab(0, 8, 70 * 16, 8, Dab.FULL_PRESSURE));
+        fabric.tick();
+        ack(fabric, transport);
+        assertEquals(1, stamp.unapplied());
+        assertEquals(16, fabric.unwrittenUnits());
+        return stamp;
+    }
+
+    /** The server reports {@code stroke}'s dabs up to {@code index} written. */
+    private void writtenUpTo(FabricEditorSession fabric, int strokeId, int index) throws ProtocolException {
+        fabric.onFrame(Codec.encodeS2C(new S2C.StrokeStatus(strokeId, index, S2C.StrokeStatus.Status.OK, null, index),
+                states));
+    }
+
+    /**
+     * A settings change mid-press while the press's wide stamp is unwritten (R turns the stamp) ends the stroke but
+     * begins the next only once the stamp is written, as a fresh press would: a restart never sends a StrokeBegin while
+     * the window is full.
+     */
+    @Test
+    void aRestartWhileAStampIsUnwrittenBeginsNothing() throws ProtocolException {
+        Rig rig = new Rig(BrushTool.HEIGHTMAP);
+        rig.set(rig.tool.settings().radius, 128);
+        FakeTransport transport = new FakeTransport(states);
+        FabricEditorSession fabric = fabricSession(transport);
+        rig.current = fabric;
+        rig.press(top(-30, 0), 0);
+        rig.frame(top(-30, 0), 50);
+        fabric.tick();
+        ack(fabric, transport);
+        assertEquals(1, beginsSent(transport));
+        assertEquals(1, sentDabs(transport).size());
+        for (int turn = 0; turn < 8; turn++) {
+            assertTrue(rig.tool.onAction(rig.view, EditorAction.ROTATE_CW));
+            for (int step = 0; step < 8; step++) {
+                WorldCursor at = top(step % 2 == 0 ? 30 : -30, 0);
+                rig.drag(at);
+                rig.frame(at, 50);
+                fabric.tick();
+                ack(fabric, transport);
+            }
+        }
+        assertEquals(1, beginsSent(transport), "eight turns with the stamp unwritten begin no stroke");
+        assertEquals(1, sentDabs(transport).size());
+        written(fabric, transport);
+        for (int step = 0; step < 8; step++) {
+            WorldCursor at = top(step % 2 == 0 ? 30 : -30, 0);
+            rig.drag(at);
+            rig.frame(at, 50);
+            fabric.tick();
+            ack(fabric, transport);
+        }
+        assertEquals(2, beginsSent(transport), "once written, the next stroke begins with the next stamp");
+        assertEquals(2, sentDabs(transport).size());
+        rig.release(top(0, 0));
+    }
+
+    /**
+     * Nine strokes begun after a wide stamp the server has not written (other brushes', begun directly here) don't make
+     * the session forget it: it still counts as unwritten until the server reports it, as the server keeps reporting a
+     * stroke with dabs in its lane.
+     */
+    @Test
+    void manyLaterStrokesDontForgetAnUnwrittenStamp() throws ProtocolException {
+        FakeTransport transport = new FakeTransport(states);
+        FabricEditorSession fabric = fabricSession(transport);
+        FabricStrokeHandle stamp = unwrittenStamp(fabric, transport);
+        BrushSpec raise = new BrushSpec(BrushTool.RAISE, 4, 0.5f, Falloff.SMOOTH, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0,
+                1L);
+        fabric.onFrame(Codec.encodeS2C(new S2C.StrokeStatus(stamp.strokeId(), 0, S2C.StrokeStatus.Status.ENDED, null),
+                states));
+        for (int i = 0; i < 12; i++) {
+            FabricStrokeHandle other = (FabricStrokeHandle) fabric.beginStroke(ToolId.RAISE, raise, StrokeParams.DEFAULT);
+            other.end();
+            fabric.onFrame(Codec.encodeS2C(new S2C.StrokeStatus(other.strokeId(), -1, S2C.StrokeStatus.Status.ENDED,
+                    null), states));
+        }
+        assertTrue(stamp.ended());
+        assertEquals(1, stamp.unapplied(), "still waiting for the stamp's report");
+        assertEquals(16, fabric.unwrittenUnits());
+        writtenUpTo(fabric, stamp.strokeId(), 0);
+        assertEquals(0, fabric.unwrittenUnits(), "released once reported");
+    }
+
+    /**
+     * After a wide stamp the server has not written, a Raise press waits too (the server's queue holds the stamp's 16
+     * units for the player, whatever brush comes next), then drags as usual once it is written.
+     */
+    @Test
+    void aRaiseDragWaitsForAnUnwrittenStamp() throws ProtocolException {
+        Rig rig = new Rig(BrushTool.RAISE);
+        FakeTransport transport = new FakeTransport(states);
+        FabricEditorSession fabric = fabricSession(transport);
+        rig.current = fabric;
+        FabricStrokeHandle stamp = unwrittenStamp(fabric, transport);
+        rig.press(top(-8, 0), 0);
+        for (int step = 0; step < 20; step++) {
+            WorldCursor at = top(-8 + step, 0);
+            rig.drag(at);
+            rig.frame(at, 50);
+            fabric.tick();
+            ack(fabric, transport);
+        }
+        assertEquals(1, beginsSent(transport), "the Raise press begins nothing while the stamp is unwritten");
+        writtenUpTo(fabric, stamp.strokeId(), 0);
+        for (int step = 0; step < 20; step++) {
+            WorldCursor at = top(12 - step, 0);
+            rig.drag(at);
+            rig.frame(at, 50);
+            fabric.tick();
+            ack(fabric, transport);
+        }
+        rig.release(top(-8, 0));
+        assertEquals(2, beginsSent(transport));
+        assertTrue(sentDabs(transport).size() > 5, "then it drags: " + sentDabs(transport).size());
+        assertTrue(rig.noticeKeys().stream().noneMatch(k -> k.startsWith("sculptory.reject")), rig.noticeKeys().toString());
+    }
+
+    private static List<Dab> sentDabs(FakeTransport transport) {
+        return transport.sent.stream().filter(C2S.Dabs.class::isInstance).map(C2S.Dabs.class::cast)
+                .flatMap(d -> d.dabs().stream()).toList();
+    }
+
+    private static int beginsSent(FakeTransport transport) {
+        return (int) transport.sent.stream().filter(C2S.StrokeBegin.class::isInstance).count();
+    }
+
+    /** The server reports the last batch sent written ({@code StrokeStatus} with its applied index). */
+    private void written(FabricEditorSession fabric, FakeTransport transport) throws ProtocolException {
+        for (int i = transport.sent.size() - 1; i >= 0; i--) {
+            if (transport.sent.get(i) instanceof C2S.Dabs dabs) {
+                int last = dabs.dabs().get(dabs.dabs().size() - 1).index();
+                fabric.onFrame(Codec.encodeS2C(new S2C.StrokeStatus(dabs.strokeId(), last, S2C.StrokeStatus.Status.OK,
+                        null, last), states));
+                return;
+            }
+        }
+    }
     /** Acknowledges every dab sent so far, as the server would after applying them. */
     private void ack(FabricEditorSession fabric, FakeTransport transport) throws ProtocolException {
         for (int i = transport.sent.size() - 1; i >= 0; i--) {
@@ -2151,6 +2483,7 @@ class BrushToolTest {
         /** Every line drawn: x1, y1, z1, x2, y2, z2, and its colour. */
         final List<double[]> segments = new ArrayList<>();
         final List<Integer> segmentColors = new ArrayList<>();
+        int quads;
 
         @Override
         public void boxOutline(Box box, int argb) {
@@ -2177,6 +2510,11 @@ class BrushToolTest {
             ringYs.add(y);
             ringColors.add(argb);
             planeYs.add(y);
+        }
+
+        @Override
+        public void surfaceQuad(double minX, double minZ, double maxX, double maxZ, double y, int argb) {
+            quads++;
         }
 
         @Override

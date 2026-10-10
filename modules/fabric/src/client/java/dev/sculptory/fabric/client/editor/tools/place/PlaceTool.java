@@ -1422,7 +1422,8 @@ public final class PlaceTool implements Tool {
         }
         SettingsValues values = c.settings();
         boolean physics = values.get(settings.physics()) && permissions.has(Perm.PHYSICS);
-        // Biomes only for a player who may change them (protocol 6), as physics: a ticked toggle never refuses a paste.
+        // Biomes only for a player who may change them (protocol 6), as physics: a ticked toggle never refuses a paste,
+        // move or stack (the server refuses the flag without the node).
         boolean biomes = values.get(settings.biomes()) && permissions.has(Perm.BIOME);
         EntityFilter filter = values.get(settings.entities());
         OpSpec op = OpSymmetry.withSymmetry(placement.op(new PasteOptions(values.get(settings.includeAir()), physics,

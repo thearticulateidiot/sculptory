@@ -191,9 +191,13 @@ public sealed interface OpSpec {
      * bounds' middle cell (the pivot). {@code into} filters the landing cells only: a moved block whose landing cell is
      * left out is not placed, while its source cell is vacated all the same. The constructors taking a transform mean
      * its exact orientation.
+     *
+     * <p>With {@code biomes} (protocol 6; the Place tool's Biomes box) the region's biomes go along with its blocks, quart
+     * by quart, and need the {@code biome} node; without, biomes stay where they are. Every constructor without it means
+     * false.
      */
     record Move(Region region, BlockPos offset, Orientation orientation, Pattern leave, EntityFilter entities,
-                Symmetry symmetry, PasteOptions.Into into) implements OpSpec {
+                Symmetry symmetry, PasteOptions.Into into, boolean biomes) implements OpSpec {
         public Move {
             Objects.requireNonNull(region);
             Objects.requireNonNull(offset);
@@ -202,6 +206,16 @@ public sealed interface OpSpec {
             Objects.requireNonNull(entities);
             Objects.requireNonNull(symmetry);
             Objects.requireNonNull(into);
+        }
+
+        public Move(Region region, BlockPos offset, Orientation orientation, Pattern leave, EntityFilter entities,
+                    Symmetry symmetry, PasteOptions.Into into) {
+            this(region, offset, orientation, leave, entities, symmetry, into, false);
+        }
+
+        /** This move with its biomes carried along or not. */
+        public Move withBiomes(boolean carry) {
+            return new Move(region, offset, orientation, leave, entities, symmetry, into, carry);
         }
 
         public Move(Region region, BlockPos offset, Transform t, Pattern leave, EntityFilter entities, Symmetry symmetry,
@@ -240,11 +254,13 @@ public sealed interface OpSpec {
 
     /**
      * Repeats the region {@code count} times, each copy offset by (dx, dy, dz) from the previous, with the entities
-     * {@code entities} selects. {@code into} filters the cells the copies land on. With {@code upsideDown} every copy is the region flipped upside down within its bounds' height; copies are never turned or mirrored. Every constructor without it
-     * means false.
+     * {@code entities} selects. {@code into} filters the cells the copies land on. With {@code upsideDown} every copy is the region flipped upside down within its bounds' height; copies are never turned or mirrored.
+     * With {@code biomes} (protocol 6; the Place tool's Biomes box) each copy takes the region's biomes too, quart by
+     * quart, and needs the {@code biome} node; without, biomes stay where they are. Every constructor without either
+     * flag means false for it.
      */
     record Stack(Region region, int dx, int dy, int dz, int count, EntityFilter entities, Symmetry symmetry,
-                 PasteOptions.Into into, boolean upsideDown) implements OpSpec {
+                 PasteOptions.Into into, boolean upsideDown, boolean biomes) implements OpSpec {
         public Stack {
             Objects.requireNonNull(region);
             Objects.requireNonNull(entities);
@@ -252,6 +268,16 @@ public sealed interface OpSpec {
             Objects.requireNonNull(into);
             if (count < 1) throw new IllegalArgumentException("Stack count must be positive");
             if (dx == 0 && dy == 0 && dz == 0) throw new IllegalArgumentException("Stack offset must be non-zero");
+        }
+
+        public Stack(Region region, int dx, int dy, int dz, int count, EntityFilter entities, Symmetry symmetry,
+                     PasteOptions.Into into, boolean upsideDown) {
+            this(region, dx, dy, dz, count, entities, symmetry, into, upsideDown, false);
+        }
+
+        /** This stack with its biomes carried into the copies or not. */
+        public Stack withBiomes(boolean carry) {
+            return new Stack(region, dx, dy, dz, count, entities, symmetry, into, upsideDown, carry);
         }
 
         public Stack(Region region, int dx, int dy, int dz, int count, EntityFilter entities, Symmetry symmetry,

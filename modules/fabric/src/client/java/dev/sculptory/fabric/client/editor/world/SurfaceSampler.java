@@ -15,6 +15,8 @@ package dev.sculptory.fabric.client.editor.world;
  */
 public final class SurfaceSampler {
     public static final int MAX_RADIUS = 32;
+    /** The widest square {@link #scanSquare} samples: the Heightmap brush's largest radius. */
+    public static final int MAX_SQUARE_RADIUS = 128;
     /** Sentinel surface height: no surface found, or the column is outside the disc. */
     public static final int NONE = Integer.MIN_VALUE;
     /** How far above {@code hitY + radius} each column scan starts. */
@@ -28,13 +30,22 @@ public final class SurfaceSampler {
         private final int centerY;
         private final int centerZ;
         private final int radius;
+        /** Columns per sample along each axis (1: every column; {@link #scanSquare} takes one in every step × step). */
+        private final int step;
+        private final int cells;
         private final int[] heights;
 
         Samples(int centerX, int centerY, int centerZ, int radius, int[] heights) {
+            this(centerX, centerY, centerZ, radius, 1, heights);
+        }
+
+        Samples(int centerX, int centerY, int centerZ, int radius, int step, int[] heights) {
             this.centerX = centerX;
             this.centerY = centerY;
             this.centerZ = centerZ;
             this.radius = radius;
+            this.step = step;
+            this.cells = (2 * radius + 1 + step - 1) / step;
             this.heights = heights;
         }
 
@@ -62,13 +73,19 @@ public final class SurfaceSampler {
 
         /**
          * Y of the topmost terrain block in the column at offset ({@code dx}, {@code dz}) from the
-         * centre (its top face is at {@code y + 1}), or {@link #NONE}.
+         * centre (its top face is at {@code y + 1}), or {@link #NONE}. With a {@link #step} over 1, the sample of the
+         * cell holding the column.
          */
         public int heightAt(int dx, int dz) {
             if (dx < -radius || dx > radius || dz < -radius || dz > radius) {
                 return NONE;
             }
-            return heights[(dz + radius) * side() + (dx + radius)];
+            return heights[(dz + radius) / step * cells + (dx + radius) / step];
+        }
+
+        /** Columns per sample along each axis: 1, or more for a {@link #scanSquare} of a wide square. */
+        public int step() {
+            return step;
         }
 
         /** Like {@link #heightAt} but with world column coordinates. */
@@ -94,6 +111,8 @@ public final class SurfaceSampler {
     private int cachedZ;
     private int cachedRadius;
     private long cachedStamp;
+    /** Whether the cached samples are a {@link #scanSquare}. */
+    private boolean cachedSquare;
     private Samples cached;
 
     /**
@@ -108,6 +127,7 @@ public final class SurfaceSampler {
                 && hitY == cachedY
                 && hitZ == cachedZ
                 && r == cachedRadius
+                && !cachedSquare
                 && changeStamp == cachedStamp) {
             return cached;
         }
@@ -118,8 +138,69 @@ public final class SurfaceSampler {
         cachedZ = hitZ;
         cachedRadius = r;
         cachedStamp = changeStamp;
+        cachedSquare = false;
         cached = samples;
         return samples;
+    }
+
+    /**
+     * Samples the Heightmap brush's square, reusing the previous result as {@link #sample} does: {@link #scanSquare}.
+     */
+    public Samples sampleSquare(TerrainProbe probe, int hitX, int hitY, int hitZ, int radius, long changeStamp) {
+        int r = Math.max(0, Math.min(MAX_SQUARE_RADIUS, radius));
+        if (cached != null
+                && cachedSquare
+                && probe.equals(cachedProbe)
+                && hitX == cachedX
+                && hitY == cachedY
+                && hitZ == cachedZ
+                && r == cachedRadius
+                && changeStamp == cachedStamp) {
+            return cached;
+        }
+        Samples samples = scanSquare(probe, hitX, hitY, hitZ, r);
+        cachedProbe = probe;
+        cachedX = hitX;
+        cachedY = hitY;
+        cachedZ = hitZ;
+        cachedRadius = r;
+        cachedStamp = changeStamp;
+        cachedSquare = true;
+        cached = samples;
+        return samples;
+    }
+
+    /**
+     * Uncached scan of the whole square {@code radius} columns around the hit block (corners included, up to
+     * {@value #MAX_SQUARE_RADIUS}: the Heightmap brush's stamp), one column per cell of {@link #squareStep} × that many
+     * columns (the cell's middle column), so a square of any size reads at most about 65 × 65 columns. Each column is
+     * scanned as {@link #scan} does over a window reaching {@code radius} up and down (plus the margins), starting at
+     * the probe's height hint, below which the air above the terrain is skipped.
+     */
+    public static Samples scanSquare(TerrainProbe probe, int hitX, int hitY, int hitZ, int radius) {
+        int r = Math.max(0, Math.min(MAX_SQUARE_RADIUS, radius));
+        int step = squareStep(r);
+        int side = 2 * r + 1;
+        int cells = (side + step - 1) / step;
+        int[] heights = new int[cells * cells];
+        int top = (int) Math.min((long) hitY + r + SCAN_ABOVE, (long) probe.topY() - 1);
+        int bottom = (int) Math.max((long) hitY - r - SCAN_BELOW, probe.bottomY());
+        for (int cz = 0; cz < cells; cz++) {
+            for (int cx = 0; cx < cells; cx++) {
+                int dx = Math.min(side - 1, cx * step + step / 2) - r;
+                int dz = Math.min(side - 1, cz * step + step / 2) - r;
+                int x = hitX + dx, z = hitZ + dz;
+                int start = Math.min(top, probe.heightHint(x, z) - 1);
+                heights[cz * cells + cx] = start < bottom ? NONE : scanColumn(probe, x, z, start, bottom);
+            }
+        }
+        return new Samples(hitX, hitY, hitZ, r, step, heights);
+    }
+
+    /** Columns per sample of a square {@code radius} columns around: 1 up to radius 32, then enough for 65 a side. */
+    public static int squareStep(int radius) {
+        int side = 2 * Math.max(0, radius) + 1;
+        return Math.max(1, (side + 2 * MAX_RADIUS) / (2 * MAX_RADIUS + 1));
     }
 
     /** Forgets the cached samples. */

@@ -1,5 +1,7 @@
 package dev.sculptory.fabric.client.session;
 
+import dev.sculptory.core.brush.BrushSpec;
+import dev.sculptory.core.brush.HeightmapSpec;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Limits;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -35,6 +37,10 @@ public final class SessionNotices {
     public static final String JOB_STRIPPED_NBT = "sculptory.notice.job_stripped_nbt";
     public static final String TOO_LARGE_BLOCKS = "sculptory.reject.too_large.blocks";
     public static final String TOO_LARGE_RADIUS = "sculptory.reject.too_large.radius";
+    /** A Heightmap stamp taller than the server's {@code maxHeightmapHeight} ({@code [max]}). */
+    public static final String TOO_LARGE_STAMP_HEIGHT = "sculptory.reject.too_large.stamp_height";
+    /** A Heightmap stamp that would change more blocks than the server allows ({@code [about, allowed]}). */
+    public static final String STAMP_TOO_MANY_BLOCKS = "sculptory.notice.heightmap_too_many_blocks";
     public static final String QUEUE_FULL_UNDO = "sculptory.reject.queue_full.undo";
     public static final String QUEUE_FULL_REDO = "sculptory.reject.queue_full.redo";
     public static final String UNDONE = "sculptory.notice.undo";
@@ -201,6 +207,35 @@ public final class SessionNotices {
             notices.add(Notice.of(Notice.Level.WARNING, JOB_STRIPPED_NBT, label, count(job.strippedNbt())));
         }
         return notices;
+    }
+
+    /**
+     * The toast for a Heightmap stroke of {@code spec} past one of the server's limits, naming it, or {@code null} when it
+     * is within them all: its radius over {@code maxHeightmapRadius}, its height over {@code maxHeightmapHeight} (neither
+     * with {@code bypass}, the player's {@code limit.bypass}), or the blocks its stamp is expected to change, its copies
+     * included ({@link HeightmapSpec#stampCells}), over {@code maxOpVolume} (with {@code bypass}, over
+     * {@link HeightmapSpec#MAX_STEP_CELLS}, which holds for everyone). The editor checks it before a stroke begins, and
+     * picks the server's refusal's toast with it.
+     */
+    public static Notice heightmapLimit(BrushSpec spec, Limits limits, boolean bypass) {
+        HeightmapSpec stamp = spec.heightmap();
+        if (stamp == null) return null;
+        if (!bypass && spec.radius() > limits.maxHeightmapRadius()) {
+            return Notice.of(Notice.Level.WARNING, TOO_LARGE_RADIUS, count(limits.maxHeightmapRadius()));
+        }
+        if (!bypass && stamp.heightBlocks() > limits.maxHeightmapHeight()) {
+            return Notice.of(Notice.Level.WARNING, TOO_LARGE_STAMP_HEIGHT, count(limits.maxHeightmapHeight()));
+        }
+        long cells = stamp.stampCells() * spec.symmetry().mode().copies();
+        long allowed = bypass ? HeightmapSpec.MAX_STEP_CELLS : Math.min(limits.maxOpVolume(), HeightmapSpec.MAX_STEP_CELLS);
+        if (cells > allowed) return Notice.of(Notice.Level.WARNING, STAMP_TOO_MANY_BLOCKS, about(cells), about(allowed));
+        return null;
+    }
+
+    /** A large count as a toast rounds it: {@code 4.4 million} from a million up, else every digit ({@code 12,345}). */
+    public static String about(long value) {
+        if (value >= 1_000_000) return String.format(Locale.ROOT, "%.1f million", value / 1e6);
+        return count(value);
     }
 
     /** A count as the toasts show it: digits grouped with commas, e.g. {@code 1,000}. */

@@ -29,9 +29,12 @@ import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Random;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -170,6 +173,67 @@ class ProtocolSixContractsTest {
     }
 
     @Test
+    void movesAndStacksCarryAnExplicitBiomesFlag() throws ProtocolException {
+        Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 4, 0);
+        for (boolean biomes : new boolean[] {false, true}) {
+            for (Orientation orientation : List.of(Orientation.IDENTITY, Orientation.free(Transform.IDENTITY, 4_500, 0, 0))) {
+                OpSpec.Move move = new OpSpec.Move(BOX, new BlockPos(3, 0, -2), orientation, STONE, EntityFilter.NONE,
+                        mirror, PasteOptions.Into.EVERYTHING, biomes);
+                C2S message = new C2S.RunOp(6, move, false, ConflictPolicy.SKIP_CONFLICTS);
+                assertEquals(message, roundTrip(message));
+                assertEquals(biomes, ((OpSpec.Move) ((C2S.RunOp) roundTrip(message)).op()).biomes());
+            }
+            for (boolean upsideDown : new boolean[] {false, true}) {
+                OpSpec.Stack stack = new OpSpec.Stack(BOX, 0, 11, 0, 3, EntityFilter.DECORATIONS, mirror,
+                        PasteOptions.Into.AIR, upsideDown, biomes);
+                C2S message = new C2S.RunOp(7, stack, false, ConflictPolicy.SKIP_CONFLICTS);
+                OpSpec.Stack decoded = (OpSpec.Stack) ((C2S.RunOp) roundTrip(message)).op();
+                assertEquals(stack, decoded);
+                assertEquals(upsideDown, decoded.upsideDown());
+                assertEquals(biomes, decoded.biomes());
+            }
+        }
+        // Every constructor without the flag means biomes stay where they are; withBiomes sets it and nothing else.
+        OpSpec.Move plain = new OpSpec.Move(BOX, BlockPos.ORIGIN, Transform.IDENTITY, STONE, EntityFilter.NONE);
+        assertFalse(plain.biomes());
+        assertTrue(plain.withBiomes(true).biomes());
+        assertEquals(plain, plain.withBiomes(true).withBiomes(false));
+        OpSpec.Stack plainStack = new OpSpec.Stack(BOX, 1, 0, 0, 2, EntityFilter.NONE, Symmetry.NONE,
+                PasteOptions.Into.EVERYTHING, true);
+        assertFalse(plainStack.biomes());
+        assertEquals(new OpSpec.Stack(BOX, 1, 0, 0, 2, EntityFilter.NONE, Symmetry.NONE, PasteOptions.Into.EVERYTHING,
+                true, true), plainStack.withBiomes(true));
+        // The flag is a wire boolean: anything but 0 or 1 is MALFORMED, and a stack without it is cut short.
+        for (int flag : new int[] {2, 0xff}) {
+            byte[] bad = runOp(out -> {
+                writeStackUpToItsBiomes(out);
+                out.u8(flag);
+            });
+            assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(bad), "biomes byte " + flag);
+        }
+        WireWriter cut = new WireWriter(ProtocolV2.MAX_C2S_FRAME);
+        cut.varint(MessageType.RUN_OP.code());
+        cut.zigzag(1);
+        cut.varint(0);
+        writeStackUpToItsBiomes(cut);
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(cut.toByteArray()), "a stack without its biomes flag");
+    }
+
+    /** A stack op's bytes up to (not including) its biomes flag. */
+    private static void writeStackUpToItsBiomes(WireWriter out) throws ProtocolException {
+        out.u8(CoreCodec.OP_STACK);
+        CoreCodec.writeRegion(out, BOX);
+        out.zigzag(1);
+        out.zigzag(0);
+        out.zigzag(0);
+        out.zigzag(2);
+        out.enumValue(EntityFilter.NONE);
+        CoreCodec.writeSymmetry(out, Symmetry.NONE);
+        out.enumValue(PasteOptions.Into.EVERYTHING);
+        out.bool(false);
+    }
+
+    @Test
     void multiPastesRoundTripUpToTheirCapAndRefuseNoneOrMore() throws ProtocolException {
         List<OpSpec.PasteMany.Placement> placements = new ArrayList<>();
         for (int i = 0; i < OpSpec.PasteMany.MAX_PLACEMENTS; i++) {
@@ -245,21 +309,150 @@ class ProtocolSixContractsTest {
 
     // ---------------------------------------------------------------- the Heightmap and Biome brushes
 
+    /** A radius-32 image (65 × 65) still travels raw, its {@code side²} bytes as they are, inside a frame. */
     @Test
-    void theLargestHeightmapFitsAStrokeBeginFrameUncompressed() throws ProtocolException {
-        int side = HeightmapSpec.MAX_SIDE;
+    void aRadius32HeightmapTravelsRaw() throws ProtocolException {
+        int side = HeightmapImages.RAW_SIDE;
         byte[] heights = new byte[side * side];
         for (int i = 0; i < heights.length; i++) heights[i] = (byte) (i * 131 + 7);
-        BrushSpec spec = new BrushSpec(BrushTool.HEIGHTMAP, BrushSpec.MAX_RADIUS, 0.5f, Falloff.SPHERE, Shape.CIRCLE, null,
-                SurfaceMask.ANY, 0, 0, -3L, Box.of(new BlockPos(-100, -64, -100), new BlockPos(100, 300, 100)),
-                new Symmetry(Symmetry.Mode.ROTATE_4, 0, 0), null, SculptMode.TERRAIN, null, null,
-                new HeightmapSpec(side, heights, HeightmapSpec.MAX_HEIGHT_BLOCKS, true), null);
-        C2S begin = new C2S.StrokeBegin(1, spec);
+        C2S begin = new C2S.StrokeBegin(1, stamp(BrushSpec.MAX_RADIUS, heights, new Symmetry(Symmetry.Mode.ROTATE_4, 0, 0)));
         byte[] frame = Codec.encodeC2S(begin, STATES);
         assertTrue(frame.length > side * side && frame.length < ProtocolV2.MAX_C2S_FRAME, "frame of " + frame.length);
+        assertTrue(indexOf(frame, heights) > 0, "the image's bytes as they are");
         assertEquals(begin, Codec.decodeC2S(frame, STATES));
-        assertEquals(side, HeightmapSpec.MAX_SIDE);
         assertEquals(65, side);
+    }
+
+    /**
+     * A wider image travels deflated: the largest (radius 128, 257 × 257 = 66,049 bytes, twice a frame) round-trips
+     * inside a {@code StrokeBegin} frame when it is a smooth picture, and so does one of every width up to it; one of
+     * pure noise can't shrink and is refused when encoded (TOO_LARGE), before anything is sent.
+     */
+    @Test
+    void aWiderHeightmapTravelsDeflatedInOneFrame() throws ProtocolException {
+        assertEquals(257, HeightmapSpec.MAX_SIDE);
+        C2S largest = new C2S.StrokeBegin(2, stamp(128, cone(257), new Symmetry(Symmetry.Mode.MIRROR_X, 4, -4)));
+        byte[] frame = Codec.encodeC2S(largest, STATES);
+        assertTrue(frame.length < ProtocolV2.MAX_C2S_FRAME / 2, "a cone in " + frame.length + " bytes");
+        assertEquals(largest, Codec.decodeC2S(frame, STATES));
+        for (int radius = 33; radius <= 128; radius += 19) {
+            C2S begin = new C2S.StrokeBegin(radius, stamp(radius, cone(2 * radius + 1), Symmetry.NONE));
+            assertEquals(begin, roundTrip(begin), "radius " + radius);
+        }
+        byte[] noise = new byte[257 * 257];
+        new Random(5).nextBytes(noise);
+        ProtocolException tooLarge = assertThrows(ProtocolException.class,
+                () -> Codec.encodeC2S(new C2S.StrokeBegin(3, stamp(128, noise, Symmetry.NONE)), STATES));
+        assertEquals(ProtocolException.Reason.TOO_LARGE, tooLarge.reason());
+    }
+
+    /**
+     * A deflated image that is not exactly {@code side²} bytes is MALFORMED, and nothing larger than the image is ever
+     * inflated: data cut short, a corrupt byte, a stream that inflates short or long (a "bomb" of zeros many times the
+     * image included), bytes after the stream, no data at all; and an image whose side doesn't fit the radius, or is
+     * wider than 257.
+     */
+    @Test
+    void aBadDeflatedHeightmapIsMalformed() throws ProtocolException {
+        byte[] heights = cone(201);
+        byte[] frame = Codec.encodeC2S(new C2S.StrokeBegin(4, stamp(100, heights, Symmetry.NONE)), STATES);
+        byte[] data = HeightmapImages.deflate(heights, 201);
+        assertEquals(stamp(100, heights, Symmetry.NONE), ((C2S.StrokeBegin) Codec.decodeC2S(
+                withImage(frame, data, data), STATES)).spec(), "the splice itself changes nothing");
+        byte[] corrupt = data.clone();
+        corrupt[data.length / 2] ^= 0x5A;
+        byte[] trailing = Arrays.copyOf(data, data.length + 2);
+        byte[][] bad = {
+            Arrays.copyOf(data, data.length - 9),
+            Arrays.copyOf(data, data.length / 2),
+            corrupt,
+            HeightmapImages.deflate(new byte[201 * 200], 200),
+            HeightmapImages.deflate(new byte[202 * 202], 202),
+            HeightmapImages.deflate(new byte[2000 * 2000], 2000),
+            trailing,
+            new byte[0],
+            {1, 2, 3, 4},
+        };
+        for (int i = 0; i < bad.length; i++) {
+            assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(withImage(frame, data, bad[i])), "case " + i);
+        }
+        // A length past what a client frame holds, or past the frame's end, is MALFORMED too (not TOO_LARGE).
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(withImage(frame, data, data, ProtocolV2.MAX_C2S_FRAME + 1)));
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(withImage(frame, data, data, Integer.MAX_VALUE)));
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(withImage(frame, data, data, data.length + 500)));
+        // The side, two varint bytes before the length: 203 (radius 100 needs 201), then 259 (over the largest).
+        int sideAt = indexOf(frame, data) - varintLength(data.length) - 2;
+        assertEquals((byte) (0x80 | (201 & 0x7F)), frame[sideAt]);
+        byte[] wrongSide = withImage(frame, data, HeightmapImages.deflate(new byte[203 * 203], 203));
+        wrongSide[sideAt] = (byte) (0x80 | (203 & 0x7F));
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(wrongSide));
+        byte[] tooWide = withImage(frame, data, HeightmapImages.deflate(new byte[259 * 259], 259));
+        tooWide[sideAt] = (byte) (0x80 | (259 & 0x7F));
+        tooWide[sideAt + 1] = (byte) (259 >>> 7);
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(tooWide));
+    }
+
+    /** A radius-{@code radius} Heightmap brush with {@code heights}, 64 tall, raising. */
+    private static BrushSpec stamp(int radius, byte[] heights, Symmetry symmetry) {
+        return new BrushSpec(BrushTool.HEIGHTMAP, radius, 0.5f, Falloff.SPHERE, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0,
+                -3L, Box.of(new BlockPos(-100, -64, -100), new BlockPos(100, 300, 100)), symmetry, null, SculptMode.TERRAIN,
+                null, null, new HeightmapSpec(2 * radius + 1, heights, 64, false), null);
+    }
+
+    /** A round cone {@code side} wide: 255 at the centre, 0 at the edge. */
+    private static byte[] cone(int side) {
+        int r = side / 2;
+        byte[] heights = new byte[side * side];
+        for (int v = 0; v < side; v++) {
+            for (int u = 0; u < side; u++) {
+                double d = Math.sqrt((u - r) * (u - r) + (v - r) * (v - r)) / r;
+                heights[v * side + u] = (byte) Math.max(0, Math.round(255 * (1 - d)));
+            }
+        }
+        return heights;
+    }
+
+    /** {@code frame} with the deflated image {@code data} (and its varint length) replaced by {@code image}. */
+    private static byte[] withImage(byte[] frame, byte[] data, byte[] image) {
+        return withImage(frame, data, image, image.length);
+    }
+
+    /** {@link #withImage}, with {@code length} written as the image's length whatever it holds. */
+    private static byte[] withImage(byte[] frame, byte[] data, byte[] image, int length) {
+        int at = indexOf(frame, data);
+        int lengthAt = at - varintLength(data.length);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(frame, 0, lengthAt);
+        int n = length;
+        while ((n & ~0x7F) != 0) {
+            out.write((n & 0x7F) | 0x80);
+            n >>>= 7;
+        }
+        out.write(n);
+        out.write(image, 0, image.length);
+        out.write(frame, at + data.length, frame.length - at - data.length);
+        return out.toByteArray();
+    }
+
+    private static int varintLength(int value) {
+        int n = 1;
+        while ((value & ~0x7F) != 0) {
+            value >>>= 7;
+            n++;
+        }
+        return n;
+    }
+
+    /** Where {@code part} first lies in {@code frame}, or -1. */
+    private static int indexOf(byte[] frame, byte[] part) {
+        outer:
+        for (int i = 0; i + part.length <= frame.length; i++) {
+            for (int j = 0; j < part.length; j++) {
+                if (frame[i + j] != part[j]) continue outer;
+            }
+            return i;
+        }
+        return -1;
     }
 
     @Test
@@ -288,9 +481,9 @@ class ProtocolSixContractsTest {
         byte[] wrongSide = frame.clone();
         wrongSide[sideAt] = 5;
         assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(wrongSide));
-        byte[] hugeSide = frame.clone();
-        hugeSide[sideAt] = (byte) (HeightmapSpec.MAX_SIDE + 1);
-        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(hugeSide));
+        byte[] noSide = frame.clone();
+        noSide[sideAt] = 0;
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(noSide));
         byte[] biomeFrame = Codec.encodeC2S(new C2S.StrokeBegin(3, biome("minecraft:a")), STATES);
         // The id's last character, then the columns bool: "minecraft:a" becomes "minecraft:A".
         biomeFrame[biomeFrame.length - 2] = 'A';

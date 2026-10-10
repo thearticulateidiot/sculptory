@@ -26,9 +26,10 @@ import java.util.Objects;
  *       latest hit: the path coalesces to the latest position rather than lagging behind the cursor. With brush
  *       symmetry each dab costs its copies ({@link #setDabCost}) in both, as the server counts them.</li>
  *   <li><b>Restarts.</b> A {@code BrushSpec} is fixed per server stroke, so a settings change mid-press
- *       (radius, strength, Alt invert) ends the server stroke and begins another at most every
- *       {@value #RESTART_INTERVAL_MILLIS} ms; the path continues without a break. Each server stroke numbers
- *       its dabs from 0.</li>
+ *       (radius, strength, Alt invert) ends the server stroke and begins another, at most every
+ *       {@value #RESTART_INTERVAL_MILLIS} ms, once the in-flight window has room for a dab after what is still in flight
+ *       before it (as a fresh press's first dab waits); the path continues without a break. Each server stroke
+ *       numbers its dabs from 0.</li>
  * </ul>
  * The server stroke begins lazily, at the first dab, so a press in the sky begins nothing until the cursor
  * meets the terrain. A stroke the server rejects (or that could not begin) emits nothing more until the next
@@ -189,11 +190,12 @@ public final class StrokeController {
     }
 
     /**
-     * What one dab costs from now on (its copies, 1 to 4). The rate bucket holds at least one such dab, so a slow rate
-     * never stops the stroke.
+     * What one dab costs from now on: its copies (1 to 4), times its weight for a wide Heightmap stamp; at most the
+     * in-flight window ({@value #MAX_IN_FLIGHT}), so one such dab always fits when nothing is in flight. The rate bucket
+     * holds at least one such dab, so a slow rate never stops the stroke.
      */
     public void setDabCost(int dabCost) {
-        this.dabCost = Math.max(1, dabCost);
+        this.dabCost = Math.max(1, Math.min(MAX_IN_FLIGHT, dabCost));
         burst = Math.max(this.dabCost, Math.ceil(rate * BURST_SECONDS));
         tokens = Math.min(tokens, burst);
     }
@@ -379,7 +381,12 @@ public final class StrokeController {
         if (previous != null) {
             previous.end();
         }
-        begin(now);
+        // The next server stroke begins under the in-flight check a fresh press's first dab meets: now when the window
+        // has room for a dab after what is still in flight before it, else with the next dab that fits. A restart never
+        // begins one while earlier strokes' dabs fill the window (a wide stamp still being written).
+        if (MAX_IN_FLIGHT - host.inFlightBeforeStroke() >= dabCost) {
+            begin(now);
+        }
     }
 
     private boolean begin(long now) {

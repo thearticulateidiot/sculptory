@@ -73,7 +73,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
     /** Stone ground at y 96-99 over the area. */
-    private static void ground(Harness h, Box area) {
+    static void ground(Harness h, Box area) {
         BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = area.min().x(); x <= area.max().x(); x++) {
@@ -120,7 +120,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
      * the cells and the history name, undoes and checks every cell is back; {@code extra} runs after the build and after
      * the undo (true then).
      */
-    private static void buildAndUndo(TestContext context, Harness h, Box area, GeneratedSource source, OpLabel label,
+    static void buildAndUndo(TestContext context, Harness h, Box area, GeneratedSource source, OpLabel label,
                                      Consumer<Boolean> extra) {
         WorldSnapshot before = capture(h.world, area);
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
