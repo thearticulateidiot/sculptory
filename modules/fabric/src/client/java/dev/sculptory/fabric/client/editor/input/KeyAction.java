@@ -75,9 +75,8 @@ public enum KeyAction {
     // The global mask on every edit: on and off, keeping its rules.
     TOGGLE_MASK("toggle_mask", Group.TOOLS, false, null, "ctrl+m"),
     // Path points: a new point right after the selected one, following the cursor until a click places it (Esc drops
-    // it). Meant as E while a path point is selected (E stays the inventory key otherwise); the reserved-key rule doesn't
-    // allow that context yet (a plain E would never fire), so the default is I until it does. Rebindable.
-    EXTRUDE_POINT("extrude_point", Group.TOOLS, false, EditorAction.EXTRUDE_POINT, "i");
+    // it). E while a path point is selected; otherwise E stays the inventory key (sharesReservedKey). Rebindable.
+    EXTRUDE_POINT("extrude_point", Group.TOOLS, false, EditorAction.EXTRUDE_POINT, "e");
 
     /** Where an action is listed in the help sheet and the Keys window. */
     public enum Group { MOVEMENT, TOOLS, SELECTION, HISTORY, CLIPBOARD, WINDOWS }
@@ -120,11 +119,21 @@ public enum KeyAction {
      * True when holding the key must not fire the action again: each undo or redo is a server edit, so the
      * operating system's key repeat would stack up requests, a held "aim at water and lava" would flicker on and
      * off, and the symmetry centre key toggles (a repeat would set and clear the centre by turns), as the mask key
-     * does; a held Jump would teleport again and again. Other actions (nudge) repeat while held.
+     * does; a held Jump would teleport again and again, and a held insert-point key would add a point each repeat.
+     * Other actions (nudge) repeat while held.
      */
     public boolean ignoresRepeat() {
         return this == UNDO || this == REDO || this == AIM_AT_FLUIDS || this == SET_SYMMETRY_CENTRE || this == JUMP
-                || this == JUMP_THROUGH || this == TOGGLE_MASK;
+                || this == JUMP_THROUGH || this == TOGGLE_MASK || this == EXTRUDE_POINT;
+    }
+
+    /**
+     * True when the action may sit on one of the player's reserved vanilla keys ({@link EditorKeymap}): it fires only when
+     * the active tool takes it, and otherwise the key does what it always does. The insert-point key is E while a path
+     * point is selected and the inventory key the rest of the time.
+     */
+    public boolean sharesReservedKey() {
+        return this == EXTRUDE_POINT;
     }
 
     /** The tool action this key offers to the active tool first, if any. */

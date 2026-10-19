@@ -28,16 +28,16 @@ One drag is one undo step, named **Extrude** or **Carve** in the History window.
 
 1. Set **Direction** to **Along a path**.
 2. Aim at the face and click: it stays lit, **locked**, while you work on it.
-3. Put [points](#points) for the path. It starts at the middle of the face and runs through the points, **Straight**, as a **Curve**, or **Hanging** with a **Sag**, as Generate's [Line](generate.md#draw-a-line) does.
+3. Click blocks for the path, or [points in the air](generate.md#points-in-the-air). It starts at the middle of the face and runs through the points you click, **Straight**, as a **Curve**, or **Hanging** with a **Sag**, as Generate's [Line](generate.md#draw-a-line) does. Edit the points as [path points](#points): select, drag, insert, remove.
 4. The face follows the path, turning with it, and the ghost shows the result. A floor or ceiling turns as little as it can. A wall stays upright and only turns with the path; tick **Follow slope** to tilt it as the path climbs.
-5. Press `Enter` to build. `Esc` clears the points; a second `Esc` lets go of the face.
+5. Press `Enter` to build. `Esc` deselects, then clears the points; one more `Esc` lets go of the face.
 
 The build is one undo step named **Extrude path**. Stairs and other blocks that face a way turn with the path to the nearest quarter turn.
 
 ## Extrude to a point
 
 1. Set **Direction** to **To a point**, aim at the face and click to lock it.
-2. Put the tip, a [point](#points), where the spire should end. It must be on the face's open side. A tip off to one side makes a leaning spire.
+2. Click the block where the tip should be, or the marker in the sky ([points in the air](generate.md#points-in-the-air)). It must be on the face's open side. A tip off to one side makes a leaning spire. Click elsewhere to move the tip, or drag its gizmo's arrows to move it along one axis.
 3. The face narrows layer by layer to the tip: a square face makes a pyramid, a round one a cone. **Taper** sets the sides: **Straight**, **Bulge** (rounded, like a dome) or **Pinch** (curving in, like a spire). Each layer keeps the face's own blocks.
 4. Press `Enter` to build: one undo step named **Taper**.
 
@@ -45,9 +45,9 @@ Blocks with contents in the face, such as chests and signs, can't be carried thi
 
 ## Points
 
-Once the face is locked, a click puts a point on the block you aim at; aimed at open sky, it goes on the pale blue **marker** floating ahead of you (`Alt+Scroll` moves it nearer or farther). Points work the same way as for Generate's [Line](generate.md#points): click a point to select it, drag it to move it (dragged into the sky it keeps its distance from you; `Esc` while dragging puts it back), and `Backspace` or `Delete` removes the selected point, or the last one.
+Once the face is locked, the path's points and the tip are [path points](generate.md#path-points), as in Generate: click to add, click to select, drag the gizmo's arrows, squares or centre to move (never onto the block under the cursor), click the path or press `E` to insert, `Backspace` to remove. Over open sky a click puts a point at the [marker](generate.md#points-in-the-air), `Alt+Scroll` sets how far ahead it floats.
 
-Points in the sky build from the ground straight up: a wall face carried straight up stays upright, a floor becomes a pillar, and with **Follow slope** a wall tilts flat as it climbs.
+This builds paths from the ground straight up into the sky: a wall face carried straight up stays upright, a floor becomes a pillar, and with **Follow slope** a wall tilts flat as it climbs.
 
 ## Settings
 

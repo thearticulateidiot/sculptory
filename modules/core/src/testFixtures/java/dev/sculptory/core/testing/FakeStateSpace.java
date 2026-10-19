@@ -33,8 +33,9 @@ import java.util.function.ToIntFunction;
  * tube_coral_fan[waterlogged] (aquatic, waterlogged by default), lily_pad (goes on water), sugar_cane[age 0-15] (a
  * column of itself), lava[level 0-15] and bubble_column (holds water, not a plant); for the upside-down flip torch,
  * lantern[hanging], hopper[facing] (down and the sides), oak_door[facing,half] (double-tall) and the modded
- * {@code testmod:gizmo[facing,spin]}, whose {@code spin} no vanilla block has; and red_bed[facing,occupied,part].
- * Tags: {@code minecraft:logs}, {@code minecraft:dirt}, {@code minecraft:sand}, {@code minecraft:stairs}.
+ * {@code testmod:gizmo[facing,spin]}, whose {@code spin} no vanilla block has; red_bed[facing,occupied,part]; and
+ * oak_leaves (vegetation). Tags: {@code minecraft:logs}, {@code minecraft:leaves}, {@code minecraft:dirt},
+ * {@code minecraft:sand}, {@code minecraft:stairs}.
  *
  * <p>Rotation turns horizontal facings clockwise (north, east, south, west) and swaps log axis x/z on odd
  * turns. Mirroring swaps east/west ({@link Mirror#X}) or north/south ({@link Mirror#Z}) facings and the
@@ -149,6 +150,8 @@ public final class FakeStateSpace implements StateSpace {
         // Two-cell blocks under a free rotation (appended): a bed, its head one cell along its facing from its foot.
         define("minecraft:red_bed", s -> 0, Set.of(), new Property("facing", HORIZONTAL),
                 new Property("occupied", List.of("false", "true")), new Property("part", List.of("foot", "head")));
+        // A tree (appended): leaves, vegetation that is neither replaceable nor terrain-solid, beside oak_log.
+        define("minecraft:oak_leaves", s -> StateFlags.VEGETATION, Set.of("minecraft:leaves"));
         flags = flagList.stream().mapToInt(Integer::intValue).toArray();
     }
 

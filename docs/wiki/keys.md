@@ -38,6 +38,7 @@ Every editor key can be changed, and `F1` always shows the keys as you have them
 | Jump onto a block, through a wall | `J`, `Shift+J` |
 | Nudge selection or ghost | Arrow keys, `PgUp`, `PgDn` (`Shift`: 10 blocks) |
 | Remove a path node or line point | `Backspace` |
+| Add a path point after the selected one (with no point selected: the inventory) | `E` |
 | Hide or show windows | `Tab` |
 | Key sheet, find a command | `F1`, `Ctrl+K` |
 | Keyboard into the next window | `F6` (`Shift`: the one before) |

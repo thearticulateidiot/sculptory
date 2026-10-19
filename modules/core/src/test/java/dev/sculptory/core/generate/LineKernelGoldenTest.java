@@ -18,7 +18,8 @@ import org.junit.jupiter.api.Test;
 /**
  * The Line's square profile on sloped, diagonal and curved paths, pinned by a hash of their cells: the frame the square
  * is laid in comes from {@code PathFrame.square} since the path extrusion batch, and must lay exactly the cells the
- * Line laid before (the hash was taken from the Line as it was at protocol 6's contracts).
+ * Line laid before (the hash was taken from the Line as it was at protocol 6's contracts, and taken again when the
+ * Curve became centripetal: only the "curve" path's cells changed then).
  */
 class LineKernelGoldenTest {
     private final FakeStateSpace states = new FakeStateSpace();
@@ -52,5 +53,5 @@ class LineKernelGoldenTest {
         assertEquals(GOLDEN, hex.toString());
     }
 
-    private static final String GOLDEN = "adc87d85aaa2b7e7aa42f5373b6901511a4a44a6b1993ed6a7e96a7f2fbd11cb";
+    private static final String GOLDEN = "ab5784729ca71ccd48776e601c654f6fea553ae41f1ab193287b81f7626a60f5";
 }

@@ -343,7 +343,7 @@ public final class ShapeBrushTool implements Tool {
                 lineClip = clip;
                 line.changed();
             }
-            line.frame(c, this::lineSetup);
+            line.frame(c, f, this::lineSetup, hit -> linePoint(c, hit));
             return;
         }
         line.pollBuild(c);
@@ -362,6 +362,8 @@ public final class ShapeBrushTool implements Tool {
         if (e.amount() == 0) {
             return false;
         }
+        // A line point dragged freely: Alt+Scroll pushes it out or pulls it in (the line has no sky marker to move).
+        if (lineMode(c.settings()) && line.dragging() && Modifiers.alt(e.modifiers()) && line.onScroll(c, e)) return true;
         KeyAction action = services.scrollAction(e.modifiers()).orElse(null);
         int direction = e.amount() > 0 ? 1 : -1;
         SettingsValues values = c.settings();
@@ -387,7 +389,7 @@ public final class ShapeBrushTool implements Tool {
     public boolean onAction(ToolContext c, EditorAction a) {
         if (lineMode(c.settings()) && !controller.pressed()) {
             switch (a) {
-                case CANCEL, ERASE_SELECTION, REMOVE_NODE, COMMIT -> {
+                case CANCEL, ERASE_SELECTION, REMOVE_NODE, COMMIT, EXTRUDE_POINT -> {
                     return line.onAction(c, a, this::lineSetup);
                 }
                 default -> {

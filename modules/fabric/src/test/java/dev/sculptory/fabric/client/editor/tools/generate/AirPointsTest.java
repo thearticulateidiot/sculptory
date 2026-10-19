@@ -198,8 +198,9 @@ class AirPointsTest {
         air.frame(sky(up), up, List.of());
         assertEquals(top, air.marker(), "shown where it goes");
         air.beginDrag(up, new BlockPos(0, world.topYExclusive() - 10, 0));
-        assertEquals(world.topYExclusive() - 1, air.dragTo(sky(up), new Ray(0.5, world.topYExclusive() - 5.5, 0.5, 0, 1,
-                0), ON_BLOCK).y());
+        Ray higher = new Ray(0.5, world.topYExclusive() - 5.5, 0.5, 0, 1, 0);
+        assertEquals(world.topYExclusive() - 1, air.withinHeight(AirPoints.cellAt(higher, air.dragDistance())).y(),
+                "a dragged point stays in the build height too");
         Ray down = new Ray(0.5, world.bottomY() + 3.5, 0.5, 0, -1, 0);
         air.endDrag();
         assertEquals(world.bottomY(), air.place(sky(down), down, ON_BLOCK).y(), "nor below its floor");
@@ -213,14 +214,12 @@ class AirPointsTest {
         assertTrue(air.dragging());
         assertEquals(10, air.dragDistance(), 1e-9, "the cell's centre is ten blocks out");
         Ray up = look(1, 1, 0); // looking up 45 degrees: the point rises, as far away as it was
-        BlockPos lifted = air.dragTo(sky(up), up, ON_BLOCK);
-        assertEquals(new BlockPos(7, 87, 0), lifted);
-        assertEquals(new BlockPos(3, GROUND, 4), air.dragTo(top(3, 4), up, ON_BLOCK), "onto a block: on it");
+        assertEquals(new BlockPos(7, 87, 0), AirPoints.cellAt(up, air.dragDistance()));
         assertTrue(air.scroll(new ScrollEvent(1, ALT | Modifiers.SHIFT)));
         assertEquals(14, air.dragDistance(), 1e-9, "Alt+Scroll moves the dragged point, not the marker");
         assertEquals(16, air.distance());
         assertEquals(14, air.shownDistance());
-        assertEquals(new BlockPos(14, 80, 0), air.dragTo(sky(east), east, ON_BLOCK));
+        assertEquals(new BlockPos(14, 80, 0), AirPoints.cellAt(east, air.dragDistance()));
         air.endDrag();
         assertFalse(air.dragging());
         assertEquals(16, air.shownDistance());
@@ -294,11 +293,11 @@ class AirPointsTest {
         assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
         assertEquals(air, rig.tool.line().points().node(0), "Esc puts it back");
         assertFalse(rig.tool.line().dragging());
-        // Dragged onto a block, it lands on the block.
+        // Dragged over a block, it never snaps onto it: it stays ten blocks out, straight below the camera.
         rig.press(sky(east), east);
-        rig.drag(top(4, 4), look(0, -1, 0));
-        rig.release(top(4, 4), look(0, -1, 0));
-        assertEquals(new BlockPos(4, GROUND, 4), rig.tool.line().points().node(0));
+        rig.drag(top(0, 0), look(0, -1, 0));
+        rig.release(top(0, 0), look(0, -1, 0));
+        assertEquals(new BlockPos(0, 70, 0), rig.tool.line().points().node(0));
     }
 
     // ---------------------------------------------------------------- Road, Sweep and Stamp
@@ -348,26 +347,30 @@ class AirPointsTest {
         rig.drag(sky(up), up);
         rig.drag(top(8, 0), look(8, -17, 0));
         rig.release(top(8, 0), look(8, -17, 0));
-        assertEquals(new BlockPos(8, GROUND, 0), rig.tool.path().node(1));
+        // It keeps its distance from the camera (no snap onto the ground): one cell over the grass there.
+        assertEquals(new BlockPos(8, GROUND + 1, 0), rig.tool.path().node(1));
         assertEquals(RoadKernel.HeightMode.FOLLOW_TERRAIN, rig.values().get(GenerateSettings.HEIGHT),
                 "passing the sky on its way to the ground turns nothing");
         rig.press(top(8, 0), look(8, -17, 0));
         rig.drag(sky(up), up);
         assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
-        assertEquals(new BlockPos(8, GROUND, 0), rig.tool.path().node(1), "Esc puts it back");
+        assertEquals(new BlockPos(8, GROUND + 1, 0), rig.tool.path().node(1), "Esc puts it back");
         assertEquals(RoadKernel.HeightMode.FOLLOW_TERRAIN, rig.values().get(GenerateSettings.HEIGHT));
         assertTrue(rig.noticeKeys().isEmpty());
         // A node added in the air turns it Straight; Esc clearing the road puts Follow terrain back.
         Ray east = look(1, 0, 0);
         rig.click(sky(east), east);
         assertEquals(RoadKernel.HeightMode.STRAIGHT, rig.values().get(GenerateSettings.HEIGHT));
-        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc deselects the new node");
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "then clears the road");
         assertTrue(rig.tool.path().isEmpty());
         assertEquals(RoadKernel.HeightMode.FOLLOW_TERRAIN, rig.values().get(GenerateSettings.HEIGHT));
         // Straight set by hand stays when the road is cleared.
         rig.set(GenerateSettings.HEIGHT, RoadKernel.HeightMode.STRAIGHT);
         rig.click(top(0, 0), look(0, -1, 0));
         assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
+        assertTrue(rig.tool.path().isEmpty());
         assertEquals(RoadKernel.HeightMode.STRAIGHT, rig.values().get(GenerateSettings.HEIGHT));
     }
 
@@ -610,6 +613,7 @@ class AirPointsTest {
 
     private static final class RecordingDraw implements WorldDraw {
         final List<Box> boxes = new ArrayList<>();
+        /** The path-coloured lines (the drawn path; the points draw their cubes in their own colours). */
         final List<double[]> lines = new ArrayList<>();
 
         @Override
@@ -622,7 +626,7 @@ class AirPointsTest {
 
         @Override
         public void line(double x1, double y1, double z1, double x2, double y2, double z2, int argb) {
-            lines.add(new double[] {x1, y1, z1, x2, y2, z2});
+            if (argb == GenerateTool.PATH_COLOUR) lines.add(new double[] {x1, y1, z1, x2, y2, z2});
         }
 
         @Override

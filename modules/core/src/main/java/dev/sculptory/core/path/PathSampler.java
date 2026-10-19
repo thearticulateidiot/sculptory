@@ -13,7 +13,8 @@ import java.util.Objects;
  * double click); a line whose points are all one block is that block's centre alone. The kinds:
  * <ul>
  *   <li>{@link PathKind#STRAIGHT}: straight segments from point to point.</li>
- *   <li>{@link PathKind#CURVE}: a uniform 3D Catmull-Rom spline through every point, as the road generator's. With
+ *   <li>{@link PathKind#CURVE}: a centripetal 3D Catmull-Rom spline through every point ({@link CatmullRom}, the road
+ *   generator's too). With
  *   four points or more and the last equal to the first it closes into a loop (smooth where it closes).</li>
  *   <li>{@link PathKind#HANGING}: per span, a catenary that sags {@code sag} blocks below the straight chord at the
  *   span's middle. The drop is vertical and follows the catenary of the span's horizontal length (a span straight up
@@ -157,6 +158,8 @@ public final class PathSampler {
         private final boolean closed;
         private final double sag;
         private int i0, i1, i2, i3;
+        /** Curve: the four control points of the segment selected. */
+        private final double[] c0 = new double[3], c1 = new double[3], c2 = new double[3], c3 = new double[3];
         /** Hanging: the span's catenary half-parameter (0: its parabola), and cosh of it. */
         private double u, coshU;
         private boolean sags;
@@ -179,6 +182,10 @@ public final class PathSampler {
                 i1 = control(s);
                 i2 = control(s + 1);
                 i3 = control(s + 2);
+                load(i0, c0);
+                load(i1, c1);
+                load(i2, c2);
+                load(i3, c3);
             }
             if (kind == PathKind.HANGING) {
                 double span = StrictMath.sqrt(sq(px[i2] - px[i1]) + sq(pz[i2] - pz[i1]));
@@ -186,6 +193,12 @@ public final class PathSampler {
                 u = sags ? catenaryU(span, sag) : 0;
                 coshU = StrictMath.cosh(u);
             }
+        }
+
+        private void load(int index, double[] out) {
+            out[0] = px[index];
+            out[1] = py[index];
+            out[2] = pz[index];
         }
 
         private int control(int index) {
@@ -219,11 +232,7 @@ public final class PathSampler {
         void at(double t, double[] out) {
             switch (kind) {
                 case STRAIGHT -> lerp(t, out);
-                case CURVE -> {
-                    out[0] = catmullRom(px[i0], px[i1], px[i2], px[i3], t);
-                    out[1] = catmullRom(py[i0], py[i1], py[i2], py[i3], t);
-                    out[2] = catmullRom(pz[i0], pz[i1], pz[i2], pz[i3], t);
-                }
+                case CURVE -> CatmullRom.at(c0, c1, c2, c3, t, out);
                 case HANGING -> {
                     lerp(t, out);
                     if (sags) out[1] -= drop(t);
@@ -271,11 +280,6 @@ public final class PathSampler {
     private static double sagRatio(double u) {
         if (u < PARABOLA_BELOW) return u / 4;
         return (StrictMath.cosh(u) - 1) / (2 * u);
-    }
-
-    private static double catmullRom(double p0, double p1, double p2, double p3, double t) {
-        double t2 = t * t, t3 = t2 * t;
-        return 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t3);
     }
 
     private static double sq(double v) {

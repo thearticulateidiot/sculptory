@@ -39,6 +39,7 @@ import dev.sculptory.fabric.client.editor.tool.ToolContext;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
+import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.ClipboardCache;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
@@ -83,6 +84,27 @@ class GenerateSweepStampTest {
         rig.world.fill(box, stone);
         rig.view.setSelection(box);
         return box;
+    }
+
+    @Test
+    void extendToGroundStandsASweepThroughTheAirOnTheTerrain() {
+        Rig rig = new Rig(GenerateSettings.Kind.SWEEP);
+        profile(rig);
+        rig.click(on(0, GROUND + 6, 0));
+        rig.click(on(8, GROUND + 6, 0));
+        rig.frame(on(8, GROUND + 6, 0));
+        GeneratedSource alone = rig.tool.sweep().preview().orElseThrow().source();
+        rig.set(GenerateSettings.SWEEP_EXTEND_TO_GROUND, true);
+        rig.frame(on(8, GROUND + 6, 0));
+        GeneratedSource extended = rig.tool.sweep().preview().orElseThrow().source();
+        assertTrue(extended.cells() > alone.cells());
+        alone.forEach((x, y, z, state) -> {
+            assertEquals(state, extended.get(x, y, z), "the sweep's own cells stay");
+            if (alone.contains(x, y - 1, z)) return;
+            for (int below = GROUND + 1; below < y; below++) {
+                assertEquals(state, extended.get(x, below, z), "carried down to the ground at " + x + "," + below + "," + z);
+            }
+        });
     }
 
     @Test
@@ -207,7 +229,8 @@ class GenerateSweepStampTest {
                 "no upload: the server pastes its own copy");
         rig.mock.finishJobs();
         assertEquals("Stamp", rig.mock.history().undoLabel(), "one undo step, named Stamp");
-        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc deselects the last point");
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "then clears them");
         assertTrue(rig.tool.stamp().points().isEmpty());
     }
 
@@ -227,6 +250,28 @@ class GenerateSweepStampTest {
     }
 
     @Test
+    void aClickOnTheStampPathInsertsACopyOnTheBlockUnderIt() {
+        Rig rig = new Rig(GenerateSettings.Kind.STAMP);
+        clipboard(rig);
+        rig.click(on(0, GROUND, 0));
+        rig.click(on(10, GROUND, 0));
+        rig.tool.onAction(rig.view, EditorAction.CANCEL); // deselect: no gizmo in the way
+        rig.services.projector = (x, y, z, out) -> {
+            out[0] = 20 * x + 8 * z;
+            out[1] = -20 * y + 8 * z;
+            return true;
+        };
+        rig.services.eye = new double[] {5.5, GROUND + 20.5, 20.5};
+        // The path is drawn over the blocks' tops (y GROUND + 1): aim at it there, a little past halfway.
+        double sx = 20 * 6.5 + 8 * 0.5, sy = -20 * (GROUND + 1) + 8 * 0.5;
+        WorldCursor far = on(6, GROUND - 6, 3);
+        rig.tool.frame(rig.view, new FrameInfo(rig.now += 16 * MS, 0f, sx, sy, far));
+        rig.tool.onPointer(rig.view, new PointerEvent(PointerEvent.Kind.PRESS, PointerEvent.LEFT, sx, sy, 0, far));
+        assertEquals(List.of(new BlockPos(0, GROUND, 0), new BlockPos(6, GROUND, 0), new BlockPos(10, GROUND, 0)),
+                rig.tool.stamp().points().nodes(), "on the block, as a clicked copy is, not a block over it");
+    }
+
+    @Test
     void draggingAPointNeverGrowsTheBakesHeld() {
         Rig rig = new Rig(GenerateSettings.Kind.STAMP);
         clipboard(rig);
@@ -236,8 +281,11 @@ class GenerateSweepStampTest {
         StampDraft stamp = rig.tool.stamp();
         int held = stamp.liveBakes();
         assertTrue(held > 0 && held < curve.length, "a bake per turned copy: " + held);
+        // Grabbed from straight above, 17 blocks up, and dragged about at that distance.
+        rig.services.ray = new Ray(0.5, GROUND + 17.5, 0.5, 0, -1, 0);
         rig.press(on(0, GROUND, 0));
         for (int k = 1; k <= 12; k++) {
+            rig.services.ray = new Ray(0.5, GROUND + 17.5, 0.5, -k, -17, k % 4);
             rig.drag(on(-k, GROUND, k % 4));
             rig.frame(on(-k, GROUND, k % 4));
             assertTrue(stamp.liveBakes() <= held, "move " + k + ": " + stamp.liveBakes() + " bakes held");
@@ -461,6 +509,24 @@ class GenerateSweepStampTest {
         final EditorKeymap keymap = EditorKeymap.defaults();
         List<GhostPlacement> shown = List.of();
         int released;
+        Ray ray;
+        dev.sculptory.fabric.client.editor.world.ScreenProjector projector;
+        double[] eye;
+
+        @Override
+        public Optional<Ray> cursorRay() {
+            return Optional.ofNullable(ray);
+        }
+
+        @Override
+        public Optional<dev.sculptory.fabric.client.editor.world.ScreenProjector> projector() {
+            return Optional.ofNullable(projector);
+        }
+
+        @Override
+        public Optional<double[]> eye() {
+            return Optional.ofNullable(eye);
+        }
 
         @Override
         public void showGhosts(List<GhostPlacement> placements) {

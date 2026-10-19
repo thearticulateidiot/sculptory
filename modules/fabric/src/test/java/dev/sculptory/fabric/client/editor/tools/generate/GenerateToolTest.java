@@ -54,6 +54,7 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.EditorToolSet;
 import dev.sculptory.fabric.client.editor.tools.PlaceholderTool;
+import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Permissions;
@@ -112,6 +113,58 @@ class GenerateToolTest {
     // ---------------------------------------------------------------- nodes
 
     @Test
+    void aClickOnTheCentreLineInsertsANodeOnTheGroundNotOnTheLineDrawnOverIt() {
+        Rig rig = new Rig();
+        rig.click(top(0, 0));
+        rig.click(top(10, 0));
+        rig.frame(top(10, 0));
+        assertTrue(rig.tool.preview().isPresent());
+        // An oblique view: every axis shows as a line of its own.
+        rig.services.projector = (x, y, z, out) -> {
+            out[0] = 20 * x + 8 * z;
+            out[1] = -20 * y + 8 * z;
+            return true;
+        };
+        rig.services.eye = new double[] {5.5, GROUND + 20.5, 20.5};
+        rig.tool.onAction(rig.view, EditorAction.CANCEL); // nothing selected, so no gizmo is in the way
+        // The centre line is drawn on the ground, 1.05 over the nodes' blocks: aim at it halfway along.
+        double sx = 20 * 6.5 + 8 * 0.5, sy = -20 * (GROUND + 1.05) + 8 * 0.5;
+        WorldCursor ground = top(6, 3);
+        rig.tool.frame(rig.view, new FrameInfo(rig.now += 16 * MS, 0f, sx, sy, ground));
+        rig.tool.onPointer(rig.view, new PointerEvent(PointerEvent.Kind.PRESS, PointerEvent.LEFT, sx, sy, 0, ground));
+        assertEquals(List.of(new BlockPos(0, GROUND, 0), new BlockPos(6, GROUND, 0), new BlockPos(10, GROUND, 0)),
+                rig.tool.path().nodes(), "on the ground block, as a clicked node is");
+        assertEquals(1, rig.tool.path().selected());
+        assertEquals(RoadKernel.HeightMode.FOLLOW_TERRAIN, rig.values().get(GenerateSettings.HEIGHT),
+                "a node on the ground leaves the Height as it is");
+    }
+
+    @Test
+    void useStairsAndSlabsTurnsAStraightRoadsStepsIntoStairsUpTheClimb() {
+        Rig rig = new Rig();
+        rig.set(GenerateSettings.HEIGHT, RoadKernel.HeightMode.STRAIGHT);
+        rig.set(GenerateSettings.BLOCK, BlockDescriptor.parse("minecraft:stone_bricks"));
+        rig.set(GenerateSettings.PATH_STAIRS_AND_SLABS, true);
+        rig.click(top(0, 0));
+        rig.click(new WorldCursor(new BlockPos(12, GROUND + 6, 0), WorldCursor.Face.UP, 12.5, GROUND + 7, 0.5, false));
+        rig.frame(top(12, 0));
+        GeneratedSource road = rig.tool.preview().orElseThrow().source();
+        int stairs = states.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
+        int[] count = {0};
+        road.forEach((x, y, z, state) -> {
+            if (state == stairs) count[0]++;
+        });
+        assertTrue(count[0] >= 5 * 3, "a stair across the road's width at each step up: " + count[0]);
+        assertTrue(rig.noticeKeys().isEmpty());
+        // A block without stairs or slabs: full blocks, and a toast says why, once.
+        rig.set(GenerateSettings.BLOCK, BlockDescriptor.parse("minecraft:stone"));
+        rig.frame(top(12, 0));
+        rig.frame(top(12, 0));
+        assertEquals(List.of(GenerateTool.NO_STEPS), rig.noticeKeys());
+        rig.tool.preview().orElseThrow().source().forEach((x, y, z, state) -> assertTrue(state != stairs));
+    }
+
+    @Test
     void clicksAddNodesAndAClickOnANodeSelectsIt() {
         Rig rig = new Rig();
         rig.click(top(0, 0));
@@ -120,7 +173,7 @@ class GenerateToolTest {
         assertTrue(rig.tool.preview().isEmpty(), "one node shows just a marker");
         rig.click(top(6, 0));
         assertEquals(2, rig.tool.path().size());
-        assertEquals(-1, rig.tool.path().selected(), "a new node is not selected");
+        assertEquals(1, rig.tool.path().selected(), "the new end node is selected");
         rig.frame(top(6, 0));
         GenerateTool.Built built = rig.tool.preview().orElseThrow();
         assertEquals(7 * 3, built.cells(), "a three-wide road over seven columns");
@@ -143,12 +196,17 @@ class GenerateToolTest {
         rig.click(top(0, 0));
         rig.click(top(6, 0));
         rig.frame(top(6, 0));
+        // Grabbed from straight above, 17 blocks up: it keeps that distance as the cursor moves.
+        rig.services.ray = new Ray(6.5, GROUND + 17.5, 0.5, 0, -1, 0);
         rig.press(top(6, 0));
+        rig.services.ray = new Ray(6.5, GROUND + 17.5, 0.5, 0, -17, 2);
         rig.drag(top(6, 2));
         assertEquals(new BlockPos(6, GROUND, 2), rig.tool.path().node(1), "the node follows the drag");
         assertTrue(rig.ctx.pointerCapture(), "captured while dragging");
+        rig.services.ray = new Ray(6.5, GROUND + 17.5, 0.5, 0, -17, 3);
         rig.release(top(6, 3));
         assertEquals(new BlockPos(6, GROUND, 3), rig.tool.path().node(1));
+        rig.services.ray = null;
         assertFalse(rig.ctx.pointerCapture());
         rig.frame(top(6, 3));
         assertTrue(rig.tool.preview().orElseThrow().source().contains(6, GROUND, 3), "the preview followed");
@@ -159,8 +217,10 @@ class GenerateToolTest {
         assertEquals(0, rig.tool.path().selected());
         assertTrue(rig.tool.onAction(rig.view, EditorAction.ERASE_SELECTION), "Delete removes the selected node");
         assertEquals(List.of(new BlockPos(6, GROUND, 3), new BlockPos(12, GROUND, 3)), rig.tool.path().nodes());
-        assertTrue(rig.tool.onAction(rig.view, EditorAction.REMOVE_NODE), "Backspace removes the last one");
-        assertEquals(List.of(new BlockPos(6, GROUND, 3)), rig.tool.path().nodes());
+        assertEquals(0, rig.tool.path().selected(), "the new first node is selected");
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.REMOVE_NODE), "Backspace removes the selected one");
+        assertEquals(List.of(new BlockPos(12, GROUND, 3)), rig.tool.path().nodes());
+        assertEquals(0, rig.tool.path().selected(), "the one left is selected");
         rig.frame(top(6, 3));
         assertTrue(rig.tool.preview().isEmpty(), "one node: no preview");
         assertEquals(List.of(), rig.services.shown, "the ghost is gone");
@@ -194,7 +254,9 @@ class GenerateToolTest {
         rig.click(top(6, 0));
         rig.frame(top(6, 0));
         assertTrue(rig.tool.previewRunning());
-        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc drops the preview being made");
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc deselects the new end node first");
+        assertTrue(rig.tool.previewRunning());
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "then drops the preview being made");
         assertFalse(rig.tool.previewRunning());
         assertEquals(2, rig.tool.path().size(), "the nodes stay");
         rig.services.runPending();
@@ -580,10 +642,12 @@ class GenerateToolTest {
         assertTrue(hints.contains(new KeyHint("Delete/Backspace", "sculptory.hint.generate.remove_node")), hints.toString());
         assertTrue(hints.contains(new KeyHint("Enter", "sculptory.hint.generate.build_path", List.of("15"))), hints.toString());
         assertTrue(hints.contains(new KeyHint("Esc", "sculptory.hint.generate.clear")));
+        rig.services.ray = new Ray(4.5, GROUND + 17.5, 0.5, 0, -1, 0);
         rig.press(top(4, 0));
         rig.drag(top(5, 0));
         assertEquals(List.of(new KeyHint("Esc", "sculptory.hint.cancel_drag"),
-                new KeyHint("Alt+Scroll", AirPoints.HINT, List.of("16"))), rig.tool.hints(rig.view));
+                new KeyHint("Alt+Scroll", AirPoints.HINT, List.of("17"))), rig.tool.hints(rig.view),
+                "the dragged node's distance");
         rig.release(top(5, 0));
     }
 
@@ -597,8 +661,10 @@ class GenerateToolTest {
         rig.release(top(6, 0));
         RecordingDraw draw = new RecordingDraw();
         rig.tool.renderWorld(rig.view, draw);
-        assertTrue(draw.boxes.contains(Box.of(new BlockPos(0, GROUND, 0))) && draw.boxes.contains(Box.of(new BlockPos(6, GROUND, 0))));
-        assertEquals(List.of(Box.of(new BlockPos(6, GROUND, 0))), draw.fills, "the selected node is filled");
+        assertEquals(List.of(Box.of(new BlockPos(0, GROUND, 0)), Box.of(new BlockPos(6, GROUND, 0))), draw.fills,
+                "each node is a translucent cube");
+        assertTrue(draw.lines.stream().anyMatch(line -> line.color() == GenerateTool.SELECTED_COLOUR),
+                "the selected one in its own colour");
         assertTrue(draw.lines.size() >= 10, "the spline is a polyline on the terrain: " + draw.lines.size());
         List<RecordingDraw.Line> centre = draw.lines.stream().filter(line -> line.color() == GenerateTool.PATH_COLOUR
                 && line.y1() == GROUND + 1.05).toList();
@@ -672,7 +738,7 @@ class GenerateToolTest {
                 "sculptory.key.tool_11", "sculptory.key.remove_node", GenerateTool.OP_PATH, GenerateTool.OP_ROOF,
                 GenerateTool.NEEDS_NODES, GenerateTool.NEEDS_SELECTION, GenerateTool.UNLOADED, GenerateTool.NOTHING,
                 GenerateTool.SENT_PATH, GenerateTool.SENT_ROOF, "sculptory.hint.generate.add_node",
-                "sculptory.hint.generate.add_or_select", "sculptory.hint.generate.move_node",
+                "sculptory.hint.generate.add_or_select", "sculptory.hint.points.gizmo",
                 "sculptory.hint.generate.remove_node", "sculptory.hint.generate.build_path",
                 "sculptory.hint.generate.build_roof", "sculptory.hint.generate.width", "sculptory.hint.generate.clear",
                 "sculptory.hint.generate.unloaded", "sculptory.hint.generate.too_large",
@@ -883,6 +949,26 @@ class GenerateToolTest {
         Runnable pendingConfirmation;
         boolean runAtOnce = true;
         final List<Runnable> pending = new ArrayList<>();
+        /** The cursor ray (none by default: picks go by the clicked column and nothing drags). */
+        Ray ray;
+        /** World to screen and the camera (none by default: no gizmo, no drawn path to hover). */
+        dev.sculptory.fabric.client.editor.world.ScreenProjector projector;
+        double[] eye;
+
+        @Override
+        public Optional<dev.sculptory.fabric.client.editor.world.ScreenProjector> projector() {
+            return Optional.ofNullable(projector);
+        }
+
+        @Override
+        public Optional<double[]> eye() {
+            return Optional.ofNullable(eye);
+        }
+
+        @Override
+        public Optional<Ray> cursorRay() {
+            return Optional.ofNullable(ray);
+        }
 
         @Override
         public void showGhosts(List<GhostPlacement> placements) {

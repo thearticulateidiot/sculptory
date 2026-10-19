@@ -71,7 +71,9 @@
       "dev.sculptory.fabric.gametest.ExtrudePathsGameTest",
       "dev.sculptory.fabric.gametest.FreeRotationGameTest",
       "dev.sculptory.fabric.gametest.ResamplingGameTest",
-      "dev.sculptory.fabric.gametest.AirPathsGameTest"
+      "dev.sculptory.fabric.gametest.AirPathsGameTest",
+      "dev.sculptory.fabric.gametest.PathPointsGameTest",
+      "dev.sculptory.fabric.gametest.ExtendToGroundGameTest"
     ]
   },
   "mixins": ["sculptory-gametest.mixins.json"],

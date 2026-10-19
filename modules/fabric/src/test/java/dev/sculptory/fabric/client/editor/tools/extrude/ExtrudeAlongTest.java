@@ -155,7 +155,10 @@ class ExtrudeAlongTest {
         assertTrue(rig.tool.draft(ExtrudeSettings.Direction.ALONG_PATH).points().isEmpty());
         rig.click(on(2, 66, 2));
         rig.frame(on(2, 66, 2));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc deselects the new point");
+        assertEquals(1, rig.tool.draft(ExtrudeSettings.Direction.ALONG_PATH).points().size());
         assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc clears the points");
+        assertTrue(rig.tool.draft(ExtrudeSettings.Direction.ALONG_PATH).points().isEmpty());
         assertTrue(rig.tool.lockedFace().isPresent());
         assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc again lets go of the face");
         assertTrue(rig.tool.lockedFace().isEmpty());

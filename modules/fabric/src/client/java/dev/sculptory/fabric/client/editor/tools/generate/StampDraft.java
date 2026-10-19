@@ -5,6 +5,7 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.SourceRef;
+import dev.sculptory.core.path.PathSample;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
@@ -14,6 +15,7 @@ import dev.sculptory.fabric.client.editor.render.ghost.GhostPlacement;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostSection;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
 import dev.sculptory.fabric.client.editor.tool.EditorAction;
+import dev.sculptory.fabric.client.editor.tool.FrameInfo;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
 import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
@@ -23,7 +25,9 @@ import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
 import dev.sculptory.fabric.client.editor.tools.place.Placement;
 import dev.sculptory.fabric.client.editor.tools.select.SelectionActions;
+import dev.sculptory.fabric.client.editor.tools.points.PointEditor;
 import dev.sculptory.fabric.client.editor.world.Ray;
+import dev.sculptory.fabric.client.editor.world.ScreenProjector;
 import dev.sculptory.fabric.client.session.ClipboardCache;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.LibraryFolder;
@@ -55,10 +59,11 @@ import java.util.function.Supplier;
  * along the path through the points; built as one {@link OpSpec.PasteMany} labelled "Stamp" (one job, one undo step,
  * block entities and entities kept: the server pastes its own copy of the source).
  *
- * <p><b>Points</b> are edited as the Line's: a click on a block adds one (each copy stands on its block, its bottom
- * middle on the block's top, as the Place tool puts a paste), a click on open sky adds one at the air marker (the copy
- * stands on the marker's cell, {@link AirPoints}), a click on a point picks it and a drag moves it (over open sky at the
- * distance it was grabbed at), Delete or Backspace removes the selected (or last) one, Esc clears them. At most
+ * <p><b>Points</b> are edited with the shared {@link PointEditor}, as the Line's: a click on a block adds one (each copy
+ * stands on its block, its bottom middle on the block's top, as the Place tool puts a paste), a click on open sky adds
+ * one at the air marker (the copy stands on the marker's cell, {@link AirPoints}), a click on a point selects it and its
+ * gizmo moves it, a click on the drawn path inserts one, Delete or Backspace removes the selected (or last) one, Esc
+ * deselects, then clears them. At most
  * {@value OpSpec.PasteMany#MAX_PLACEMENTS} copies.
  *
  * <p><b>Turning.</b> The first copy keeps the source as copied; each other copy is turned by the angle the path's
@@ -85,6 +90,8 @@ public final class StampDraft {
     public static final int OUTLINE_COLOUR = OverlayColors.scaleAlpha(GenerateTool.PATH_COLOUR, 0.6f);
     /** Blocks only where the source has them (its air leaves the world as it is); its entities come too. */
     static final PasteOptions OPTIONS = new PasteOptions(false, false, true);
+    /** The path is drawn this far over the points' centres (on the blocks' tops, where the copies stand). */
+    static final double DRAWN_LIFT = 0.5;
 
     /** The source copied, as the server knows it, and its size and anchor. */
     public record Source(SourceRef ref, String name, BlockPos dims, BlockPos anchor, long cells) {
@@ -98,10 +105,8 @@ public final class StampDraft {
 
     private final Supplier<GenerateTool.Services> services;
     private final PathModel points = new PathModel();
-    private int dragging = -1;
-    /** Whether the pointer moved since the drag's press: a release without it moves nothing. */
-    private boolean moved;
-    private BlockPos dragFrom;
+    /** The shared point editor of the copies' points. */
+    private final PointEditor editor;
     /** Quarter turns R added to every copy. */
     private int turns;
     /** The Library asset picked for stamping (path, content hash), or null. */
@@ -132,16 +137,59 @@ public final class StampDraft {
 
     /** Points in the air: a click on open sky puts a copy at the marker ({@link AirPoints}). */
     private final AirPoints air;
-
     StampDraft(Supplier<GenerateTool.Services> services, AirPoints air) {
         this.services = Objects.requireNonNull(services);
         this.air = Objects.requireNonNull(air);
+        PointEditor.View view = GenerateTool.pointView(services);
+        this.editor = new PointEditor(points, air, view, new PointEditor.Host() {
+            @Override
+            public BlockPos pointOn(WorldCursor cursor) {
+                return cursor.pos();
+            }
+
+            @Override
+            public int maxPoints() {
+                return OpSpec.PasteMany.MAX_PLACEMENTS;
+            }
+
+            @Override
+            public String tooManyNotice(PathModel.Role role) {
+                return TOO_MANY;
+            }
+
+            @Override
+            public List<List<PathSample>> drawnSegments(List<BlockPos> nodes, boolean closed) {
+                // The path is drawn over the blocks' tops, where the copies stand.
+                List<List<PathSample>> segments = new ArrayList<>();
+                for (List<PathSample> chord : PointEditor.chords(nodes, false)) {
+                    List<PathSample> raised = new ArrayList<>(chord.size());
+                    for (PathSample s : chord) raised.add(new PathSample(s.x(), s.y() + DRAWN_LIFT, s.z(), s.along()));
+                    segments.add(raised);
+                }
+                return segments;
+            }
+
+            @Override
+            public BlockPos insertPoint(List<BlockPos> nodes, int segment, double[] at) {
+                // The drawn path runs over the blocks' tops: the point goes in the block under it.
+                return new BlockPos((int) Math.floor(at[0]), (int) Math.floor(at[1] - DRAWN_LIFT), (int) Math.floor(at[2]));
+            }
+
+            @Override
+            public void edited(ToolContext c, PointEditor.Edit edit) {
+                // The ghosts follow the points each frame; nothing to make again here.
+            }
+        });
     }
 
     public PathModel points() {
         return points;
     }
 
+    /** The point editor of the copies' points (for tests). */
+    public PointEditor editor() {
+        return editor;
+    }
     /** Quarter turns R added to every copy. */
     public int turns() {
         return turns;
@@ -200,74 +248,18 @@ public final class StampDraft {
 
     // ---- Input ----
 
-    /** A click adds a copy on the block (or picks a point to drag); returns whether the event was taken. */
+    /** A pointer event for the point editor (a click adds a copy on the block); returns whether it was taken. */
     public boolean onPointer(ToolContext c, PointerEvent e) {
-        WorldCursor cursor = e.cursor();
-        switch (e.kind()) {
-            case PRESS -> {
-                if (e.button() != PointerEvent.LEFT) return false;
-                Ray ray = services.get().cursorRay().orElse(null);
-                air.useWorld(c);
-                int index = ray != null ? AirPoints.pick(points.nodes(), ray, cursor) : -1;
-                if (index < 0 && !cursor.missed()) index = points.indexAt(cursor.pos());
-                BlockPos point = index >= 0 ? null : air.place(cursor, ray, WorldCursor::pos);
-                if (index < 0 && point == null) return false;
-                if (index >= 0) {
-                    points.select(index);
-                    dragging = index;
-                    dragFrom = points.node(index);
-                    moved = false;
-                    air.beginDrag(ray, dragFrom);
-                    c.setPointerCapture(true);
-                } else if (points.size() >= OpSpec.PasteMany.MAX_PLACEMENTS) {
-                    c.notify(Notice.of(Notice.Level.INFO, TOO_MANY, Integer.toString(OpSpec.PasteMany.MAX_PLACEMENTS)));
-                } else {
-                    points.add(point);
-                }
-                return true;
-            }
-            case DRAG -> {
-                if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
-                moved = true;
-                air.useWorld(c);
-                BlockPos to = air.dragTo(cursor, services.get().cursorRay().orElse(null), WorldCursor::pos);
-                if (to == null) return false;
-                points.move(dragging, to);
-                return true;
-            }
-            case RELEASE -> {
-                if (e.button() != PointerEvent.LEFT || dragging < 0) return false;
-                // A press and release with no movement between (a click on a point) moves nothing.
-                if (moved) {
-                    BlockPos to = air.dragTo(cursor, services.get().cursorRay().orElse(null), WorldCursor::pos);
-                    if (to != null) points.move(dragging, to);
-                }
-                endDrag(c);
-                return true;
-            }
-            default -> {
-                return false;
-            }
-        }
+        return editor.onPointer(c, e);
     }
 
-    /** Esc, Delete/Backspace, R and Enter; returns whether the action was taken. */
+    /** Esc, Delete/Backspace, the insert key, R and Enter; returns whether the action was taken. */
     public boolean onAction(ToolContext c, EditorAction a) {
+        if (editor.onAction(c, a)) return true;
         switch (a) {
             case CANCEL -> {
-                if (dragging >= 0) {
-                    points.move(dragging, dragFrom);
-                    endDrag(c);
-                    return true;
-                }
                 if (points.isEmpty()) return false;
-                points.clear();
-                return true;
-            }
-            case ERASE_SELECTION, REMOVE_NODE -> {
-                if (points.isEmpty()) return false;
-                if (dragging >= 0) endDrag(c);
-                points.removeSelectedOrLast();
+                editor.clear(c);
                 return true;
             }
             case ROTATE_CW, ROTATE_CCW -> {
@@ -284,30 +276,14 @@ public final class StampDraft {
         }
     }
 
-    /** Alt+Scroll: the marker nearer or farther, or the point dragged over open sky ({@code cursor}). */
-    public boolean onScroll(ToolContext c, ScrollEvent e, WorldCursor cursor) {
-        if (!air.scroll(e)) return false;
-        air.useWorld(c);
-        if (dragging >= 0 && cursor.missed()) {
-            moved = true;
-            BlockPos to = air.dragTo(cursor, services.get().cursorRay().orElse(null), WorldCursor::pos);
-            if (to != null) points.move(dragging, to);
-        }
-        return true;
+    /** Alt+Scroll: the marker nearer or farther, or the point dragged freely. */
+    public boolean onScroll(ToolContext c, ScrollEvent e) {
+        return editor.onScroll(c, e);
     }
 
     /** Whether a point is being dragged. */
     public boolean dragging() {
-        return dragging >= 0;
-    }
-
-    private void endDrag(ToolContext c) {
-        if (dragging >= 0) {
-            c.setPointerCapture(false);
-            air.endDrag();
-        }
-        dragging = -1;
-        dragFrom = null;
+        return editor.dragging();
     }
 
     // ---- Copies ----
@@ -372,8 +348,12 @@ public final class StampDraft {
 
     // ---- Frames and ghosts ----
 
-    /** Once per frame: asks for the source's preview when it changed, takes finished bakes, shows the ghosts. */
-    public void frame(ToolContext c) {
+    /**
+     * Once per frame: the point editor (marker, guide line, hovering, a held point following the camera), then asks for
+     * the source's preview when it changed, takes finished bakes, shows the ghosts.
+     */
+    public void frame(ToolContext c, FrameInfo f) {
+        editor.frame(c, f);
         SourceRef wanted = wantedPreview(c);
         if (!Objects.equals(wanted, previewFor)) requestPreview(c, wanted);
         takeBakes();
@@ -466,7 +446,7 @@ public final class StampDraft {
             GhostVolume turned = turn.isIdentity() ? volume : baked.get(turn);
             if (turned == null) {
                 // While a point is dragged the turns change every move: the copies show turned as a whole until it rests.
-                if (dragging < 0) bake(c, turn);
+                if (!editor.dragging()) bake(c, turn);
                 out.add(GhostPlacement.of(volume, min.x(), min.y(), min.z()).withOrientation(turn));
             } else {
                 out.add(GhostPlacement.of(turned, min.x(), min.y(), min.z()));
@@ -512,7 +492,7 @@ public final class StampDraft {
 
     /** The kind or tool was put away: drags end, ghosts go, the points stay. */
     public void hide(ToolContext c) {
-        endDrag(c);
+        editor.deactivate(c);
         dropPreview();
         takeBakes(); // bakes already finished are released now; the others when they finish
         services.get().showGhosts(List.of());
@@ -595,18 +575,13 @@ public final class StampDraft {
     /** The points, the path through them and, without ghosts, each copy's box. */
     public void renderWorld(ToolContext c, WorldDraw d) {
         List<BlockPos> nodes = points.nodes();
-        for (int i = 0; i < nodes.size(); i++) {
-            Box box = Box.of(nodes.get(i));
-            boolean selected = i == points.selected();
-            d.boxOutline(box, selected ? GenerateTool.SELECTED_COLOUR : GenerateTool.NODE_COLOUR);
-            if (selected) d.boxFill(box, OverlayColors.scaleAlpha(GenerateTool.SELECTED_COLOUR, 0.25f));
-        }
         d.seeThrough(true);
         for (int i = 1; i < nodes.size(); i++) {
             BlockPos a = nodes.get(i - 1), b = nodes.get(i);
             d.line(a.x() + 0.5, a.y() + 1, a.z() + 0.5, b.x() + 0.5, b.y() + 1, b.z() + 0.5, GenerateTool.PATH_COLOUR);
         }
         d.seeThrough(false);
+        editor.render(d, GenerateTool.NODE_COLOUR, GenerateTool.SELECTED_COLOUR);
         Optional<Source> source = source(c, null);
         if (volume != null || source.isEmpty()) return;
         for (int i = 0; i < nodes.size(); i++) d.boxOutline(placement(source.get(), i).targetBox(), OUTLINE_COLOUR);
@@ -627,13 +602,13 @@ public final class StampDraft {
             hints.add(air.hint());
             return hints;
         }
-        if (dragging >= 0) {
-            hints.add(new KeyHint("Esc", "sculptory.hint.cancel_drag"));
+        if (editor.busy()) {
+            hints.addAll(editor.hints(click, s::keyLabel));
             hints.add(air.hint());
             return hints;
         }
         hints.add(new KeyHint(click, "sculptory.hint.stamp.add_or_select"));
-        hints.add(new KeyHint(click + " drag", "sculptory.hint.line.move_point"));
+        hints.addAll(editor.hints(click, s::keyLabel));
         hints.add(air.hint());
         hints.add(new KeyHint(s.keyLabel(KeyAction.ERASE_SELECTION) + "/" + s.keyLabel(KeyAction.REMOVE_NODE),
                 "sculptory.hint.line.remove_point"));

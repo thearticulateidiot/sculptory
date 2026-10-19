@@ -16,8 +16,8 @@ import java.util.List;
 import java.util.function.Function;
 
 /**
- * Points in the air, for the tools whose clicks make path points (Extrude along a path and to a point; Generate's
- * Road, Line, Sweep and Stamp).
+ * Points in the air, for the shared point editor ({@code PointEditor}) of the tools whose clicks make path points
+ * (Extrude along a path and to a point; Generate's Road, Line, Sweep and Stamp).
  *
  * <ul>
  *   <li><b>A block wins.</b> With the cursor on a block a point goes where the tool puts it on a block.</li>
@@ -30,9 +30,9 @@ import java.util.function.Function;
  *   on; over open sky a ray passing within {@value #PICK_MARGIN} of a cell picks it too, and while it would, that point
  *   is highlighted instead of the marker (aim beside it to place one farther out). A point whose cell holds the camera
  *   is never picked by its ray. The tools still pick a point on the block's column as before.</li>
- *   <li><b>Dragging.</b> A dragged point goes onto the block under the cursor, as before; over open sky it stays as far
- *   from the camera as it was when grabbed (looking up lifts it), and Alt+Scroll changes that distance. A press and
- *   release with no movement between moves nothing.</li>
+ *   <li><b>Dragging.</b> A point dragged freely (the point editor's centre cube, or a point grabbed by a click) stays as
+ *   far from the camera as it was when grabbed, whatever lies under the cursor (it never snaps onto terrain), and
+ *   Alt+Scroll changes that distance ({@link #beginDrag}, {@link #dragDistance}).</li>
  * </ul>
  * Client thread only.
  */
@@ -189,14 +189,10 @@ public final class AirPoints {
         dragDistance = Math.max(MIN_DISTANCE, Math.min(MAX_DISTANCE, Math.sqrt(dx * dx + dy * dy + dz * dz)));
     }
 
-    /**
-     * Where the dragged point goes: {@code pointOf} the cursor on a block, else the cell its distance along {@code ray};
-     * null when the ray missed and is not known.
-     */
-    public BlockPos dragTo(WorldCursor cursor, Ray ray, Function<WorldCursor, BlockPos> pointOf) {
-        if (!cursor.missed()) return pointOf.apply(cursor);
-        if (ray == null) return null;
-        return airCell(cursor, ray, dragging() ? dragDistance : distance);
+    /** {@code cell} kept within the build height (its y clamped). */
+    public BlockPos withinHeight(BlockPos cell) {
+        int y = Math.max(bottomY, Math.min(topYExclusive - 1, cell.y()));
+        return y == cell.y() ? cell : new BlockPos(cell.x(), y, cell.z());
     }
 
     public void endDrag() {
@@ -278,9 +274,9 @@ public final class AirPoints {
         d.line(cx, cy, cz - 0.75, cx, cy, cz + 0.75, MARKER_COLOUR);
     }
 
-    /** Whether the distance label shows: the marker is up, or a point is dragged over open sky. */
+    /** Whether the distance label shows: the marker is up, or a point is dragged freely (at its distance). */
     public boolean labelShown(WorldCursor cursor) {
-        return marker != null || (dragging() && cursor.missed());
+        return marker != null || dragging();
     }
 
     /**

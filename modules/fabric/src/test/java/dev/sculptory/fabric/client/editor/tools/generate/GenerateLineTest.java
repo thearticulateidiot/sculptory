@@ -38,6 +38,7 @@ import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
 import dev.sculptory.fabric.client.editor.tool.ToolContext;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
+import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Permissions;
@@ -132,10 +133,14 @@ class GenerateLineTest {
         rig.click(on(9, 72, 3));
         assertTrue(rig.tool.onAction(rig.view, EditorAction.REMOVE_NODE));
         assertEquals(2, rig.tool.line().points().size());
+        // A point drags as a node does: at its distance from the camera, whatever block the cursor is over.
+        rig.services.ray = new Ray(0.5, 70.5, -9.5, 0, 0, 1);
         rig.press(on(0, 70, 0));
+        rig.services.ray = new Ray(0.5, 70.5, -9.5, 6, 0, 8);
         rig.drag(on(0, 70, 6));
         rig.release(on(0, 70, 6));
-        assertEquals(new BlockPos(0, 70, 6), rig.tool.line().points().node(0), "a point drags like a node");
+        assertEquals(new BlockPos(6, 70, -2), rig.tool.line().points().node(0), "a point drags like a node");
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc deselects it first");
         assertTrue(rig.tool.onScroll(rig.view, new ScrollEvent(1, Modifiers.CONTROL)));
         assertEquals(2, rig.values().get(GenerateSettings.LINE_THICKNESS));
         assertTrue(rig.tool.onScroll(rig.view, new ScrollEvent(1, Modifiers.CONTROL | Modifiers.SHIFT)));
@@ -147,6 +152,63 @@ class GenerateLineTest {
         assertTrue(rig.tool.line().preview().isEmpty());
         assertEquals(List.of(), rig.services.shown, "the ghost is gone");
         assertFalse(rig.tool.onAction(rig.view, EditorAction.CANCEL));
+    }
+
+    @Test
+    void extendToGroundFillsEveryColumnOfTheLineDownToTheGroundAndBuildsItAsOneLine() {
+        Rig rig = new Rig();
+        rig.set(GenerateSettings.LINE_EXTEND_TO_GROUND, true);
+        rig.click(on(0, 70, 0));
+        rig.click(on(10, 75, 0));
+        rig.frame(on(10, 75, 0));
+        LineDraft.Built built = rig.tool.line().preview().orElseThrow();
+        GeneratedSource line = LineKernel.generate(new LineKernel.Spec(new PathSpec(List.of(new BlockPos(0, 70, 0),
+                new BlockPos(10, 75, 0)), PathKind.STRAIGHT), 1, LineKernel.Profile.ROUND,
+                new Pattern.Single(states.state("minecraft:stone_bricks"))), states, 1 << 20);
+        int[] cells = {0};
+        line.forEach((x, y, z, state) -> {
+            for (int below = GROUND + 1; below <= y; below++) {
+                assertTrue(built.source().contains(x, below, z), "solid down to the ground at " + x + "," + below);
+            }
+            assertFalse(built.source().contains(x, GROUND, z), "the ground itself is not written");
+            cells[0]++;
+        });
+        assertTrue(built.cells() > line.cells(), "the fill came on top of the line's own " + cells[0] + " cells");
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.COMMIT));
+        rig.frame(on(10, 75, 0));
+        assertEquals(List.of(new MockEditorSession.Call("generate", built.source().bounds())), rig.mock.calls(),
+                "the line and its fill as one upload");
+        assertEquals(OpLabel.LINE, assertInstanceOf(ToolAction.RunOp.class, rig.mock.sent().get(0)).label());
+        // Off again: the line alone.
+        rig.set(GenerateSettings.LINE_EXTEND_TO_GROUND, false);
+        rig.frame(on(10, 75, 0));
+        assertEquals(line.cells(), rig.tool.line().preview().orElseThrow().cells());
+    }
+
+    @Test
+    void useStairsAndSlabsTurnsTheLinesStepsAndAfterExtendToGroundToo() {
+        Rig rig = new Rig();
+        rig.set(GenerateSettings.LINE_BLOCK, BlockDescriptor.parse("minecraft:stone_bricks"));
+        rig.set(GenerateSettings.LINE_STAIRS_AND_SLABS, true);
+        rig.click(on(0, 70, 0));
+        rig.click(on(12, 76, 0));
+        rig.frame(on(12, 76, 0));
+        int east = states.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
+        int[] count = {0};
+        rig.tool.line().preview().orElseThrow().source().forEach((x, y, z, state) -> {
+            if (state == east) count[0]++;
+        });
+        assertTrue(count[0] >= 5, "a stair at each step up: " + count[0]);
+        rig.set(GenerateSettings.LINE_EXTEND_TO_GROUND, true);
+        rig.frame(on(12, 76, 0));
+        GeneratedSource wall = rig.tool.line().preview().orElseThrow().source();
+        int[] after = {0};
+        wall.forEach((x, y, z, state) -> {
+            if (state == east) after[0]++;
+            if (state == east) assertFalse(wall.contains(x, y + 1, z), "a stair is on the wall's top");
+        });
+        assertTrue(after[0] >= 5, "the wall's top steps up in stairs: " + after[0]);
+        assertTrue(rig.noticeKeys().isEmpty());
     }
 
     @Test
@@ -223,9 +285,11 @@ class GenerateLineTest {
         }
         List<String> keys = new ArrayList<>(List.of(GenerateTool.OP_LINE, GenerateTool.SENT_LINE, LineDraft.NEEDS_POINTS,
                 LineDraft.UNLOADED, LineDraft.NOTHING, "sculptory.notice.line_max_points", "sculptory.hint.line.add_point",
-                "sculptory.hint.line.add_or_select", "sculptory.hint.line.move_point", "sculptory.hint.line.remove_point",
+                "sculptory.hint.line.add_or_select", "sculptory.hint.line.remove_point",
                 "sculptory.hint.line.build", "sculptory.hint.line.clear", "sculptory.hint.line.thickness",
-                "sculptory.setting.generate.line_section"));
+                "sculptory.setting.generate.line_section", "sculptory.hint.points.place", "sculptory.hint.points.drop",
+                "sculptory.hint.points.gizmo", "sculptory.hint.points.insert", "sculptory.hint.points.deselect",
+                "sculptory.hint.points.insert_on_path"));
         for (String key : keys) assertTrue(lang.has(key), key);
     }
 
@@ -318,6 +382,12 @@ class GenerateLineTest {
     private static final class FakeServices implements GenerateTool.Services {
         final EditorKeymap keymap = EditorKeymap.defaults();
         List<GhostPlacement> shown = List.of();
+        Ray ray;
+
+        @Override
+        public Optional<Ray> cursorRay() {
+            return Optional.ofNullable(ray);
+        }
 
         @Override
         public void showGhosts(List<GhostPlacement> placements) {

@@ -217,10 +217,12 @@ public final class McEditorPlatform implements EditorPlatform {
         for (KeyBinding binding : bindings) {
             InputUtil.Key bound = KeyBindingHelper.getBoundKeyOf(binding);
             String name = I18n.translate(binding.getTranslationKey());
+            // Only the inventory key may be shared (the insert-point key, E while a path point is selected).
+            boolean shareable = binding == options.inventoryKey;
             if (bound.getCategory() == InputUtil.Type.KEYSYM && bound.getCode() > 0) {
-                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.KEY, bound.getCode(), name));
+                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.KEY, bound.getCode(), name, shareable));
             } else if (bound.getCategory() == InputUtil.Type.MOUSE) {
-                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.MOUSE, bound.getCode(), name));
+                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.MOUSE, bound.getCode(), name, shareable));
             }
         }
         return reserved;

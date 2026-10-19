@@ -97,8 +97,11 @@ public final class AirPathsGameTest implements FabricGameTest {
             if (state != bricks && state != stairs) flipped[0]++;
         });
         check(flipped[0] == 0, flipped[0] + " cells turned on the way up");
+        // The centripetal Curve leans up to a block east (toward the short first step) partway up: no hole either way.
         for (int y = 104; y <= 130; y++) {
-            for (int z = z0; z <= z0 + 2; z++) check(source.contains(x0 + 1, y, z), "a hole at " + y + "," + z);
+            for (int z = z0; z <= z0 + 2; z++) {
+                check(source.contains(x0 + 1, y, z) || source.contains(x0 + 2, y, z), "a hole at " + y + "," + z);
+            }
         }
         ExtrudePathsGameTest.buildAndUndo(context, h, area, source, OpLabel.PATH_EXTRUDE, undone -> {});
     }

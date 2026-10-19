@@ -24,7 +24,8 @@ import java.util.StringJoiner;
  * <p><b>Reserved keys.</b> The player's movement, chat, command, inventory and editor-toggle keys
  * always keep working in the editor. A chord on one of those keys without Ctrl or Alt would steal
  * it, so such a chord is rejected: it never fires and the Keys window shows it in red. Chords with
- * Ctrl or Alt (Ctrl+D) stay usable.
+ * Ctrl or Alt (Ctrl+D) stay usable. One action may share a reserved key ({@link KeyAction#sharesReservedKey}): the
+ * insert-point key is E while a path point is selected; the rest of the time E opens the inventory as always.
  *
  * <p><b>Conflicts.</b> Two actions on the same chord are both flagged; the one listed first in
  * {@link KeyAction} wins until the player fixes it, in the Keys window or the file.
@@ -41,11 +42,19 @@ import java.util.StringJoiner;
 public final class EditorKeymap {
     public static final int VERSION = 1;
 
-    /** A vanilla key the editor must leave alone, e.g. (KEY, W, "Walk Forwards"). */
-    public record ReservedKey(KeyChord.Input input, int code, String name) {
+    /**
+     * A vanilla key the editor must leave alone, e.g. (KEY, W, "Walk Forwards"). {@code shareable}: an action that
+     * {@link KeyAction#sharesReservedKey shares a reserved key} may sit on it (only the inventory key).
+     */
+    public record ReservedKey(KeyChord.Input input, int code, String name, boolean shareable) {
         public ReservedKey {
             Objects.requireNonNull(input);
             Objects.requireNonNull(name);
+        }
+
+        /** A key no editor action may share. */
+        public ReservedKey(KeyChord.Input input, int code, String name) {
+            this(input, code, name, false);
         }
     }
 
@@ -140,13 +149,14 @@ public final class EditorKeymap {
 
     /**
      * The action for a pressed chord: an exact match first, then (with Shift held) a shift-variant
-     * action on the same chord without Shift. Reserved chords never match.
+     * action on the same chord without Shift. Reserved chords never match, except for an action that shares its key
+     * ({@link KeyAction#sharesReservedKey}: the router lets the key through when the tool does not take it).
      */
     public Optional<KeyAction> match(KeyChord pressed) {
         Objects.requireNonNull(pressed);
         for (KeyAction action : KeyAction.values()) {
             for (KeyChord chord : bindings.get(action)) {
-                if (chord.equals(pressed) && reservedBy(chord).isEmpty()) {
+                if (chord.equals(pressed) && reservedFor(action, chord).isEmpty()) {
                     return Optional.of(action);
                 }
             }
@@ -167,6 +177,11 @@ public final class EditorKeymap {
         return Optional.empty();
     }
 
+    /** The reserved key {@code chord} takes from the player for {@code action}: none when the action may share it. */
+    private Optional<ReservedKey> reservedFor(KeyAction action, KeyChord chord) {
+        return reservedBy(chord).filter(key -> !(action.sharesReservedKey() && key.shareable()));
+    }
+
     /** The reserved key a chord collides with, if any. */
     public Optional<ReservedKey> reservedBy(KeyChord chord) {
         if (chord.input() == KeyChord.Input.SCROLL || chord.hasCommandModifier()) {
@@ -180,9 +195,12 @@ public final class EditorKeymap {
         return Optional.empty();
     }
 
-    /** What is wrong with one of an action's chords, if anything. A reserved chord is reported first. */
+    /**
+     * What is wrong with one of an action's chords, if anything. A reserved chord is reported first, except for an
+     * action that shares its key ({@link KeyAction#sharesReservedKey}).
+     */
     public Optional<Problem> problem(KeyAction action, KeyChord chord) {
-        Optional<ReservedKey> reservedKey = reservedBy(chord);
+        Optional<ReservedKey> reservedKey = reservedFor(action, chord);
         if (reservedKey.isPresent()) {
             return Optional.of(new Problem.Reserved(reservedKey.get().name()));
         }

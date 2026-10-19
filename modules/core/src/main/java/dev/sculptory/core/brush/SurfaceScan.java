@@ -1,5 +1,6 @@
 package dev.sculptory.core.brush;
 
+import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
@@ -15,6 +16,9 @@ import dev.sculptory.core.world.WorldReader;
  *   <li><b>Structure</b>: everything else (non-full blocks such as stairs and fences, and every block with a
  *       block entity). Nothing sculpts or scatters over them.</li>
  *   <li><b>Plant</b>: open vegetation that is not a fluid block.</li>
+ *   <li><b>Trunk</b>: a log or wood block ({@link #LOGS}). Ground to the brushes (a trunk is terrain-solid), but
+ *       the scans that look for the ground under trees look past it: Overlay and Naturalize, and Extend to Ground
+ *       ({@code GroundFill}).</li>
  * </ul>
  *
  * <p>{@link #scan} finds a column's surface: scanning down from {@code yTop} (or from the reader's
@@ -29,6 +33,11 @@ public final class SurfaceScan {
 
     private static final int OPEN = StateFlags.AIR | StateFlags.REPLACEABLE | StateFlags.VEGETATION
             | StateFlags.FLUID_BLOCK;
+
+    /**
+     * The block tag of tree trunks: logs and wood, stripped or not, and the nether stems and hyphae ({@link #trunk}).
+     */
+    public static final NamespacedId LOGS = new NamespacedId("minecraft:logs");
 
     private SurfaceScan() {}
 
@@ -86,6 +95,11 @@ public final class SurfaceScan {
      */
     public static boolean structure(int flags) {
         return !ground(flags) && !open(flags);
+    }
+
+    /** A tree trunk: a block in {@link #LOGS} (logs, wood, stripped or not, stems and hyphae). */
+    public static boolean trunk(StateSpace states, int state) {
+        return states.inTag(state, LOGS);
     }
 
     /** Open vegetation that is not a fluid block (short grass, flowers, leaves). */

@@ -134,7 +134,22 @@ class ShapeLineTest {
         assertFalse(rig.tool.onAction(rig.view, EditorAction.COMMIT), "Enter is not the line's while placing shapes");
         rig.set(ShapeSettings.DRAW, ShapeSettings.Draw.LINE);
         assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
+        assertEquals(2, rig.tool.line().points().size(), "the first Esc deselects the point Backspace selected");
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
         assertTrue(rig.tool.line().points().isEmpty());
+    }
+
+    @Test
+    void theInsertKeyAddsALinePointAfterTheSelectedOneAndOtherwiseIsLeftAlone() {
+        Rig rig = new Rig();
+        rig.click(top(0, 0));
+        rig.click(top(6, 0));
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.EXTRUDE_POINT), "a point selected: E inserts one");
+        assertTrue(rig.tool.line().editor().placingInserted());
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL), "Esc drops it");
+        assertEquals(2, rig.tool.line().points().size());
+        assertTrue(rig.tool.onAction(rig.view, EditorAction.CANCEL));
+        assertFalse(rig.tool.onAction(rig.view, EditorAction.EXTRUDE_POINT), "nothing selected: E is the inventory");
     }
 
     @Test

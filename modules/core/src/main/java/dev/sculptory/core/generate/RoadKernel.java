@@ -3,8 +3,11 @@ package dev.sculptory.core.generate;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.brush.SurfaceScan;
 import dev.sculptory.core.edit.Pattern;
+import dev.sculptory.core.path.CatmullRom;
 import dev.sculptory.core.world.WorldReader;
 import it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -12,7 +15,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * The Path generator: a road along a Catmull-Rom spline through the builder's nodes. {@link #path} lays the centre line and the footprint (pure geometry, for the
+ * The Path generator: a road along a centripetal Catmull-Rom spline ({@link CatmullRom}) through the builder's nodes. {@link #path} lays the centre line and the footprint (pure geometry, for the
  * cursor and the ground snapshot); {@link #generate} gives the footprint its heights from a {@link SurfaceReader} and
  * writes the cells. Both are pure functions of their inputs.
  */
@@ -109,16 +112,18 @@ public final class RoadKernel {
         private final double[] zs;
         private final double[] along;
         private final double[] nodeAlong;
+        private final int[] nodeVertex;
         private final boolean closed;
         private final List<Column> columns;
 
-        private Path(List<BlockPos> nodes, double[] xs, double[] zs, double[] along, double[] nodeAlong, boolean closed,
-                     List<Column> columns) {
+        private Path(List<BlockPos> nodes, double[] xs, double[] zs, double[] along, double[] nodeAlong, int[] nodeVertex,
+                     boolean closed, List<Column> columns) {
             this.nodes = nodes;
             this.xs = xs;
             this.zs = zs;
             this.along = along;
             this.nodeAlong = nodeAlong;
+            this.nodeVertex = nodeVertex;
             this.closed = closed;
             this.columns = columns;
         }
@@ -138,6 +143,11 @@ public final class RoadKernel {
 
         public double z(int vertex) {
             return zs[vertex];
+        }
+
+        /** The vertex at node {@code node} (the first of its segment; the last node's is the last vertex). */
+        public int nodeVertex(int node) {
+            return nodeVertex[node];
         }
 
         /** The arc length at a vertex. */
@@ -196,6 +206,20 @@ public final class RoadKernel {
             return nodes.get(nodes.size() - 1).y();
         }
 
+        /**
+         * Per footprint column, the axis the road runs along there ({@link SlopeSteps#AXIS_X} or {@link SlopeSteps#AXIS_Z}:
+         * the larger part of the centre line's direction at the column's arc length), for its stairs and slabs.
+         */
+        public Long2IntMap climbAxes() {
+            Long2IntOpenHashMap axes = new Long2IntOpenHashMap();
+            for (Column column : columns) {
+                double[] a = pointAt(column.along() - 0.5), b = pointAt(column.along() + 0.5);
+                int axis = SlopeSteps.axisOf(b[0] - a[0], 0, b[1] - a[1]);
+                axes.put(GroundMap.column(column.x(), column.z()), axis);
+            }
+            return axes;
+        }
+
         /** The centre-line point at arc length {@code s} (clamped), as {x, z}. */
         public double[] pointAt(double s) {
             if (xs.length == 0) return new double[] {0, 0};
@@ -237,10 +261,11 @@ public final class RoadKernel {
                 double chord = Math.hypot(px[i2] - px[i1], pz[i2] - pz[i1]);
                 int steps = Math.max(1, (int) Math.ceil(chord / SAMPLE_STEP));
                 nodeVertex[s] = vertices.size();
+                double[] c0 = {px[i0], pz[i0]}, c1 = {px[i1], pz[i1]}, c2 = {px[i2], pz[i2]}, c3 = {px[i3], pz[i3]};
                 for (int j = 0; j < steps; j++) {
-                    double t = (double) j / steps;
-                    vertices.add(new double[] {catmullRom(px[i0], px[i1], px[i2], px[i3], t),
-                            catmullRom(pz[i0], pz[i1], pz[i2], pz[i3], t)});
+                    double[] vertex = new double[2];
+                    CatmullRom.at(c0, c1, c2, c3, (double) j / steps, vertex);
+                    vertices.add(vertex);
                 }
             }
             // The last vertex: the last node (or, closed, the first again).
@@ -255,17 +280,12 @@ public final class RoadKernel {
         }
         for (int i = 0; i < n; i++) nodeAlong[i] = along.length == 0 ? 0 : along[nodeVertex[i]];
         List<Column> columns = n >= 2 ? footprint(xs, zs, along, spec.width(), closed) : List.of();
-        return new Path(nodes, xs, zs, along, nodeAlong, closed, columns);
+        return new Path(nodes, xs, zs, along, nodeAlong, nodeVertex, closed, columns);
     }
 
     private static int control(int index, int points, boolean closed) {
         if (closed) return Math.floorMod(index, points);
         return Math.max(0, Math.min(points - 1, index));
-    }
-
-    private static double catmullRom(double p0, double p1, double p2, double p3, double t) {
-        double t2 = t * t, t3 = t2 * t;
-        return 0.5 * (2 * p1 + (p2 - p0) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (3 * p1 - p0 - 3 * p2 + p3) * t3);
     }
 
     /**

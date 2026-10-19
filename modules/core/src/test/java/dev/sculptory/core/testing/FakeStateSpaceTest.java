@@ -24,13 +24,13 @@ class FakeStateSpaceTest {
         // air, stone, dirt, grass 2, water 16, stairs 80, log 3, slab 6, chest 8, sand, short grass, widget 6, poppy,
         // tall grass 2, pink petals 16, seagrass, sea pickle 8, vertical slab 2, kelp 26, kelp plant, tall seagrass 2, coral fan 2,
         // lily pad, sugar cane 16, lava 16, bubble column, oak planks, stone bricks, stone brick stairs 80, stone brick
-        // slab 6, cobblestone, andesite, torch, lantern 2, hopper 5, oak door 8, gizmo 12, red bed 16
+        // slab 6, cobblestone, andesite, torch, lantern 2, hopper 5, oak door 8, gizmo 12, red bed 16, oak leaves
         assertEquals(1 + 1 + 1 + 2 + 16 + 80 + 3 + 6 + 8 + 1 + 1 + 6 + 1 + 2 + 16 + 1 + 8 + 2 + 26 + 1 + 2 + 2 + 1 + 16 + 16 + 1
-                + 1 + 1 + 80 + 6 + 1 + 1 + 1 + 2 + 5 + 8 + 12 + 16, states.size());
+                + 1 + 1 + 80 + 6 + 1 + 1 + 1 + 2 + 5 + 8 + 12 + 16 + 1, states.size());
         assertEquals(0, states.air());
         assertEquals("minecraft:air", states.format(0));
         assertEquals(states.format(17), new FakeStateSpace().format(17));
-        assertEquals(38, states.blockIds().size());
+        assertEquals(39, states.blockIds().size());
     }
 
     @Test

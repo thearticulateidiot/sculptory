@@ -41,7 +41,8 @@ class EditorKeymapTest {
                 GLFW.GLFW_KEY_LEFT_SHIFT, GLFW.GLFW_KEY_LEFT_CONTROL, GLFW.GLFW_KEY_T, GLFW.GLFW_KEY_SLASH,
                 GLFW.GLFW_KEY_E, GLFW.GLFW_KEY_B};
         for (int code : codes) {
-            keys.add(new EditorKeymap.ReservedKey(KeyChord.Input.KEY, code, "key " + code));
+            // E is the inventory key: the one an action may share.
+            keys.add(new EditorKeymap.ReservedKey(KeyChord.Input.KEY, code, "key " + code, code == GLFW.GLFW_KEY_E));
         }
         return keys;
     }
@@ -218,6 +219,25 @@ class EditorKeymapTest {
         assertEquals(Optional.empty(), key(keymap, GLFW.GLFW_KEY_T, 0));
         keymap.bind(KeyAction.LIBRARY, List.of(KeyChord.parse("shift+w")));
         assertTrue(keymap.hasProblem(KeyAction.LIBRARY), "Shift doesn't make a movement key free");
+    }
+
+    @Test
+    void theInsertPointKeySharesTheInventoryKeyAndNoOtherActionMay() {
+        EditorKeymap keymap = EditorKeymap.defaults();
+        keymap.setReservedKeys(vanillaDefaults());
+        assertEquals(List.of(KeyChord.parse("e")), keymap.chords(KeyAction.EXTRUDE_POINT));
+        assertEquals(Optional.of(KeyAction.EXTRUDE_POINT), key(keymap, GLFW.GLFW_KEY_E, 0),
+                "E reaches the tool (the router lets it through to the inventory when the tool leaves it)");
+        assertFalse(keymap.hasProblem(KeyAction.EXTRUDE_POINT), "not red in the Keys window");
+        assertTrue(KeyAction.EXTRUDE_POINT.sharesReservedKey());
+        keymap.bind(KeyAction.LIBRARY, List.of(KeyChord.parse("e")));
+        assertTrue(keymap.hasProblem(KeyAction.LIBRARY), "another action on E is still refused");
+        keymap.bind(KeyAction.EXTRUDE_POINT, List.of(KeyChord.parse("w")));
+        assertTrue(keymap.hasProblem(KeyAction.EXTRUDE_POINT), "only the inventory key is shared: W keeps flying");
+        assertEquals(Optional.empty(), key(keymap, GLFW.GLFW_KEY_W, 0));
+        keymap.bind(KeyAction.EXTRUDE_POINT, List.of(KeyChord.parse("i")));
+        assertEquals(Optional.of(KeyAction.EXTRUDE_POINT), key(keymap, GLFW.GLFW_KEY_I, 0), "rebindable");
+        assertEquals(Optional.empty(), key(keymap, GLFW.GLFW_KEY_E, 0));
     }
 
     @Test

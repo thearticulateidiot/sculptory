@@ -172,6 +172,10 @@ class InputRouterTest {
                 log.add("suspend chat");
                 return true;
             }
+            if (key == GLFW.GLFW_KEY_E) {
+                log.add("suspend inventory");
+                return true;
+            }
             return false;
         }
     }
@@ -439,7 +443,8 @@ class InputRouterTest {
         for (KeyAction action : KeyAction.values()) {
             assertEquals(action == KeyAction.UNDO || action == KeyAction.REDO || action == KeyAction.AIM_AT_FLUIDS
                             || action == KeyAction.SET_SYMMETRY_CENTRE || action == KeyAction.JUMP
-                            || action == KeyAction.JUMP_THROUGH || action == KeyAction.TOGGLE_MASK,
+                            || action == KeyAction.JUMP_THROUGH || action == KeyAction.TOGGLE_MASK
+                            || action == KeyAction.EXTRUDE_POINT,
                     action.ignoresRepeat(), action.name());
         }
     }
@@ -546,6 +551,24 @@ class InputRouterTest {
         assertTrue(router.keyPressed(T, 0, 0));
         assertEquals(List.of("suspend chat"), log);
         assertFalse(router.keyPressed(GLFW.GLFW_KEY_K, 0, 0), "unbound keys are not consumed");
+    }
+
+    @Test
+    void theInsertKeyIsTheToolsWhileItTakesItAndOtherwiseEStaysTheInventory() {
+        EditorKeymap keymap = EditorKeymap.defaults();
+        keymap.setReservedKeys(List.of(new EditorKeymap.ReservedKey(KeyChord.Input.KEY, GLFW.GLFW_KEY_E, "Inventory", true)));
+        InputRouter withInventory = new InputRouter(ui, tools, new FakeCommands(), look, new FakeMovement(), keymap);
+        assertTrue(withInventory.keyPressed(GLFW.GLFW_KEY_E, 18, 0));
+        assertEquals(List.of("tool action EXTRUDE_POINT", "suspend inventory"), log,
+                "no path point selected: the tool leaves it and E opens the inventory");
+        withInventory.keyReleased(GLFW.GLFW_KEY_E, 18, 0);
+        log.clear();
+        tools.takes.add(EditorAction.EXTRUDE_POINT);
+        assertTrue(withInventory.keyPressed(GLFW.GLFW_KEY_E, 18, 0));
+        assertEquals(List.of("tool action EXTRUDE_POINT"), log, "a point selected: the tool's");
+        assertTrue(withInventory.keyPressed(GLFW.GLFW_KEY_E, 18, 0));
+        assertEquals(List.of("tool action EXTRUDE_POINT"), log, "a held E adds one point, not one per repeat");
+        assertFalse(keymap.hasProblem(KeyAction.EXTRUDE_POINT), "the Keys window does not show it in red");
     }
 
     // ---- Esc ladder ----

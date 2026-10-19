@@ -19,7 +19,7 @@ One press is one undo step. By default it places the top bar's active block: mid
 
 Set **Draw** to **Along a line**, and clicks add points instead of placing shapes. The current shape, with its size, **Hollow** and **Mode**, is swept along a line through the points, and `Enter` builds the whole sweep as one undo step named **Shape line**.
 
-1. Click blocks to add points; each point is where a click would centre the shape (so **Anchor** still applies). Click a point to select it, drag it to move it, `Backspace` removes the selected (or last) point, `Esc` clears them.
+1. Click blocks to add points; each point is where a click would centre the shape (so **Anchor** still applies). Edit them as Generate's [path points](generate.md#path-points): select, drag the gizmo, insert, `Backspace` to remove; `Esc` deselects, then clears them. A click on open sky adds nothing here.
 2. Pick the **Path**: **Straight**, **Curve** or **Hanging** (with its **Sag**), as for [Generate's line](generate.md#draw-a-line).
 3. The ghost shows the sweep (a **Carve** sweep shows its box and the path instead). Press `Enter`.
 

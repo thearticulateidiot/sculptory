@@ -467,7 +467,7 @@ public final class ExtrudeTool implements Tool {
         cursor = f.cursor();
         mouseX = f.mouseX();
         mouseY = f.mouseY();
-        along.frame(c, direction(c), cursor, services.cursorRay().orElse(null));
+        along.frame(c, direction(c), f);
         if (along.lockedFace().isPresent()) return;
         if (drag != null) {
             runDragSearch(c);
@@ -522,14 +522,14 @@ public final class ExtrudeTool implements Tool {
     // ---- Scroll ----
 
     /**
-     * Along a path or to a point, with a face locked: Alt+Scroll moves the air marker (or the point dragged over open sky)
+     * Along a path or to a point, with a face locked: Alt+Scroll moves the air marker (or the point dragged freely)
      * nearer or farther ({@link AirPoints}). Straight extrusions take no scroll.
      */
     @Override
     public boolean onScroll(ToolContext c, ScrollEvent e) {
         ExtrudeSettings.Direction direction = direction(c);
         if (direction == ExtrudeSettings.Direction.STRAIGHT) return false;
-        return along.onScroll(c, e, direction, cursor);
+        return along.onScroll(c, e, direction);
     }
 
     /** Over open sky with a face locked, the air marker's (or the dragged point's) distance beside the cursor. */

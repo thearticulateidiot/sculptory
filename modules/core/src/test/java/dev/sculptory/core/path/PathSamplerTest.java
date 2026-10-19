@@ -106,6 +106,44 @@ class PathSamplerTest {
     }
 
     @Test
+    void aShortStepThenALongClimbNeitherDipsNorDriftsSideways() {
+        // The uniform spline dipped about 1.5 blocks below the start on the short step here (and more the higher the
+        // climb) and swung past its points sideways; the centripetal one stays between them.
+        PathSpec spec = spec(PathKind.CURVE, 0, 0, 64, 0, 2, 64, 0, 4, 84, 0);
+        List<PathSample> samples = PathSampler.sample(spec, 0.25);
+        for (PathSample s : samples) {
+            assertTrue(Math.floor(s.y()) >= 64, "dips below the start's layer: " + s);
+            assertTrue(s.x() >= 0.5 - EPS && s.x() <= 4.5 + EPS, "swings past the points: " + s);
+            assertEquals(0.5, s.z(), EPS, "drifts sideways");
+        }
+        // A bend in plan: a short step east then a long run north keeps to the points' side.
+        PathSpec bend = spec(PathKind.CURVE, 0, 0, 64, 0, 2, 64, 0, 3, 64, 30);
+        for (PathSample s : PathSampler.sample(bend, 0.25)) {
+            assertTrue(s.z() >= 0, "swings back out of the start's row: " + s);
+            assertTrue(s.x() <= 3.5 + 0.5, "swings past the far point: " + s);
+        }
+    }
+
+    @Test
+    void theCentripetalSegmentMatchesTheUniformOneForEvenSpacingAndHitsItsEnds() {
+        double[] p0 = {0, 0, 0}, p1 = {1, 0, 0}, p2 = {2, 0, 0}, p3 = {3, 0, 0};
+        double[] out = new double[3];
+        for (double t = 0; t <= 1; t += 0.125) {
+            CatmullRom.at(p0, p1, p2, p3, t, out);
+            assertEquals(1 + t, out[0], 1e-12, "evenly spaced on a line: even along it");
+        }
+        double[] a = {0, 64, 0}, b = {5, 70, 2}, c = {9, 60, 7}, d = {20, 64, 3};
+        CatmullRom.at(a, b, c, d, 0, out);
+        assertEquals(List.of(5.0, 70.0, 2.0), List.of(out[0], out[1], out[2]));
+        CatmullRom.at(a, b, c, d, 1, out);
+        assertEquals(9.0, out[0], 1e-12);
+        assertEquals(60.0, out[1], 1e-12);
+        assertEquals(7.0, out[2], 1e-12);
+        CatmullRom.at(a, b, b, d, 0.5, out);
+        assertEquals(List.of(5.0, 70.0, 2.0), List.of(out[0], out[1], out[2]), "a segment of one point is that point");
+    }
+
+    @Test
     void aClosedCurveLoopsBackSmoothly() {
         PathSpec loop = spec(PathKind.CURVE, 0, 0, 64, 0, 10, 64, 0, 10, 64, 10, 0, 64, 10, 0, 64, 0);
         assertTrue(PathSampler.closed(loop));

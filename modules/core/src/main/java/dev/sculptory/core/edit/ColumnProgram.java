@@ -3,6 +3,7 @@ package dev.sculptory.core.edit;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.NamespacedId;
+import dev.sculptory.core.brush.SurfaceScan;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.region.Region;
@@ -60,7 +61,6 @@ final class ColumnProgram implements ClaimingProgram {
     /** Cell classes ({@link #classes}). */
     static final byte COVER = 1, FLUID = 2, WRITABLE = 4, GROUND = 8;
     private static final NamespacedId SNOW_LAYER = new NamespacedId("minecraft:snow");
-    private static final NamespacedId LOGS = new NamespacedId("minecraft:logs");
     private static final List<NamespacedId> NATURAL_TAGS = Stream.of("minecraft:dirt",
             "minecraft:sand", "minecraft:base_stone_overworld", "minecraft:base_stone_nether",
             "minecraft:stone_ore_replaceables", "minecraft:deepslate_ore_replaceables", "minecraft:terracotta",
@@ -193,7 +193,7 @@ final class ColumnProgram implements ClaimingProgram {
             byte c = 0;
             if (fluid) {
                 c = FLUID;
-            } else if (StateFlags.has(flags, StateFlags.AIR) || snow || states.inTag(h, LOGS)
+            } else if (StateFlags.has(flags, StateFlags.AIR) || snow || SurfaceScan.trunk(states, h)
                     || (!StateFlags.has(flags, StateFlags.TERRAIN_SOLID) && (flags & (StateFlags.VEGETATION
                     | StateFlags.REPLACEABLE | StateFlags.NO_COLLISION)) != 0)) {
                 c = COVER;

@@ -133,6 +133,8 @@ public final class InputRouter {
     private final Owner[] owners = new Owner[8];
     /** GLFW key codes pressed and not yet released while the editor had input. */
     private final BitSet heldKeys = new BitSet();
+    /** The shared reserved key (E) whose press the tool took, until its release: its repeats are the tool's too. */
+    private int sharedTaken = -1;
     /** The key a listening control took last, until its release: its repeats are not chord presses. */
     private int capturedKey = -1;
 
@@ -311,6 +313,17 @@ public final class InputRouter {
             return true;
         }
         Optional<KeyAction> chord = keymap.match(KeyChord.key(key, modifiers));
+        if (chord.isPresent() && chord.get().sharesReservedKey()
+                && keymap.reservedBy(KeyChord.key(key, modifiers)).isPresent()) {
+            // On the inventory key (E): the tool's when it takes it (one press, no repeats), else the key does what it always
+            // does.
+            Optional<EditorAction> toolAction = chord.get().editorAction();
+            if (repeat ? key == sharedTaken : toolAction.isPresent() && tools.action(toolAction.get(), modifiers)) {
+                sharedTaken = key;
+                return true;
+            }
+            chord = Optional.empty();
+        }
         if (chord.isPresent()) {
             if (!(repeat && chord.get().ignoresRepeat())) {
                 dispatch(chord.get(), modifiers);
@@ -334,6 +347,9 @@ public final class InputRouter {
         }
         if (key == capturedKey) {
             capturedKey = -1;
+        }
+        if (key == sharedTaken) {
+            sharedTaken = -1;
         }
         return false;
     }

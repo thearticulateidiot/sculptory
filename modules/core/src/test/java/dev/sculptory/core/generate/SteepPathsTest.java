@@ -193,6 +193,31 @@ class SteepPathsTest {
         }
     }
 
+    /**
+     * A face carried a block aside and then straight up: the same layer all the way, except that a Curve (centripetal)
+     * leans up to a block toward that first short step partway up the climb, so there each layer keeps its size within
+     * a row of cells ({@link #steadySize}) and every cell lies within one cell, across, of the first layer's.
+     */
+    private static void uprightLayers(PathKind kind, String what, GeneratedSource source, int y0, int y1) {
+        if (kind == PathKind.CURVE) {
+            steadySize(kind, what, source, y0, y1, 3);
+            Set<Long> first = new java.util.HashSet<>();
+            source.forEach((x, y, z, state) -> {
+                if (y == y0) first.add(GroundMap.column(x, z));
+            });
+            source.forEach((x, y, z, state) -> {
+                if (y < y0 || y > y1) return;
+                boolean near = false;
+                for (int dx = -1; dx <= 1 && !near; dx++) {
+                    for (int dz = -1; dz <= 1 && !near; dz++) near = first.contains(GroundMap.column(x + dx, z + dz));
+                }
+                assertTrue(near, what + ": " + x + "," + y + "," + z + " drifts more than a cell" + "\n" + dump(source));
+            });
+        } else {
+            sameLayers(what, source, y0, y1);
+        }
+    }
+
     // ---- Steep starts that drift aside ----
 
     /** The block states in {@code source} other than stone and dirt (the stairs, as they were turned). */
@@ -245,7 +270,7 @@ class SteepPathsTest {
         for (PathKind kind : PathKind.values()) {
             GeneratedSource up = extrude(face, kind, false, 1, 65, 1, 1, 97, 1);
             solid("upright " + kind, up, 64, 98);
-            sameLayers("upright " + kind, up, 70, 92);
+            uprightLayers(kind, "upright " + kind, up, 70, 92);
         }
     }
 
@@ -255,7 +280,7 @@ class SteepPathsTest {
         for (PathKind kind : PathKind.values()) {
             GeneratedSource up = extrude(face, kind, true, 1, 65, 1, 1, 97, 1);
             solid("follow slope " + kind, up, 64, 97);
-            sameLayers("follow slope " + kind, up, 70, 92);
+            uprightLayers(kind, "follow slope " + kind, up, 70, 92);
         }
     }
 

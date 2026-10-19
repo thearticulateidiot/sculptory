@@ -43,11 +43,6 @@ public final class GenerateSettings {
             "sculptory.setting.generate.kind.coming_soon");
     /** The kinds not built yet that the Kind dropdown leaves out altogether (not promised): Smart Surface. */
     private static final Set<Kind> KINDS_HIDDEN = Set.of(Kind.SMART_SURFACE);
-    /**
-     * Shows none of the settings whose generator work isn't built yet: Road's and Line's stairs and slabs and Line's and
-     * Sweep's Extend to Ground. Each turns to its kind's own visibility once its kernel does it.
-     */
-    private static final Predicate<SettingsValues> NOT_BUILT_YET = values -> false;
 
     /** The Heightmap import's turn of its picture, clockwise seen from above, in quarter turns. */
     public enum Turn {
@@ -107,11 +102,10 @@ public final class GenerateSettings {
             RoadKernel.MAX_CLEAR_ABOVE, null, PATH);
     /**
      * On sloping stretches the step cells get stairs (facing along the climb) or slabs of the road's block family instead
-     * of full blocks, when it has them. Hidden ({@link #NOT_BUILT_YET}) until the Road kernel does it; then shown with
-     * PATH.
+     * of full blocks, when it has them ({@code core.generate.SlopeSteps}; the family from {@code StairSlabVariants}).
      */
     public static final SettingDef.Bool PATH_STAIRS_AND_SLABS = new SettingDef.Bool("path.stairs_slabs",
-            PREFIX + "path_stairs_slabs", false, NOT_BUILT_YET);
+            PREFIX + "path_stairs_slabs", false, PATH);
 
     // Roof
     public static final SettingDef.Enum<RoofKernel.Style> STYLE = new SettingDef.Enum<>("roof.style", PREFIX + "style",
@@ -163,17 +157,17 @@ public final class GenerateSettings {
             values -> LINE.test(values) && values.get(GenerateSettings.LINE_MATERIAL) == Material.PALETTE);
     /**
      * Every column the line occupies is filled down to the terrain below (the ground rule Road uses), so walls, supports
-     * and ridges come out solid; capped like other generated volumes. Hidden ({@link #NOT_BUILT_YET}) until the Line
-     * kernel does it; then shown with LINE.
+     * and ridges come out solid ({@code core.generate.GroundFill}, each fill cell of the line's material); capped like
+     * other generated volumes.
      */
     public static final SettingDef.Bool LINE_EXTEND_TO_GROUND = new SettingDef.Bool("line.extend_to_ground",
-            PREFIX + "line_extend_to_ground", false, NOT_BUILT_YET);
+            PREFIX + "line_extend_to_ground", false, LINE);
     /**
-     * Stairs and slabs on the line's sloping stretches, as Road's {@link #PATH_STAIRS_AND_SLABS}. Hidden until the Line
-     * kernel does it; then shown with LINE.
+     * Stairs and slabs on the line's sloping stretches (its top and its underside), as Road's
+     * {@link #PATH_STAIRS_AND_SLABS}.
      */
     public static final SettingDef.Bool LINE_STAIRS_AND_SLABS = new SettingDef.Bool("line.stairs_slabs",
-            PREFIX + "line_stairs_slabs", false, NOT_BUILT_YET);
+            PREFIX + "line_stairs_slabs", false, LINE);
 
     // Sweep
     public static final SettingDef.Enum<PathKind> SWEEP_PATH = new SettingDef.Enum<>("sweep.path", PREFIX + "sweep_path",
@@ -183,11 +177,11 @@ public final class GenerateSettings {
     public static final SettingDef.Bool SWEEP_FOLLOW_SLOPE = new SettingDef.Bool("sweep.follow_slope",
             PREFIX + "sweep_follow_slope", false, SWEEP);
     /**
-     * The sweep's columns filled down to the terrain, as the Line's {@link #LINE_EXTEND_TO_GROUND}. Hidden until the
-     * Sweep kernel does it; then shown with SWEEP.
+     * The sweep's columns filled down to the terrain, as the Line's {@link #LINE_EXTEND_TO_GROUND}; each column's fill
+     * takes the state of its lowest swept cell.
      */
     public static final SettingDef.Bool SWEEP_EXTEND_TO_GROUND = new SettingDef.Bool("sweep.extend_to_ground",
-            PREFIX + "sweep_extend_to_ground", false, NOT_BUILT_YET);
+            PREFIX + "sweep_extend_to_ground", false, SWEEP);
 
     // Stamp
     public static final SettingDef.Enum<StampSource> STAMP_SOURCE = new SettingDef.Enum<>("stamp.source",
