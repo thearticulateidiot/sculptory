@@ -50,11 +50,11 @@ Sculptory used to be called Builder Suite. On its first start it moves the old `
 
 ## Which build is this?
 
-Every build has a build id: a release has its version alone (`0.3.0-alpha`), a build from source adds the commit (`0.3.0-alpha+6a043a85`). The id is in the jar's name, the mod list and the log line `Sculptory 0.3.0-alpha initializing`, and `/sculptory version` names the server's build and yours.
+Every build has a build id: a release has its version alone (`0.4.0-beta`), a build from source adds the commit (`0.4.0-beta+6a043a85`). The id is in the jar's name, the mod list and the log line `Sculptory 0.4.0-beta initializing`, and `/sculptory version` names the server's build and yours.
 
 ## Updating
 
-Replace the jar on the server and on every client with the same build.
+Replace the jar on the server and on every client with the same build. [Updating Sculptory](updating.md) lists what carries over and where the files are.
 
 - Another build of the same protocol can still edit, with a warning that names both builds.
 - Another protocol can join and play but not edit: the editor says "This server runs a different Sculptory version, so the editor can't open".

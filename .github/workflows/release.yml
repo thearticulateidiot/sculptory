@@ -147,7 +147,7 @@ jobs:
           files: dist/sculptory-${{ needs.build.outputs.version }}.jar
           name: Sculptory ${{ needs.build.outputs.version }}
           version: ${{ needs.build.outputs.version }}
-          version-type: alpha
+          version-type: beta
           changelog-file: dist/release-notes.md
           loaders: fabric
           game-versions: 1.21.1
@@ -183,7 +183,7 @@ jobs:
           files: dist/sculptory-${{ needs.build.outputs.version }}.jar
           name: Sculptory ${{ needs.build.outputs.version }}
           version: ${{ needs.build.outputs.version }}
-          version-type: alpha
+          version-type: beta
           changelog-file: dist/release-notes.md
           loaders: fabric
           game-versions: 1.21.1

@@ -138,15 +138,15 @@ bundled.
 
 ## Versions and releases
 
-The version is `mod_version` in `gradle.properties` (for example `0.3.0-alpha`). Every build has a build id, which
+The version is `mod_version` in `gradle.properties` (for example `0.4.0-beta`). Every build has a build id, which
 names the jar, is the version in the mod list and is compared by client and server when a player joins
 (`/sculptory version` shows both):
 
-- A **dev build** (any ordinary build) adds the commit: `0.3.0-alpha+6a043a85`, with `.dirty` for uncommitted
-  changes and `+nogit` without git. Its jar is `sculptory-0.3.0-alpha+6a043a85.jar`.
-- A **release build** is `mod_version` alone: `0.3.0-alpha`, in `sculptory-0.3.0-alpha.jar`. Gradle makes one when
+- A **dev build** (any ordinary build) adds the commit: `0.4.0-beta+6a043a85`, with `.dirty` for uncommitted
+  changes and `+nogit` without git. Its jar is `sculptory-0.4.0-beta+6a043a85.jar`.
+- A **release build** is `mod_version` alone: `0.4.0-beta`, in `sculptory-0.4.0-beta.jar`. Gradle makes one when
   it is given `-Prelease` (`scripts/gradle.ps1 :fabric:remapJar -Prelease`), or when it runs in GitHub Actions for a
-  tag that starts with `v`. Such a tag must be `v` plus `mod_version` (`v0.3.0-alpha`), or the build stops. A local
+  tag that starts with `v`. Such a tag must be `v` plus `mod_version` (`v0.4.0-beta`), or the build stops. A local
   release build from a checkout with uncommitted changes warns, since its id no longer says so.
 
 To release: set `mod_version`, update `CHANGELOG.md`, commit, and push the tag `v<mod_version>`. The release workflow

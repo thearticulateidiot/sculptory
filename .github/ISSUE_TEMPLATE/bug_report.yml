@@ -12,8 +12,8 @@ body:
     id: sculptory
     attributes:
       label: Sculptory version
-      description: The build id from `/sculptory version` or the jar's name, e.g. `0.3.0-alpha`. On a server, the server's and your client's.
-      placeholder: 0.3.0-alpha
+      description: The build id from `/sculptory version` or the jar's name, e.g. `0.4.0-beta`. On a server, the server's and your client's.
+      placeholder: 0.4.0-beta
     validations:
       required: true
   - type: input

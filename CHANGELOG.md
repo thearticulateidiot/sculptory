@@ -3,7 +3,14 @@
 All notable changes to Sculptory. Versions follow `mod_version` in `gradle.properties`; client and server need the
 same build.
 
-## Unreleased
+## 0.4.0-beta — first beta
+
+For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.3.0-alpha. Beta means the main
+tools are done and what you save carries over when you update Sculptory on the same Minecraft version: see
+[Updating Sculptory](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/updating.md). Network
+protocol 6.
+
+### New since 0.3.0-alpha
 
 - **Free rotation**: turn a paste or a move by any angle around any axis.
   - Three rings on the ghost snap every 15°; hold `Ctrl` to turn freely, or type the angles in Tool Settings.
@@ -60,8 +67,41 @@ same build.
 - Selection box handles show faintly through blocks and can still be grabbed there.
 - Servers can cap the Heightmap brush's size and height with `limits.maxHeightmapRadius` and
   `limits.maxHeightmapHeight`; a stamp's blocks count against `limits.maxOpVolume`.
-- Network protocol 6: a 0.3.0-alpha client can join a server running this build (and the other way round) and play,
-  but the editor won't open: client and server need the same protocol.
+- Under the hood, the server side moved into a module of its own, free of Minecraft code, as groundwork for other
+  platforms. Nothing changes in game.
+
+### What carries over when you update
+
+Updating Sculptory on the same Minecraft version keeps:
+
+- **Your editor settings**: UI size, panel opacity, fade when not hovered, tool outline opacity, fly speed, window
+  layouts (one per UI size), open and folded sections, keys, presets, every tool's last settings, the Mask's rules and
+  tutorial progress.
+- **Server and shared data**: undo history (within the server's age and disk limits), the library's schematics and
+  palettes, who each asset is shared with, and `config/sculptory/server.json`.
+- **The world**: blocks placed with Sculptory are ordinary blocks and never depend on the mod.
+
+Not kept: undo history across a Minecraft update (steps belong to the Minecraft version they were made in). Going back
+to an older Sculptory leaves files from a newer one as they are and never damages them, but it may not use them.
+
+Saved files are handled more carefully:
+
+- A file Sculptory can't read is never deleted: it is left as it is or copied aside first.
+- A saved settings file that can't be read is now copied aside (as `<name>.bad`) instead of being replaced, and a
+  Mask file from a newer version is left as it is.
+- Settings this build doesn't know, written by a newer or older build, are kept when it saves.
+
+### Updating from 0.3.0-alpha
+
+- Replace the jar on the server and on every client that edits: client and server need the same protocol. A
+  0.3.0-alpha client can join a server running 0.4.0-beta (and the other way round) and play, but the editor won't
+  open.
+- Your editor settings, window layouts, presets, keys, saved undo history and the library carry over. The saved fly
+  speed is new and starts at 1×.
+- If you go back to 0.3.0-alpha: a `.schem` with biomes opens there with all its blocks but without its biomes. A
+  player whose saved history holds biome edits has no saved history while 0.3.0-alpha runs (it leaves the file alone
+  and doesn't save that player's new edits); nothing is damaged, and the history is back when you return to
+  0.4.0-beta.
 
 ## 0.3.0-alpha — first public release
 

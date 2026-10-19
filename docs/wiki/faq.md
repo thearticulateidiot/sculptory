@@ -38,9 +38,9 @@ Palette Paint with a weighted mix and a [pattern](mix-patterns.md): Patches for 
 
 Yes: hold `G` outside the editor and switch a power on. See [Builder mode](builder-mode.md).
 
-### Do my settings survive a restart?
+### Do my settings survive a restart or an update?
 
-Yes: every tool's settings, your keys, the UI size and opacity are saved on your computer. The symmetry centre and the gradient line are not: see [Tool Settings](tool-settings.md).
+Yes: every tool's settings, your keys, the UI size, opacity and window layouts are saved on your computer and carry over to newer Sculptory versions. The symmetry centre and the gradient line are not kept: see [Tool Settings](tool-settings.md) and [Updating Sculptory](updating.md).
 
 ## Servers
 
@@ -70,7 +70,7 @@ Not yet. A Paper port is planned.
 
 ## Known limits
 
-Sculptory is an alpha. The limits you are most likely to meet:
+Sculptory is a beta. The limits you are most likely to meet:
 
 - Fabric 1.21.1 only: no Paper, Forge, NeoForge or other Minecraft versions yet.
 - The server and every editing client need the same build; see [Server setup](server-setup.md#updating).

@@ -8,6 +8,9 @@
 #                                             #   Options > Video Settings > Shader Packs (packs go in
 #                                             #   .local/run/client/shaderpacks)
 #   scripts/playtest.ps1 -Size 1600x900       # game window size
+#                                             # Plain playtests in every checkout share one set of settings (game
+#                                             #   options and the editor's settings files) in <main checkout>\.local\run\settings:
+#                                             #   the newer copy is used at start and the game's is kept when it closes.
 #   scripts/playtest.ps1 -Tour                # dev-only screenshot tour of the editor UI:
 #                                             #   opens world "BS Tour", takes the pictures, quits; the pictures and
 #                                             #   index.txt go to <main checkout>\.local\tour\<yyyyMMdd-HHmmss>
@@ -151,6 +154,27 @@ function Enable-CheckShaderPack([string]$Main, [string]$GameDir) {
     $lines = @($lines | Where-Object { $_ -notmatch '^(shaderPack|enableShaders)=' }) + "shaderPack=$($pack.Name)" + 'enableShaders=true'
     Set-Content -LiteralPath $irisFile -Value $lines -Encoding ascii
     return $pack.Name
+}
+
+# The developer's settings, shared by every checkout's plain playtests: Minecraft's options and the editor's settings
+# files (UI size, opacity, layouts, keys, presets, tool settings, sections, mask, tutorial). Worlds, history and the
+# library stay with each checkout.
+$sharedSettingsFiles = @('options.txt') + @(
+    'editor-ui.json', 'editor-layout.json', 'editor-keys.json', 'editor-presets.json', 'editor-tool-settings.json',
+    'editor-sections.json', 'editor-mask.txt', 'editor-tutorial.json' | ForEach-Object { "config\sculptory\$_" })
+
+# Copies each shared settings file from one game directory to another where the source copy is newer (or the target
+# has none). Copy-Item keeps the time, so a file copied once is not copied back.
+function Sync-Settings([string]$From, [string]$To) {
+    foreach ($name in $sharedSettingsFiles) {
+        $source = Join-Path $From $name
+        if (-not (Test-Path -LiteralPath $source)) { continue }
+        $target = Join-Path $To $name
+        if ((Test-Path -LiteralPath $target) -and
+            (Get-Item -LiteralPath $target).LastWriteTimeUtc -ge (Get-Item -LiteralPath $source).LastWriteTimeUtc) { continue }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
+        Copy-Item -LiteralPath $source -Destination $target -Force
+    }
 }
 
 # Whether no running game holds a world: its session.lock (if any) opens without sharing.
@@ -330,8 +354,17 @@ if ($Tour) {
 if ($Size) {
     $gradleArgs += "-PbsSize=$Size"
 }
+# A plain playtest (not the tour, check or demo, which need their own settings, nor a second player's game directory)
+# starts with the newest of the shared and this checkout's settings and hands its own back when the game closes.
+$shareSettings = -not ($Tour -or $Check -or $Demo -or $RunDir)
+if ($shareSettings) {
+    $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim()
+    $sharedSettings = Join-Path (Split-Path -Parent $commonDir) '.local\run\settings'
+    Sync-Settings $sharedSettings $clientDir
+}
 & (Join-Path $PSScriptRoot 'gradle.ps1') @gradleArgs
 $code = $LASTEXITCODE
+if ($shareSettings) { Sync-Settings $clientDir $sharedSettings }
 if ($Tour) {
     $index = Join-Path $TourDir 'index.txt'
     if (Test-Path -LiteralPath $index) {

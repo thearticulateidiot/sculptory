@@ -66,4 +66,5 @@ A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to 
 ## Help
 
 - [Troubleshooting](troubleshooting.md): messages and what to do about them
+- [Updating Sculptory](updating.md): what carries over to a new version, and where the files are
 - [FAQ](faq.md): short answers to common questions

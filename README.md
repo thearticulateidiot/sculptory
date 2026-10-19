@@ -7,8 +7,10 @@ into an editor: floating windows, a tool palette, brushes that shape terrain, se
 stack, schematics, a shared library, scatter and one undo history for all of it. It works in singleplayer and on
 dedicated servers, where the server decides who may edit.
 
-> **Alpha.** 0.3.0-alpha is the first public release. Most of it is covered by automated tests, but parts haven't
-> been played much yet. Keep backups of worlds you care about, and see [Known limits](docs/wiki/faq.md#known-limits).
+> **Beta.** The main tools are done, and what you save (settings, layouts, presets, undo history, the library) carries
+> over to newer Sculptory versions for the same Minecraft version: see [Updating Sculptory](docs/wiki/updating.md).
+> Most of it is covered by automated tests, but parts haven't been played much yet. Keep backups of worlds you care
+> about, and see [Known limits](docs/wiki/faq.md#known-limits).
 
 ![The editor screen: the menu bar, windows and the tool palette](docs/wiki/images/screen-and-windows-overview.png)
 
@@ -86,6 +88,10 @@ dedicated servers, where the server decides who may edit.
 2. **Singleplayer** works with that alone: you can edit in every world you own.
 3. **On a server**, put Fabric API and the **same Sculptory jar** on the server and on every client that wants to edit.
    By default operators (op level 2 or higher) may edit; a permissions mod can decide per player or group.
+
+**Updating:** replace the jar in `mods` (on a server, the same jar on the server and every editing client). Your
+settings, layouts, presets, undo history and library carry over: [Updating Sculptory](docs/wiki/updating.md) lists
+what is kept and where the files are.
 
 Downloads: [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (Modrinth and CurseForge pages
 follow). [Server setup](docs/wiki/server-setup.md) in the wiki has the details: updating, which build you have, removing
