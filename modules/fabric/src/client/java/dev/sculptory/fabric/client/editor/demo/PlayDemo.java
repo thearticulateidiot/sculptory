@@ -235,6 +235,8 @@ public final class PlayDemo {
         try {
             overlay.show(driver.translate(DemoCaptions.PREPARING));
             DemoStage stage = setUpWorld(driver);
+            // Tool settings are kept between games: the ones the script relies on go back to their defaults.
+            driver.defaultScriptSettings();
             Demo demo = new Demo(client, editor, driver, overlay, stage, config.pacing());
             // Over the stage, outside the editor, for the opening view.
             driver.view(stage.x(56) + 0.5, stage.y(52), stage.z(136) + 0.5, stage.x(56) + 0.5, stage.y(0),

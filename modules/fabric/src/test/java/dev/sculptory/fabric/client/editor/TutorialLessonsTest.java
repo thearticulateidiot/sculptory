@@ -79,11 +79,12 @@ class TutorialLessonsTest {
     }
 
     @Test
-    void nineteenLessonsInThreeGroupsOfFourToTenStepsWithStableIds() {
+    void twentyFourLessonsInThreeGroupsOfFourToTenStepsWithStableIds() {
         List<Lesson> lessons = Lessons.all();
         assertEquals(List.of("getting_around", "menus", "select", "edit", "history", "settings",
-                "terrain", "weather", "paint", "patterns", "shapes", "symmetry",
-                "library", "flip", "export", "build", "scatter", "tinker", "builder"),
+                "terrain", "weather", "heightmap", "paint", "patterns", "shapes", "symmetry", "biomes",
+                "library", "flip", "rotate", "export", "build", "path_points", "smart_surface", "scatter", "tinker",
+                "builder"),
                 lessons.stream().map(Lesson::id).toList());
         assertEquals(List.of("basics", "brushes", "building"),
                 Lessons.groups().stream().map(Lessons.Group::id).toList());
@@ -217,8 +218,8 @@ class TutorialLessonsTest {
             }
         }
         assertTrue(links >= Lessons.all().size(), "every lesson links somewhere: " + links);
-        assertEquals(33, Lessons.WIKI_PAGES.size(),
-                "the 28 frozen ids, and tools, tinker, builder-mode, weather and navigation");
+        assertEquals(37, Lessons.WIKI_PAGES.size(), "the 28 frozen ids, and tools, tinker, builder-mode, weather,"
+                + " navigation, heightmap, biomes, smart-surface and free-rotation");
     }
 
     @Test
@@ -273,7 +274,8 @@ class TutorialLessonsTest {
             }
         }
         assertEquals(Set.of("select.pick", "select.box_again", "select.clear", "shapes.box_again", "symmetry.off",
-                "patterns.random", "weather.erode_mode"),
+                "patterns.random", "weather.erode_mode", "build.kind", "build.direction", "heightmap.raise",
+                "biomes.view_off"),
                 metAtOnce, "Select is active, nothing is selected and every setting is at its default");
     }
 }

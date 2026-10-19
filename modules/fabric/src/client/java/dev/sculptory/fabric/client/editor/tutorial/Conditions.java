@@ -6,6 +6,7 @@ import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.Selection;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import dev.sculptory.fabric.client.editor.tutorial.Condition.Check;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -54,6 +55,18 @@ public final class Conditions {
         return probe -> {
             long start = counter.applyAsLong(probe);
             return now -> counter.applyAsLong(now) > start;
+        };
+    }
+
+    /** Met once {@code counter} has grown by at least {@code amount} since the step began. */
+    public static Condition increasedBy(ToLongFunction<TutorialProbe> counter, long amount) {
+        Objects.requireNonNull(counter);
+        if (amount < 1) {
+            throw new IllegalArgumentException("Grows by at least 1, not " + amount);
+        }
+        return probe -> {
+            long start = counter.applyAsLong(probe);
+            return now -> counter.applyAsLong(now) - start >= amount;
         };
     }
 
@@ -354,8 +367,52 @@ public final class Conditions {
         return state(TutorialProbe::symmetryCentreSet);
     }
 
-    public static Condition pathNodes(int atLeast) {
-        return state(probe -> probe.pathNodes() >= atLeast);
+    /**
+     * At least {@code clicks} points added to {@code kind}'s path or outline since the step began (an end point, or one
+     * inserted): points left from before don't count.
+     */
+    public static Condition pointsPlaced(GenerateSettings.Kind kind, int clicks) {
+        Objects.requireNonNull(kind);
+        return increasedBy(probe -> probe.points(kind).placed(), clicks);
+    }
+
+    /** A point inserted into {@code kind}'s path (a click on the drawn path, or the insert key). */
+    public static Condition pointInserted(GenerateSettings.Kind kind) {
+        Objects.requireNonNull(kind);
+        return increased(probe -> probe.points(kind).inserted());
+    }
+
+    /** One of {@code kind}'s path or outline points was dragged somewhere else. */
+    public static Condition pointMoved(GenerateSettings.Kind kind) {
+        Objects.requireNonNull(kind);
+        return increased(probe -> probe.points(kind).moved());
+    }
+
+    /** An inside point added to {@code kind}'s outline (Smart Surface). */
+    public static Condition insidePointPlaced(GenerateSettings.Kind kind) {
+        Objects.requireNonNull(kind);
+        return increased(probe -> probe.points(kind).insidePlaced());
+    }
+
+    /** One of {@code kind}'s inside points was dragged somewhere else. */
+    public static Condition insidePointMoved(GenerateSettings.Kind kind) {
+        Objects.requireNonNull(kind);
+        return increased(probe -> probe.points(kind).insideMoved());
+    }
+
+    /** A middle point of {@code kind}'s path is selected. */
+    public static Condition middlePointSelected(GenerateSettings.Kind kind) {
+        Objects.requireNonNull(kind);
+        return state(probe -> probe.points(kind).middleSelected());
+    }
+
+    /** {@code kind} has points and none of them is selected. */
+    public static Condition pointsDeselected(GenerateSettings.Kind kind) {
+        Objects.requireNonNull(kind);
+        return state(probe -> {
+            Points points = probe.points(kind);
+            return points.outline() + points.inside() > 0 && !points.anySelected();
+        });
     }
 
     public static Condition scatterAreaPainted() {
@@ -386,6 +443,26 @@ public final class Conditions {
     /** The ghost in progress is turned upside down. */
     public static Condition placementUpsideDown() {
         return state(TutorialProbe::placementUpsideDown);
+    }
+
+    /** The Selection window's Rotate… ghost is up. */
+    public static Condition rotating() {
+        return state(TutorialProbe::rotating);
+    }
+
+    /** The placement in progress is turned (by a ring, a typed angle, R, a mirror or a flip). */
+    public static Condition placementTurned() {
+        return state(TutorialProbe::placementTurned);
+    }
+
+    /** View > Biome view is on. */
+    public static Condition biomeViewOn() {
+        return state(TutorialProbe::biomeViewOn);
+    }
+
+    /** View > Biome view is off. */
+    public static Condition biomeViewOff() {
+        return state(probe -> !probe.biomeViewOn());
     }
 
     /** A builder-mode power is on. */

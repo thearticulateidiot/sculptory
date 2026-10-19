@@ -33,9 +33,9 @@ import org.junit.jupiter.api.Test;
 import org.lwjgl.glfw.GLFW;
 
 /**
- * The client contracts of the batch after 0.3.0-alpha (protocol 6) before its streams land: palette slots 16 and 17
- * (the Heightmap brush on ; and the Biome brush on ', both built),
- * and Generate's Sweep and Stamp kinds, listed but not yet offered (Heightmap is built).
+ * The client contracts of protocol 6 (the release after 0.3.0-alpha): palette slots 16 and 17 (the Heightmap brush on
+ * ; and the Biome brush on '), and Generate's kinds added since (Sweep, Stamp, Heightmap and Smart Surface), all
+ * offered.
  */
 class BatchSixPaletteTest {
     private static Tool slot(int slot) {
@@ -62,11 +62,11 @@ class BatchSixPaletteTest {
                 Perm.BRUSH), heightmap.descriptor());
         assertEquals(new ToolDescriptor(ToolId.BIOME, "sculptory.tool.biome", TerrainBrushTool.BIOME_ICON, Perm.BIOME),
                 biome.descriptor());
-        // Both streams landed: the Heightmap brush in slot 16 and the Biome brush (needing the biome node) in 17.
+        // The Heightmap brush in slot 16 and the Biome brush (needing the biome node) in 17, both built.
         assertEquals(dev.sculptory.core.brush.BrushTool.HEIGHTMAP,
-                assertInstanceOf(TerrainBrushTool.class, heightmap, "ws/heightmap built it").kind());
+                assertInstanceOf(TerrainBrushTool.class, heightmap, "the Heightmap brush is built").kind());
         assertEquals(dev.sculptory.core.brush.BrushTool.BIOME,
-                assertInstanceOf(TerrainBrushTool.class, biome, "ws/biomes built it").kind());
+                assertInstanceOf(TerrainBrushTool.class, biome, "the Biome brush is built").kind());
         for (Tool tool : List.of(heightmap, biome)) {
             assertFalse(EditorToolSet.comingSoon(tool.descriptor().id()).isPresent(), "selectable, not greyed out");
             for (String key : List.of(tool.descriptor().nameKey(), tool.descriptor().nameKey() + ".tooltip")) {
@@ -88,26 +88,22 @@ class BatchSixPaletteTest {
     }
 
     @Test
-    void generatesNewKindsAreListedButNotOfferedYet() throws IOException {
+    void everyGenerateKindIsListedAndOfferedInItsOrder() throws IOException {
         JsonObject lang = lang();
         List<GenerateSettings.Kind> offered = new ArrayList<>();
         for (GenerateSettings.Kind kind : GenerateSettings.Kind.values()) {
             if (GenerateSettings.KIND.available(kind)) offered.add(kind);
+            assertTrue(GenerateSettings.KIND.validate(kind, null).isValid(), kind.name());
             assertTrue(lang.has("sculptory.setting.generate.kind." + kind.name().toLowerCase(java.util.Locale.ROOT)),
                     kind.name());
         }
-        assertEquals(List.of(GenerateSettings.Kind.PATH, GenerateSettings.Kind.ROOF, GenerateSettings.Kind.LINE,
-                GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP,
-                GenerateSettings.Kind.SMART_SURFACE), offered, "every kind is built");
-        assertEquals(List.of(GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP),
-                List.of(GenerateSettings.Kind.values()).subList(3, 6), "appended, in this order");
-        // Smart Surface is appended and, built, offered.
-        assertEquals(GenerateSettings.Kind.SMART_SURFACE, GenerateSettings.Kind.values()[6], "appended");
-        assertTrue(GenerateSettings.KIND.unavailable().isEmpty(), "every kind is built");
-        assertTrue(GenerateSettings.KIND.validate(GenerateSettings.Kind.SMART_SURFACE, null).isValid());
-        assertTrue(GenerateSettings.KIND.options().contains(GenerateSettings.Kind.SMART_SURFACE), "listed");
-        assertEquals(7, GenerateSettings.KIND.options().size());
-        assertTrue(GenerateSettings.KIND.validate(GenerateSettings.Kind.HEIGHTMAP, null).isValid());
+        // Presets save the name; new kinds are appended.
+        List<GenerateSettings.Kind> order = List.of(GenerateSettings.Kind.PATH, GenerateSettings.Kind.ROOF,
+                GenerateSettings.Kind.LINE, GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP,
+                GenerateSettings.Kind.HEIGHTMAP, GenerateSettings.Kind.SMART_SURFACE);
+        assertEquals(order, offered, "every kind is built");
+        assertEquals(order, GenerateSettings.KIND.options(), "every kind is listed");
+        assertTrue(GenerateSettings.KIND.unavailable().isEmpty());
     }
 
     @Test

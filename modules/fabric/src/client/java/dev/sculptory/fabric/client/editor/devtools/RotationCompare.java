@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.client.editor.tools.place;
+package dev.sculptory.fabric.client.editor.devtools;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
 

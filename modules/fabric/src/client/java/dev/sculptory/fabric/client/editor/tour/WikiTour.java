@@ -4,6 +4,7 @@ import dev.sculptory.core.Box;
 import dev.sculptory.fabric.client.editor.commands.EditorCommands;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.place.PlaceSettings;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,8 +25,15 @@ public final class WikiTour {
     private static final long GHOST_WAIT_MS = 4_000;
     /** The ring opens on the next tick after the key press; wait well past that. */
     private static final long RING_WAIT_MS = 1_500;
-    /** The whole screen, scaled down to show the layout. */
-    private static final int OVERVIEW_WIDTH = 800;
+    /**
+     * The whole screen, as wide as a wiki picture may be so the windows' text reads (the README shows it too); written
+     * narrower when the world in it would take it past {@link TourCrop#MAX_BYTES}.
+     */
+    private static final int OVERVIEW_WIDTH = TourCrop.MAX_WIDTH;
+    /** Room above the mix's heading in its picture (UI units), as around a cropped window. */
+    private static final int MIX_MARGIN = 3;
+    /** Below the Pattern row: the pattern's own settings (the seed). */
+    private static final int PATTERN_SETTINGS_HEIGHT = 72;
     /** A crop of the world (many colours) stays under 300 KB at this width; the thumbnail is far smaller anyway. */
     private static final int WORLD_WIDTH = 600;
     /** The ring over the world, the same trade. */
@@ -63,9 +71,12 @@ public final class WikiTour {
                             List.of("minecraft:grass_block", "minecraft:coarse_dirt", "minecraft:stone"),
                             List.of(3, 2, 1));
                     tour.setChoiceSetting(ToolId.PALETTE, "pattern", "GRADIENT");
+                    // The seed in view, then the whole mix (its heading too), which the picture starts with.
                     tour.scrollIntoView(tour.toolSettingsForm().field("pattern.seed").orElseThrow());
+                    tour.scrollIntoView(tour.toolSettingsForm().field("palette").orElseThrow());
                 }, tour -> tour.windowRowsArea(EditorWindows.TOOL_SETTINGS,
-                        tour.toolSettingsForm().field("pattern").orElseThrow(), 78, 72)));
+                        tour.toolSettingsForm().field("palette").orElseThrow(),
+                        tour.toolSettingsForm().field("pattern").orElseThrow(), MIX_MARGIN, PATTERN_SETTINGS_HEIGHT)));
         steps.add(step("import-export-dialog", "The Export dialog for the copied box: the file name and the format row",
                 tour -> tour.runCommand(EditorCommands.EXPORT_CLIPBOARD), TourContext::popupArea));
         // The stairs were placed two steps ago. Tinker's label hangs to the lower right of the pointer (under the
@@ -127,6 +138,13 @@ public final class WikiTour {
                     tour.clearSelection();
                     tour.selectTool(ToolId.PLACE);
                 }, tour -> tour.windowArea(EditorWindows.TOOL_SETTINGS)).withMinMillis(GHOST_WAIT_MS));
+        // The Free rotation section starts folded, so the picture above doesn't show it. This one shows the section
+        // alone: the window can't always scroll its header to the top, which left part of a row above it.
+        steps.add(step("free-rotation-section", "Place: Tool Settings with the Free rotation section open",
+                tour -> {
+                    tour.selectTool(ToolId.PLACE);
+                    tour.expandSectionOf(PlaceSettings.METHOD_KEY);
+                }, tour -> tour.sectionArea(PlaceSettings.METHOD_KEY)).withMinMillis(GHOST_WAIT_MS));
     }
 
     /** Tool Settings, masks, symmetry. */
@@ -154,10 +172,34 @@ public final class WikiTour {
                     tour.selectTool(ToolId.PALETTE);
                 }, tour -> tour.windowArea(EditorWindows.TOOL_SETTINGS)));
         steps.add(settingsOf(ToolId.SHAPE, "shape-brush-settings", "Tool Settings for the Shape brush"));
-        steps.add(settingsOf(ToolId.GENERATE, "generate-settings", "Tool Settings for Generate (Path)"));
-        steps.add(settingsOf(ToolId.EXTRUDE, "extrude-settings", "Tool Settings for Extrude"));
+        // Generate's Kind and Extrude's Direction are set each time, so a retake shows the mode its page describes.
+        steps.add(step("smart-surface-settings", "Tool Settings for Generate (Smart Surface)",
+                tour -> {
+                    tour.selectTool(ToolId.GENERATE);
+                    tour.setChoiceSetting(ToolId.GENERATE, "kind", "SMART_SURFACE");
+                }, tour -> tour.windowArea(EditorWindows.TOOL_SETTINGS)));
+        steps.add(step("generate-settings", "Tool Settings for Generate (Path)",
+                tour -> {
+                    tour.selectTool(ToolId.GENERATE);
+                    tour.setChoiceSetting(ToolId.GENERATE, "kind", "PATH");
+                }, tour -> tour.windowArea(EditorWindows.TOOL_SETTINGS)));
+        steps.add(step("extrude-settings", "Tool Settings for Extrude (Straight)",
+                tour -> {
+                    tour.selectTool(ToolId.EXTRUDE);
+                    tour.setChoiceSetting(ToolId.EXTRUDE, "direction", "STRAIGHT");
+                }, tour -> tour.windowArea(EditorWindows.TOOL_SETTINGS)));
         steps.add(settingsOf(ToolId.FLUID, "fluid-settings", "Tool Settings for the Fluid tool (Flood)"));
         steps.add(settingsOf(ToolId.SCATTER, "scatter-settings", "Tool Settings for Scatter, with an empty mix"));
+        steps.add(settingsOf(ToolId.HEIGHTMAP, "heightmap-settings", "Tool Settings for the Heightmap brush"));
+        // Biome view stays on after its step (it is not part of the reset): the Biome tool's step turns it off.
+        steps.add(step("biomes-view-window", "View > Biome view on: the Biomes in view window lists the biomes around",
+                tour -> tour.showBiomeView(true), tour -> tour.windowArea(EditorWindows.BIOME_LEGEND))
+                .withMinMillis(COPY_WAIT_MS));
+        steps.add(step("biomes-settings", "Tool Settings for the Biome tool",
+                tour -> {
+                    tour.showBiomeView(false);
+                    tour.selectTool(ToolId.BIOME);
+                }, tour -> tour.windowArea(EditorWindows.TOOL_SETTINGS)));
     }
 
     /** The windows of their own pages. */

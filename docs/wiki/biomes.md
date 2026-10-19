@@ -6,6 +6,8 @@ The **Biome** tool (`'`, the last palette slot) paints biomes: pick one from the
 
 Minecraft keeps biomes in **biome cells** of 4×4×4 blocks, lined up on multiples of 4. That is the finest a biome can change, so borders are blocky at that size.
 
+![Tool Settings for the Biome tool](images/biomes-settings.png)
+
 ## Paint with the brush
 
 1. Press `'`.
@@ -34,12 +36,14 @@ By default the brush paints **whole columns**, from the bottom of the world to t
 
 - **Copy** and **Cut** keep the biomes of the biome cells the copied blocks are in.
 - **Paste** writes them only with **Biomes** ticked in the [Place](place.md) tool's settings (off by default, like WorldEdit's `-b`). Turned or flipped pastes turn the biomes with the blocks; the paste spot is rounded to the nearest biome cell, so the pattern keeps its shape.
-- **Move** and **Stack** carry the biomes along only with **Biomes** ticked in the [Place](place.md) tool's settings, the same box Paste uses (off by default, and remembered). Unticked, the blocks move and the biomes stay where they were. Ticked, the source keeps its own biomes too (there is no "empty" biome). **Rotate…** in the Selection window and the [Extrude](extrude.md) tool leave biomes where they are.
+- **Move** and **Stack** carry the biomes along only with **Biomes** ticked in the [Place](place.md) tool's settings, the same box Paste uses (off by default, and remembered). Unticked, the blocks move and the biomes stay where they were. Ticked, the source keeps its own biomes too (there is no "empty" biome). **Rotate…** in the Selection window is a move: it turns the biomes with the blocks when **Biomes** is ticked, and leaves them where they are otherwise. The [Extrude](extrude.md) tool leaves biomes where they are.
 - `.schem` files keep biomes both ways ([Import and export](import-export.md)). Litematica and structure files have no biomes.
 
 ## Biome view
 
 **View ▸ Biome view** tints the ground around you by biome and opens a small **Biomes in view** window listing them, most of the ground first. Only you see it. It updates as biomes change, yours or anyone else's.
+
+![The Biomes in view window](images/biomes-view-window.png)
 
 ## Undo
 

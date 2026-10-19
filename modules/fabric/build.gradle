@@ -105,11 +105,12 @@ sourceSets {
     }
 }
 
-// The dev-only client harnesses (the screenshot tour, the play check, the scripted demo, and
-// the unregistered UI toolkit preview) run from the source sets (runClient, scripts/playtest.ps1) and never from the
-// jar, so the jar leaves them out. SculptoryClientMod starts them only when their class is there
-// (DevHarnessClassesTest checks that nothing else refers to them). Their sources stay in the sources jar.
-def devHarnessPackages = ['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/fabric/client/editor/${it}/**".toString() }
+// The dev-only client harnesses (the screenshot tour, the play check, the scripted demo, the development-only
+// /bsclient commands, and the unregistered UI toolkit preview) run from the source sets (runClient,
+// scripts/playtest.ps1) and never from the jar, so the jar leaves them out. SculptoryClientMod starts them only when
+// their class is there (DevHarnessClassesTest checks that nothing else refers to them). Their sources stay in the
+// sources jar.
+def devHarnessPackages = ['check', 'demo', 'devtools', 'tour', 'ui/demo'].collect { "dev/sculptory/fabric/client/editor/${it}/**".toString() }
 tasks.named('jar') { exclude devHarnessPackages }
 
 // DedicatedServerClassesTest scans the common/server output and the shared server module (what a dedicated server

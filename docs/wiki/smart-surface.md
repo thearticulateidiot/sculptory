@@ -4,6 +4,8 @@
 
 **Smart Surface** is a [Generate](generate.md) mode that fills an outline of points with a terrain-like sheet: you put points on blocks, they make a closed outline, and a surface stretches across it through every point, like a cloth laid over pegs. Use it for hillsides, ramps between two levels, dunes, the ground under a build, or a smooth patch of land where the terrain is broken. `Enter` builds it as one undo step named **Smart surface**.
 
+![Tool Settings for Generate's Smart Surface](images/smart-surface-settings.png)
+
 ## Use it
 
 1. Press `-` and set **Generate** to **Smart Surface**.
@@ -41,7 +43,7 @@ Points move as on every path: see [Path points](generate.md#path-points). A drag
 | Top layer, Top mix | The surface blocks: the **Active block** (the top bar's) or a weighted **Mix** ([Mix patterns](mix-patterns.md)) |
 | Top depth | How many blocks deep the top layer is, from the surface down (0–64; 0: all body) |
 | Body, Body mix | The blocks under the top layer: the active block or a mix |
-| Extend to ground | Each column is filled straight down to the ground under it, so the surface stands on the land like a solid hill. It looks through plants, leaves and tree trunks: over a forest it fills down to the real ground and replaces the trees in its way (unless **Keep existing** is on), and under an overhang it fills to the ground beneath |
+| Extend to ground | Each column is filled straight down to the ground under it, so the surface stands on the land like a solid hill. It looks through plants, leaves, tree trunks, water and lava: over a forest it fills down to the real ground and replaces the trees in its way (unless **Keep existing** is on), and under an overhang it fills to the ground beneath |
 | Thickness | Without Extend to ground: how thick the sheet is, 1–64 blocks |
 | Gap-free steep slopes | Each column reaches down to meet its lowest neighbour, so a steep part has no holes in its face. Always on (and hidden) with Extend to ground |
 | Keep existing | Fill air only: blocks already there stay |

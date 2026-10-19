@@ -10,6 +10,7 @@ import dev.sculptory.fabric.client.editor.EditorContext;
 import dev.sculptory.fabric.client.editor.EditorController;
 import dev.sculptory.fabric.client.editor.ExitReason;
 import dev.sculptory.fabric.client.editor.commands.Availability;
+import dev.sculptory.fabric.client.editor.commands.EditorCommands;
 import dev.sculptory.fabric.client.editor.hud.EditorUi;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
@@ -26,6 +27,7 @@ import dev.sculptory.fabric.client.editor.ui.UiOpacity;
 import dev.sculptory.fabric.client.editor.ui.UiScale;
 import dev.sculptory.fabric.client.editor.ui.layout.Spacer;
 import dev.sculptory.fabric.client.editor.ui.widget.CollapsibleSection;
+import dev.sculptory.fabric.client.editor.ui.widget.ListView;
 import dev.sculptory.fabric.client.editor.ui.widget.ScrollPane;
 import dev.sculptory.fabric.client.editor.ui.widget.Tooltip;
 import dev.sculptory.fabric.client.editor.ui.window.Corner;
@@ -71,6 +73,8 @@ public final class TourContext {
     static final float WIKI_PITCH = 50f;
     /** Room left around a cropped window, menu or card (UI units), so its border and shadow show. */
     private static final int CROP_MARGIN = 3;
+    /** A widget taller than this (UI units: a list, a preview) may be cut by a crop's edge; a row is far shorter. */
+    private static final int MAX_ROW_HEIGHT = 48;
 
     private final MinecraftClient client;
     private final EditorClient editor;
@@ -383,19 +387,18 @@ public final class TourContext {
      * top.
      */
     public void expandSectionOf(String settingKey) {
-        EditorUi ui = ui();
-        Window window = ui.windows().window(EditorWindows.TOOL_SETTINGS)
-                .orElseThrow(() -> new IllegalStateException("No Tool Settings window"));
-        window.content(); // builds the active tool's form now if the tool just changed
-        SettingsForm form = ui.toolSettings().form()
-                .orElseThrow(() -> new IllegalStateException("The active tool has no settings form"));
-        Node field = form.field(settingKey)
-                .orElseThrow(() -> new IllegalStateException("No setting '" + settingKey + "'"));
-        CollapsibleSection section = ancestor(field, CollapsibleSection.class);
+        CollapsibleSection section = sectionOf(settingKey);
         section.setExpanded(true);
         relayout();
         ScrollPane pane = ancestor(section, ScrollPane.class);
         pane.scroll().setOffset(section.bounds().y() - pane.content().bounds().y());
+    }
+
+    /** The Tool Settings section holding one of the active tool's settings. */
+    public CollapsibleSection sectionOf(String settingKey) {
+        Node field = toolSettingsForm().field(settingKey)
+                .orElseThrow(() -> new IllegalStateException("No setting '" + settingKey + "'"));
+        return ancestor(field, CollapsibleSection.class);
     }
 
     /** The active tool's Tool Settings form, built and laid out now. */
@@ -553,6 +556,17 @@ public final class TourContext {
         relayout();
     }
 
+    /**
+     * Turns Biome view on or off through its menu command (View > Biome view), which opens or closes the Biomes in
+     * view window with it. Nothing happens when it already is as asked. The view is not part of {@link #reset}: a step
+     * that turns it on leaves it on until a later step turns it off.
+     */
+    public void showBiomeView(boolean shown) {
+        if (ui().biomeView().enabled() != shown) {
+            runCommand(EditorCommands.VIEW_BIOMES);
+        }
+    }
+
     /** Sets a tool's weighted-block list (a mix or palette) from block specs ("minecraft:stone"), each with a weight. */
     public void setMixSetting(ToolId tool, String key, List<String> specs, List<Integer> weights) {
         EditorContext editor = editorContext();
@@ -701,8 +715,49 @@ public final class TourContext {
         return new Rect(0, 0, ui().uiWidth(), ui().uiHeight());
     }
 
-    /** An open window, with a small margin. */
+    /**
+     * An open window, with a small margin. Where its content scrolls, the picture starts and ends on whole rows (see
+     * {@link #onWholeRows}).
+     */
     public Rect windowArea(String id) {
+        return onWholeRows(id, openWindowArea(id));
+    }
+
+    /** An open window from its top down to {@code below} UI units under {@code node} (a row near its top). */
+    public Rect windowTopArea(String id, Node node, int below) {
+        Rect window = openWindowArea(id);
+        Rect last = shownBounds(node);
+        return onWholeRows(id, Rect.ofEdges(window.x(), window.y(), window.right(),
+                Math.min(window.bottom(), last.bottom() + below)));
+    }
+
+    /** The width of an open window, from {@code above} UI units over {@code node} to {@code below} under it. */
+    public Rect windowRowsArea(String id, Node node, int above, int below) {
+        return windowRowsArea(id, node, node, above, below);
+    }
+
+    /**
+     * The width of an open window, from {@code above} UI units over {@code first} to {@code below} under {@code last},
+     * on whole rows.
+     */
+    public Rect windowRowsArea(String id, Node first, Node last, int above, int below) {
+        Rect window = openWindowArea(id);
+        Rect top = shownBounds(first);
+        Rect bottom = shownBounds(last);
+        return onWholeRows(id, Rect.ofEdges(window.x(), Math.max(window.y(), top.y() - above), window.right(),
+                Math.min(window.bottom(), bottom.bottom() + below)));
+    }
+
+    /**
+     * The Tool Settings section holding a setting, from its header down (to the window's bottom when it runs on),
+     * on whole rows: the section on its own, whether or not the window could scroll its header to the top.
+     */
+    public Rect sectionArea(String settingKey) {
+        CollapsibleSection section = sectionOf(settingKey);
+        return windowRowsArea(EditorWindows.TOOL_SETTINGS, section, CROP_MARGIN, CROP_MARGIN);
+    }
+
+    private Rect openWindowArea(String id) {
         relayout();
         Window window = ui().windows().window(id)
                 .orElseThrow(() -> new IllegalStateException("No window '" + id + "'"));
@@ -712,19 +767,46 @@ public final class TourContext {
         return TourCrop.grow(window.rect(), CROP_MARGIN);
     }
 
-    /** An open window from its top down to {@code below} UI units under {@code node} (a row near its top). */
-    public Rect windowTopArea(String id, Node node, int below) {
-        Rect window = windowArea(id);
-        Rect last = shownBounds(node);
-        return Rect.ofEdges(window.x(), window.y(), window.right(), Math.min(window.bottom(), last.bottom() + below));
+    /**
+     * {@code crop} (of window {@code id}) moved onto whole rows where the window's content is a scroll pane: a row the
+     * crop's top or bottom, or the pane's clipping, would cut through is taken in whole or left out
+     * ({@link TourCrop#snapToRows}). A list scrolling inside a window (Keys) keeps its half row, which shows that it
+     * scrolls.
+     */
+    private Rect onWholeRows(String id, Rect crop) {
+        Window window = ui().windows().window(id).orElseThrow();
+        if (!window.hasContent() || !(window.content() instanceof ScrollPane pane) || pane.bounds().isEmpty()) {
+            return crop;
+        }
+        List<TourCrop.Band> rows = new ArrayList<>();
+        addRows(pane.content(), ui().windows().context(), rows);
+        return TourCrop.snapToRows(crop, pane.bounds(), rows, CROP_MARGIN, MAX_ROW_HEIGHT);
     }
 
-    /** The width of an open window, from {@code above} UI units over {@code node} to {@code below} under it. */
-    public Rect windowRowsArea(String id, Node node, int above, int below) {
-        Rect window = windowArea(id);
-        Rect row = shownBounds(node);
-        return Rect.ofEdges(window.x(), Math.max(window.y(), row.y() - above), window.right(),
-                Math.min(window.bottom(), row.bottom() + below));
+    /**
+     * The rows under {@code node} a crop's edge should not cut: each widget without children (a label, a button, a
+     * closed section), an open section's header, and a list or scroll pane inside as one block. Spacers draw nothing.
+     */
+    private static void addRows(Node node, UiContext ctx, List<TourCrop.Band> rows) {
+        if (!node.isShown() || node instanceof Spacer) {
+            return;
+        }
+        Rect bounds = node.bounds();
+        if (node instanceof ScrollPane || node instanceof ListView<?> || node.children().isEmpty()) {
+            if (!bounds.isEmpty()) {
+                rows.add(new TourCrop.Band(bounds.y(), bounds.bottom()));
+            }
+            return;
+        }
+        if (node instanceof CollapsibleSection section) {
+            Rect header = section.headerRect(ctx);
+            if (!header.isEmpty()) {
+                rows.add(new TourCrop.Band(header.y(), header.bottom()));
+            }
+        }
+        for (Node child : node.children()) {
+            addRows(child, ctx, rows);
+        }
     }
 
     /** The open menus, pickers and popups (Find a command too), with what they hang from (a menu title, a button). */

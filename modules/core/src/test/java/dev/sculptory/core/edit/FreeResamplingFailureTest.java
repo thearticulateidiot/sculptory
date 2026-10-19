@@ -42,7 +42,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * The failure cases of the free-rotation methods (fix round 2): a sparse smooth turn is refused before it is mapped,
+ * The failure cases of the free-rotation methods: a sparse smooth turn is refused before it is mapped,
  * a two-cell block is judged whole by "Paste into" and the source mask, a landing cell that lost its block to a pair
  * keeps the move's own rules, exact count loses no block next to pairs, a job cut short undoes exactly, and stamps and
  * symmetric copies undo exactly in every method.

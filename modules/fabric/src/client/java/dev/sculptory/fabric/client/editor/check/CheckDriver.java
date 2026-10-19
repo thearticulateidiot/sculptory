@@ -15,9 +15,13 @@ import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
+import dev.sculptory.fabric.client.editor.tools.generate.PathModel;
+import dev.sculptory.fabric.client.editor.tools.place.PlaceSettings;
 import dev.sculptory.fabric.client.editor.ui.Node;
 import dev.sculptory.fabric.client.editor.ui.Rect;
 import dev.sculptory.fabric.client.editor.ui.widget.Button;
+import dev.sculptory.fabric.client.editor.ui.widget.ScrollPane;
 import dev.sculptory.fabric.client.editor.ui.window.SizedLayouts;
 import dev.sculptory.fabric.client.editor.ui.window.Window;
 import dev.sculptory.fabric.client.editor.world.ScreenProjector;
@@ -39,6 +43,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.network.ClientPlayerEntity;
@@ -328,6 +333,39 @@ public final class CheckDriver {
             ctx().updateSettings(tool, with(values, def, value));
         });
         frames(1);
+    }
+
+    /**
+     * Puts the tool settings the play check and the demo rely on back to their defaults. Settings are kept between
+     * games, so a client someone has played with may have others: Extrude along a path, a Line or Sweep filled down to
+     * the ground, stairs and slabs on a Road or Line, another free-rotation method, biomes carried by a paste.
+     */
+    public void defaultScriptSettings() {
+        defaults(ToolId.EXTRUDE, "direction");
+        defaults(ToolId.GENERATE, "line.extend_to_ground", "sweep.extend_to_ground", "path.stairs_slabs",
+                "line.stairs_slabs");
+        defaults(ToolId.PLACE, PlaceSettings.METHOD_KEY, PlaceSettings.SMOOTH_SLOPES_KEY, PlaceSettings.BIOMES_KEY);
+    }
+
+    /** Sets the tool's settings {@code keys} to their defaults. */
+    private void defaults(ToolId tool, String... keys) {
+        onClient(() -> {
+            SettingsValues values = ctx().settings(tool);
+            SettingsValues reset = values;
+            for (String key : keys) {
+                SettingDef<?> def = values.schema().def(key)
+                        .orElseThrow(() -> new Failed(tool.value() + " has no setting '" + key + "'"));
+                reset = withDefault(reset, def);
+            }
+            if (!reset.equals(values)) {
+                ctx().updateSettings(tool, reset);
+            }
+        });
+        frames(1);
+    }
+
+    private static <T> SettingsValues withDefault(SettingsValues values, SettingDef<T> def) {
+        return values.with(def, def.defaultValue());
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -802,6 +840,23 @@ public final class CheckDriver {
         frames(1);
     }
 
+    /**
+     * Esc until a tool's path points are gone: the first press deselects the selected point, one more may stop a preview
+     * being made, the next clears the points. At most three, and none once they are gone (Esc with nothing left to do
+     * goes on down the ladder and leaves the editor).
+     */
+    public void clearPoints(Supplier<PathModel> points) {
+        for (int i = 0; i < 3 && !onClient(() -> points.get().isEmpty()); i++) {
+            key(GLFW.GLFW_KEY_ESCAPE, 0);
+        }
+    }
+
+    /** The Generate tool (its Road nodes, Line points and the rest). */
+    public GenerateTool generateTool() {
+        return onClient(() -> ctx().tools().get(ToolId.GENERATE).map(GenerateTool.class::cast)
+                .orElseThrow(() -> new Failed("no Generate tool")));
+    }
+
     /** Esc while a popup is open, which closes it (with none open, Esc would go on down the ladder and leave the editor). */
     public void closePopup() {
         if (onClient(() -> ui().windows().context().popups().isOpen())) {
@@ -871,7 +926,7 @@ public final class CheckDriver {
     /** Clicks the middle of a UI node with the left button, through the editor screen. */
     public void clickNode(Node node) {
         double[] at = onClient(() -> {
-            relayout();
+            reveal(node);
             Rect bounds = node.bounds();
             if (bounds.isEmpty() || !node.isShown()) {
                 throw new Failed(node.getClass().getSimpleName() + " is not shown");
@@ -893,6 +948,19 @@ public final class CheckDriver {
         Button button = button(windowId, text)
                 .orElseThrow(() -> new Failed("no \"" + text + "\" button in the " + windowId + " window"));
         clickNode(button);
+    }
+
+    /**
+     * Scrolls each scroll pane holding {@code node} so that it shows whole (a button low in a window taller than its
+     * default size, such as Stack in the Selection window), then lays the editor UI out. Client thread.
+     */
+    public void reveal(Node node) {
+        for (Node at = node.parent(); at != null; at = at.parent()) {
+            if (at instanceof ScrollPane pane) {
+                pane.scrollIntoView(node);
+            }
+        }
+        relayout();
     }
 
     /** Lays the editor UI out now (it does so every frame anyway). Client thread. */

@@ -16,8 +16,6 @@ import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tools.brush.BrushSettings;
 import dev.sculptory.fabric.client.editor.tools.brush.ShapeSettings;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 import java.util.function.Predicate;
 
 /**
@@ -35,14 +33,6 @@ public final class GenerateSettings {
      * Smart Surface (a terrain-like sheet filled inside a closed outline of points). Presets save the name.
      */
     public enum Kind { PATH, ROOF, LINE, SWEEP, STAMP, HEIGHTMAP, SMART_SURFACE }
-
-    /**
-     * The kinds not built yet, with why they can't be chosen (a key such as
-     * {@code sculptory.setting.generate.kind.coming_soon}): none now, Smart Surface being built.
-     */
-    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of();
-    /** The kinds not built yet that the Kind dropdown leaves out altogether (not promised): none now. */
-    private static final Set<Kind> KINDS_HIDDEN = Set.of();
 
     /** The Heightmap import's turn of its picture, clockwise seen from above, in quarter turns. */
     public enum Turn {
@@ -73,8 +63,7 @@ public final class GenerateSettings {
     private static final Predicate<SettingsValues> HEIGHTMAP_KIND = values -> values.get(GenerateSettings.KIND) == Kind.HEIGHTMAP;
     private static final Predicate<SettingsValues> SMART = values -> values.get(GenerateSettings.KIND) == Kind.SMART_SURFACE;
 
-    public static final SettingDef.Enum<Kind> KIND = new SettingDef.Enum<>("kind", PREFIX + "kind", Kind.class, Kind.PATH,
-            SettingDef.ALWAYS, KINDS_NOT_BUILT, KINDS_HIDDEN);
+    public static final SettingDef.Enum<Kind> KIND = new SettingDef.Enum<>("kind", PREFIX + "kind", Kind.class, Kind.PATH);
 
     // Path
     public static final SettingDef.Int WIDTH = new SettingDef.Int("path.width", PREFIX + "width", 3, RoadKernel.MIN_WIDTH,

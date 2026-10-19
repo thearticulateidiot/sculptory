@@ -24,10 +24,12 @@ The tutorial is a set of short lessons that teach the editor in your own world, 
 | Group | Lessons |
 |---|---|
 | Basics | Getting around · Menus and finding things · Select · Edit a selection · Undo and history · Keys and settings |
-| Brushes | Terrain brushes · Weather brush · Paint and palettes · Mix patterns · Shapes · Symmetry |
-| Building | Library · Flip upside down · Import and export · Generate, Extrude and Fluid · Scatter · Tinker · Builder mode |
+| Brushes | Terrain brushes · Weather brush · Heightmap brush · Paint and palettes · Mix patterns · Shapes · Symmetry · Biomes |
+| Building | Library · Flip upside down · Rotate freely · Import and export · Generate, Extrude and Fluid · Path points · Smart Surface · Scatter · Tinker · Builder mode |
 
-Take them in order the first time: later lessons use what earlier ones taught.
+There are 24 lessons. Take them in order the first time: later lessons use what earlier ones taught.
+
+Tools keep their settings between games, so a lesson that needs one sets it first: **Generate, Extrude and Fluid** asks you to set Generate to **Path** and Extrude's **Direction** to **Straight** (the step ticks off at once when it already is), and **Path points** and **Smart Surface** set Generate to **Line** and **Smart Surface**.
 
 The **Builder mode** lesson happens outside the editor, where the card doesn't show: each step says what to do out there and to come back; the step ticks off once you are back.
 
@@ -37,8 +39,10 @@ A step whose tool you may not use can't tick off: **Skip step** goes on. What ea
 
 | Lesson | Needs |
 |---|---|
-| Edit a selection, Shapes, Generate, Extrude and Fluid, Tinker | `region` (Generate also `clipboard`) |
-| Terrain brushes, Weather brush, Paint and palettes, Mix patterns, Symmetry | `brush` |
+| Edit a selection, Shapes, Rotate freely, Generate, Extrude and Fluid, Tinker | `region` (Generate also `clipboard`) |
+| Path points, Smart Surface | `region` and `clipboard` |
+| Terrain brushes, Weather brush, Heightmap brush, Paint and palettes, Mix patterns, Symmetry | `brush` |
+| Biomes | `biome` |
 | Library, Flip upside down | `clipboard` (saving in the library: `library.write` or your own folder) |
 | Import and export | `clipboard`, `schematic.export` (a dropped file: `schematic.import`) |
 | Scatter | `scatter` |

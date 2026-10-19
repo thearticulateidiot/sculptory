@@ -16,18 +16,29 @@ dedicated servers, where the server decides who may edit.
 
 - **Editor mode and windows.** `B` opens the editor (best in Creative, to fly): tools, settings, history and the library live
   in windows you can move, resize and hide. A menu bar, `Ctrl+K` to find any command by name, `F1` for every key. Every
-  key can be rebound.
+  key can be rebound. Fly at 0.25× to 8× speed by scrolling, or with `/sculptory flyspeed` (`/flyspeed` where the server
+  has no command of that name): the speed is saved and also applies when you fly outside the editor.
 - **Selections and operations.** Select a box, a sphere, cylinder, cone or pyramid, connected blocks (magic select),
-  or paint a selection with a brush or a lasso. Fill, Replace (keeping stair shapes, or a whole block family), Erase,
-  Hollow, Walls, Overlay, Naturalize and Update blocks, with progress and cancel, up to millions of blocks.
+  or paint a selection with a brush or a lasso; the box's handles show through blocks and stay grabbable. Fill,
+  Replace (keeping stair shapes, or a whole block family), Erase, Hollow, Walls, Overlay, Naturalize and Update blocks,
+  with progress and cancel, up to millions of blocks.
 - **Masks.** Limit every edit, or one brush, to the blocks you choose: by block or tag, on top of, under or next to
   something, solid, height, slope, inside the selection, random, each with "not".
-- **Terrain and Weather brushes.** Raise, Lower, Smooth, Flatten, Paint and Palette Paint up to radius 32, on any
-  surface (walls and overhangs too), with falloff and symmetry. The Weather brush erodes, fills in, roughens or melts.
+- **Terrain, Weather and Heightmap brushes.** Raise, Lower, Smooth, Flatten, Paint and Palette Paint up to radius 32,
+  on any surface (walls and overhangs too), with falloff and symmetry. The Weather brush erodes, fills in, roughens or
+  melts. The Heightmap brush stamps or paints hills, craters and ridges from grayscale pictures, built in or your own
+  PNGs, up to radius 128.
+- **Smart Surface.** Click points round an area and inside it: a terrain-like sheet fills the outline through every
+  point, smooth or faceted, with a top layer and a body, as a sheet or filled down to the ground.
+- **Biomes.** The Biome tool paints biomes or fills the selection with one; biomes can travel with copy, paste, move,
+  stack and `.schem` files, and Biome view tints the ground by biome.
 - **Shape brush with lines.** Click to place spheres, cylinders, cones, cubes and pyramids, drag to paint them, or sweep
   them along straight lines, curves and hanging cables.
 - **Paste, move and stack** with rotate, flip and upside-down flip, ghost previews and a placement gizmo. Entities come
   along (item frames, armour stands, optionally mobs).
+- **Free rotation.** Turn a paste, a move or the selection (**Rotate…**) by any angle around any axis, with the gizmo's
+  rings or typed angles. Nearest, Exact count or Smooth decides how the turned blocks land on the grid, and Smooth
+  slopes puts stairs and slabs on turned slopes.
 - **Schematics.** Import and export `.schem` (WorldEdit-compatible), `.litematic` and structure `.nbt` files.
 - **Library.** The server's shared folder of schematics and block palettes, with folders, per-asset access and
   "shared with me".
@@ -36,8 +47,15 @@ dedicated servers, where the server decides who may edit.
 - **Tinker.** Change one block's properties, a sign's text or an entity in place, by scrolling over it.
 - **Builder mode.** Hold `G` in normal creative play for a ring of powers, without opening the editor.
 - **Jump.** `J` puts you on the block you look at, `Shift+J` through the wall.
-- **More tools:** Generate (roads, roofs, lines and curves), Extrude (pull out, carve in, smear a face), Fluid (flood,
-  drain, balls of water or lava), palettes and mix patterns, presets for every tool, symmetry.
+- **Generate and Extrude.** Generate builds roads, roofs, lines and curves, sweeps a profile along a path, stamps copies
+  along a path and shapes terrain from a heightmap picture. Extrude pulls a face out, carves it in, smears it, carries
+  it along a path or tapers it to a point. Line, Sweep and Smart Surface can **Extend to ground**; Line and Road can
+  **Use stairs and slabs** on their slopes.
+- **Path points.** Roads, lines, sweeps, stamps, Smart Surface, Extrude's paths and the Shape brush's lines share one
+  point editor: points on blocks (or in the sky), a gizmo to drag them along an axis, in a plane or freely, and new
+  points inserted on the path or after the selected one with `E`.
+- **More tools:** Fluid (flood, drain, balls of water or lava), palettes and mix patterns, presets for every tool,
+  symmetry.
 - **History and undo.** One `Ctrl+Z` / `Ctrl+Y` history for every tool, a History window to jump to any point, and
   undo that keeps what other players changed since. The history is saved with the world and survives restarts and
   crashes.
@@ -78,7 +96,7 @@ the mod.
 | Key | What it does |
 |---|---|
 | `B` | Open and close the editor |
-| `1`–`9`, `0`, `-`, `=`, `[`, `]`, `\` | The 15 tools (Select, Raise, Lower, Smooth, Flatten, Paint, Palette Paint, Place, Scatter, Shape, Generate, Extrude, Fluid, Tinker, Weather) |
+| `1`–`9`, `0`, `-`, `=`, `[`, `]`, `\`, `;`, `'` | The 17 tools (Select, Raise, Lower, Smooth, Flatten, Paint, Palette Paint, Place, Scatter, Shape, Generate, Extrude, Fluid, Tinker, Weather, Heightmap, Biome) |
 | `Ctrl+Scroll` | Tool size |
 | `Ctrl+Z`, `Ctrl+Y` | Undo, redo |
 | `Ctrl+C`, `Ctrl+X`, `Ctrl+V` | Copy, cut, paste |

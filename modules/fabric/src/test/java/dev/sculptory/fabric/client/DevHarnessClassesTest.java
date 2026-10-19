@@ -18,17 +18,18 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 
 /**
- * The mod jar leaves out the dev-only client harnesses (the screenshot tour, the play check, the scripted demo and the
- * UI toolkit preview; {@code devHarnessPackages} in modules/fabric/build.gradle), so no class that ships may name one,
- * or it would fail to load from the jar. Only {@link SculptoryClientMod} starts them, by class-file name and only when
- * that class file is there. Paths and packages come from the build ({@code sculptory.clientClassDirs},
+ * The mod jar leaves out the dev-only client harnesses (the screenshot tour, the play check, the scripted demo, the
+ * development-only /bsclient commands and the UI toolkit preview; {@code devHarnessPackages} in
+ * modules/fabric/build.gradle), so no class that ships may name one, or it would fail to load from the jar. Only
+ * {@link SculptoryClientMod} starts them, by class-file name and only when that class file is there. Paths and packages come from the build ({@code sculptory.clientClassDirs},
  * {@code sculptory.devHarnessPackages}).
  */
 class DevHarnessClassesTest {
     private static final String ENTRYPOINT = "dev/sculptory/fabric/client/SculptoryClientMod.class";
-    /** The classes {@code SculptoryClientMod.devHarness} looks for, by their binary names. */
+    /** The classes {@code SculptoryClientMod} looks for (devHarness, devClassPresent), by their binary names. */
     private static final List<String> STARTED = List.of("dev.sculptory.fabric.client.editor.tour.UiTour",
-            "dev.sculptory.fabric.client.editor.check.PlayCheck", "dev.sculptory.fabric.client.editor.demo.PlayDemo");
+            "dev.sculptory.fabric.client.editor.check.PlayCheck", "dev.sculptory.fabric.client.editor.demo.PlayDemo",
+            "dev.sculptory.fabric.client.editor.devtools.DevCommands");
 
     @Test
     void noShippedClientClassNamesADevHarnessExceptTheEntrypoint() throws IOException {
@@ -38,7 +39,7 @@ class DevHarnessClassesTest {
         assertNotNull(packages, "the build did not pass the dev harness packages");
         // "dev/sculptory/fabric/client/editor/tour/**" -> "dev/sculptory/fabric/client/editor/tour/"
         List<String> prefixes = Arrays.stream(packages.split(",")).map(p -> p.substring(0, p.length() - 2)).toList();
-        assertEquals(4, prefixes.size(), "the dev harness packages: " + packages);
+        assertEquals(5, prefixes.size(), "the dev harness packages: " + packages);
         int scanned = 0;
         int harnessClasses = 0;
         List<String> offenders = new ArrayList<>();

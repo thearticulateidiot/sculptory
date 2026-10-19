@@ -498,10 +498,20 @@ public final class UiTour {
     /**
      * Writes the {@code source} pixels of {@code frame} as a {@code size} picture: copied as they are when the sizes
      * match (a resampling filter would soften them), otherwise scaled down; then saved as a small palette PNG
-     * ({@link TourPng}).
+     * ({@link TourPng}). A PNG over {@link TourCrop#MAX_BYTES} (much of the world in it) is written again smaller.
      */
     private static void writePart(NativeImage frame, TourCrop.Pixels source, TourCrop.Pixels size, Path file)
             throws IOException {
+        TourCrop.Pixels written = size;
+        byte[] png = encodePart(frame, source, written);
+        for (int tries = 0; png.length > TourCrop.MAX_BYTES && tries < 4; tries++) {
+            written = TourCrop.shrunkForBytes(written, png.length, TourCrop.MAX_BYTES);
+            png = encodePart(frame, source, written);
+        }
+        Files.write(file, png);
+    }
+
+    private static byte[] encodePart(NativeImage frame, TourCrop.Pixels source, TourCrop.Pixels size) {
         try (NativeImage picture = new NativeImage(size.width(), size.height(), false)) {
             if (size.width() == source.width() && size.height() == source.height()) {
                 // Reads from (x, y) in the frame, writes from (0, 0) in the picture.
@@ -516,7 +526,7 @@ public final class UiTour {
                     rgb[y * size.width() + x] = (abgr & 0xFF) << 16 | (abgr & 0xFF00) | (abgr >> 16) & 0xFF;
                 }
             }
-            Files.write(file, TourPng.encode(rgb, size.width(), size.height()));
+            return TourPng.encode(rgb, size.width(), size.height());
         }
     }
 

@@ -25,11 +25,14 @@ The **Selection** window (and the Selection menu) changes every block of the sel
 | Naturalize… | Grass on top, 3 dirt, then stone, from every column's top down; blocks and depths editable (below) |
 | Update blocks | Connects fences, walls, panes, stairs and redstone to their neighbours and fixes the light (below) |
 | Rotate… | Turns the selected blocks where they stand by any angle (below) |
+| Fill biome | Sets every biome cell the selection touches to the Biome tool's biome: see [Biomes](biomes.md#fill-the-selection) |
 | Copy, Cut | Puts the selection on the [clipboard](clipboard.md) (`Ctrl+C`, `Ctrl+X`) |
 | Move, Stack | Drag the selection to a new place, or repeat it in a row: see [Place](place.md) |
 | Save as asset… | Saves the selection to the [library](library.md) |
+| Export… | Copies the selection and writes it to a `.schem`, `.litematic` or `.nbt` file: see [Import and export](import-export.md) |
+| Convert to box | For a magic, brush or lasso selection: selects its whole box instead |
 
-All of them work on boxes, shapes and block selections (magic, brush and lasso select), and repeat on the copies when **Symmetry** is on.
+The operations from Fill to Update blocks work on boxes, shapes and block selections (magic, brush and lasso select), and repeat on the copies when **Symmetry** is on.
 
 ## Replace
 

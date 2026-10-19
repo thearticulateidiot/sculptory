@@ -100,7 +100,8 @@ class UiTourStepsTest {
             "screen-and-windows", "finding-things", "tutorial", "tool-settings", "presets", "select",
             "selection-operations", "terrain-brushes", "masks", "shape-brush", "generate", "extrude", "fluid", "scatter",
             "clipboard", "place", "library", "palettes", "symmetry", "history", "keys", "server-setup", "permissions",
-            "troubleshooting", "faq", "tools", "tinker", "builder-mode", "mix-patterns", "import-export");
+            "troubleshooting", "faq", "tools", "tinker", "builder-mode", "mix-patterns", "import-export", "heightmap",
+            "biomes", "smart-surface", "free-rotation");
 
     @Test
     void theOrdinaryTourKeepsWholeFrames() {
@@ -141,5 +142,10 @@ class UiTourStepsTest {
                 "history-window", "keys-window")), "each window with a page of its own");
         assertTrue(wiki.containsAll(List.of("screen-and-windows-overview", "screen-and-windows-top-bar",
                 "finding-things-command-search")), "the screen, the top bar, Ctrl+K");
+        assertTrue(wiki.containsAll(List.of("heightmap-settings", "biomes-settings", "biomes-view-window",
+                "smart-surface-settings", "free-rotation-section")),
+                "the Heightmap brush, the Biome tool and Biome view, Smart Surface, free rotation");
+        assertTrue(wiki.indexOf("biomes-view-window") < wiki.indexOf("biomes-settings"),
+                "the Biome tool's step comes after Biome view's, which it turns off again");
     }
 }

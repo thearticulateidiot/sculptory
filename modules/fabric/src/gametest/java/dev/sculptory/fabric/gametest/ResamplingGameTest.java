@@ -48,7 +48,7 @@ import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
 
 /**
- * The free-rotation methods (fix round 2 of batch 2026-10-07) in a real world: Nearest, Exact count and Smooth, with and
+ * The free-rotation methods in a real world: Nearest, Exact count and Smooth, with and
  * without smooth slopes, paste and move the directional showcase as the programs' model says, keep Exact count's
  * blocks, undo exactly, and a smooth turn is refused sooner (its resampling work counts against the op limit). Region
  * slots 2100-2105.

@@ -1,6 +1,8 @@
 package dev.sculptory.fabric.client.editor.wiki;
 
+import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -44,12 +46,14 @@ public final class WikiPages {
     public static final String NAVIGATION = "navigation";
     public static final String BIOMES = "biomes";
     public static final String HEIGHTMAP = "heightmap";
+    public static final String SMART_SURFACE = "smart-surface";
 
     /** Every frozen page id. */
     public static final List<String> FROZEN = List.of(HOME, GETTING_STARTED, EDITOR_MODE, SCREEN_AND_WINDOWS,
             FINDING_THINGS, TUTORIAL, TOOL_SETTINGS, PRESETS, SELECT, SELECTION_OPERATIONS, TERRAIN_BRUSHES, MASKS,
             SHAPE_BRUSH, GENERATE, EXTRUDE, FLUID, SCATTER, CLIPBOARD, PLACE, LIBRARY, PALETTES, SYMMETRY, HISTORY, KEYS,
-            SERVER_SETUP, PERMISSIONS, TROUBLESHOOTING, FAQ, TINKER, BUILDER_MODE, WEATHER, NAVIGATION, HEIGHTMAP, BIOMES);
+            SERVER_SETUP, PERMISSIONS, TROUBLESHOOTING, FAQ, TINKER, BUILDER_MODE, WEATHER, NAVIGATION, HEIGHTMAP, BIOMES,
+            SMART_SURFACE);
 
     /** A page, and the section on it ({@code null} for its top). */
     public record Target(String pageId, String anchor) {
@@ -85,6 +89,17 @@ public final class WikiPages {
     /** The page (and section) explaining {@code tool}; the home page for a tool the table doesn't know. */
     public static Target forTool(ToolId tool) {
         return TOOLS.getOrDefault(tool, new Target(HOME, null));
+    }
+
+    /**
+     * The page for {@code tool} as it is set now ({@code settings}, the tool's current settings): Generate set to Smart
+     * Surface opens that mode's own page; otherwise {@link #forTool(ToolId)}.
+     */
+    public static Target forTool(ToolId tool, SettingsValues settings) {
+        if (tool.equals(ToolId.GENERATE) && settings.get(GenerateSettings.KIND) == GenerateSettings.Kind.SMART_SURFACE) {
+            return new Target(SMART_SURFACE, null);
+        }
+        return forTool(tool);
     }
 
     /** The tools the table knows, for tests. */

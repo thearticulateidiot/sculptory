@@ -9,10 +9,13 @@ import dev.sculptory.fabric.client.editor.hud.EditorUi;
 import dev.sculptory.fabric.client.editor.hud.HelpSheet;
 import dev.sculptory.fabric.client.editor.hud.ToastStack;
 import dev.sculptory.fabric.client.editor.ui.McFontText;
+import dev.sculptory.fabric.client.editor.ui.Node;
 import dev.sculptory.fabric.client.editor.ui.Rect;
 import dev.sculptory.fabric.client.editor.ui.RecordingGraphics;
 import dev.sculptory.fabric.client.editor.ui.Theme;
 import dev.sculptory.fabric.client.editor.ui.UiScale;
+import dev.sculptory.fabric.client.editor.ui.widget.Button;
+import dev.sculptory.fabric.client.editor.ui.widget.ScrollPane;
 import dev.sculptory.fabric.client.editor.ui.window.Window;
 import dev.sculptory.fabric.client.editor.ui.window.WindowManager;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
@@ -32,7 +35,7 @@ import org.lwjgl.glfw.GLFW;
  * between the top bar and the hint line, toasts leave the windows' title bars free, and Reset layout puts every open
  * window back on screen and leaves which are open alone.
  */
-class OwnersScreenLayoutTest {
+class ScaledScreenLayoutTest {
     private static final int SCREEN_WIDTH = 426;
     private static final int SCREEN_HEIGHT = 247;
     /** The windows that open on demand at a default place of their own. */
@@ -238,5 +241,46 @@ class OwnersScreenLayoutTest {
         assertTrue(windows.mouseDown(fromX, fromY, GLFW.GLFW_MOUSE_BUTTON_LEFT, 0));
         windows.mouseDragged(toX, toY, GLFW.GLFW_MOUSE_BUTTON_LEFT);
         windows.mouseUp(toX, toY, GLFW.GLFW_MOUSE_BUTTON_LEFT);
+    }
+
+    @Test
+    void theSelectionWindowsButtonsBelowItsDefaultHeightShowWholeOnceScrolledIntoView() {
+        for (int percent : new int[] {50, 100}) {
+            scale.set(percent);
+            frame();
+            Window selection = ui.windows().window(EditorWindows.SELECTION).orElseThrow();
+            Rect content = selection.contentRect(Theme.DARK);
+            Button fillBiome = button(selection, "Fill biome");
+            if (percent == 50) {
+                assertEquals(fillBiome.bounds(), content.intersect(fillBiome.bounds()), "Fill biome shows at 50%");
+            }
+            // The play check and the demo click Stack: they scroll it into view first (CheckDriver.reveal).
+            Button stack = button(selection, "Stack");
+            ScrollPane pane = scrollPaneOf(stack);
+            pane.scrollIntoView(stack);
+            frame();
+            assertEquals(stack.bounds(), content.intersect(stack.bounds()), "Stack shows whole at " + percent + "%");
+            pane.scroll().setOffset(0);
+        }
+    }
+
+    private static ScrollPane scrollPaneOf(Node node) {
+        for (Node at = node.parent(); at != null; at = at.parent()) {
+            if (at instanceof ScrollPane pane) {
+                return pane;
+            }
+        }
+        throw new AssertionError("not in a scroll pane");
+    }
+
+    private static Button button(Window window, String text) {
+        List<Node> nodes = new ArrayList<>(List.of(window.content()));
+        for (int i = 0; i < nodes.size(); i++) {
+            if (nodes.get(i) instanceof Button button && button.text().equals(text)) {
+                return button;
+            }
+            nodes.addAll(nodes.get(i).children());
+        }
+        throw new AssertionError("no " + text + " button in " + window.id());
     }
 }

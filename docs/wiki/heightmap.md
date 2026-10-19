@@ -4,6 +4,8 @@
 
 The **Heightmap** brush (`;`) stamps a height picture onto the terrain: white parts raise the ground the most, black parts leave it as it is. Click once for a hill, a crater or a mesa where you point; drag to paint a ridge or a valley along your path. To shape a whole selected area from one picture, use [Generate](generate.md#import-a-heightmap)'s **Heightmap** instead.
 
+![Tool Settings for the Heightmap brush](images/heightmap-settings.png)
+
 ## Use it
 
 1. Press `;`.

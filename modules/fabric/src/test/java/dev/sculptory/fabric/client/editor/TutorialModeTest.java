@@ -12,9 +12,11 @@ import dev.sculptory.core.palette.PalettePattern;
 import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.schem.SchematicFormat;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.fabric.client.editor.blocks.BlockCatalog;
 import dev.sculptory.fabric.client.editor.commands.CommandMenu;
 import dev.sculptory.fabric.client.editor.commands.EditorCommands;
+import dev.sculptory.fabric.client.editor.heightmap.HeightmapRef;
 import dev.sculptory.fabric.client.editor.hud.EditorUi;
 import dev.sculptory.fabric.client.editor.hud.HelpSheet;
 import dev.sculptory.fabric.client.editor.hud.QuickStart;
@@ -24,9 +26,18 @@ import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.settings.form.SettingsForm;
+import dev.sculptory.fabric.client.editor.tool.PointerEvent;
+import dev.sculptory.fabric.client.editor.tool.ToolContext;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.brush.BrushSettings;
 import dev.sculptory.fabric.client.editor.tools.brush.TerrainBrushTool;
+import dev.sculptory.fabric.client.editor.tools.extrude.ExtrudeSettings;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
+import dev.sculptory.fabric.client.editor.tools.generate.PathModel;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
+import dev.sculptory.fabric.client.editor.tools.place.PlaceSettings;
+import dev.sculptory.fabric.client.editor.tools.points.PointEditor;
 import dev.sculptory.fabric.client.editor.tools.select.SelectSettings;
 import dev.sculptory.fabric.client.editor.windows.ExportDialog;
 import dev.sculptory.fabric.client.session.ClipboardCache;
@@ -35,10 +46,12 @@ import dev.sculptory.fabric.client.editor.tutorial.Lessons;
 import dev.sculptory.fabric.client.editor.tutorial.Tutorial;
 import dev.sculptory.fabric.client.editor.tutorial.TutorialRunner;
 import dev.sculptory.fabric.client.editor.ui.McFontText;
+import dev.sculptory.fabric.client.editor.ui.Node;
 import dev.sculptory.fabric.client.editor.ui.Rect;
 import dev.sculptory.fabric.client.editor.ui.RecordingGraphics;
 import dev.sculptory.fabric.client.editor.ui.Theme;
 import dev.sculptory.fabric.client.editor.ui.UiScale;
+import dev.sculptory.fabric.client.editor.ui.widget.Button;
 import dev.sculptory.fabric.client.editor.ui.widget.Menu;
 import dev.sculptory.fabric.client.editor.ui.window.Window;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
@@ -814,6 +827,280 @@ class TutorialModeTest {
         assertEquals("This lesson made no changes to your world. That was the last lesson.",
                 tutorial.card().bodyLabel().text());
         assertEquals(List.of("Fill"), rig.session.history().redoLabels(), "the undone placement, redoable");
+    }
+
+    // ---- Generate's road, path points and Smart Surface; free rotation; the Heightmap brush; biomes ----
+
+    private GenerateTool generate() {
+        return (GenerateTool) rig.ctx.tools().get(ToolId.GENERATE).orElseThrow();
+    }
+
+    private void setGenerate(GenerateSettings.Kind kind) {
+        set(ToolId.GENERATE, "kind", kind);
+    }
+
+    /** Sets a tool's setting {@code key}, as its control in Tool Settings does. */
+    private void set(ToolId tool, String key, Object value) {
+        SettingsValues values = rig.ctx.settings(tool);
+        @SuppressWarnings("unchecked")
+        SettingDef<Object> def = (SettingDef<Object>) values.schema().def(key).orElseThrow();
+        rig.ctx.updateSettings(tool, values.with(def, value));
+    }
+
+    /** A left click on block (x, y, z) with the active tool, through the editor's pointer input. */
+    private void click(int x, int y, int z) {
+        rig.platform.pickBlockAt(x, y, z);
+        rig.controller.pointer(PointerEvent.Kind.PRESS, PointerEvent.LEFT, 10, 10, 0);
+        rig.controller.pointer(PointerEvent.Kind.RELEASE, PointerEvent.LEFT, 10, 10, 0);
+    }
+
+    /** The shown button labelled {@code text} in an open window. */
+    private Button button(String windowId, String text) {
+        List<Node> nodes = new ArrayList<>();
+        nodes.add(ui.windows().window(windowId).orElseThrow().content());
+        for (int i = 0; i < nodes.size(); i++) {
+            Node node = nodes.get(i);
+            if (node instanceof Button button && button.text().equals(text)) {
+                return button;
+            }
+            nodes.addAll(node.children());
+        }
+        throw new AssertionError("no " + text + " button in " + windowId);
+    }
+
+    /** Presses Enter (or clicks a button, say) and ticks the session until the step is done. */
+    private void untilDone(Runnable action) {
+        action.run();
+        for (int i = 0; i < 200 && !runner().stepDone(); i++) {
+            rig.session.tick();
+            rig.controller.frame(10, 10, now * 1_000_000L, 0f);
+            frame();
+        }
+        assertTrue(runner().stepDone(), step() + " is done");
+        settle();
+    }
+
+    @Test
+    void theBuildLessonSetsGenerateToPathAndCountsOnlyTheNodesClickedDuringTheStep() {
+        // An earlier game: a road's three nodes still there, Generate left on Line, Extrude left on Along a path.
+        press(GLFW.GLFW_KEY_MINUS, 0);
+        click(0, 60, 0);
+        click(6, 60, 0);
+        click(12, 60, 0);
+        assertEquals(3, generate().path().size());
+        setGenerate(GenerateSettings.Kind.LINE);
+        set(ToolId.EXTRUDE, "direction", ExtrudeSettings.Direction.ALONG_PATH);
+        press(GLFW.GLFW_KEY_1, 0);
+        start("build");
+        press(GLFW.GLFW_KEY_MINUS, 0);
+        settle();
+        assertEquals("kind", step());
+        frame();
+        assertEquals(settingRow("kind"), tutorial.highlight(), "the Generate row");
+        setGenerate(GenerateSettings.Kind.PATH);
+        settle();
+        assertEquals("nodes", step());
+        frame();
+        assertFalse(runner().stepDone(), "the nodes left from the earlier road don't count");
+        click(18, 60, 0);
+        frame();
+        assertFalse(runner().stepDone(), "one node clicked");
+        click(24, 60, 0);
+        settle();
+        assertEquals("road", step());
+        assertEquals(5, generate().path().size(), "added to the road there was");
+        // As the road step says: Esc deselects the node, a second Esc clears them all, and the editor stays open.
+        press(GLFW.GLFW_KEY_ESCAPE, 0);
+        assertEquals(5, generate().path().size());
+        assertEquals(-1, generate().path().selected(), "deselected");
+        press(GLFW.GLFW_KEY_ESCAPE, 0);
+        assertTrue(generate().path().isEmpty(), "cleared");
+        assertTrue(rig.mode.isActive(), "still in the editor");
+        skipTo("extrude_pick");
+        press(GLFW.GLFW_KEY_EQUAL, 0);
+        settle();
+        assertEquals("direction", step(), "Extrude is on Along a path: the lesson asks for Straight");
+        frame();
+        assertEquals(settingRow("direction"), tutorial.highlight());
+        set(ToolId.EXTRUDE, "direction", ExtrudeSettings.Direction.STRAIGHT);
+        settle();
+        assertEquals("extrude", step());
+    }
+
+    @Test
+    void thePathPointsLessonFollowsTheLinesPointsClickedSelectedDraggedInsertedAndDeselected() {
+        start("path_points");
+        press(GLFW.GLFW_KEY_MINUS, 0);
+        settle();
+        assertEquals("kind", step());
+        setGenerate(GenerateSettings.Kind.LINE);
+        settle();
+        assertEquals("points", step());
+        PointEditor line = generate().line().editor();
+        click(0, 60, 0);
+        click(4, 60, 0);
+        frame();
+        assertFalse(runner().stepDone(), "two points of three");
+        click(8, 60, 0);
+        settle();
+        assertEquals("select", step());
+        assertEquals(2, line.selected(), "the end point clicked last is selected");
+        click(4, 60, 0);
+        settle();
+        assertEquals("drag", step(), "a click on the middle point selects it");
+        ToolContext c = rig.ctx.contextFor(ToolId.GENERATE);
+        PathModel.PointRef middle = new PathModel.PointRef(PathModel.Role.OUTLINE, 1);
+        line.move(c, middle, new BlockPos(4, 62, 0), false);
+        frame();
+        assertFalse(runner().stepDone(), "a drag still on");
+        line.move(c, middle, new BlockPos(4, 63, 0), true);
+        settle();
+        assertEquals("insert", step());
+        press(GLFW.GLFW_KEY_E, 0);
+        assertTrue(line.placingInserted(), "E: a new point follows the cursor");
+        frame();
+        assertFalse(runner().stepDone(), "not inserted until a click puts it down");
+        click(6, 60, 0);
+        assertEquals(4, line.points().size(), "the click put it down, selected");
+        settle();
+        assertEquals("deselect", step());
+        frame();
+        assertFalse(runner().stepDone(), "the point put down is selected");
+        press(GLFW.GLFW_KEY_ESCAPE, 0);
+        settle();
+        assertEquals("build", step());
+        assertEquals(4, line.points().size(), "Esc only deselected");
+    }
+
+    @Test
+    void theSmartSurfaceLessonFollowsTheOutlineAnInsidePointAndItsRise() {
+        start("smart_surface");
+        press(GLFW.GLFW_KEY_MINUS, 0);
+        settle();
+        setGenerate(GenerateSettings.Kind.SMART_SURFACE);
+        settle();
+        assertEquals("outline", step());
+        PointEditor smart = generate().smartSurface().editor();
+        click(0, 60, 0);
+        click(10, 60, 0);
+        click(10, 60, 10);
+        frame();
+        assertFalse(runner().stepDone(), "three outline points of four");
+        click(0, 60, 10);
+        settle();
+        assertEquals("inside", step());
+        assertEquals(4, smart.points().size());
+        click(5, 60, 5);
+        settle();
+        assertEquals("raise", step());
+        assertEquals(1, smart.points().insideCount(), "a click inside the outline is an inside point");
+        smart.move(rig.ctx.contextFor(ToolId.GENERATE), new PathModel.PointRef(PathModel.Role.INSIDE, 0),
+                new BlockPos(5, 66, 5), true);
+        settle();
+        assertEquals("settings", step());
+        frame();
+        assertTrue(tutorial.highlight().isPresent(), "the Top layer row");
+        tutorial.card().skipButton().click();
+        frame();
+        assertEquals("build", step());
+    }
+
+    @Test
+    void theRotateLessonFollowsRotateTheRingGhostsTurnTheMethodAndThePlacement() {
+        start("rotate");
+        rig.ctx.setSelection(new Box(new BlockPos(0, 60, 0), new BlockPos(2, 62, 2)));
+        settle();
+        assertEquals("open", step());
+        frame();
+        assertEquals(ui.windows().window(EditorWindows.SELECTION).map(Window::rect), tutorial.highlight());
+        button(EditorWindows.SELECTION, "Rotate…").click();
+        settle();
+        assertEquals("turn", step());
+        assertTrue(rig.place.rotating());
+        frame();
+        assertFalse(runner().stepDone(), "not turned yet");
+        assertTrue(rig.place.setAngles(4_500, 0, 0));
+        settle();
+        assertEquals("method", step());
+        frame();
+        assertTrue(tutorial.highlight().isPresent(), "the Method row, or the Free rotation header");
+        set(ToolId.PLACE, PlaceSettings.METHOD_KEY, Resampling.EXACT);
+        settle();
+        assertEquals("place", step());
+        untilDone(() -> press(GLFW.GLFW_KEY_ENTER, 0));
+        assertEquals("paste", step());
+        tutorial.card().skipButton().click();
+        frame();
+        assertEquals(TutorialRunner.Phase.FINISHED, runner().phase());
+        assertEquals(1, runner().made(), "the turn is one change");
+    }
+
+    @Test
+    void theHeightmapLessonFollowsThePictureHeightTurnAndMode() {
+        start("heightmap");
+        press(GLFW.GLFW_KEY_SEMICOLON, 0);
+        settle();
+        assertEquals("picture", step());
+        frame();
+        assertEquals(settingRow("heightmap.image"), tutorial.highlight());
+        set(ToolId.HEIGHTMAP, "heightmap.image", HeightmapRef.builtIn("crater"));
+        settle();
+        assertEquals("height", step());
+        set(ToolId.HEIGHTMAP, "heightmap.height", 24);
+        settle();
+        assertEquals("turn", step());
+        assertTrue(tutorial.card().bodyLabel().text().startsWith("R turns the picture"),
+                tutorial.card().bodyLabel().text());
+        press(GLFW.GLFW_KEY_R, 0);
+        settle();
+        assertEquals("stamp", step(), "R turned the picture a quarter turn");
+        SettingsValues heightmap = rig.ctx.settings(ToolId.HEIGHTMAP);
+        assertEquals(90, heightmap.get(heightmap.schema().def("heightmap.angle").orElseThrow()));
+        tutorial.card().skipButton().click(); // strokes are counted by EditorProbe.StrokeCount (StrokeCountTest)
+        frame();
+        assertEquals("lower", step());
+        set(ToolId.HEIGHTMAP, "heightmap.mode", BrushSettings.StampMode.LOWER);
+        settle();
+        assertEquals("lower_stamp", step());
+        tutorial.card().skipButton().click();
+        frame();
+        assertEquals("raise", step());
+        set(ToolId.HEIGHTMAP, "heightmap.mode", BrushSettings.StampMode.RAISE);
+        settle();
+        assertEquals(TutorialRunner.Phase.AFTER, runner().phase(), "no edits: straight to the lesson's end");
+    }
+
+    @Test
+    void theBiomesLessonFollowsTheBiomeTheViewTheBoxAndFillBiome() {
+        start("biomes");
+        press(GLFW.GLFW_KEY_APOSTROPHE, 0);
+        settle();
+        assertEquals("biome", step());
+        set(ToolId.BIOME, "biome", "minecraft:swamp");
+        settle();
+        assertEquals("view", step());
+        assertEquals(Optional.of(ui.menuBar().titleBounds(CommandMenu.VIEW.ordinal())), tutorial.highlight(),
+                "the View menu holds Biome view");
+        ui.commands().run(EditorCommands.VIEW_BIOMES);
+        settle();
+        assertEquals("paint", step());
+        tutorial.card().skipButton().click();
+        frame();
+        assertEquals("box", step());
+        press(GLFW.GLFW_KEY_1, 0);
+        rig.ctx.setSelection(new Box(new BlockPos(0, 60, 0), new BlockPos(7, 62, 7)));
+        settle();
+        assertEquals("fill", step());
+        untilDone(() -> button(EditorWindows.SELECTION, "Fill biome").click());
+        assertEquals("move_stack", step());
+        assertTrue(rig.session.history().undoLabels().get(0).startsWith("Biome fill"),
+                rig.session.history().undoLabels().toString());
+        tutorial.card().skipButton().click();
+        frame();
+        assertEquals("view_off", step());
+        ui.commands().run(EditorCommands.VIEW_BIOMES);
+        settle();
+        assertEquals(TutorialRunner.Phase.FINISHED, runner().phase());
     }
 
     private void leaveTheEditor() {

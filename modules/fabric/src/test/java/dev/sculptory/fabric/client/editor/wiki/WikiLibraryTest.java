@@ -3,7 +3,9 @@ package dev.sculptory.fabric.client.editor.wiki;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -71,6 +73,18 @@ class WikiLibraryTest {
         assertEquals("terrain-brushes", t.get(0).pageId(), "a title starting with the query first");
     }
 
+    /** Generate's ? opens the page of the mode it is set to when that mode has its own (Smart Surface). */
+    @Test
+    void generateSetToSmartSurfaceOpensItsOwnPage() {
+        SettingsValues generate = SettingsValues.defaults(GenerateSettings.SCHEMA);
+        assertEquals(new WikiPages.Target("generate", null), WikiPages.forTool(ToolId.GENERATE, generate));
+        assertEquals(new WikiPages.Target("generate", null), WikiPages.forTool(ToolId.GENERATE,
+                generate.with(GenerateSettings.KIND, GenerateSettings.Kind.LINE)));
+        assertEquals(new WikiPages.Target("smart-surface", null), WikiPages.forTool(ToolId.GENERATE,
+                generate.with(GenerateSettings.KIND, GenerateSettings.Kind.SMART_SURFACE)));
+        assertTrue(WikiPages.FROZEN.contains(WikiPages.SMART_SURFACE));
+    }
+
     @Test
     void everyToolHasItsPage() {
         assertEquals(new WikiPages.Target("select", null), WikiPages.forTool(ToolId.SELECT));
@@ -92,7 +106,7 @@ class WikiLibraryTest {
         for (WikiPages.Target target : WikiPages.tools().values()) {
             assertTrue(WikiPages.FROZEN.contains(target.pageId()), target.pageId());
         }
-        assertEquals(34, WikiPages.FROZEN.size());
+        assertEquals(35, WikiPages.FROZEN.size());
         assertTrue(WikiPages.FROZEN.stream().allMatch(id -> WikiLink.PAGE_ID.matcher(id).matches()));
     }
 }

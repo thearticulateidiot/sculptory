@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.ParseResults;
+import com.mojang.brigadier.StringReader;
 import com.mojang.brigadier.builder.ArgumentBuilder;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -82,6 +83,36 @@ class FlySpeedCommandTreeTest {
         assertEquals(List.of("server: sculptory", "server: sculptory undo",
                 "server: sculptory fill 1 2 3 4 5 6 minecraft:stone", "server: sculptory cancel Alex",
                 "server: sculptory flyspeedx"), ran);
+    }
+
+    /**
+     * Fabric checks the client commands for ambiguities at join and logs each as a warning: the forwarded rest of
+     * {@code /sculptory} leaves {@code flyspeed} to its own node, so there are none.
+     */
+    @Test
+    void theTreeHasNoAmbiguities() throws CommandSyntaxException {
+        List<String> ambiguities = new ArrayList<>();
+        dispatcher.findAmbiguities((parent, child, sibling, inputs) ->
+                ambiguities.add(dispatcher.getPath(child) + " / " + dispatcher.getPath(sibling) + " " + inputs));
+        assertEquals(List.of(), ambiguities);
+        // The forwarded rest reads what greedyString reads, but not flyspeed as its first word.
+        assertEquals("undo now", FlySpeedCommand.ForwardedRest.INSTANCE.parse(new StringReader("undo now")));
+        assertEquals("flyspeedx 2", FlySpeedCommand.ForwardedRest.INSTANCE.parse(new StringReader("flyspeedx 2")));
+        assertThrows(CommandSyntaxException.class,
+                () -> FlySpeedCommand.ForwardedRest.INSTANCE.parse(new StringReader("flyspeed 2")));
+        assertThrows(CommandSyntaxException.class,
+                () -> FlySpeedCommand.ForwardedRest.INSTANCE.parse(new StringReader("flyspeed")));
+        StringReader reader = new StringReader("sculptory cancel Alex");
+        reader.setCursor("sculptory ".length());
+        assertEquals("cancel Alex", FlySpeedCommand.ForwardedRest.INSTANCE.parse(reader));
+        assertTrue(!reader.canRead(), "reads to the end");
+    }
+
+    /** The rest of {@code /sculptory} suggests nothing of its own, as the greedy string it replaced. */
+    @Test
+    void theForwardedRestSuggestsNothing() throws Exception {
+        assertEquals(List.of(), suggestions(dispatcher, "sculptory und"));
+        assertEquals(List.of("flyspeed"), suggestions(dispatcher, "sculptory fl"));
     }
 
     /**

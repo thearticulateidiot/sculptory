@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.client.editor.tools.place;
+package dev.sculptory.fabric.client.editor.devtools;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;

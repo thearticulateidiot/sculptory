@@ -7,6 +7,8 @@ import static dev.sculptory.fabric.client.editor.tutorial.Conditions.activeBlock
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.any;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.anySettingsChanged;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.anyToolSettingChanged;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.biomeViewOff;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.biomeViewOn;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.blocksSelected;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.boxSelected;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.builderPowerOn;
@@ -18,20 +20,28 @@ import static dev.sculptory.fabric.client.editor.tutorial.Conditions.exported;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.flySpeedChanged;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.gradientLineSet;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.hasSelection;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.insidePointMoved;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.insidePointPlaced;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.keySheetOpenedThenClosed;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.keyboardInWindow;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.libraryChanged;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.looked;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.menuOpen;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.middlePointSelected;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.moved;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.noBuilderPower;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.noSelection;
-import static dev.sculptory.fabric.client.editor.tutorial.Conditions.pathNodes;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.placementTurned;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.placementUpsideDown;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.placing;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.pointInserted;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.pointMoved;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.pointsDeselected;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.pointsPlaced;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.presetsChanged;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.redone;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.reentered;
+import static dev.sculptory.fabric.client.editor.tutorial.Conditions.rotating;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.scatterAreaPainted;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.scatterMixChanged;
 import static dev.sculptory.fabric.client.editor.tutorial.Conditions.selectionChanged;
@@ -57,6 +67,10 @@ import dev.sculptory.fabric.client.editor.commands.CommandMenu;
 import dev.sculptory.fabric.client.editor.commands.EditorCommands;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.brush.BrushSettings;
+import dev.sculptory.fabric.client.editor.tools.extrude.ExtrudeSettings;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
+import dev.sculptory.fabric.client.editor.tools.place.PlaceSettings;
 import dev.sculptory.fabric.client.editor.tools.select.SelectSettings;
 import dev.sculptory.fabric.client.editor.tutorial.Arg.VanillaKey;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
@@ -75,7 +89,8 @@ public final class Lessons {
             "screen-and-windows", "finding-things", "tutorial", "tool-settings", "presets", "select",
             "selection-operations", "terrain-brushes", "masks", "shape-brush", "generate", "extrude", "fluid", "scatter",
             "clipboard", "place", "library", "palettes", "symmetry", "history", "keys", "server-setup", "permissions",
-            "troubleshooting", "faq", "tools", "tinker", "builder-mode", "weather", "navigation");
+            "troubleshooting", "faq", "tools", "tinker", "builder-mode", "weather", "navigation", "heightmap", "biomes",
+            "smart-surface", "free-rotation");
 
     /** A group of lessons in the Tutorial window; its title is {@code sculptory.tutorial.group.<id>}. */
     public record Group(String id, List<Lesson> lessons) {
@@ -89,10 +104,15 @@ public final class Lessons {
         }
     }
 
+    /** Esc, named as the key sheet names it (before the groups: their lessons use it). */
+    private static final Arg ESC = text("sculptory.help.key.esc");
+
     private static final List<Group> GROUPS = List.of(
             new Group("basics", List.of(gettingAround(), menus(), select(), edit(), history(), settings())),
-            new Group("brushes", List.of(terrain(), weather(), paint(), patterns(), shapes(), symmetry())),
-            new Group("building", List.of(library(), flip(), export(), build(), scatter(), tinker(), builder())));
+            new Group("brushes", List.of(terrain(), weather(), heightmap(), paint(), patterns(), shapes(), symmetry(),
+                    biomes())),
+            new Group("building", List.of(library(), flip(), rotate(), export(), build(), pathPoints(), smartSurface(),
+                    scatter(), tinker(), builder())));
 
     private static final List<Lesson> ALL = GROUPS.stream().flatMap(group -> group.lessons().stream()).toList();
 
@@ -143,7 +163,7 @@ public final class Lessons {
                         key(KeyAction.JUMP), key(KeyAction.JUMP_THROUGH)).wiki("navigation")
                 .step("fly_speed", flySpeedChanged()).args(key(KeyAction.FLY_SPEED))
                         .target(new Target.TopBar(Target.Item.FLY_SPEED))
-                .read("esc").args(text("sculptory.help.key.esc"))
+                .read("esc").args(ESC)
                 .step("leave", reentered()).args(vanilla(VanillaKey.TOGGLE), vanilla(VanillaKey.TOGGLE))
                         .wiki("editor-mode")
                 .build();
@@ -161,7 +181,7 @@ public final class Lessons {
                         .wiki("keys")
                 .step("f6", keyboardInWindow()).args(key(KeyAction.FOCUS_NEXT_WINDOW))
                 .step("hide", windowsHiddenThenShown())
-                        .args(text("sculptory.help.key.esc"), key(KeyAction.HIDE_WINDOWS))
+                        .args(ESC, key(KeyAction.HIDE_WINDOWS))
                 .read("windows").target(menuRow(CommandMenu.VIEW, EditorCommands.RESET_LAYOUT))
                         .wiki("screen-and-windows")
                 .build();
@@ -266,6 +286,30 @@ public final class Lessons {
                 .build();
     }
 
+    /** The Heightmap brush: a picture stamped on the ground, raised, turned, then cut in. */
+    static Lesson heightmap() {
+        return Lesson.builder("heightmap")
+                .step("pick", toolActive(ToolId.HEIGHTMAP)).args(key(KeyAction.TOOL_16)).target(palette(16))
+                        .wiki("heightmap")
+                .step("picture", settingChanged(ToolId.HEIGHTMAP, "heightmap.image"))
+                        .target(row(ToolId.HEIGHTMAP, "heightmap.image"))
+                .step("height", settingChanged(ToolId.HEIGHTMAP, "heightmap.height"))
+                        .target(row(ToolId.HEIGHTMAP, "heightmap.height"))
+                .step("turn", settingChanged(ToolId.HEIGHTMAP, "heightmap.angle"))
+                        .args(key(KeyAction.ROTATE_CW), key(KeyAction.ROTATE_CCW))
+                        .target(row(ToolId.HEIGHTMAP, "heightmap.angle"))
+                .step("stamp", strokeEnded(ToolId.HEIGHTMAP))
+                .step("lower", setting(ToolId.HEIGHTMAP, "heightmap.mode", BrushSettings.StampMode.LOWER))
+                        .target(row(ToolId.HEIGHTMAP, "heightmap.mode"))
+                .step("lower_stamp", Conditions.all(
+                                setting(ToolId.HEIGHTMAP, "heightmap.mode", BrushSettings.StampMode.LOWER),
+                                strokeEnded(ToolId.HEIGHTMAP)))
+                        .wiki("heightmap")
+                .step("raise", setting(ToolId.HEIGHTMAP, "heightmap.mode", BrushSettings.StampMode.RAISE))
+                        .target(row(ToolId.HEIGHTMAP, "heightmap.mode"))
+                .build();
+    }
+
     static Lesson paint() {
         return Lesson.builder("paint")
                 .step("pick", toolActive(ToolId.PAINT)).args(key(KeyAction.TOOL_6)).target(palette(6))
@@ -334,6 +378,24 @@ public final class Lessons {
                 .build();
     }
 
+    /**
+     * Biomes: the Biome brush, the biome view, Fill biome on a selection, biomes carried by Move and Stack, and the view
+     * turned off again.
+     */
+    static Lesson biomes() {
+        return Lesson.builder("biomes")
+                .step("pick", toolActive(ToolId.BIOME)).args(key(KeyAction.TOOL_17)).target(palette(17))
+                        .wiki("biomes")
+                .step("biome", settingChanged(ToolId.BIOME, "biome")).target(row(ToolId.BIOME, "biome"))
+                .step("view", biomeViewOn()).target(menuRow(CommandMenu.VIEW, EditorCommands.VIEW_BIOMES))
+                .step("paint", strokeEnded(ToolId.BIOME))
+                .step("box", boxSelected()).args(key(KeyAction.TOOL_1))
+                .step("fill", edited()).target(new Target.WindowFrame(EditorWindows.SELECTION))
+                .read("move_stack").wiki("biomes")
+                .step("view_off", biomeViewOff()).target(menuRow(CommandMenu.VIEW, EditorCommands.VIEW_BIOMES))
+                .build();
+    }
+
     // ---- Building ----
 
     static Lesson library() {
@@ -361,6 +423,20 @@ public final class Lessons {
                 .build();
     }
 
+    /** Free rotation: Rotate… in the Selection window, its rings or typed angles, and how the turn lands on the grid. */
+    static Lesson rotate() {
+        return Lesson.builder("rotate")
+                .step("select", hasSelection()).args(key(KeyAction.TOOL_1))
+                .step("open", rotating()).target(new Target.WindowFrame(EditorWindows.SELECTION))
+                        .wiki("free-rotation")
+                .step("turn", Conditions.all(rotating(), placementTurned()))
+                .step("method", settingChanged(ToolId.PLACE, PlaceSettings.METHOD_KEY))
+                        .target(row(ToolId.PLACE, PlaceSettings.METHOD_KEY))
+                .step("place", edited()).args(key(KeyAction.COMMIT), key(KeyAction.UNDO))
+                .read("paste").args(key(KeyAction.PASTE)).wiki("free-rotation")
+                .build();
+    }
+
     /** Files (2026-09-29): an export as .litematic through the Export… dialog, and how files come in. */
     static Lesson export() {
         return Lesson.builder("export")
@@ -371,18 +447,60 @@ public final class Lessons {
                 .build();
     }
 
+    /**
+     * Generate's road, Extrude and Fluid. Tool settings are kept between games, so the steps that rely on one set it
+     * first (met at once when it already is): Generate on Path, Extrude's Direction on Straight.
+     */
     static Lesson build() {
         return Lesson.builder("build")
                 .step("generate_pick", toolActive(ToolId.GENERATE)).args(key(KeyAction.TOOL_11)).target(palette(11))
                         .wiki("generate")
-                .step("nodes", pathNodes(2))
-                .step("road", edited()).args(key(KeyAction.COMMIT), key(KeyAction.UNDO))
+                .step("kind", setting(ToolId.GENERATE, "kind", GenerateSettings.Kind.PATH))
+                        .target(row(ToolId.GENERATE, "kind"))
+                .step("nodes", pointsPlaced(GenerateSettings.Kind.PATH, 2)).args(ESC)
+                .step("road", edited()).args(key(KeyAction.COMMIT), key(KeyAction.UNDO), ESC, ESC)
                 .step("extrude_pick", toolActive(ToolId.EXTRUDE)).args(key(KeyAction.TOOL_12)).target(palette(12))
                         .wiki("extrude")
+                .step("direction", setting(ToolId.EXTRUDE, "direction", ExtrudeSettings.Direction.STRAIGHT))
+                        .target(row(ToolId.EXTRUDE, "direction"))
                 .step("extrude", edited())
                 .step("fluid_pick", toolActive(ToolId.FLUID)).args(key(KeyAction.TOOL_13)).target(palette(13))
                         .wiki("fluid")
                 .step("fluid", edited()).target(row(ToolId.FLUID, "mode"))
+                .build();
+    }
+
+    /**
+     * Path points: the point editor every path tool shares (Line, Sweep, Road nodes, Stamp, Extrude's paths), shown on
+     * Generate's Line: points clicked, one selected and dragged by an arrow, one inserted, the selection dropped.
+     */
+    static Lesson pathPoints() {
+        return Lesson.builder("path_points")
+                .step("pick", toolActive(ToolId.GENERATE)).args(key(KeyAction.TOOL_11)).target(palette(11))
+                        .wiki("generate")
+                .step("kind", setting(ToolId.GENERATE, "kind", GenerateSettings.Kind.LINE))
+                        .target(row(ToolId.GENERATE, "kind"))
+                .step("points", pointsPlaced(GenerateSettings.Kind.LINE, 3)).args(ESC)
+                .step("select", middlePointSelected(GenerateSettings.Kind.LINE))
+                .step("drag", pointMoved(GenerateSettings.Kind.LINE))
+                .step("insert", pointInserted(GenerateSettings.Kind.LINE)).args(key(KeyAction.EXTRUDE_POINT))
+                .step("deselect", pointsDeselected(GenerateSettings.Kind.LINE)).args(ESC, ESC)
+                .step("build", edited()).args(key(KeyAction.COMMIT), key(KeyAction.UNDO)).wiki("generate")
+                .build();
+    }
+
+    /** Smart Surface: an outline of points, an inside point raised with its arrow, and the sheet built. */
+    static Lesson smartSurface() {
+        return Lesson.builder("smart_surface")
+                .step("pick", toolActive(ToolId.GENERATE)).args(key(KeyAction.TOOL_11)).target(palette(11))
+                        .wiki("smart-surface")
+                .step("kind", setting(ToolId.GENERATE, "kind", GenerateSettings.Kind.SMART_SURFACE))
+                        .target(row(ToolId.GENERATE, "kind"))
+                .step("outline", pointsPlaced(GenerateSettings.Kind.SMART_SURFACE, 4)).args(ESC)
+                .step("inside", insidePointPlaced(GenerateSettings.Kind.SMART_SURFACE))
+                .step("raise", insidePointMoved(GenerateSettings.Kind.SMART_SURFACE))
+                .read("settings").target(row(ToolId.GENERATE, "smart.top.blocks"))
+                .step("build", edited()).args(key(KeyAction.COMMIT), ESC, ESC).wiki("smart-surface")
                 .build();
     }
 

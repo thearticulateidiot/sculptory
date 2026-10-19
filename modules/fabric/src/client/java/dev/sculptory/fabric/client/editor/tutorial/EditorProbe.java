@@ -14,6 +14,7 @@ import dev.sculptory.fabric.client.editor.tool.Tool;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.fabric.client.editor.tools.brush.ShapeBrushTool;
 import dev.sculptory.fabric.client.editor.tools.brush.TerrainBrushTool;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.editor.tools.tinker.TinkerTool;
@@ -239,11 +240,12 @@ public final class EditorProbe implements TutorialProbe {
     }
 
     @Override
-    public int pathNodes() {
+    public Points points(GenerateSettings.Kind kind) {
         return ctx.tools().get(ToolId.GENERATE)
                 .filter(GenerateTool.class::isInstance)
-                .map(tool -> ((GenerateTool) tool).path().size())
-                .orElse(0);
+                .flatMap(tool -> ((GenerateTool) tool).editor(kind))
+                .map(Points::of)
+                .orElse(Points.NONE);
     }
 
     @Override
@@ -292,6 +294,22 @@ public final class EditorProbe implements TutorialProbe {
     public boolean placementUpsideDown() {
         return placeTool().flatMap(PlaceTool::placement).map(placement -> placement.transform().upsideDown())
                 .orElse(false);
+    }
+
+    @Override
+    public boolean rotating() {
+        return placeTool().map(PlaceTool::rotating).orElse(false);
+    }
+
+    @Override
+    public boolean placementTurned() {
+        return placeTool().flatMap(PlaceTool::placement).map(placement -> !placement.orientation().isIdentity())
+                .orElse(false);
+    }
+
+    @Override
+    public boolean biomeViewOn() {
+        return ui.biomeView().enabled();
     }
 
     private Optional<PlaceTool> placeTool() {

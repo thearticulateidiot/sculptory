@@ -10,7 +10,7 @@
 
 1. Press `1`.
 2. Left-drag from one block to another: the box is drawn between them.
-3. Resize: drag a face handle, `Shift+click` a block to grow the box to include it, or `Ctrl+Scroll` over a face to push it in and out.
+3. Resize: drag a face handle, `Shift+click` a block to grow the box to include it, or `Ctrl+Scroll` over a face to push it in and out. A handle behind blocks shows faintly through them and can still be dragged.
 4. Move: `Ctrl+drag` inside the box, or nudge it with the arrow keys and `PgUp`/`PgDn` (`Shift`: 10 blocks at a time).
 5. `Ctrl+D` clears the selection.
 
@@ -41,6 +41,7 @@ To type exact corners, use the fields in the **Selection** window.
 - Magic, Brush and Lasso make a block selection: it moves, but it can't be resized. **Convert to box** in the Selection window selects its whole box instead.
 - A cone's tip points where **Tip points** says; its base fills the opposite side of the box.
 - Selections aren't in the undo history: `Ctrl+Z` undoes edits, not a selection you moved.
+- A handle hidden behind a nearby wall still takes a press close to it on the screen, so a new box can't be started on the wall right there: start it a little to the side, or move first.
 - The selection also bounds a flood, a drain and a brush with **Only inside selection** on.
 
 ## Related

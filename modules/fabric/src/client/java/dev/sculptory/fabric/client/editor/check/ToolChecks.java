@@ -84,8 +84,8 @@ final class ToolChecks {
         run.clientMatches("the road", built);
         run.picture("road", "A straight cobblestone road set into the stone floor");
         run.undoRedo("the road", before, built);
-        // Esc clears the path's nodes.
-        d.key(GLFW.GLFW_KEY_ESCAPE, 0);
+        // The nodes stay after a build: Esc deselects the last one, then clears them.
+        d.clearPoints(d.generateTool()::path);
     }
 
     private static void roof(CheckRun run) {

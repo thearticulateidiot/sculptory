@@ -1,13 +1,17 @@
 package dev.sculptory.fabric.client.editor;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.StringReader;
+import com.mojang.brigadier.arguments.ArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.RootCommandNode;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
@@ -24,6 +28,8 @@ import java.util.function.BooleanSupplier;
  * the whole input once its root matches, so everything under {@code /sculptory} but {@code flyspeed} (and
  * {@code /sculptory} alone) is sent on to the server as typed ({@link Handler#forward}). The server's tree has no
  * {@code flyspeed} child, and none of its arguments is signed, so a forwarded command runs there as it always did.
+ * The forwarded rest is read by {@link ForwardedRest}, which leaves {@code flyspeed} to its own node so the tree has
+ * no ambiguity ({@code CommandDispatcher.findAmbiguities}, which Fabric logs as a warning at join).
  */
 public final class FlySpeedCommand {
     public static final String NAME = "flyspeed";
@@ -60,6 +66,37 @@ public final class FlySpeedCommand {
     }
 
     /**
+     * The rest of the input after {@code /sculptory}, as {@code StringArgumentType.greedyString()} reads it, except that
+     * input whose first word is {@code flyspeed} is refused: that word is the {@code flyspeed} node's, which Brigadier
+     * always tries first, so the refusal changes no parse and only tells {@code findAmbiguities} the two siblings don't
+     * overlap. No suggestions, like the greedy string. A client-only type: client command nodes are never serialized
+     * (Fabric keeps them in its own dispatcher and copies them into the client's copy of the server's tree for
+     * suggestions), so no argument serializer is needed.
+     */
+    static final class ForwardedRest implements ArgumentType<String> {
+        static final ForwardedRest INSTANCE = new ForwardedRest();
+
+        private ForwardedRest() {
+        }
+
+        @Override
+        public String parse(StringReader reader) throws CommandSyntaxException {
+            String rest = reader.getRemaining();
+            int space = rest.indexOf(' ');
+            if ((space < 0 ? rest : rest.substring(0, space)).equals(NAME)) {
+                throw CommandSyntaxException.BUILT_IN_EXCEPTIONS.dispatcherUnknownArgument().createWithContext(reader);
+            }
+            reader.setCursor(reader.getTotalLength());
+            return rest;
+        }
+
+        @Override
+        public Collection<String> getExamples() {
+            return StringArgumentType.greedyString().getExamples();
+        }
+    }
+
+    /**
      * Registers {@code /sculptory flyspeed [<speed>]} (with {@code /sculptory} and {@code /sculptory <anything else>}
      * forwarded to the server) and {@code /flyspeed [<speed>]}, which only exists while {@code serverHasOwn} is false.
      * A client command that does not exist (or whose requirement fails) is "unknown", and Fabric sends unknown commands
@@ -73,7 +110,7 @@ public final class FlySpeedCommand {
         dispatcher.register(LiteralArgumentBuilder.<S>literal(ROOT)
                 .executes(context -> handler.forward(context.getSource(), context.getInput()))
                 .then(flySpeed(LiteralArgumentBuilder.<S>literal(NAME), handler))
-                .then(RequiredArgumentBuilder.<S, String>argument("command", StringArgumentType.greedyString())
+                .then(RequiredArgumentBuilder.<S, String>argument("command", ForwardedRest.INSTANCE)
                         .executes(context -> handler.forward(context.getSource(), context.getInput()))));
     }
 

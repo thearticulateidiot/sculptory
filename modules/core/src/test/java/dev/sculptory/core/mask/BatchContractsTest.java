@@ -53,8 +53,8 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 /**
- * The core contracts of the WorldEdit-inspired batch:
- * what they already do before their streams land, and the stubs' refusals.
+ * The core contracts of the WorldEdit-inspired features (masks, the snapshot reader, the layer ops, the Weather brush,
+ * paths and the feature catalog): their shared types and limits.
  */
 class BatchContractsTest {
     private static final FakeStateSpace STATES = new FakeStateSpace();
@@ -203,7 +203,7 @@ class BatchContractsTest {
         assertFalse(BrushTool.TERRAIN.contains(BrushTool.WEATHER));
         BrushSpec spec = new BrushSpec(BrushTool.WEATHER, 3, 1f, Falloff.SMOOTH, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0,
                 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, new WeatherSpec(WeatherSpec.Mode.FILL_IN));
-        // The weather stream replaced the contract stub: an empty world changes nothing (WeatherKernelTest has the rest).
+        // An empty world changes nothing (WeatherKernelTest has the rest).
         BrushKernels.forTool(BrushTool.WEATHER).applyStep(spec, List.of(new Dab(0, 0, 64 * 16, 0, 255)), new StrokeState(),
                 new FakeWorld(STATES), (x, y, z, s) -> {
                     throw new AssertionError("wrote " + x + " " + y + " " + z);

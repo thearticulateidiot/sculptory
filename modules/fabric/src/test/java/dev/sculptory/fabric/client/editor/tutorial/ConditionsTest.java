@@ -13,6 +13,7 @@ import dev.sculptory.fabric.client.editor.commands.CommandMenu;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.tool.Selection;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import dev.sculptory.fabric.client.editor.tools.select.SelectSettings;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import java.util.LinkedHashMap;
@@ -58,13 +59,18 @@ class ConditionsTest {
         noise.put("presets", List.of(p -> p.presetsVersion++));
         noise.put("strokes", List.of(p -> p.stroke(ToolId.LOWER)));
         noise.put("symmetry", List.of(p -> p.symmetryCentreSet = true));
-        noise.put("pathNodes", List.of(p -> p.pathNodes = 5));
+        // Another kind's points: a step about one kind's points never ticks on another's.
+        noise.put("otherPoints", List.of(
+                p -> p.points.put(GenerateSettings.Kind.SWEEP, new Points(4, 1, 2, true, 9, 3, 1, 2, 1))));
         noise.put("scatterArea", List.of(p -> p.scatterAreaPainted = true));
         noise.put("scatterMix", List.of(p -> p.scatterMixSize = 3));
         noise.put("tinker", List.of(p -> p.tinkerAimsAtProperty = true));
         noise.put("gradientLine", List.of(p -> p.gradientLineSet = true));
         noise.put("placing", List.of(p -> p.placing = true));
         noise.put("flip", List.of(p -> p.placementUpsideDown = true));
+        noise.put("rotating", List.of(p -> p.rotating = true, p -> p.rotating = false));
+        noise.put("turned", List.of(p -> p.placementTurned = true, p -> p.placementTurned = false));
+        noise.put("biomeView", List.of(p -> p.biomeViewOn = true, p -> p.biomeViewOn = false));
         noise.put("builderPower", List.of(p -> p.builderPowerOn = true));
         noise.put("exportDialog", List.of(p -> p.exportDialogOpen = true));
         noise.put("exports", List.of(p -> p.exports++));
@@ -221,9 +227,62 @@ class ConditionsTest {
         ticksOnlyOn(Conditions.commandSearchOpenedThenClosed(), Set.of("commandSearch"),
                 p -> p.commandSearchOpen = true, p -> p.commandSearchOpen = false);
         ticksOnlyOn(Conditions.symmetryCentreSet(), Set.of("symmetry"), p -> p.symmetryCentreSet = true);
-        ticksOnlyOn(Conditions.pathNodes(2), Set.of("pathNodes"), p -> p.pathNodes = 2);
         ticksOnlyOn(Conditions.scatterAreaPainted(), Set.of("scatterArea"), p -> p.scatterAreaPainted = true);
         ticksOnlyOn(Conditions.scatterMixChanged(), Set.of("scatterMix"), p -> p.scatterMixSize = 1);
+    }
+
+    /** {@code kind}'s points: {@code outline} of them, {@code selected} selected (-1: none), and what was made. */
+    private static Points points(int outline, int inside, int selected, long placed, long inserted, long insidePlaced,
+            long moved, long insideMoved) {
+        return new Points(outline, inside, selected, selected >= 0, placed, inserted, insidePlaced, moved, insideMoved);
+    }
+
+    @Test
+    void pointStepsTickOnTheirKindsOwnPointsAndChanges() {
+        GenerateSettings.Kind line = GenerateSettings.Kind.LINE;
+        GenerateSettings.Kind smart = GenerateSettings.Kind.SMART_SURFACE;
+        ticksOnlyOn(Conditions.pointsPlaced(line, 3), Set.of(),
+                p -> p.points.put(line, points(1, 0, 0, 1, 0, 0, 0, 0)),
+                p -> p.points.put(line, points(2, 0, 1, 2, 0, 0, 0, 0)),
+                p -> p.points.put(line, points(3, 0, 2, 3, 0, 0, 0, 0)));
+        ticksOnlyOn(Conditions.pointInserted(line), Set.of(), p -> p.points.put(line, points(4, 0, 1, 4, 1, 0, 0, 0)));
+        ticksOnlyOn(Conditions.pointMoved(line), Set.of(), p -> p.points.put(line, points(3, 0, 1, 3, 0, 0, 1, 0)));
+        ticksOnlyOn(Conditions.middlePointSelected(line), Set.of(),
+                p -> p.points.put(line, points(3, 0, 1, 3, 0, 0, 0, 0)));
+        ticksOnlyOn(p -> p.points.put(line, points(3, 0, 1, 3, 0, 0, 0, 0)), Conditions.pointsDeselected(line),
+                Set.of(), p -> p.points.put(line, points(3, 0, -1, 3, 0, 0, 0, 0)));
+        ticksOnlyOn(Conditions.insidePointPlaced(smart), Set.of(),
+                p -> p.points.put(smart, points(4, 1, -1, 4, 0, 1, 0, 0)));
+        ticksOnlyOn(Conditions.insidePointMoved(smart), Set.of(),
+                p -> p.points.put(smart, points(4, 1, -1, 4, 0, 1, 0, 1)));
+    }
+
+    @Test
+    void pointsLeftFromBeforeTheStepDoNotCountOnlyNewClicksDo() {
+        GenerateSettings.Kind path = GenerateSettings.Kind.PATH;
+        probe.points.put(path, points(5, 0, 4, 5, 0, 0, 0, 0));
+        Condition.Check twoNew = Conditions.pointsPlaced(path, 2).start(probe);
+        assertFalse(twoNew.met(probe), "five nodes from an earlier road");
+        probe.points.put(path, points(6, 0, 5, 6, 0, 0, 0, 0));
+        assertFalse(twoNew.met(probe), "one new click");
+        probe.points.put(path, points(0, 0, -1, 6, 0, 0, 0, 0));
+        assertFalse(twoNew.met(probe), "cleared with Esc: nothing new");
+        probe.points.put(path, points(1, 0, 0, 7, 0, 0, 0, 0));
+        assertTrue(twoNew.met(probe), "two clicks since the step began");
+        Condition.Check end = Conditions.middlePointSelected(path).start(probe);
+        assertFalse(end.met(probe), "the only point is no middle one");
+        probe.points.put(path, points(3, 0, 2, 9, 0, 0, 0, 0));
+        assertFalse(end.met(probe), "the last point is no middle one");
+        assertThrows(IllegalArgumentException.class, () -> Conditions.increasedBy(p -> 0, 0));
+    }
+
+    @Test
+    void rotateAndBiomeConditions() {
+        ticksOnlyOn(Conditions.rotating(), Set.of("rotating"), p -> p.rotating = true);
+        ticksOnlyOn(Conditions.all(Conditions.rotating(), Conditions.placementTurned()), Set.of("rotating", "turned"),
+                p -> p.rotating = true, p -> p.placementTurned = true);
+        ticksOnlyOn(Conditions.biomeViewOn(), Set.of("biomeView"), p -> p.biomeViewOn = true);
+        ticksOnlyOn(p -> p.biomeViewOn = true, Conditions.biomeViewOff(), Set.of("biomeView"), p -> p.biomeViewOn = false);
     }
 
     @Test

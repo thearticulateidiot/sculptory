@@ -4,6 +4,7 @@ import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.Selection;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import java.util.List;
 import java.util.Optional;
 
@@ -81,8 +82,11 @@ public interface TutorialProbe {
     /** Whether the symmetry centre (M) is set. */
     boolean symmetryCentreSet();
 
-    /** The Generate tool's road nodes. */
-    int pathNodes();
+    /**
+     * The Generate tool's points for {@code kind} (Path's road nodes, Line, Smart Surface...); {@link Points#NONE} for a
+     * kind without points.
+     */
+    Points points(GenerateSettings.Kind kind);
 
     /** Whether the Scatter tool has a painted area (or uses the selection). */
     boolean scatterAreaPainted();
@@ -101,6 +105,15 @@ public interface TutorialProbe {
 
     /** Whether the placement in progress is turned upside down (V). */
     boolean placementUpsideDown();
+
+    /** Whether the placement in progress is the Selection window's Rotate… (the ring ghost on the selection). */
+    boolean rotating();
+
+    /** Whether the placement in progress is turned at all (a ring, a typed angle, R, a mirror or a flip). */
+    boolean placementTurned();
+
+    /** Whether View > Biome view is on. */
+    boolean biomeViewOn();
 
     /** Whether any builder-mode power is on (the G ring, outside the editor). */
     boolean builderPowerOn();

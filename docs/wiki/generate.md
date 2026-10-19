@@ -22,10 +22,10 @@
 ## Draw a line
 
 1. Press `-` and set **Generate** to **Line**.
-2. Click blocks to add points, or click the marker in the sky ([points in the air](#points-in-the-air)); the line runs through their centres. Edit them as [path points](#path-points): select, drag, insert, remove.
+2. Click blocks to add points, or click the marker in the sky ([points in the air](#points-in-the-air)); the line runs through their centres. A line or a sweep takes up to 64 points. Edit them as [path points](#path-points): select, drag, insert, remove.
 3. Pick the **Path**: **Straight** from point to point, **Curve** smoothly through every point (drag the last point onto the first for a closed loop, of four points or more with the closing one), or **Hanging**, sagging between each pair of points by **Sag** blocks, like a rope or a power line.
 4. Set the **Thickness** (1–16, `Ctrl+Scroll`) and, from 2 up, the **Profile**: **Round** or **Square**.
-5. Tick **Extend to ground** to fill every column the line passes through down to the ground under it: a beam becomes a wall, a bridge stands on its supports. The fill goes straight down through leaves, trunks, plants and water to the first ground block, so over a forest it reaches the forest floor (the trees in its way are built over) and under an overhang it reaches the ground beneath. Tick **Use stairs and slabs** to smooth its slopes with the block's stairs and slabs.
+5. Tick **Extend to ground** to fill every column the line passes through down to the ground under it: a beam becomes a wall, a bridge stands on its supports. The fill goes straight down through plants, leaves, trunks, water and lava to the first other block, so over a forest it reaches the forest floor (the trees in its way are built over) and under an overhang it reaches the ground beneath. Tick **Use stairs and slabs** to smooth its slopes with the block's stairs and slabs.
 6. Press `Enter` to build. `Esc` deselects, then clears the points.
 
 ## Sweep a profile
@@ -41,14 +41,14 @@ A profile thicker than one block repeats along the path: a fence profile three b
 
 1. Copy something (`Ctrl+C`), or pick a saved build in the [Library](library.md) and click **Stamp**.
 2. Press `-` and set **Generate** to **Stamp** (the Library's **Stamp** button does this for you and sets **Copy** to **Library asset**).
-3. Click blocks: a copy stands on each, as a paste would (or on the marker's block in the sky: [points in the air](#points-in-the-air)). The first copy is as you copied it; the others turn with the path through the points, by any angle, as a pasted copy turned in the [Place](place.md) tool does (stairs and other blocks that face a way take the nearest facing). `R` turns every copy a quarter more. Move, insert and remove the points as [path points](#path-points).
+3. Click blocks: a copy stands on each, as a paste would (or on the marker's block in the sky: [points in the air](#points-in-the-air)). The first copy is as you copied it; the others turn with the path through the points, by any angle, as a pasted copy turned in the [Place](place.md) tool does, but always with the Nearest method, whatever [Free rotation](free-rotation.md)'s **Method** says (stairs and other blocks that face a way take the nearest facing). `R` turns every copy a quarter more. Move, insert and remove the points as [path points](#path-points).
 4. Press `Enter` to build: one undo step named **Stamp**, at most 256 copies at once.
 
 Stamps are pasted by the server from its own copy, so chests keep their contents and entities such as armor stands and item frames come along.
 
 ## Path points
 
-The Road's nodes, the Line's, Sweep's and Stamp's points, Extrude's path and tip, and the [Shape brush](shape-brush.md#sweep-a-shape-along-a-line)'s line all work the same way.
+The Road's nodes, the Line's, Sweep's, Stamp's and [Smart Surface](smart-surface.md)'s points, Extrude's path and tip, and the [Shape brush](shape-brush.md#sweep-a-shape-along-a-line)'s line all work the same way.
 
 - **Add**: click a block to put a point on it, or open sky to put one at the [marker](#points-in-the-air). The new point is the end of the path and is selected, so the next click carries the path on from it: while the end point is selected a thin dark line runs from it to a small cube under the cursor, where the next point would go.
 - **Select**: click a point. Points are translucent cubes; the selected one shows a gizmo: a white cube at its middle, red, green and blue arrows, and three coloured squares. The part under the cursor lights up.
@@ -61,9 +61,9 @@ The Road's nodes, the Line's, Sweep's and Stamp's points, Extrude's path and tip
 
 ## Points in the air
 
-The Road, Line, Sweep and Stamp (and [Extrude](extrude.md)'s path and tip) take points in the sky as well as on blocks. Aim at open sky: a pale blue box with a cross, the **marker**, floats ahead of you, its distance beside the cursor. Click to put a point there. With the cursor on a block, the point goes on the block as usual.
+The Road, Line, Sweep, Stamp and [Smart Surface](smart-surface.md) (and [Extrude](extrude.md)'s path and tip) take points in the sky as well as on blocks. Aim at open sky: a pale blue box with a cross, the **marker**, floats ahead of you, its distance beside the cursor. Click to put a point there. With the cursor on a block, the point goes on the block as usual.
 
-- `Alt+Scroll` moves the marker a block nearer or farther, `Shift+Alt+Scroll` four blocks, from 2 to 256 blocks away (never past what your render distance lets the editor aim at, nor out of the world's height). It starts at 16, is shared by all four, and keeps your distance while the game runs. `Ctrl+Scroll` still sets the road's width and the line's thickness.
+- `Alt+Scroll` moves the marker a block nearer or farther, `Shift+Alt+Scroll` four blocks, from 2 to 256 blocks away (never past what your render distance lets the editor aim at, nor out of the world's height). It starts at 16, is shared by the Road, Line, Sweep, Stamp and Smart Surface (Extrude has its own), and keeps your distance while the game runs. `Ctrl+Scroll` still sets the road's width and the line's thickness.
 - Click a point floating in the air to pick it. While your aim would pick a point, that point lights up instead of the marker: aim beside it to place a new point farther out.
 - A road node left in the air when you place it or let go of it (nothing solid in its block or the one under it) sets **Height** to **Straight between points** (a message says so), so the road runs through its nodes: a floating deck with nothing under it. `Esc` clearing the road puts **Height** back. With **Straight between points**, **Fill below** only fills where something lies under the deck within its depth, so a ramp up from the ground keeps its embankment near the ground and becomes a bare deck higher up; where the road crosses chunks your game hasn't loaded it is a bare deck too, and a message counts those columns. With **Follow terrain** the fill is as before.
 
@@ -100,7 +100,7 @@ Set **Generate** to **Smart Surface**, click blocks round an area for its outlin
 | Path, Sag | The line's shape through its points; how far a hanging span drops at its middle, 0–64 |
 | Thickness, Profile | The line's width across, 1–16; round (a tube) or square (a beam) |
 | Material (Line) | One **Block**, or a weighted **Mix** |
-| Extend to ground (Line) | Fill every column the line passes through down to the ground under it, through leaves, trunks, plants and water |
+| Extend to ground (Line) | Fill every column the line passes through down to the ground under it, through plants, leaves, trunks, water and lava |
 | Use stairs and slabs (Line) | The line's steps up become stairs facing up the climb, upside-down stairs under it, or slabs, of each block's own family |
 | Path, Sag (Sweep) | The sweep's path through its points; how far a hanging span drops at its middle |
 | Follow slope | The profile tilts as the path climbs, instead of staying upright |
@@ -114,10 +114,10 @@ Set **Generate** to **Smart Surface**, click blocks round an area for its outlin
 
 - **Clear above** cuts the road through a forest; **Fill below** builds an embankment across a dip.
 - Pick the **Stairs** block first: the slab and full block fill in when they share its name.
-- Chunks the road crosses that your game hasn't loaded show as red boxes and stop the build: fly closer.
+- With **Follow terrain**, chunks the road crosses that your game hasn't loaded show as red boxes and stop the build: fly closer. A **Straight between points** road builds a bare deck there instead ([points in the air](#points-in-the-air)).
 - A thin **Hanging** line between two towers makes a cable or a rope; a thick **Curve** of stone makes an arch. Blocks are placed as they are: fences and walls in a line don't connect to each other.
 - A line reaching into chunks your game hasn't loaded won't build: fly closer.
-- **Extend to ground** stops on anything that is not a tree or a plant: a roof, a fence or a chest under the line holds the fill up, as the ground does. A column where nothing lies below gets no fill.
+- **Extend to ground** looks through plants, leaves, tree trunks, water and lava, and stops on anything else: a roof, a fence or a chest under the line holds the fill up, as the ground does. A column where nothing lies below gets no fill.
 - A sweep needs a selection: the profile is read when you click, so change the selection and the ghost follows.
 - Where two stamped copies overlap, the one clicked later wins.
 - A heightmap import clears everything above the new ground inside the selection: select only the land, not the houses next to it. Chests, furnaces, signs and other blocks with contents are left exactly as they are (a message counts them). A column's ground is its topmost solid block, so a tree trunk or a roof inside the selection is taken for ground (its block is what the column grows or is cut to): clear them first.

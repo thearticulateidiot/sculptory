@@ -5,6 +5,7 @@ import dev.sculptory.core.NamespacedId;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tool.Selection;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateSettings;
 import dev.sculptory.fabric.client.editor.tools.select.SelectSettings;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -41,13 +42,16 @@ final class FakeProbe implements TutorialProbe {
     int presetsVersion;
     final Map<ToolId, Long> strokes = new HashMap<>();
     boolean symmetryCentreSet;
-    int pathNodes;
+    final Map<GenerateSettings.Kind, Points> points = new HashMap<>();
     boolean scatterAreaPainted;
     int scatterMixSize;
     boolean tinkerAimsAtProperty;
     boolean gradientLineSet;
     boolean placing;
     boolean placementUpsideDown;
+    boolean rotating;
+    boolean placementTurned;
+    boolean biomeViewOn;
     boolean builderPowerOn;
     boolean exportDialogOpen;
     long exports;
@@ -190,8 +194,8 @@ final class FakeProbe implements TutorialProbe {
     }
 
     @Override
-    public int pathNodes() {
-        return pathNodes;
+    public Points points(GenerateSettings.Kind kind) {
+        return points.getOrDefault(kind, Points.NONE);
     }
 
     @Override
@@ -222,6 +226,21 @@ final class FakeProbe implements TutorialProbe {
     @Override
     public boolean placementUpsideDown() {
         return placementUpsideDown;
+    }
+
+    @Override
+    public boolean rotating() {
+        return rotating;
+    }
+
+    @Override
+    public boolean placementTurned() {
+        return placementTurned;
+    }
+
+    @Override
+    public boolean biomeViewOn() {
+        return biomeViewOn;
     }
 
     @Override

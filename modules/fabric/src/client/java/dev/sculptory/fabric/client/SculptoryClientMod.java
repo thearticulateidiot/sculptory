@@ -9,8 +9,7 @@ import dev.sculptory.fabric.client.editor.check.CheckConfig;
 import dev.sculptory.fabric.client.editor.check.PlayCheck;
 import dev.sculptory.fabric.client.editor.demo.DemoConfig;
 import dev.sculptory.fabric.client.editor.demo.PlayDemo;
-import dev.sculptory.fabric.client.editor.render.ghost.GhostDebug;
-import dev.sculptory.fabric.client.editor.tools.place.RotationCompare;
+import dev.sculptory.fabric.client.editor.devtools.DevCommands;
 import dev.sculptory.fabric.client.editor.tour.TourConfig;
 import dev.sculptory.fabric.client.editor.tour.UiTour;
 import dev.sculptory.fabric.client.net.ClientNet;
@@ -51,10 +50,11 @@ public final class SculptoryClientMod implements ClientModInitializer {
         EditorClient editor = EditorClient.init();
         // Builder mode (hold G): the same session and state space as the editor.
         BuilderClient.init(editor, ClientNet::session, states);
-        GhostDebug.register();
-        // /bsclient rotation compare: the free-rotation methods side by side, for playtests (development runs only).
-        if (FabricLoader.getInstance().isDevelopmentEnvironment()) {
-            RotationCompare.register(states);
+        // The development-only client commands (/bsclient ghost, /bsclient rotation compare): dev runs only, and the
+        // mod jar leaves them out like the harnesses below.
+        if (FabricLoader.getInstance().isDevelopmentEnvironment()
+                && devClassPresent("dev.sculptory.fabric.client.editor.devtools.DevCommands")) {
+            DevCommands.register(states);
         }
         // The dev-only harnesses: the screenshot tour, the play check and the scripted demo.
         // They run only from a dev checkout (runClient) and are left out of the mod jar. Their property constants are
@@ -77,11 +77,19 @@ public final class SculptoryClientMod implements ClientModInitializer {
      */
     private static boolean devHarness(String property, String className) {
         if (System.getProperty(property) == null) return false;
-        String resource = className.replace('.', '/') + ".class";
-        if (SculptoryClientMod.class.getClassLoader().getResource(resource) != null) return true;
+        if (devClassPresent(className)) return true;
         SculptoryMod.LOG.warn("Sculptory: -D{} is set, but this jar has no dev harnesses (they run from a dev checkout only)",
                 property);
         return false;
+    }
+
+    /**
+     * Whether the dev-only class {@code className} is on the classpath (a dev run; the mod jar leaves the dev packages
+     * out). Looks for the class file by name, so nothing is loaded.
+     */
+    private static boolean devClassPresent(String className) {
+        String resource = className.replace('.', '/') + ".class";
+        return SculptoryClientMod.class.getClassLoader().getResource(resource) != null;
     }
 
     /** Reads {@code Block.STATE_IDS} and the bound block tags; touches no server-only class. */

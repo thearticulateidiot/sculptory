@@ -35,8 +35,7 @@ import java.util.Objects;
  *       ({@link #quarterTurns}: each angle rounded to a multiple of 90°, halfway rounding down) bring an axis of the
  *       other parity there (an even width turned onto an odd depth), so a quarter turn on any axis stays an exact
  *       permutation of cells, with no ties and no holes, and an even-sized build turns about its middle, not half a
- *       block off it. (Before fix round 2 of batch 2026-10-07 the pivot was the centre of the middle cell, towards the
- *       minimum for an even size; odd sizes turn exactly as they did.)</li>
+ *       block off it.</li>
  *   <li>The result box holds every cell whose centre lies in the half-open axis-aligned bounds {@code [L, H)} of the
  *       turned intermediate box. {@link Bounds#offset()} is its minimum corner in the intermediate box's coordinates.
  *       For an exact orientation the result box is the intermediate box ({@code offset} 0). A free orientation's

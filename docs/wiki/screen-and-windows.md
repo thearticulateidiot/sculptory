@@ -10,10 +10,10 @@ The top bar holds the menus, the palette and hint line sit at the bottom, toasts
 |---|---|
 | Top bar | Menus, the active block, Undo, Redo, the water toggle, fly speed, the status dot, UI size |
 | Active block | What Fill, Walls and the Shape brush place: click it to choose, or middle-click a block in the world |
-| Palette | The 15 tools: click a slot or press its key; a greyed slot names the missing permission in its tooltip |
+| Palette | The 17 tools: click a slot or press its key; a greyed slot names the missing permission in its tooltip |
 | Hint line | The active tool's keys for what you can do right now |
 | Toasts | Results and refusals; **View > Notifications** keeps the last 100 |
-| Windows | Tool Settings, Selection, Clipboard, Library, History, Keys, Tutorial, Wiki, Notifications, Tinker |
+| Windows | Tool Settings, Selection, Clipboard, Library, History, Keys, Tutorial, Wiki, Notifications, Tinker, Mask (the top bar's Mask chip), Biomes in view (View > Biome view) |
 
 ![The top bar, left side](images/screen-and-windows-top-bar.png)
 

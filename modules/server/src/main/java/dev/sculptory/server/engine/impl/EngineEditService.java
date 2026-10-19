@@ -305,12 +305,6 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     private static final int SCAN_MARGIN = 8;
     /** Most copies one stack may make. */
     public static final int MAX_STACK_COUNT = 256;
-
-    /**
-     * The detail of the protocol 6 contract stubs' refusals ({@code INVALID}): a multi-paste, a biome fill, a paste or
-     * move with a free orientation, a paste of biomes, and Heightmap and Biome strokes, until their streams land.
-     */
-    public static final String NOT_IMPLEMENTED = "not implemented";
     /** Server ticks between re-checks of the permissions of players with admitted jobs ({@link #revalidate}). */
     public static final int PERMISSION_RECHECK_TICKS = 40;
     /**

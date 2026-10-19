@@ -432,10 +432,10 @@ public final class Demo {
 
     // ---- The editor's UI ----
 
-    /** The middle of a laid-out node in GUI pixels. */
+    /** The middle of a laid-out node in GUI pixels, scrolled into view first. */
     public double[] centre(Node node) {
         return onClient(() -> {
-            driver.relayout();
+            driver.reveal(node);
             Rect bounds = node.bounds();
             if (bounds.isEmpty() || !node.isShown()) {
                 throw new CheckDriver.Failed(node.getClass().getSimpleName() + " is not shown");

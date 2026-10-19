@@ -38,10 +38,9 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 /**
- * The core contracts of the batch after 0.3.0-alpha (protocol 6) before its streams land: the multi-paste, the biome
- * fill, orientations on Paste and Move, the paste options' biomes, the Heightmap and Biome brushes and the edit record's
- * biome slot. The new ops and brushes are contract stubs here: they refuse to compile or run, and each stream replaces
- * its lines when it makes them work.
+ * The core contracts of protocol 6 (the release after 0.3.0-alpha): the multi-paste, the biome fill, orientations on
+ * Paste and Move, the paste options' biomes, the Heightmap and Biome brushes and the edit record's biome slot. What the
+ * new ops and brushes do in full is tested next to their programs and kernels.
  */
 class BatchSixContractsTest {
     private static final FakeStateSpace STATES = new FakeStateSpace();

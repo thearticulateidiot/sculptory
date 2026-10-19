@@ -264,6 +264,8 @@ public final class PointEditor {
     private double[] grabOffset;
     /** A free drag: another point the ray passed through when it began (not snapped onto until the ray leaves it). */
     private BlockPos behindGrab;
+    /** The changes reported so far, by kind and role ({@link #count}). */
+    private final long[] counts = new long[EditKind.values().length * Role.values().length];
 
     /**
      * An editor of {@code points}.
@@ -369,7 +371,7 @@ public final class PointEditor {
         int index = points.size();
         points.insert(index, point);
         points.select(index);
-        host.edited(c, new Edit(EditKind.ADD, Role.OUTLINE, index, null, point, true));
+        report(c, new Edit(EditKind.ADD, Role.OUTLINE, index, null, point, true));
         return index;
     }
 
@@ -388,7 +390,7 @@ public final class PointEditor {
         }
         int index = points.addInside(point);
         points.selectInside(index);
-        host.edited(c, new Edit(EditKind.ADD, Role.INSIDE, index, null, point, true));
+        report(c, new Edit(EditKind.ADD, Role.INSIDE, index, null, point, true));
         return index;
     }
 
@@ -412,17 +414,22 @@ public final class PointEditor {
         }
         points.insert(index, point);
         if (select) points.select(index);
-        host.edited(c, new Edit(EditKind.INSERT, Role.OUTLINE, index, null, point, finished));
+        report(c, new Edit(EditKind.INSERT, Role.OUTLINE, index, null, point, finished));
         return index;
     }
 
     /** Moves {@code point} to {@code to}; returns whether it moved ({@code finished}: see {@link Edit}). */
     public boolean move(ToolContext c, PointRef point, BlockPos to, boolean finished) {
+        return move(c, point, to, finished, true);
+    }
+
+    /** {@link #move}; {@code counted} false leaves it out of {@link #count} (a cancelled drag put back). */
+    private boolean move(ToolContext c, PointRef point, BlockPos to, boolean finished, boolean counted) {
         boolean inside = point.role() == Role.INSIDE;
         BlockPos before = inside ? points.insidePoint(point.index()) : points.node(point.index());
         boolean moved = inside ? points.moveInside(point.index(), to) : points.move(point.index(), to);
         if (!moved) return false;
-        host.edited(c, new Edit(EditKind.MOVE, point.role(), point.index(), before, to, finished));
+        report(c, new Edit(EditKind.MOVE, point.role(), point.index(), before, to, finished), counted);
         return true;
     }
 
@@ -432,6 +439,11 @@ public final class PointEditor {
      * point removed.
      */
     public BlockPos remove(ToolContext c, PointRef point) {
+        return remove(c, point, true);
+    }
+
+    /** {@link #remove}; {@code counted} false leaves it out of {@link #count} (the insert key's point dropped). */
+    private BlockPos remove(ToolContext c, PointRef point, boolean counted) {
         boolean wasSelected = points.selection().filter(point::equals).isPresent();
         boolean inside = point.role() == Role.INSIDE;
         if (dragged != null && dragged.equals(point)) endDrag(c);
@@ -444,7 +456,7 @@ public final class PointEditor {
             }
         }
         if (wasSelected && !inside && points.size() > 0) points.select(Math.max(0, point.index() - 1));
-        host.edited(c, new Edit(EditKind.REMOVE, point.role(), point.index(), removed, null, true));
+        report(c, new Edit(EditKind.REMOVE, point.role(), point.index(), removed, null, true), counted);
         return removed;
     }
 
@@ -452,7 +464,7 @@ public final class PointEditor {
     public void select(ToolContext c, PointRef point) {
         if (points.selection().equals(Optional.ofNullable(point))) return;
         points.select(point);
-        host.edited(c, new Edit(EditKind.SELECT, point == null ? Role.OUTLINE : point.role(),
+        report(c, new Edit(EditKind.SELECT, point == null ? Role.OUTLINE : point.role(),
                 point == null ? -1 : point.index(), null, null, true));
     }
 
@@ -462,7 +474,32 @@ public final class PointEditor {
         inserting = null;
         if (points.isEmpty()) return;
         points.clear();
-        host.edited(c, new Edit(EditKind.CLEAR, Role.OUTLINE, -1, null, null, true));
+        report(c, new Edit(EditKind.CLEAR, Role.OUTLINE, -1, null, null, true));
+    }
+
+    /**
+     * How many changes of {@code kind} to {@code role} points this editor has made (the tutorial's steps count clicks
+     * with it): the finished {@link Edit}s, so a drag counts once, as it ends, and the insert key's point counts as an
+     * INSERT (an inside one as an ADD) once a click puts it down. A drag put back with Esc, and the insert key's point
+     * dropped, count nothing. A CLEAR, and a SELECT of nothing, count as {@link Role#OUTLINE}.
+     */
+    public long count(EditKind kind, Role role) {
+        return counts[kind.ordinal() * Role.values().length + role.ordinal()];
+    }
+
+    /** Counts {@code edit} once finished and tells the host. */
+    private void report(ToolContext c, Edit edit) {
+        report(c, edit, true);
+    }
+
+    /** Tells the host; {@code counted} false leaves the edit out of {@link #count}. */
+    private void report(ToolContext c, Edit edit, boolean counted) {
+        if (counted && edit.finished()) tally(edit.kind(), edit.role());
+        host.edited(c, edit);
+    }
+
+    private void tally(EditKind kind, Role role) {
+        counts[kind.ordinal() * Role.values().length + role.ordinal()]++;
     }
 
     private void tooMany(ToolContext c, Role role, int max) {
@@ -707,7 +744,7 @@ public final class PointEditor {
             moved = true;
         } else if (release && moved) {
             // The last frame already put it there: the host still hears that the drag is done.
-            host.edited(c, new Edit(EditKind.MOVE, dragged.role(), dragged.index(), dragFrom, to, true));
+            report(c, new Edit(EditKind.MOVE, dragged.role(), dragged.index(), dragFrom, to, true));
         }
     }
 
@@ -718,7 +755,11 @@ public final class PointEditor {
         BlockPos to = targetOf(cursor, ray);
         if (to == null) to = pointAt(at);
         BlockPos before = pointAt(at);
-        if (!move(c, at, to, true)) host.edited(c, new Edit(EditKind.MOVE, at.role(), at.index(), before, to, true));
+        if (!move(c, at, to, true, false)) {
+            report(c, new Edit(EditKind.MOVE, at.role(), at.index(), before, to, true), false);
+        }
+        // Put down, the point is inserted (an inside one added): counted now, not when the key was pressed.
+        tally(at.role() == Role.INSIDE ? EditKind.ADD : EditKind.INSERT, at.role());
         select(c, at);
     }
 
@@ -745,7 +786,7 @@ public final class PointEditor {
                     PointRef point = dragged;
                     BlockPos back = dragFrom;
                     endDrag(c);
-                    move(c, point, back, true);
+                    move(c, point, back, true, false);
                     return true;
                 }
                 if (points.selection().isPresent()) {
@@ -781,7 +822,7 @@ public final class PointEditor {
         if (inserting == null) return false;
         PointRef at = inserting;
         inserting = null;
-        remove(c, at);
+        remove(c, at, false);
         return true;
     }
 
@@ -803,7 +844,7 @@ public final class PointEditor {
             }
             int index = points.addInside(start);
             inserting = new PointRef(Role.INSIDE, index);
-            host.edited(c, new Edit(EditKind.ADD, Role.INSIDE, index, null, start, false));
+            report(c, new Edit(EditKind.ADD, Role.INSIDE, index, null, start, false));
             return true;
         }
         int index = insertAt(c, from.index() + 1, start, false, false);

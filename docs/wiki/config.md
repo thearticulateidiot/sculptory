@@ -145,6 +145,8 @@ The entity caps count passengers and may be passed with `limit.bypass`. Players,
 | `/sculptory fill <from> <to> <block>` | `admin` | Fills a box, as a normal job with history. |
 | `/sculptory undo`, `/sculptory redo` | `admin` | Undoes or redoes your last step. |
 
+`/sculptory flyspeed` is a client command: it runs in the player's own game, needs no permission and only changes how fast that player flies. Where the server has no `/flyspeed` of its own, `/flyspeed` does the same; a server that has one (EssentialsX's or CMI's, say) keeps it. See [Editor mode](editor-mode.md#fly-speed). Because of it, players with Sculptory installed see `/sculptory` suggested even without these permissions; the server still refuses what they may not run.
+
 ## Built-in limits
 
 These aren't in the file. A request over its rate is refused with "Too many edits at once — slow down a little"; normal use stays well inside them.

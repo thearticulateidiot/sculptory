@@ -470,6 +470,11 @@ public final class PlaceTool implements Tool {
         return Optional.ofNullable(placement);
     }
 
+    /** Whether the placement in progress is the Selection window's Rotate… (the ring ghost on the selection). */
+    public boolean rotating() {
+        return placement != null && rotating;
+    }
+
     /** Whether the ghost follows the cursor (false once dropped). */
     public boolean following() {
         return following;

@@ -238,12 +238,17 @@ class HeightmapKernelCostTest {
         }
     }
 
-    /** Milliseconds the JVM's stop-the-world collections have paused every thread for so far (concurrent ones left out). */
+    /**
+     * Milliseconds the JVM's stop-the-world collections have paused every thread for so far. G1's "G1 Concurrent GC"
+     * bean counts: in JDK 21 its time is the Remark and Cleanup pauses (JDK-8297247), which stop every thread. ZGC's and
+     * Shenandoah's "... Cycles" beans don't: their time is spent by collector threads while ours runs, so subtracting it
+     * would hide real work. (The same rule as {@code ShapeBrushLaneGameTest.gcMillis} in the GameTests.)
+     */
     static long gcMillis() {
         long total = 0;
         for (GarbageCollectorMXBean gc : ManagementFactory.getGarbageCollectorMXBeans()) {
             String name = gc.getName();
-            if (name.contains("Concurrent") || name.contains("Cycles")) continue;
+            if (name.contains("Cycles")) continue;
             total += Math.max(0, gc.getCollectionTime());
         }
         return total;

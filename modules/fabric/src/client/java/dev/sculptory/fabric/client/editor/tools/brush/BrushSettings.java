@@ -332,8 +332,9 @@ public final class BrushSettings {
             case SMOOTH, FLATTEN, WEATHER -> 0.6;
             // The Heightmap brush has no strength (the picture and its height are the brush): 1, hidden.
             case HEIGHTMAP -> 1.0;
-            // Protocol 6 placeholder: ws/biomes sets its own.
-            case PAINT, PALETTE, SHAPE, BIOME -> 1.0;
+            // A biome is painted or not: 1, hidden like the Heightmap brush's.
+            case BIOME -> 1.0;
+            case PAINT, PALETTE, SHAPE -> 1.0;
         };
     }
 

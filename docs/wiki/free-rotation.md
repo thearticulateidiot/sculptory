@@ -12,7 +12,9 @@ A paste, a move or the selection can turn by any angle around any axis: up (yaw)
 4. Pick the **Method** under **Free rotation** in Tool Settings. The ghost shows the result of the method you picked, exactly as it will be placed.
 5. Press `Enter`. A Rotate… is one undo step named "Rotate", and afterwards the selection is exactly the turned blocks.
 
-Rotate… turns the blocks around the symmetry centre (set with `M`) at the selection's middle height, or around the selection's middle when no centre is set: the gizmo sits there. Nudge the ghost with the arrow keys before `Enter` to put it somewhere else; a Rotate… that is only nudged is an ordinary move.
+![The Free rotation section of the Place tool's Tool Settings](images/free-rotation-section.png)
+
+Rotate… turns the blocks around the symmetry centre (set with `M`) at the selection's middle height, or around the selection's middle when no centre is set: the gizmo sits there. Nudge the ghost with the arrow keys, or drag the gizmo's arrows, before `Enter` to put it somewhere else; a Rotate… that is only moved is an ordinary move.
 
 ## Methods
 
@@ -40,7 +42,8 @@ With **Smooth slopes** ticked, a full block on the top or the underside of a tur
 - A smooth turn costs four times as much of the server's operation limit as a nearest one, and Smooth slopes adds one more. A smooth move or paste can therefore be refused as too large where a nearest one is not. How much a smooth turn may move depends on its shape too: a solid build can use most of the limit, a wall one block thick about half of it, and a line or a few blocks spread over a large area about a tenth.
 - With **Paste into** set to Only air or Only existing blocks, a door, bed or tall plant is placed only when both of its cells allow it. A move that cannot place one leaves it out, and its old place is cleared all the same, as for any block **Paste into** skips (undo brings it back).
 - Where copies of a stamp or a symmetric paste overlap, the copy that wins a cell can take one half of a door from another copy.
-- Stack and Scatter turn by quarter turns only.
+- Stack doesn't turn: stacked copies keep the selection's orientation, and only `V` flips them upside down ([Place](place.md#move-or-stack)). Scatter turns by quarter turns only.
+- Stamp copies in [Generate](generate.md#stamp-copies) always use Nearest.
 
 ## Related
 

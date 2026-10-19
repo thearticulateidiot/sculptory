@@ -48,6 +48,8 @@ keeps.
 2. In Tool Settings, open the **Mask** section and click **Edit…** under "Brush only where".
 3. Add rules as in the Mask window. **Invert the whole mask** brushes only where the rules do not all match.
 
+![The Raise brush's Tool Settings with the Mask section open](images/masks-section.png)
+
 A brush's mask is tested at the ground block the brush works on (the top of a column, or in **Surface** mode each
 block that changes), and its slope is the brush's own measure (a wall counts as 16). **Only inside selection** keeps
 the brush inside the selection box as it is when the stroke starts; Invert does not flip it.

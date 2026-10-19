@@ -16,8 +16,8 @@ The palette at the bottom of the screen holds the tools. Press a tool's key or c
 | `8` | [Place](place.md) | Paste, move, stack, turn and flip | Paste `clipboard`; Move, Stack `region` |
 | `9` | [Scatter](scatter.md) | Vanilla trees and features, rocks and plants over an area; Alt+click places one | `scatter` |
 | `0` | [Shape brush](shape-brush.md) | Spheres, cylinders, cones, cubes, pyramids; swept along a line | `brush` |
-| `-` | [Generate](generate.md) | Roads, roofs over the selection, lines and curves through points | `clipboard` and `region` |
-| `=` | [Extrude](extrude.md) | Pull a face out, carve it in, smear it | `region` |
+| `-` | [Generate](generate.md) | Roads, roofs over the selection, lines and curves through points, sweeps of a profile and stamps along a path, heightmaps from a picture, Smart Surface | `clipboard` and `region` |
+| `=` | [Extrude](extrude.md) | Pull a face out, carve it in, smear it; carry it **Along a path** or taper it **To a point** | `region` |
 | `[` | [Fluid](fluid.md) | Flood, drain, balls of water or lava | Flood, Drain `region`; ball `brush` |
 | `]` | [Tinker](tinker.md) | Change a block's properties or text, or an entity, in place | `region` |
 | `\` | [Weather](weather.md) | Erode, fill in, roughen or melt the surface | `brush` |

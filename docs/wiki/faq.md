@@ -80,6 +80,9 @@ Sculptory is an alpha. The limits you are most likely to meet:
 - Leaving a server drops your clipboard and scatter preview; your undo history is kept.
 - No command undoes or inspects another player's edits.
 - `/sculptory reload` doesn't apply the `history`, `library` and `transform` settings: those need a restart.
+- [Generate](generate.md#stamp-copies)'s Stamp copies always turn with the Nearest method, whatever [Free rotation](free-rotation.md)'s **Method** says.
+- **Use stairs and slabs** (Line, Road) places straight stairs only, never corner shapes.
+- A [Heightmap brush](heightmap.md) stamp at radius 128 needs a lot of server memory: it can bring a 4 GB server close to full memory and make it pause briefly.
 - `Ctrl+K` finds commands, tools, windows and the active tool's settings, but not library assets or blocks. The menus have no keyboard shortcuts of their own.
 
 ## Related

@@ -486,7 +486,8 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
                 () -> windows.isOpen(EditorWindows.WIKI) && !windows.isAllHidden());
         commands.provide(EditorCommands.WIKI, () -> openWiki(null, null), null);
         toolSettings.setHelp(tool -> {
-            WikiPages.Target target = WikiPages.forTool(tool);
+            // As the tool is set now: Generate set to Smart Surface opens that mode's page.
+            WikiPages.Target target = WikiPages.forTool(tool, ctx.settings(tool));
             openWiki(target.pageId(), target.anchor());
         });
 

@@ -355,7 +355,7 @@ public final class OpCompiler {
                 yield product(product(pasteSourceSize.x(), pasteSourceSize.y(), pasteSourceSize.z()),
                         many.placements().size());
             }
-            // Biome cells, not blocks: the region's cells bound the cells it is judged on (ws/biomes may refine it).
+            // Biome cells, not blocks: the region's cells bound the cells it is judged on.
             case OpSpec.BiomeFill fill -> cells(fill.region(), cap);
         };
         return product(single, copies);

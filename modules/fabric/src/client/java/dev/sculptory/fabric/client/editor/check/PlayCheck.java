@@ -322,11 +322,13 @@ public final class PlayCheck {
 
     /**
      * Each scenario starts in the editor with the Select tool, nothing selected, no popup, help or quick start card,
-     * the player's window layout and UI size.
+     * the check's window layout and UI size, and the tool settings the scenarios rely on at their defaults
+     * ({@link CheckDriver#defaultScriptSettings}).
      */
     private void resetEditor(CheckDriver driver) {
         driver.enterEditor();
         driver.standardEditor();
+        driver.defaultScriptSettings();
         driver.onClient(() -> {
             driver.controller().selectTool(ToolId.SELECT);
             driver.ctx().setSelection(null);

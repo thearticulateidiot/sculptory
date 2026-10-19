@@ -484,6 +484,18 @@ public final class GenerateTool implements Tool {
         return line;
     }
 
+    /** The point editor of a kind that has points (Path's road nodes, Line, Sweep, Stamp, Smart Surface), if it has. */
+    public Optional<PointEditor> editor(GenerateSettings.Kind kind) {
+        return Optional.ofNullable(switch (kind) {
+            case PATH -> roadEditor;
+            case LINE -> line.editor();
+            case SWEEP -> sweep.editor();
+            case STAMP -> stamp.editor();
+            case SMART_SURFACE -> smart.editor();
+            case ROOF, HEIGHTMAP -> null;
+        });
+    }
+
     /** The latest preview, if any. */
     public Optional<Built> preview() {
         return Optional.ofNullable(shown);

@@ -1,4 +1,4 @@
-package dev.sculptory.fabric.client.editor.render.ghost;
+package dev.sculptory.fabric.client.editor.devtools;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
@@ -9,6 +9,10 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
+import dev.sculptory.fabric.client.editor.render.ghost.GhostPlacement;
+import dev.sculptory.fabric.client.editor.render.ghost.GhostRenderer;
+import dev.sculptory.fabric.client.editor.render.ghost.GhostStates;
+import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
 import java.util.List;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;

@@ -18,6 +18,9 @@ import dev.sculptory.fabric.client.editor.mask.MaskChip;
 import dev.sculptory.fabric.client.editor.mask.RuleKind;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
 import dev.sculptory.fabric.client.editor.tool.WorldCursor.Face;
+import dev.sculptory.fabric.client.editor.tools.brush.ShapeBrushTool;
+import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
+import dev.sculptory.fabric.client.editor.tools.generate.PathModel;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.editor.tools.scatter.ScatterTool;
 import dev.sculptory.fabric.client.editor.tools.tinker.TinkerTool;
@@ -43,6 +46,7 @@ import dev.sculptory.protocol.v2.S2C;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -584,14 +588,18 @@ public final class DemoScript {
         d.say(SHAPE_LINE_BUILT);
         d.edit(() -> d.key(KeyAction.COMMIT));
         d.hold(RESULT_MS);
-        clearPoints(d);
+        ShapeBrushTool shape = d.onClient(() -> (ShapeBrushTool) d.ctx().tools().get(ToolId.SHAPE).orElseThrow());
+        clearPoints(d, shape.line()::points);
         d.setting(ToolId.SHAPE, "draw", "SHAPES");
         d.setting(ToolId.SHAPE, "radius", 4);
     }
 
-    /** Esc: the line's points go (no point is being dragged). */
-    private static void clearPoints(Demo d) {
-        d.keyCode(GLFW.GLFW_KEY_ESCAPE, 0);
+    /**
+     * Esc until the points are gone: the first press only deselects the point clicked last
+     * ({@link CheckDriver#clearPoints}).
+     */
+    private static void clearPoints(Demo d, Supplier<PathModel> points) {
+        d.driver().clearPoints(points);
         d.pause(300);
     }
 
@@ -736,7 +744,8 @@ public final class DemoScript {
         d.say(GENERATE_ROAD_BUILT);
         d.edit(() -> d.key(KeyAction.COMMIT));
         d.hold(RESULT_MS);
-        d.keyCode(GLFW.GLFW_KEY_ESCAPE, 0);
+        GenerateTool generate = d.driver().generateTool();
+        clearPoints(d, generate::path);
 
         // Line, hanging: a chain sagging from one post's top to the other's.
         int middle = (LINE_POST_X0 + LINE_POST_X1) / 2;
@@ -759,7 +768,7 @@ public final class DemoScript {
         d.say(GENERATE_ROAD_BUILT);
         d.edit(() -> d.key(KeyAction.COMMIT));
         d.hold(RESULT_MS);
-        clearPoints(d);
+        clearPoints(d, generate.line()::points);
 
         d.say(GENERATE_ROOF);
         d.selectTool(ToolId.SELECT);

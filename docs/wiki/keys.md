@@ -22,7 +22,8 @@ Every editor key can be changed, and `F1` always shows the keys as you have them
 | Heightmap brush: turn the picture | `R`, `Shift+R` |
 | Tool size (Road width, Line thickness) | `Ctrl+Scroll` (`Shift`: steps of 4) |
 | Brush strength or height, Lasso height | `Alt+Scroll` |
-| Points in the air: the marker nearer or farther (Extrude along a path or to a point; Generate's Road, Line, Sweep and Stamp) | `Alt+Scroll` (`Shift`: steps of 4) |
+| Points in the air: the marker nearer or farther (Extrude along a path or to a point; Generate's Road, Line, Sweep, Stamp and Smart Surface) | `Alt+Scroll` (`Shift`: steps of 4) |
+| A path point dragged freely (its white cube): nearer or farther, also on the Shape brush's line | `Alt+Scroll` while dragging |
 | Fly speed | `Scroll` over the world, or `/sculptory flyspeed` in chat ([Editor mode](editor-mode.md#fly-speed)) |
 | Tinker: next value, another property | `Scroll`, `Shift+Scroll` over a block |
 | Pick block (eyedropper) | Middle-click |
@@ -37,7 +38,7 @@ Every editor key can be changed, and `F1` always shows the keys as you have them
 | Switch the Mask on or off (every edit; top bar chip) | `Ctrl+M` |
 | Jump onto a block, through a wall | `J`, `Shift+J` |
 | Nudge selection or ghost | Arrow keys, `PgUp`, `PgDn` (`Shift`: 10 blocks) |
-| Remove a path node or line point | `Backspace` |
+| Remove the selected path point (with none selected: the last one) | `Backspace`, or `Delete` while the tool has points |
 | Add a path point after the selected one (with no point selected: the inventory) | `E` |
 | Hide or show windows | `Tab` |
 | Key sheet, find a command | `F1`, `Ctrl+K` |

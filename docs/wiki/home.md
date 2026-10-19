@@ -34,7 +34,7 @@ A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to 
 - [Smart Surface](smart-surface.md): a sheet of land through points you click, filling their outline
 - [Biomes](biomes.md): paint biomes, fill the selection with one, see them with Biome view
 - [Shape brush](shape-brush.md): spheres, cylinders, cones, cubes, pyramids
-- [Extrude](extrude.md): pull a face out, carve it in, smear it along
+- [Extrude](extrude.md): pull a face out, carve it in, smear it, carry it along a path or taper it to a point
 - [Fluid](fluid.md): flood, drain, balls of water or lava
 
 ## Paint, mix and plant
@@ -45,7 +45,7 @@ A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to 
 
 ## Build faster
 
-- [Generate](generate.md): roads, roofs and lines
+- [Generate](generate.md): roads, roofs, lines, sweeps of a profile, stamps along a path, heightmaps from a picture, Smart Surface
 - [Jump and Through](navigation.md): J onto a block, Shift+J through a wall
 - [Symmetry](symmetry.md): mirrored and turned copies of what you do
 - [Builder mode](builder-mode.md): powers for normal creative play (hold `G`)
@@ -55,7 +55,7 @@ A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to 
 
 - [Tool Settings](tool-settings.md): the window every tool is set up in
 - [Keys](keys.md): every default key, and how to change them
-- [Tools at a glance](tools.md): the 15 tools, their keys and permissions
+- [Tools at a glance](tools.md): the 17 tools, their keys and permissions
 
 ## Run a server
 

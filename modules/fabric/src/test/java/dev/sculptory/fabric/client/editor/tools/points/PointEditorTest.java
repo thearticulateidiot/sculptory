@@ -566,6 +566,78 @@ class PointEditorTest {
         assertEquals(Optional.of(new PathModel.PointRef(PathModel.Role.INSIDE, 1)), editor.selection());
     }
 
+    // ---- What the editor counts (the tutorial's steps) ----
+
+    private static long count(PointEditor editor, PointEditor.EditKind kind) {
+        return editor.count(kind, PathModel.Role.OUTLINE);
+    }
+
+    @Test
+    void aDragCountsOnceAtItsReleaseAndOnePutBackWithEscCountsNothing() {
+        Camera camera = new Camera(0.5, 64.5, 20.5);
+        PointEditor editor = editor(new PathModel(), camera);
+        editor.addEnd(c, p(0, 64, 0));
+        assertEquals(1, count(editor, PointEditor.EditKind.ADD));
+        double[] centre = screen(0.5, 64.5, 0.5);
+        double[] onX = {centre[0] + 40, centre[1]};
+        camera.aimAt(0.5, 64.5, 0.5);
+        pointer(editor, PointerEvent.Kind.PRESS, onX, TERRAIN);
+        camera.aimAt(3.7, 64.5, 0.5);
+        pointer(editor, PointerEvent.Kind.DRAG, onX, TERRAIN);
+        camera.aimAt(4.7, 64.5, 0.5);
+        pointer(editor, PointerEvent.Kind.DRAG, onX, TERRAIN);
+        assertEquals(0, count(editor, PointEditor.EditKind.MOVE), "a drag still on");
+        pointer(editor, PointerEvent.Kind.RELEASE, onX, TERRAIN);
+        assertEquals(1, count(editor, PointEditor.EditKind.MOVE), "counted once, at its release");
+
+        assertEquals(p(4, 64, 0), editor.points().node(0));
+        double[] at = screen(4.5, 64.5, 0.5);
+        double[] onXNow = {at[0] + 40, at[1]};
+        camera.aimAt(4.5, 64.5, 0.5);
+        pointer(editor, PointerEvent.Kind.PRESS, onXNow, TERRAIN);
+        assertTrue(editor.dragging());
+        camera.aimAt(8.7, 64.5, 0.5);
+        pointer(editor, PointerEvent.Kind.DRAG, onXNow, TERRAIN);
+        assertEquals(p(8, 64, 0), editor.points().node(0));
+        assertTrue(editor.onAction(c, EditorAction.CANCEL), "Esc puts it back");
+        assertEquals(p(4, 64, 0), editor.points().node(0));
+        assertEquals(1, count(editor, PointEditor.EditKind.MOVE), "a drag put back counts nothing");
+        assertTrue(edits.get(edits.size() - 1).finished(), "the host still hears the point is back");
+    }
+
+    @Test
+    void theInsertKeysPointCountsOnceAClickPutsItDownAndNothingWhenDropped() {
+        PointEditor editor = editor(new PathModel(), 64);
+        editor.addEnd(c, p(0, 64, 0));
+        editor.addEnd(c, p(10, 64, 0));
+        editor.select(c, outline(0));
+        editor.frame(c, new FrameInfo(0, 0f, 10, 10, block(3, 63, 4)));
+        assertTrue(editor.onAction(c, EditorAction.EXTRUDE_POINT));
+        editor.frame(c, new FrameInfo(0, 0f, 10, 10, block(5, 63, 6)));
+        assertEquals(0, count(editor, PointEditor.EditKind.INSERT), "the key alone: the point still follows the cursor");
+        click(editor, block(6, 63, 6));
+        assertEquals(1, count(editor, PointEditor.EditKind.INSERT), "put down: one insert");
+        assertEquals(0, count(editor, PointEditor.EditKind.MOVE), "not a move");
+
+        assertTrue(editor.onAction(c, EditorAction.EXTRUDE_POINT));
+        assertTrue(editor.onAction(c, EditorAction.CANCEL), "Esc drops it");
+        assertEquals(3, editor.points().size());
+        assertEquals(1, count(editor, PointEditor.EditKind.INSERT));
+        assertEquals(0, count(editor, PointEditor.EditKind.REMOVE), "dropped: nothing counted");
+        assertEquals(PointEditor.EditKind.REMOVE, edits.get(edits.size() - 1).kind(), "the host hears it go");
+
+        PointEditor surface = surface();
+        for (BlockPos corner : List.of(p(0, 64, 0), p(12, 64, 0), p(12, 64, 12), p(0, 64, 12))) surface.addEnd(c, corner);
+        surface.addInside(c, p(4, 66, 4));
+        assertEquals(1, surface.count(PointEditor.EditKind.ADD, PathModel.Role.INSIDE));
+        surface.frame(c, new FrameInfo(0, 0f, 10, 10, block(7, 64, 7)));
+        assertTrue(surface.onAction(c, EditorAction.EXTRUDE_POINT));
+        assertEquals(1, surface.count(PointEditor.EditKind.ADD, PathModel.Role.INSIDE), "not yet");
+        click(surface, block(8, 64, 6));
+        assertEquals(2, surface.count(PointEditor.EditKind.ADD, PathModel.Role.INSIDE), "an inside point put down");
+        assertEquals(0, surface.count(PointEditor.EditKind.MOVE, PathModel.Role.INSIDE));
+    }
+
     @Test
     void theSamplesOfACurveAreCutAtItsPoints() {
         List<BlockPos> points = List.of(p(0, 64, 0), p(4, 64, 0), p(4, 64, 0), p(8, 64, 4));
