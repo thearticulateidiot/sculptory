@@ -779,6 +779,11 @@ public final class EditorClient implements EditorMode.Host {
                 }
 
                 @Override
+                public BlockDescriptor activeBlock() {
+                    return ctx.activeBlock();
+                }
+
+                @Override
                 public String translate(String key, Object... args) {
                     return translator.translate(key, args);
                 }

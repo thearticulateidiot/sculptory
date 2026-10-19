@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Build faster](home.md#build-faster)
 
-**Generate** (`-`) builds a **road** along points you click, a **roof** over the selection, a **line** through blocks you click, a **sweep** of the selection along a path, **stamps** of your clipboard on blocks you click, or a **heightmap**: terrain shaped from a picture over the selection. It shows the result first, and `Enter` builds it as one undo step named **Road**, **Roof**, **Line**, **Sweep**, **Stamp** or **Heightmap**. Use it for paths that hug the land, embanked highways, roofs of stairs and slabs that would take an evening by hand, cables, pipes, arches and beams, walls with a profile of your own, rows of lamp posts or trees, and whole landscapes from a picture.
+**Generate** (`-`) builds a **road** along points you click, a **roof** over the selection, a **line** through blocks you click, a **sweep** of the selection along a path, **stamps** of your clipboard on blocks you click, a **heightmap**: terrain shaped from a picture over the selection, or a **smart surface**: a sheet of land through points you click. It shows the result first, and `Enter` builds it as one undo step named **Road**, **Roof**, **Line**, **Sweep**, **Stamp**, **Heightmap** or **Smart surface**. Use it for paths that hug the land, embanked highways, roofs of stairs and slabs that would take an evening by hand, cables, pipes, arches and beams, walls with a profile of your own, rows of lamp posts or trees, and whole landscapes from a picture.
 
 ![Tool Settings for Generate](images/generate-settings.png)
 
@@ -77,6 +77,10 @@ The Road, Line, Sweep and Stamp (and [Extrude](extrude.md)'s path and tip) take 
 6. Press `Enter` to build.
 
 The picture is stretched over the whole footprint, so a wide selection makes a wide hill. In each column the ground is set to the picture's height: everything above it, up to the top of the selection (or Max Y), becomes air, trees and water included; below it the column keeps its own blocks, as with the [Heightmap brush](heightmap.md#raise-and-lower): grass stays on top, the dirt beneath grows or is cut.
+
+## Smart Surface
+
+Set **Generate** to **Smart Surface**, click blocks round an area for its outline and inside it for hills and hollows: a terrain-like sheet fills the outline through every point. See [Smart Surface](smart-surface.md).
 
 ## Settings
 

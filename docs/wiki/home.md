@@ -31,6 +31,7 @@ A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to 
 - [Masks](masks.md): limit every edit, or one brush, to the blocks you choose
 - [Weather brush](weather.md): erode, fill in, roughen or melt terrain
 - [Heightmap brush](heightmap.md): stamp hills, craters and ridges from a picture, or your own PNGs
+- [Smart Surface](smart-surface.md): a sheet of land through points you click, filling their outline
 - [Biomes](biomes.md): paint biomes, fill the selection with one, see them with Biome view
 - [Shape brush](shape-brush.md): spheres, cylinders, cones, cubes, pyramids
 - [Extrude](extrude.md): pull a face out, carve it in, smear it along

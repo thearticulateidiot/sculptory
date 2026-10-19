@@ -5,6 +5,7 @@ import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.generate.LineKernel;
 import dev.sculptory.core.generate.RoadKernel;
 import dev.sculptory.core.generate.RoofKernel;
+import dev.sculptory.core.generate.SmartSurfaceKernel;
 import dev.sculptory.core.path.PathKind;
 import dev.sculptory.core.path.PathSpec;
 import dev.sculptory.fabric.client.editor.heightmap.HeightmapLibrary;
@@ -36,13 +37,12 @@ public final class GenerateSettings {
     public enum Kind { PATH, ROOF, LINE, SWEEP, STAMP, HEIGHTMAP, SMART_SURFACE }
 
     /**
-     * The kinds not built yet, with why they can't be chosen: Smart Surface, until its kernel and host are built (which
-     * removes it from here and from {@link #KINDS_HIDDEN}).
+     * The kinds not built yet, with why they can't be chosen (a key such as
+     * {@code sculptory.setting.generate.kind.coming_soon}): none now, Smart Surface being built.
      */
-    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of(Kind.SMART_SURFACE,
-            "sculptory.setting.generate.kind.coming_soon");
-    /** The kinds not built yet that the Kind dropdown leaves out altogether (not promised): Smart Surface. */
-    private static final Set<Kind> KINDS_HIDDEN = Set.of(Kind.SMART_SURFACE);
+    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of();
+    /** The kinds not built yet that the Kind dropdown leaves out altogether (not promised): none now. */
+    private static final Set<Kind> KINDS_HIDDEN = Set.of();
 
     /** The Heightmap import's turn of its picture, clockwise seen from above, in quarter turns. */
     public enum Turn {
@@ -200,9 +200,9 @@ public final class GenerateSettings {
     public static final SettingDef.Bool HEIGHTMAP_INVERT = new SettingDef.Bool("heightmap.invert", PREFIX + "heightmap_invert",
             false, HEIGHTMAP_KIND);
 
-    // Smart Surface (not offered yet: KINDS_HIDDEN)
+    // Smart Surface
     /** The deepest top layer (blocks); 0 leaves the top layer out (all body). */
-    public static final int SMART_MAX_TOP_DEPTH = 32;
+    public static final int SMART_MAX_TOP_DEPTH = SmartSurfaceKernel.MAX_TOP_DEPTH;
     /** The thickest sheet (blocks) when Extend to Ground is off. */
     public static final int SMART_MAX_THICKNESS = 64;
     /** Flat triangles of a Delaunay triangulation of the points instead of the smooth surface through them. */

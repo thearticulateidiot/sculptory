@@ -48,6 +48,7 @@
       "dev.sculptory.fabric.gametest.RegionGameTest",
       "dev.sculptory.fabric.gametest.OpSymmetryGameTest",
       "dev.sculptory.fabric.gametest.GenerateGameTest",
+      "dev.sculptory.fabric.gametest.SmartSurfaceGameTest",
       "dev.sculptory.fabric.gametest.PasteIntoGameTest",
       "dev.sculptory.fabric.gametest.FluidGameTest",
       "dev.sculptory.fabric.gametest.FluidUndoGameTest",

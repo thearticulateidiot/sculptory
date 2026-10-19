@@ -97,17 +97,16 @@ class BatchSixPaletteTest {
                     kind.name());
         }
         assertEquals(List.of(GenerateSettings.Kind.PATH, GenerateSettings.Kind.ROOF, GenerateSettings.Kind.LINE,
-                GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP), offered,
-                "Sweep and Stamp (ws/extrude-paths) and Heightmap (ws/heightmap) are built");
+                GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP,
+                GenerateSettings.Kind.SMART_SURFACE), offered, "every kind is built");
         assertEquals(List.of(GenerateSettings.Kind.SWEEP, GenerateSettings.Kind.STAMP, GenerateSettings.Kind.HEIGHTMAP),
                 List.of(GenerateSettings.Kind.values()).subList(3, 6), "appended, in this order");
-        // Smart Surface is appended, hidden and not offered until it is built.
+        // Smart Surface is appended and, built, offered.
         assertEquals(GenerateSettings.Kind.SMART_SURFACE, GenerateSettings.Kind.values()[6], "appended");
-        assertEquals(java.util.Set.of(GenerateSettings.Kind.SMART_SURFACE), GenerateSettings.KIND.unavailable().keySet(),
-                "every other kind is built");
-        assertFalse(GenerateSettings.KIND.validate(GenerateSettings.Kind.SMART_SURFACE, null).isValid());
-        assertFalse(GenerateSettings.KIND.options().contains(GenerateSettings.Kind.SMART_SURFACE), "not even listed");
-        assertEquals(6, GenerateSettings.KIND.options().size());
+        assertTrue(GenerateSettings.KIND.unavailable().isEmpty(), "every kind is built");
+        assertTrue(GenerateSettings.KIND.validate(GenerateSettings.Kind.SMART_SURFACE, null).isValid());
+        assertTrue(GenerateSettings.KIND.options().contains(GenerateSettings.Kind.SMART_SURFACE), "listed");
+        assertEquals(7, GenerateSettings.KIND.options().size());
         assertTrue(GenerateSettings.KIND.validate(GenerateSettings.Kind.HEIGHTMAP, null).isValid());
     }
 

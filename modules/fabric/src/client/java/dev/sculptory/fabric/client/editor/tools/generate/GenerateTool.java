@@ -3,6 +3,7 @@ package dev.sculptory.fabric.client.editor.tools.generate;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
+import dev.sculptory.core.NamespacedId;
 import dev.sculptory.core.brush.HeightImage;
 import dev.sculptory.core.brush.SurfaceScan;
 import dev.sculptory.core.edit.PasteOptions;
@@ -125,6 +126,11 @@ import org.slf4j.LoggerFactory;
  * thread when the preview starts; the kernel runs off it. Enter builds it as one undo step named "Heightmap"
  * ({@link OpLabel#HEIGHTMAP}).
  *
+ * <p><b>Smart Surface</b> ({@link SmartSurfaceDraft}). Points on blocks make a closed outline and inside points (the
+ * shared point editor); a terrain-like sheet fills the outline through every point, as a top layer over a body, a set
+ * thickness or down to the ground; Enter builds it as one undo step named "Smart surface"
+ * ({@link OpLabel#SMART_SURFACE}).
+ *
  * <p><b>Previews</b> run on the background executor: the Path generator first snapshots the ground of the footprint's
  * columns from the client world on the client thread ({@link GroundMap}), the kernel and the ghost bake then run off
  * it; a result of an older change is dropped. A source over {@link #MAX_GHOST_CELLS} shows its bounds as an outline;
@@ -228,6 +234,11 @@ public final class GenerateTool implements Tool {
         /** The camera's position (the point gizmo's size); none by default. */
         default Optional<double[]> eye() {
             return Optional.empty();
+        }
+
+        /** The editor's active block (the top bar's): Smart Surface's top and body unless set to a mix; stone by default. */
+        default BlockDescriptor activeBlock() {
+            return BlockDescriptor.of(new NamespacedId("minecraft:stone"));
         }
 
         /** Display text for a translation key (the air marker's distance label); the key itself by default. */
@@ -349,6 +360,8 @@ public final class GenerateTool implements Tool {
     private final LineDraft sweep;
     /** The Stamp's points, ghosts and build. */
     private final StampDraft stamp;
+    /** Smart Surface's points, preview and build. */
+    private final SmartSurfaceDraft smart;
     /** Points in the air for the Road, Line, Sweep and Stamp: one marker distance for them all. */
     private final AirPoints air = new AirPoints();
     /** The mouse at the last frame (scaled pixels), for the marker's distance label. */
@@ -371,6 +384,7 @@ public final class GenerateTool implements Tool {
         this.line = new LineDraft(() -> services, PATH_COLOUR).withAirPoints(air);
         this.sweep = new LineDraft(() -> services, PATH_COLOUR).withAirPoints(air);
         this.stamp = new StampDraft(() -> services, air);
+        this.smart = new SmartSurfaceDraft(services, air);
         PointEditor.View view = GenerateTool.pointView(() -> services);
         this.roadEditor = new PointEditor(path, air, view, new PointEditor.Host() {
             @Override
@@ -450,6 +464,11 @@ public final class GenerateTool implements Tool {
         return stamp;
     }
 
+    /** Smart Surface's points and preview (for tests and the HUD). */
+    public SmartSurfaceDraft smartSurface() {
+        return smart;
+    }
+
     /** The Library's Stamp: stamps the asset at {@code path} from now on (when the Stamp source is the Library). */
     public void useStampAsset(String path, String contentHash) {
         stamp.useAsset(path, contentHash);
@@ -511,6 +530,7 @@ public final class GenerateTool implements Tool {
         line.deactivate(c);
         sweep.deactivate(c);
         stamp.hide(c);
+        smart.deactivate(c);
         context = null;
     }
 
@@ -523,6 +543,7 @@ public final class GenerateTool implements Tool {
         if (kind == GenerateSettings.Kind.LINE) return line.onPointer(c, e, WorldCursor::pos);
         if (kind == GenerateSettings.Kind.SWEEP) return sweep.onPointer(c, e, WorldCursor::pos);
         if (kind == GenerateSettings.Kind.STAMP) return stamp.onPointer(c, e);
+        if (kind == GenerateSettings.Kind.SMART_SURFACE) return smart.onPointer(c, e);
         if (kind != GenerateSettings.Kind.PATH) return false;
         return roadEditor.onPointer(c, e);
     }
@@ -592,6 +613,7 @@ public final class GenerateTool implements Tool {
     @Override
     public boolean onScroll(ToolContext c, ScrollEvent e) {
         GenerateSettings.Kind kind = c.settings().get(GenerateSettings.KIND);
+        if (kind == GenerateSettings.Kind.SMART_SURFACE) return smart.onScroll(c, e);
         if (takesPoints(kind) && Modifiers.alt(e.modifiers()) && !Modifiers.control(e.modifiers())) {
             // Alt+Scroll: the air marker (or the point dragged freely) nearer or farther.
             return switch (kind) {
@@ -625,6 +647,7 @@ public final class GenerateTool implements Tool {
         boolean removal = a == EditorAction.ERASE_SELECTION || a == EditorAction.REMOVE_NODE;
         if (current == GenerateSettings.Kind.SWEEP) return sweep.onAction(c, a, this::sweepSetup) || removal;
         if (current == GenerateSettings.Kind.STAMP) return stamp.onAction(c, a) || removal;
+        if (current == GenerateSettings.Kind.SMART_SURFACE) return smart.onAction(c, a);
         boolean pathMode = c.settings().get(GenerateSettings.KIND) == GenerateSettings.Kind.PATH;
         if (pathMode && roadEditor.onAction(c, a)) return true;
         switch (a) {
@@ -680,6 +703,7 @@ public final class GenerateTool implements Tool {
         changed();
         line.changed();
         sweep.changed();
+        smart.changed();
     }
 
     @Override
@@ -697,6 +721,7 @@ public final class GenerateTool implements Tool {
                     case LINE -> line.hide(c);
                     case SWEEP -> sweep.hide(c);
                     case STAMP -> stamp.hide(c);
+                    case SMART_SURFACE -> smart.hide(c);
                     case PATH -> {
                         roadEditor.deactivate(c);
                         dropPreview();
@@ -710,6 +735,7 @@ public final class GenerateTool implements Tool {
         }
         line.pollBuild(c);
         sweep.pollBuild(c);
+        smart.pollBuild(c);
         switch (kind) {
             case LINE -> {
                 line.frame(c, f, this::lineSetup, WorldCursor::pos);
@@ -729,6 +755,11 @@ public final class GenerateTool implements Tool {
             }
             case STAMP -> {
                 stamp.frame(c, f);
+                commit.poll(c);
+                return;
+            }
+            case SMART_SURFACE -> {
+                smart.frame(c, f);
                 commit.poll(c);
                 return;
             }
@@ -852,8 +883,6 @@ public final class GenerateTool implements Tool {
     /** The work of a preview, or null when there is nothing to preview (after telling the player why, if a setting). */
     private Supplier<Built> task(ToolContext c) {
         SettingsValues values = c.settings();
-        // Smart Surface is not offered yet: it gets its own host, as Line and Sweep have.
-        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.SMART_SURFACE) return null;
         StateSpace states = statesOrNull(c);
         WorldReader world = worldOrNull(c);
         if (states == null || world == null) return null;
@@ -1043,7 +1072,7 @@ public final class GenerateTool implements Tool {
                 values.get(GenerateSettings.INSIDE), air);
     }
 
-    private static Pattern single(ToolContext c, BlockDescriptor block, StateSpace states) {
+    static Pattern single(ToolContext c, BlockDescriptor block, StateSpace states) {
         int state = states.resolve(block);
         if (state < 0) {
             c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.unknown_block", block.format()));
@@ -1060,7 +1089,7 @@ public final class GenerateTool implements Tool {
         return false;
     }
 
-    private static Pattern mix(ToolContext c, List<SettingDef.WeightedBlock> entries, StateSpace states) {
+    static Pattern mix(ToolContext c, List<SettingDef.WeightedBlock> entries, StateSpace states) {
         if (entries.isEmpty()) {
             c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.palette_empty"));
             return null;
@@ -1264,7 +1293,6 @@ public final class GenerateTool implements Tool {
     private void build(ToolContext c) {
         SettingsValues values = c.settings();
         GenerateSettings.Kind kind = values.get(GenerateSettings.KIND);
-        if (kind == GenerateSettings.Kind.SMART_SURFACE) return; // not offered yet
         if (kind == GenerateSettings.Kind.PATH && path.size() < 2) {
             c.notify(Notice.of(Notice.Level.INFO, NEEDS_NODES));
             return;
@@ -1341,6 +1369,10 @@ public final class GenerateTool implements Tool {
             }
             case STAMP -> {
                 stamp.renderWorld(c, d);
+                return;
+            }
+            case SMART_SURFACE -> {
+                smart.renderWorld(c, d);
                 return;
             }
             default -> {
@@ -1436,7 +1468,8 @@ public final class GenerateTool implements Tool {
     /** Over open sky, the air marker's (or the dragged point's) distance beside the cursor. */
     @Override
     public void renderHud(ToolContext c, HudDraw d) {
-        if (!takesPoints(c.settings().get(GenerateSettings.KIND)) || !air.labelShown(cursor)) return;
+        GenerateSettings.Kind kind = c.settings().get(GenerateSettings.KIND);
+        if (!(takesPoints(kind) || kind == GenerateSettings.Kind.SMART_SURFACE) || !air.labelShown(cursor)) return;
         AirPoints.renderLabel(d, mouseX, mouseY, services.translate(AirPoints.LABEL, air.shownDistance()));
     }
 
@@ -1466,6 +1499,10 @@ public final class GenerateTool implements Tool {
         }
         if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.STAMP) {
             hints.addAll(stamp.hints(c, CLICK));
+            return hints;
+        }
+        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.SMART_SURFACE) {
+            hints.addAll(smart.hints(c, CLICK));
             return hints;
         }
         Built built = shown;

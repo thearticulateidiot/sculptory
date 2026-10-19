@@ -647,7 +647,7 @@ public final class LineDraft {
     }
 
     /** The chunks the line's cells lie in that this game has not loaded. */
-    private static int unloadedChunks(ToolContext c, GeneratedSource source) {
+    static int unloadedChunks(ToolContext c, GeneratedSource source) {
         WorldReader world = GenerateTool.worldOrNull(c);
         if (world == null) return 0;
         LongOpenHashSet seen = new LongOpenHashSet();
