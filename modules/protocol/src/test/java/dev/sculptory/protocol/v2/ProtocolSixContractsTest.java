@@ -1,5 +1,6 @@
 package dev.sculptory.protocol.v2;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -28,6 +29,7 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
@@ -148,6 +150,101 @@ class ProtocolSixContractsTest {
         assertFalse(pitched.isExact());
         C2S.RunOp decoded = (C2S.RunOp) Codec.decodeC2S(paste(0x20, 0, 0xA8, 0x46, 0), STATES);
         assertEquals(pitched, ((OpSpec.Paste) decoded.op()).orientation());
+    }
+
+    @Test
+    void aFreeOrientationsResamplingRoundTripsOnPastesMultiPastesAndMoves() throws ProtocolException {
+        Transform turned = new Transform(1, Mirror.Z, false);
+        for (Resampling method : Resampling.values()) {
+            for (boolean slopes : new boolean[] {false, true}) {
+                Orientation orientation = Orientation.free(turned, 1_234, 500, 35_000, method, slopes);
+                assertEquals(method, orientation.resampling());
+                assertEquals(slopes, orientation.smoothSlopes());
+                C2S paste = new C2S.RunOp(1, new OpSpec.Paste(CLIPBOARD, BlockPos.ORIGIN, orientation,
+                        PasteOptions.DEFAULT), false, ConflictPolicy.SKIP_CONFLICTS);
+                assertEquals(paste, roundTrip(paste), orientation.toString());
+                C2S many = new C2S.RunOp(2, new OpSpec.PasteMany(CLIPBOARD, List.of(
+                        new OpSpec.PasteMany.Placement(BlockPos.ORIGIN, orientation),
+                        new OpSpec.PasteMany.Placement(new BlockPos(4, 0, 0), Orientation.of(turned))),
+                        PasteOptions.DEFAULT), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP);
+                assertEquals(many, roundTrip(many), orientation.toString());
+                C2S move = new C2S.RunOp(3, new OpSpec.Move(BOX, BlockPos.ORIGIN, orientation, STONE, EntityFilter.ALL,
+                        Symmetry.NONE, PasteOptions.Into.AIR), false, ConflictPolicy.OVERWRITE, OpLabel.ROTATE);
+                assertEquals(move, roundTrip(move), orientation.toString());
+            }
+        }
+    }
+
+    @Test
+    void theDefaultResamplingSendsNoByteAndAnotherIsBitSixThenOneByte() throws ProtocolException {
+        // Nearest without stairs is the free orientation as before: bit 5 and three angles.
+        Orientation nearest = Orientation.free(Transform.rotation(1), 9_001, 0, 5, Resampling.NEAREST, false);
+        assertEquals(Orientation.free(Transform.rotation(1), 9_001, 0, 5), nearest);
+        assertArrayEquals(paste(0x21, 0xA9, 0x46, 0x00, 0x05), encodedPaste(nearest));
+        // Exact count (1) with stairs on slopes (bit 2): 0x05 after the angles.
+        assertArrayEquals(paste(0x61, 0xA9, 0x46, 0x00, 0x05, 0x05),
+                encodedPaste(Orientation.free(Transform.rotation(1), 9_001, 0, 5, Resampling.EXACT, true)));
+        assertArrayEquals(paste(0x60, 0x01, 0x00, 0x00, 0x02),
+                encodedPaste(Orientation.free(Transform.IDENTITY, 1, 0, 0, Resampling.SMOOTH, false)));
+        C2S.RunOp decoded = (C2S.RunOp) Codec.decodeC2S(paste(0x61, 0xA9, 0x46, 0x00, 0x05, 0x05), STATES);
+        assertEquals(Orientation.free(Transform.rotation(1), 9_001, 0, 5, Resampling.EXACT, true),
+                ((OpSpec.Paste) decoded.op()).orientation());
+        decoded = (C2S.RunOp) Codec.decodeC2S(paste(0x60, 0x01, 0x00, 0x00, 0x02), STATES);
+        assertEquals(Orientation.free(Transform.IDENTITY, 1, 0, 0, Resampling.SMOOTH, false),
+                ((OpSpec.Paste) decoded.op()).orientation());
+        decoded = (C2S.RunOp) Codec.decodeC2S(paste(0x60, 0x01, 0x00, 0x00, 0x04), STATES);
+        assertEquals(Orientation.free(Transform.IDENTITY, 1, 0, 0, Resampling.NEAREST, true),
+                ((OpSpec.Paste) decoded.op()).orientation());
+    }
+
+    /** A paste of the clipboard at the origin with {@code orientation}, as the codec writes it. */
+    private static byte[] encodedPaste(Orientation orientation) throws ProtocolException {
+        return Codec.encodeC2S(new C2S.RunOp(1, new OpSpec.Paste(CLIPBOARD, BlockPos.ORIGIN, orientation,
+                PasteOptions.DEFAULT), false, ConflictPolicy.SKIP_CONFLICTS), STATES);
+    }
+
+    @Test
+    void aMalformedResamplingIsRefused() throws ProtocolException {
+        // Bit 6 without bit 5; a resampling byte that is the default (0), names no method (3), or sets bits 3-7; bit 7.
+        for (int[] bytes : List.of(new int[] {0x40}, new int[] {0x41, 0x01}, new int[] {0x60, 1, 0, 0, 0x00},
+                new int[] {0x60, 1, 0, 0, 0x03}, new int[] {0x60, 1, 0, 0, 0x07}, new int[] {0x60, 1, 0, 0, 0x08},
+                new int[] {0x60, 1, 0, 0, 0x81}, new int[] {0xE0, 1, 0, 0, 0x01})) {
+            assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(paste(bytes)), HexFormat.of().formatHex(
+                    paste(bytes)));
+        }
+        // A missing resampling byte runs into the paste options: the frame no longer parses.
+        assertEquals(ProtocolException.Reason.MALFORMED, reasonOf(runOp(out -> {
+            out.u8(CoreCodec.OP_PASTE);
+            CoreCodec.writeSource(out, CLIPBOARD);
+            CoreCodec.writePos(out, BlockPos.ORIGIN);
+            out.u8(0x60);
+            out.varint(1);
+            out.varint(0);
+            out.varint(0);
+        })));
+    }
+
+    @Test
+    void anExactOrientationHasNothingToResample() {
+        // The canonical form: folded quarter turns and exact ones drop the method and the slopes flag.
+        Orientation folded = Orientation.free(Transform.IDENTITY, 9_000, 0, 0, Resampling.SMOOTH, true);
+        assertTrue(folded.isExact());
+        assertEquals(Orientation.of(Transform.rotation(1)), folded);
+        assertEquals(Resampling.NEAREST, folded.resampling());
+        assertFalse(folded.smoothSlopes());
+        assertTrue(folded.resamplesByDefault());
+        assertEquals(Orientation.IDENTITY, Orientation.IDENTITY.withResampling(Resampling.EXACT, true));
+        // A free one keeps them, through its symmetric images too.
+        Orientation free = Orientation.free(Transform.IDENTITY, 1_000, 2_000, 0).withResampling(Resampling.EXACT, true);
+        assertEquals(Resampling.EXACT, free.resampling());
+        assertTrue(free.smoothSlopes());
+        assertFalse(free.equals(Orientation.free(Transform.IDENTITY, 1_000, 2_000, 0)));
+        Orientation image = free.then(new Transform(1, Mirror.X, false));
+        assertEquals(Resampling.EXACT, image.resampling());
+        assertTrue(image.smoothSlopes());
+        Orientation conjugate = free.conjugated(Transform.rotation(1));
+        assertEquals(Resampling.EXACT, conjugate.resampling());
+        assertTrue(conjugate.smoothSlopes());
     }
 
     // ---------------------------------------------------------------- paste options, multi-paste, biome fill

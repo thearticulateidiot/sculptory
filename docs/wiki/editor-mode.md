@@ -14,6 +14,22 @@ The editor swaps the normal controls for a free mouse cursor, menus, a tool pale
 
 The editor closes by itself when you die, disconnect, change dimension, lose the permission to edit or open another screen such as the inventory. Your tools and settings are kept for the next time.
 
+## Fly speed
+
+The fly speed goes from 0.25× to 8× your normal speed. Scroll over the world in the editor to step it, or type it in chat with `/sculptory flyspeed`, which works on any server without operator rights. Where the server has no `/flyspeed` command of its own (and in single player), `/flyspeed` does the same; where it has one, `/flyspeed` is the server's.
+
+| Command | What it does |
+|---|---|
+| `/sculptory flyspeed` | Shows the speed |
+| `/sculptory flyspeed 2.5` | Sets it, from 0.25 to 8 (a number outside is brought into the range) |
+| `/sculptory flyspeed reset` | Back to 1× |
+
+The speed is kept between games. It works in the editor and whenever you fly in Creative or Spectator with the editor closed; in Survival and Adventure your normal speed is used.
+
+- The speed multiplies your own: when a server or a plugin sets your fly speed, that speed is what 2× doubles.
+- Paper and Bukkit servers only tell your game about the commands you may use: without the server's own fly speed permission, `/flyspeed` is Sculptory's there.
+- Some servers check how fast players move and pull back a player who flies too fast. If you are pulled back while flying, lower the speed there.
+
 ## Aim at water and lava
 
 Tools aim through water and lava by default, so a brush on a lake shapes the lake bed. To work on the surface instead, click the **lily pad** button in the top bar or use **View > Aim at water and lava**. It stays on until you switch it back.

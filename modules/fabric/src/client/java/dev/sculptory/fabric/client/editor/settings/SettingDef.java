@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -193,15 +194,24 @@ public sealed interface SettingDef<T> permits SettingDef.Int, SettingDef.Decimal
     /**
      * One constant of an enum, shown as a dropdown. Options in {@code unavailable} are shown greyed out, with the
      * translation key there as the reason in their tooltip, and can't be chosen (a value holding one doesn't validate).
+     * Options in {@code hidden} (each also unavailable) are not shown at all ({@link #options()}).
      */
     record Enum<E extends java.lang.Enum<E>>(String key, String labelKey, Class<E> type, E defaultValue,
-                                             Predicate<SettingsValues> visibleWhen, Map<E, String> unavailable)
+                                             Predicate<SettingsValues> visibleWhen, Map<E, String> unavailable,
+                                             Set<E> hidden)
             implements SettingDef<E> {
         public Enum {
             checkCommon(key, labelKey, defaultValue, visibleWhen);
             Objects.requireNonNull(type);
             unavailable = Map.copyOf(unavailable);
+            hidden = Set.copyOf(hidden);
             if (unavailable.containsKey(defaultValue)) throw new IllegalArgumentException("The default is unavailable");
+            if (!unavailable.keySet().containsAll(hidden)) throw new IllegalArgumentException("A hidden option is unavailable");
+        }
+
+        public Enum(String key, String labelKey, Class<E> type, E defaultValue, Predicate<SettingsValues> visibleWhen,
+                    Map<E, String> unavailable) {
+            this(key, labelKey, type, defaultValue, visibleWhen, unavailable, Set.of());
         }
 
         public Enum(String key, String labelKey, Class<E> type, E defaultValue, Predicate<SettingsValues> visibleWhen) {
@@ -215,6 +225,11 @@ public sealed interface SettingDef<T> permits SettingDef.Int, SettingDef.Decimal
         /** Whether {@code option} can be chosen. */
         public boolean available(E option) {
             return !unavailable.containsKey(option);
+        }
+
+        /** The options shown, in declaration order: every constant but the hidden ones. */
+        public List<E> options() {
+            return java.util.Arrays.stream(type.getEnumConstants()).filter(option -> !hidden.contains(option)).toList();
         }
 
         @Override

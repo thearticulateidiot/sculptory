@@ -350,6 +350,76 @@ class UiSizeStoreTest {
                 UiSizeStore.MAX_KEPT_DEPTH));
     }
 
+    @Test
+    void theFlySpeedRoundTripsAndIsLeftOutAtOne(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("editor-ui.json");
+        UiSizeStore store = store(path);
+        store.load();
+        assertEquals(1, store.flySpeed(), "no file: 1×");
+        store.flySpeedChanged(2.5, 0);
+        store.saveNow();
+        assertEquals("{\n  \"version\": 1,\n  \"uiSize\": 100,\n  \"flySpeed\": 2.5\n}\n", read(path));
+
+        UiSizeStore reopened = store(path);
+        assertEquals(100, reopened.load());
+        assertEquals(2.5, reopened.flySpeed(), "survives a restart");
+        reopened.flySpeedChanged(1, 0);
+        reopened.saveNow();
+        assertEquals("{\n  \"version\": 1,\n  \"uiSize\": 100\n}\n", read(path), "1× is left out again");
+        assertEquals(List.of(), problems);
+    }
+
+    @Test
+    void flySpeedsOutOfRangeAreClampedAndMalformedOnesAreOne(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("editor-ui.json");
+        assertEquals(8, flySpeedOf(path, "{\"version\": 1, \"uiSize\": 100, \"flySpeed\": 50}"));
+        assertEquals(0.25, flySpeedOf(path, "{\"version\": 1, \"uiSize\": 100, \"flySpeed\": 0}"));
+        assertEquals(0.25, flySpeedOf(path, "{\"version\": 1, \"uiSize\": 100, \"flySpeed\": -3}"));
+        assertEquals(1.33, flySpeedOf(path, "{\"version\": 1, \"uiSize\": 100, \"flySpeed\": 1.3333}"));
+        assertEquals(1, flySpeedOf(path, "{\"version\": 1, \"uiSize\": 100, \"flySpeed\": \"fast\"}"));
+        assertEquals(1, flySpeedOf(path, "{\"version\": 1, \"uiSize\": 100, \"flySpeed\": [2]}"));
+        assertEquals(1, flySpeedOf(path, "{\"version\": 1, \"uiSize\": 100, \"flySpeed\": true}"));
+        assertEquals(1, flySpeedOf(path, "not json"));
+        assertEquals(1, flySpeedOf(path, "{\"version\": 2, \"uiSize\": 100, \"flySpeed\": 4}"),
+                "a newer file is not used");
+        // Saving a clamped value writes the clamped value, and the size and other fields are kept.
+        Files.writeString(path, "{\"version\": 1, \"uiSize\": 90, \"flySpeed\": 12, \"other\": 3}",
+                StandardCharsets.UTF_8);
+        UiSizeStore store = store(path);
+        store.load();
+        store.opacityChanged(CHANGED, 0);
+        store.saveNow();
+        JsonObject saved = JsonParser.parseString(read(path)).getAsJsonObject();
+        assertEquals(8, saved.get("flySpeed").getAsDouble());
+        assertEquals(90, saved.get("uiSize").getAsInt());
+        assertEquals(3, saved.get("other").getAsInt());
+    }
+
+    @Test
+    void scrolledFlySpeedsAreSavedOnceTheySettle(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("editor-ui.json");
+        UiSizeStore store = store(path);
+        store.load();
+        double[] steps = {1.5, 2, 3, 4};
+        for (int i = 0; i < steps.length; i++) {
+            store.flySpeedChanged(steps[i], i * 50L);
+            store.saveIfSettled(i * 50L);
+        }
+        store.saveIfSettled(150 + UiSizeStore.SETTLE_MS - 1);
+        assertFalse(Files.exists(path), "nothing is written while the wheel turns");
+        store.saveIfSettled(150 + UiSizeStore.SETTLE_MS);
+        assertEquals(4, flySpeedOf(path, read(path)));
+        assertEquals(List.of(), problems);
+    }
+
+    /** The fly speed a store reads from a file holding {@code json}. */
+    private double flySpeedOf(Path path, String json) throws Exception {
+        Files.writeString(path, json, StandardCharsets.UTF_8);
+        UiSizeStore store = store(path);
+        store.load();
+        return store.flySpeed();
+    }
+
     /** The opacity a store reads from a file holding {@code json}. */
     private UiOpacity.Values loaded(Path path, String json) throws Exception {
         Files.writeString(path, json, StandardCharsets.UTF_8);

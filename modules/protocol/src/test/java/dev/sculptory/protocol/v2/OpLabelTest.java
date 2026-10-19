@@ -61,6 +61,7 @@ class OpLabelTest {
         assertEquals(List.of(OpSpec.PasteMany.class), fitting(OpLabel.STAMP));
         assertEquals(List.of(OpSpec.Move.class), fitting(OpLabel.ROTATE));
         assertEquals(List.of(OpSpec.BiomeFill.class), fitting(OpLabel.BIOME_FILL));
+        assertEquals(List.of(OpSpec.Paste.class), fitting(OpLabel.SMART_SURFACE));
     }
 
     @Test
@@ -82,6 +83,7 @@ class OpLabelTest {
         assertEquals("Stamp", OpLabel.STAMP.text());
         assertEquals("Rotate", OpLabel.ROTATE.text());
         assertEquals("Biome fill", OpLabel.BIOME_FILL.text());
+        assertEquals("Smart surface", OpLabel.SMART_SURFACE.text());
         for (OpLabel label : OpLabel.values()) {
             if (label != OpLabel.NONE) assertFalse(label.text().isBlank(), label.name());
         }

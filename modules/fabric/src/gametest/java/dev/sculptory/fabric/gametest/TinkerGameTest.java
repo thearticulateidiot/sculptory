@@ -576,6 +576,9 @@ public final class TinkerGameTest implements FabricGameTest {
         clear(h, area);
         String stairs = "minecraft:oak_stairs[facing=north]";
         h.runtime.writer(h.world, WriteOptions.DEFAULT).write(x0 + 1, FLOOR + 1, z0 + 1, h.state(stairs), null);
+        // The stand stands on a block, so it stays in its section: over the cleared floor it fell once its entities
+        // ticked, out of the section within about ten ticks and down to the flat test world's ground at y = -60.
+        h.runtime.writer(h.world, WriteOptions.DEFAULT).write(x0 + 1, FLOOR, z0 + 2, h.state("minecraft:stone"), null);
         ArmorStandEntity stand = new ArmorStandEntity(h.world, x0 + 1.5, FLOOR + 1, z0 + 2.5);
         check(h.world.spawnEntity(stand), "fixture stand");
         RecordingListener fill = new RecordingListener();
@@ -591,6 +594,11 @@ public final class TinkerGameTest implements FabricGameTest {
         String innerLeft = "minecraft:oak_stairs[facing=north,shape=inner_left]";
         boolean[] aboveStarted = {false};
         context.createTimedTaskRunner()
+                // An entity edit puts the edited entity back only where the chunk's entities are loaded, which the
+                // game does a few ticks after the chunk (later under load): wait for it, so no edit below is refused
+                // for it (each step would retry, but a slow load then decided which check ran when).
+                .createAndAdd(() -> check(FabricEntities.loaded(h.world, x0 >> 4, z0 >> 4),
+                        "the stand's chunk has its entities loaded"))
                 .createAndAdd(() -> {
                     dev.sculptory.core.nbt.NbtCompound standBefore = placed(live(h, stand.getUuid(), "the stand"));
                     check(refusal(() -> h.service.entity(h.player, stand.getUuid(), List.of(new EntityEdit.Yaw(90))))

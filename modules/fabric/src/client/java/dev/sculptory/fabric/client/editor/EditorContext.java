@@ -42,7 +42,7 @@ public final class EditorContext {
     private final Listeners<Runnable> selectionListeners = new Listeners<>();
     private final Listeners<Consumer<ToolId>> settingsListeners = new Listeners<>();
     private final Listeners<Runnable> activeBlockListeners = new Listeners<>();
-    private final FlySpeed flySpeed = new FlySpeed();
+    private final FlySpeed flySpeed;
     private Selection selection;
     private RegionWork regionWork = RegionWork.direct();
     private BlockDescriptor activeBlock = DEFAULT_BLOCK;
@@ -53,8 +53,17 @@ public final class EditorContext {
 
     /** @param notices shows toasts */
     public EditorContext(Supplier<EditorBackend> backend, Consumer<Notice> notices) {
+        this(backend, notices, new FlySpeed());
+    }
+
+    /**
+     * @param notices shows toasts
+     * @param flySpeed the game's fly speed (also used outside the editor and by {@code /flyspeed})
+     */
+    public EditorContext(Supplier<EditorBackend> backend, Consumer<Notice> notices, FlySpeed flySpeed) {
         this.backend = Objects.requireNonNull(backend);
         this.notices = Objects.requireNonNull(notices);
+        this.flySpeed = Objects.requireNonNull(flySpeed);
     }
 
     public ToolRegistry tools() {

@@ -9,6 +9,10 @@ import java.util.Optional;
  *
  * <p>Handles take priority over the box faces. Handles keep a roughly constant screen size by
  * scaling with distance from the eye, capped to a quarter of the box's smallest side.
+ *
+ * <p>Picking ignores the world: a handle (or face) the cursor ray passes through is picked even when blocks stand
+ * between it and the eye, so a handle hidden behind a wall (drawn faintly through it) is grabbed where it shows. The
+ * tools ask for this pick before they look at the block under the cursor.
  */
 public final class BoxHandles {
     /** Handle half-size per block of eye distance (about 25 px tall at a 70° FOV on a 1080p screen). */

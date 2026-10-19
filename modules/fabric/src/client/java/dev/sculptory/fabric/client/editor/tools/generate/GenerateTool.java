@@ -54,6 +54,7 @@ import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.editor.world.Ray;
+import dev.sculptory.fabric.client.editor.world.ScreenProjector;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.Permissions;
@@ -203,6 +204,16 @@ public final class GenerateTool implements Tool {
          * ({@link AirPoints}); none by default, so a click on open sky places nothing.
          */
         default Optional<Ray> cursorRay() {
+            return Optional.empty();
+        }
+
+        /** World to screen, for the point editor's gizmo and drawn path; none by default. */
+        default Optional<ScreenProjector> projector() {
+            return Optional.empty();
+        }
+
+        /** The camera's position (the point gizmo's size); none by default. */
+        default Optional<double[]> eye() {
             return Optional.empty();
         }
 
@@ -827,6 +838,8 @@ public final class GenerateTool implements Tool {
     /** The work of a preview, or null when there is nothing to preview (after telling the player why, if a setting). */
     private Supplier<Built> task(ToolContext c) {
         SettingsValues values = c.settings();
+        // Smart Surface is not offered yet: it gets its own host, as Line and Sweep have.
+        if (values.get(GenerateSettings.KIND) == GenerateSettings.Kind.SMART_SURFACE) return null;
         StateSpace states = statesOrNull(c);
         WorldReader world = worldOrNull(c);
         if (states == null || world == null) return null;
@@ -1150,6 +1163,7 @@ public final class GenerateTool implements Tool {
     private void build(ToolContext c) {
         SettingsValues values = c.settings();
         GenerateSettings.Kind kind = values.get(GenerateSettings.KIND);
+        if (kind == GenerateSettings.Kind.SMART_SURFACE) return; // not offered yet
         if (kind == GenerateSettings.Kind.PATH && path.size() < 2) {
             c.notify(Notice.of(Notice.Level.INFO, NEEDS_NODES));
             return;

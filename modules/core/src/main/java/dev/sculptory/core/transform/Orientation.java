@@ -56,12 +56,25 @@ import java.util.Objects;
  * minimum corner; a free rotation turns about the pivot), so a caller that turns continuously through 90° places the
  * copy by a point ({@link #mapCell} of an anchor, as a paste does), not by the result box's corner.
  *
+ * <h2>Resampling</h2>
+ * A free orientation also carries how its blocks land on the grid ({@link #resampling()}: nearest block, exact count
+ * or smooth) and whether surface cells on turned slopes get stairs and slabs ({@link #smoothSlopes()}, for every
+ * method). They travel with the angles (Paste, PasteMany placements and Move all carry an orientation) and are part
+ * of equality. An exact orientation is a permutation of cells: the constructor sets them to {@link Resampling#NEAREST}
+ * and {@code false}, its canonical form. {@link #then} and {@link #conjugated} keep them; {@link #free(Transform, int,
+ * int, int)} and {@link #nearest} give the defaults. Until those methods are built, every map here
+ * ({@link #inverseCell}, {@link Sampler}, {@link #bounds}) is the nearest-block one whatever the method, so the
+ * programs and the ghost treat every method as {@link Resampling#NEAREST}.
+ *
  * @param transform the exact part, applied first
  * @param yaw clockwise seen from above, 1/100 degree
  * @param pitch about +X, right-handed, 1/100 degree
  * @param roll about +Z, right-handed, 1/100 degree
+ * @param resampling how a free rotation's blocks land on the grid ({@link Resampling#NEAREST} when exact)
+ * @param smoothSlopes whether turned slopes get stairs and slabs after resampling ({@code false} when exact)
  */
-public record Orientation(Transform transform, int yaw, int pitch, int roll) {
+public record Orientation(Transform transform, int yaw, int pitch, int roll, Resampling resampling,
+                          boolean smoothSlopes) {
     /** A full turn in the units of the angles (1/100 degree). */
     public static final int FULL_TURN = 36_000;
     /** A quarter turn in the units of the angles (1/100 degree). */
@@ -75,6 +88,7 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll) {
 
     public Orientation {
         Objects.requireNonNull(transform);
+        Objects.requireNonNull(resampling);
         yaw = Math.floorMod(yaw, FULL_TURN);
         pitch = Math.floorMod(pitch, FULL_TURN);
         roll = Math.floorMod(roll, FULL_TURN);
@@ -88,6 +102,16 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll) {
                 roll = 0;
             }
         }
+        if ((yaw | pitch | roll) == 0) {
+            // An exact orientation has nothing to resample.
+            resampling = Resampling.NEAREST;
+            smoothSlopes = false;
+        }
+    }
+
+    /** {@code transform}, then the free rotation, resampled to the nearest block without stairs on slopes. */
+    public Orientation(Transform transform, int yaw, int pitch, int roll) {
+        this(transform, yaw, pitch, roll, Resampling.NEAREST, false);
     }
 
     /** The exact orientation of {@code transform}. */
@@ -95,9 +119,33 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll) {
         return transform.isIdentity() ? IDENTITY : new Orientation(transform, 0, 0, 0);
     }
 
-    /** {@code transform}, then the free rotation (angles in 1/100 degree), in canonical form. */
+    /**
+     * {@code transform}, then the free rotation (angles in 1/100 degree), in canonical form, resampled to the nearest
+     * block ({@link Resampling#NEAREST}, no stairs on slopes).
+     */
     public static Orientation free(Transform transform, int yaw, int pitch, int roll) {
         return new Orientation(transform, yaw, pitch, roll);
+    }
+
+    /** {@code transform}, then the free rotation, resampled by {@code resampling}, in canonical form. */
+    public static Orientation free(Transform transform, int yaw, int pitch, int roll, Resampling resampling,
+                                   boolean smoothSlopes) {
+        return new Orientation(transform, yaw, pitch, roll, resampling, smoothSlopes);
+    }
+
+    /**
+     * This orientation resampled by {@code method}, with or without stairs on slopes. An exact orientation is returned
+     * as it is (it has nothing to resample).
+     */
+    public Orientation withResampling(Resampling method, boolean slopes) {
+        Objects.requireNonNull(method);
+        if (isExact() || (method == resampling && slopes == smoothSlopes)) return this;
+        return new Orientation(transform, yaw, pitch, roll, method, slopes);
+    }
+
+    /** Whether the resampling is the default one: nearest block, no stairs on slopes (always for an exact one). */
+    public boolean resamplesByDefault() {
+        return resampling == Resampling.NEAREST && !smoothSlopes;
     }
 
     /** Whether there is no free rotation: the orientation is its {@link #transform()} alone. */
@@ -182,7 +230,8 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll) {
             r = -r;
         }
         Transform reflected = transform.compose(new Transform(0, image.mirror(), image.upsideDown()));
-        return free(reflected, y + image.quarterTurnsCw() * QUARTER_TURN, p, r);
+        return free(reflected, y + image.quarterTurnsCw() * QUARTER_TURN, p, r)
+                .withResampling(resampling, smoothSlopes);
     }
 
     /**
@@ -211,7 +260,7 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll) {
                 conjugate[3 * row + col] = sum;
             }
         }
-        return nearest(t, conjugate);
+        return nearest(t, conjugate).withResampling(resampling, smoothSlopes);
     }
 
     /**

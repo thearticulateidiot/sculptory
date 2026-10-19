@@ -7,6 +7,7 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import dev.sculptory.fabric.client.editor.ConfigFile;
+import dev.sculptory.fabric.client.editor.FlySpeed;
 import dev.sculptory.fabric.client.editor.ui.UiOpacity;
 import dev.sculptory.fabric.client.editor.ui.UiScale;
 import java.util.ArrayList;
@@ -18,12 +19,14 @@ import java.util.Set;
 
 /**
  * Loads and saves {@code editor-ui.json}: the editor UI size (format in {@link UiScale}), whether the player has
- * dismissed the quick start card ({@code "quickStartSeen": true}, left out until then) and the opacity settings of
- * View > Opacity… ({@link UiOpacity}; each left out while at its default):
+ * dismissed the quick start card ({@code "quickStartSeen": true}, left out until then), the opacity settings of
+ * View > Opacity… ({@link UiOpacity}; each left out while at its default) and the fly speed ({@link FlySpeed}, set
+ * by the editor's scroll and {@code /flyspeed}; left out at 1×):
  * <pre>{@code
  * {"version": 1, "uiSize": 80, "quickStartSeen": true,
- *  "panelOpacity": 60, "fadeWhenNotHovered": true, "toolOutlineOpacity": 40}
+ *  "panelOpacity": 60, "fadeWhenNotHovered": true, "toolOutlineOpacity": 40, "flySpeed": 2.5}
  * }</pre>
+ * A fly speed that isn't a number reads as 1×; one outside 0.25-8 is clamped into it ({@link FlySpeed#clamp}).
  * A missing or malformed file gives 100%, an unseen card and everything opaque, and the next save replaces it (a
  * malformed or missing flag reads as unseen: the card shows once more). An opacity that isn't a number reads as its
  * default (100); a number outside its range (20–100 for the panels, 10–100 for the tool outlines) is clamped into it,
@@ -32,12 +35,13 @@ import java.util.Set;
  * was; the next save writes it as version 1. A file of another version (from a newer Sculptory) also gives 100%
  * and the defaults, but is reported and left unchanged; the card then counts as seen, since that can't be saved.
  *
- * <p>The opacity fields are new in the same version 1: a build from before reads the size and the flag as always (it
- * ignores fields it doesn't know) and drops the opacity when it saves. This build keeps the fields it doesn't know
+ * <p>The opacity and fly speed fields are new in the same version 1: a build from before reads the size and the flag as
+ * always (it ignores fields it doesn't know) and drops them when it saves. This build keeps the fields it doesn't know
  * (from a newer build of version 1) on a save, after its own.
  *
- * <p>Size and opacity changes are saved once they settle: holding a UI-size key steps through sizes quickly, and a
- * dragged slider changes the opacity at every step, and each step shouldn't write the file. The editor calls
+ * <p>Size, opacity and fly speed changes are saved once they settle: holding a UI-size key steps through sizes
+ * quickly, a dragged slider changes the opacity at every step, and so does the scroll the fly speed; each step
+ * shouldn't write the file. The editor calls
  * {@link #saveIfSettled} every tick and {@link #saveNow} when it closes. Dismissing the card is saved at once. Each
  * save writes every value. Client thread only.
  */
@@ -48,9 +52,10 @@ public final class UiSizeStore {
     static final String PANEL_OPACITY = "panelOpacity";
     static final String FADE_WHEN_NOT_HOVERED = "fadeWhenNotHovered";
     static final String TOOL_OUTLINE_OPACITY = "toolOutlineOpacity";
+    static final String FLY_SPEED = "flySpeed";
     /** The fields this build writes itself; any other field of a version-1 file is kept as it was. */
     private static final Set<String> KNOWN = Set.of("version", "uiSize", QUICK_START_SEEN, PANEL_OPACITY,
-            FADE_WHEN_NOT_HOVERED, TOOL_OUTLINE_OPACITY);
+            FADE_WHEN_NOT_HOVERED, TOOL_OUTLINE_OPACITY, FLY_SPEED);
     /**
      * How deep a field this build doesn't know may nest and still be kept. Parsing has no depth limit, but writing JSON
      * recurses: a deeper field (only a hand edit makes one) is dropped rather than overflow the stack.
@@ -65,6 +70,7 @@ public final class UiSizeStore {
     private int percent = UiScale.DEFAULT_PERCENT;
     private boolean quickStartSeen;
     private UiOpacity.Values opacity = UiOpacity.Values.DEFAULT;
+    private double flySpeed = FlySpeed.DEFAULT;
     /** The fields of the file read that this build doesn't know, written back after its own. */
     private JsonObject unknown = new JsonObject();
 
@@ -78,6 +84,7 @@ public final class UiSizeStore {
         pending = false;
         quickStartSeen = false;
         opacity = UiOpacity.Values.DEFAULT;
+        flySpeed = FlySpeed.DEFAULT;
         unknown = new JsonObject();
         if (text.isEmpty()) {
             percent = UiScale.DEFAULT_PERCENT;
@@ -94,6 +101,7 @@ public final class UiSizeStore {
         JsonObject root = object(text.get());
         quickStartSeen = readSeen(root);
         opacity = readOpacity(root);
+        flySpeed = readFlySpeed(root);
         unknown = unknownFields(root);
         return percent;
     }
@@ -113,6 +121,18 @@ public final class UiSizeStore {
     /** Remembers new opacity values to save once they have settled. */
     public void opacityChanged(UiOpacity.Values values, long nowMs) {
         opacity = Objects.requireNonNull(values);
+        pending = true;
+        changedAtMs = nowMs;
+    }
+
+    /** The fly speed as read by {@link #load} (1× for a missing, malformed or newer file), or since changed. */
+    public double flySpeed() {
+        return flySpeed;
+    }
+
+    /** Remembers a new fly speed to save once it has settled (scrolling steps through speeds quickly). */
+    public void flySpeedChanged(double multiplier, long nowMs) {
+        flySpeed = FlySpeed.clamp(multiplier);
         pending = true;
         changedAtMs = nowMs;
     }
@@ -148,14 +168,15 @@ public final class UiSizeStore {
     }
 
     private void write() {
-        file.write(toJson(percent, quickStartSeen, opacity, unknown));
+        file.write(toJson(percent, quickStartSeen, opacity, flySpeed, unknown));
     }
 
     /**
      * The file's text: {@link UiScale#toJson}, the flag once it is set, each opacity value that differs from its
-     * default, then {@code unknown}'s fields.
+     * default, the fly speed unless it is 1×, then {@code unknown}'s fields.
      */
-    static String toJson(int percent, boolean quickStartSeen, UiOpacity.Values opacity, JsonObject unknown) {
+    static String toJson(int percent, boolean quickStartSeen, UiOpacity.Values opacity, double flySpeed,
+            JsonObject unknown) {
         JsonObject root = JsonParser.parseString(UiScale.toJson(percent)).getAsJsonObject();
         if (quickStartSeen) {
             root.addProperty(QUICK_START_SEEN, true);
@@ -169,6 +190,9 @@ public final class UiSizeStore {
         }
         if (opacity.toolOutlines() != defaults.toolOutlines()) {
             root.addProperty(TOOL_OUTLINE_OPACITY, opacity.toolOutlines());
+        }
+        if (flySpeed != FlySpeed.DEFAULT) {
+            root.addProperty(FLY_SPEED, flySpeed);
         }
         for (Map.Entry<String, JsonElement> field : unknown.entrySet()) {
             if (!KNOWN.contains(field.getKey())) {
@@ -205,6 +229,18 @@ public final class UiSizeStore {
                 && value.getAsBoolean();
         int outlines = clampedPercent(root.get(TOOL_OUTLINE_OPACITY), UiOpacity.OUTLINES_MIN, defaults.toolOutlines());
         return new UiOpacity.Values(panels, fade, outlines);
+    }
+
+    /** The fly speed in a version-1 file ({@code null}: none): a number, clamped; 1× for anything else. */
+    static double readFlySpeed(JsonObject root) {
+        if (root == null || !(root.get(FLY_SPEED) instanceof JsonPrimitive value) || !value.isNumber()) {
+            return FlySpeed.DEFAULT;
+        }
+        try {
+            return FlySpeed.clamp(value.getAsDouble());
+        } catch (NumberFormatException malformed) {
+            return FlySpeed.DEFAULT;
+        }
     }
 
     /** A percentage: a number clamped to {@code min}–100 and rounded, or {@code fallback} for anything else. */

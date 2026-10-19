@@ -164,6 +164,38 @@ class GizmoPickTest {
     }
 
     /** Straight down onto the up ring at {@code degrees} from east towards south. */
+    @Test
+    void thePointGizmoPicksTheCentreThenAPlaneSquareThenAnArrow() {
+        assertEquals(GizmoPick.Handle.CENTRE, pickPoint(102, 101).handle());
+        // The level square spans x 0.25-0.5 and z 0.25-0.5: screen x 105-110, y 102.5-105 (nearer the X arrow than 6 px).
+        GizmoPick.Picked level = pickPoint(107.5, 103.75);
+        assertEquals(GizmoPick.Handle.PLANE_Y, level.handle());
+        assertEquals(0, level.distancePx());
+        assertEquals(GizmoPick.Handle.PLANE_Z, pickPoint(107.5, 92.5).handle());
+        assertEquals(GizmoPick.Handle.AXIS_X, pickPoint(115, 99).handle());
+        assertTrue(GizmoPick.pickPoint(OBLIQUE, 0, 0, 0, 1.0, 160, 160, 6).isEmpty());
+        // The square across X is seen edge on here: it holds nothing, and no ring is ever picked.
+        assertTrue(GizmoPick.pickPoint(OBLIQUE, 0, 0, 0, 1.0, 89, 105, 6).isEmpty());
+    }
+
+    @Test
+    void aPlaneDragMovesWholeBlocksInItsPlaneOnly() {
+        GizmoPick.PlaneDrag drag = GizmoPick.PlaneDrag.begin(GizmoPick.Handle.PLANE_Y, 0.5, 64.5, 0.5,
+                new Ray(0.3, 80, 0.3, 0, -1, 0)).orElseThrow();
+        assertEquals(java.util.List.of(3, 0, -3), java.util.Arrays.stream(drag.update(new Ray(3.4, 80, -2.6, 0, -1, 0))).boxed().toList());
+        // A ray along the plane keeps the last offset.
+        assertEquals(java.util.List.of(3, 0, -3), java.util.Arrays.stream(drag.update(new Ray(0, 64.5, 0, 1, 0, 0))).boxed().toList());
+        assertTrue(GizmoPick.PlaneDrag.begin(GizmoPick.Handle.PLANE_Y, 0, 64, 0, new Ray(0, 80, 0, 1, 0, 0)).isEmpty());
+        assertTrue(GizmoPick.PlaneDrag.begin(GizmoPick.Handle.AXIS_X, 0, 64, 0, new Ray(0, 80, 0, 0, -1, 0)).isEmpty());
+        assertTrue(GizmoPick.Handle.PLANE_Y.moves(0) && !GizmoPick.Handle.PLANE_Y.moves(1) && GizmoPick.Handle.PLANE_Y.moves(2));
+        assertTrue(GizmoPick.Handle.AXIS_Y.moves(1) && !GizmoPick.Handle.AXIS_Y.moves(0));
+        assertTrue(GizmoPick.Handle.CENTRE.moves(0) && !GizmoPick.Handle.ROTATE_Y.moves(1));
+    }
+
+    private static GizmoPick.Picked pickPoint(double cursorX, double cursorY) {
+        return GizmoPick.pickPoint(OBLIQUE, 0, 0, 0, 1.0, cursorX, cursorY, GizmoPick.PICK_RADIUS_PX).orElseThrow();
+    }
+
     private static Ray ray(double degrees) {
         double a = Math.toRadians(degrees);
         return new Ray(Math.cos(a), 70, Math.sin(a), 0, -1, 0);

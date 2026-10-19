@@ -38,10 +38,13 @@ public interface EditorPlatform {
     /** The block's display name ("Oak Planks"). */
     String blockName(BlockDescriptor block);
 
-    /** Sets the player's creative fly speed to {@code multiplier} × vanilla. */
+    /** Sets the player's fly speed to {@code multiplier} × their own while the editor is open (any game mode). */
     void applyFlySpeed(double multiplier);
 
-    /** Puts back the fly speed the player had before the editor changed it. */
+    /**
+     * The editor closed: from now on the game mode decides (the multiplier stays in creative and spectator flight;
+     * the player's own speed comes back in the other modes).
+     */
     void restoreFlySpeed();
 
     /** The camera yaw in degrees. */

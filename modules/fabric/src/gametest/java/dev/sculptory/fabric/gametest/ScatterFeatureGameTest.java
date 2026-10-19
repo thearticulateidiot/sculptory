@@ -7,7 +7,6 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.box;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.check;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.forceChunks;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.pos;
-import static dev.sculptory.fabric.gametest.EngineTestSupport.regionCorner;
 import static dev.sculptory.fabric.gametest.ScatterGameTest.FLOOR_Y;
 import static dev.sculptory.fabric.gametest.ScatterGameTest.commit;
 import static dev.sculptory.fabric.gametest.ScatterGameTest.floor;
@@ -84,6 +83,8 @@ import org.slf4j.LoggerFactory;
  */
 public final class ScatterFeatureGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
+    /** How far from a forced chunk its neighbours load to FULL: ticket levels 32 and 33. */
+    private static final int FORCED_RING = 2;
     private static final ScatterSource OAK = new ScatterSource.Feature("minecraft:oak");
     private static final ScatterSource BIRCH = new ScatterSource.Feature("minecraft:birch");
     private static final ScatterSource FANCY_OAK = new ScatterSource.Feature("minecraft:fancy_oak");
@@ -91,6 +92,17 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     private static final ScatterSource SPRUCE = new ScatterSource.Feature("minecraft:spruce");
 
     // ---------------------------------------------------------------- helpers
+
+    /**
+     * The north-west corner of region {@code slot}, at the same world position in every run: (slot × 4096, slot × 4096).
+     * The planner hashes each column's world coordinates (its rank, variant and growth), and the GameTest server puts
+     * its tests somewhere new each run, so a region placed relative to the test (EngineTestSupport.regionCorner) grows
+     * a different set of trees each run, and a check such as "some trees, but not all, reach past x0 + 12" held for
+     * most places but not all. Pinned, every run plans the same trees.
+     */
+    static int[] fixedRegion(int slot) {
+        return new int[] {slot * 4096, slot * 4096};
+    }
 
     /** A preview of {@code sources} (weight 1 each) over {@code area}. */
     static C2S.ScatterPreview request(ScatterArea area, int spacing, ScatterSettings.Density density, long seed,
@@ -147,7 +159,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_features_catalog", tickLimit = LIMIT)
     public void everyCatalogEntryGrowsOrFailsReadably(TestContext context) {
         Harness h = new Harness(context);
-        int[] at = regionCorner(context, 1180);
+        int[] at = fixedRegion(1180);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 16, 16, "minecraft:grass_block");
         // Ground under the floor (the test world is void below it): an ice spike's base and mangrove roots stop there.
@@ -253,7 +265,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void theCommitWritesWhatThePreviewGrewAndUndoesExactly(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1181);
+        int[] at = fixedRegion(1181);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
         // Bees stay in their nests at night, so only their time in the nest changes between the commit and the undo.
@@ -364,7 +376,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void treesReachingProtectedColumnsAreSkippedWhole(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1182);
+        int[] at = fixedRegion(1182);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 16, "minecraft:grass_block");
         WorldBorder border = h.world.getWorldBorder();
@@ -442,27 +454,34 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void anUnloadedNeighbourChunkIsNeverLoaded(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1183);
+        int[] at = fixedRegion(1183);
         int x0 = at[0], z0 = at[1];
         int cx0 = x0 >> 4, cz0 = z0 >> 4;
         Box forced = box(x0, FLOOR_Y, z0, x0 + 15, FLOOR_Y, z0 + 15);
         loadAndForce(h.world, forced);
-        // The last loaded chunk to the east, and the unloaded one after it.
-        int last = cx0;
-        while (last < cx0 + 4 && WorldChecks.isChunkLoaded(h.world, last + 1, cz0)) last++;
-        int edge = last;
-        check(!WorldChecks.isChunkLoaded(h.world, edge + 1, cz0), "no unloaded chunk east of " + cx0);
+        // A forced chunk's neighbours load to FULL out to FORCED_RING chunks away (their ticket levels), a few ticks after
+        // it, later under load; the chunk past them stays unloaded. The edge is that last ring chunk, waited for: measured
+        // at once instead, a neighbour still loading was taken for the unloaded one and had loaded by the planning.
+        int edge = cx0 + FORCED_RING;
         int ex = edge << 4;
-        paint(h, ex, z0 + 2, 16, 12, "minecraft:grass_block");
-        Reply reply = preview(scatter, h.player, request(region(ex + 6, z0 + 4, ex + 15, z0 + 11), 3,
-                new ScatterSettings.Density.Fraction(0.5), 8L, OAK));
+        Reply[] reply = {null};
         context.createTimedTaskRunner()
+                .createAndAdd(() -> check(WorldChecks.isChunkLoaded(h.world, edge, cz0),
+                        "chunk " + edge + "," + cz0 + " is still loading"))
                 .createAndAdd(() -> {
-                    scatter.tick();
-                    check(reply.finished(), "planning");
+                    if (reply[0] != null) return;
+                    check(!WorldChecks.isChunkLoaded(h.world, edge + 1, cz0), "chunk " + (edge + 1) + "," + cz0
+                            + ", past the forced chunk's neighbours, is loaded");
+                    paint(h, ex, z0 + 2, 16, 12, "minecraft:grass_block");
+                    reply[0] = preview(scatter, h.player, request(region(ex + 6, z0 + 4, ex + 15, z0 + 11), 3,
+                            new ScatterSettings.Density.Fraction(0.5), 8L, OAK));
                 })
                 .createAndAdd(() -> {
-                    ScatterService.PlanReady plan = reply.get("preview");
+                    scatter.tick();
+                    check(reply[0].finished(), "planning");
+                })
+                .createAndAdd(() -> {
+                    ScatterService.PlanReady plan = reply[0].get("preview");
                     Integer unloaded = plan.rejectedCounts().get("UNLOADED");
                     check(unloaded != null && unloaded > 0, "UNLOADED " + plan.rejectedCounts());
                     check(plan.placements() > 0, "no tree fits: " + plan.rejectedCounts());
@@ -487,7 +506,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void theGrownCellCapAndTheCatalogRefuse(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1184);
+        int[] at = fixedRegion(1184);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
         long cap = h.runtime.config().scatter.maxFeatureCells;
@@ -527,7 +546,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void reRollingGrowsOtherTrees(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1185);
+        int[] at = fixedRegion(1185);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
         ScatterArea area = region(x0, z0, x0 + 31, z0 + 31);
@@ -556,7 +575,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void aOneSpotPreviewPlacesOneTree(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1186);
+        int[] at = fixedRegion(1186);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 16, 16, "minecraft:grass_block");
         int x = x0 + 8, z = z0 + 8;
@@ -600,7 +619,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void underTheMaskATreeIsPlannedAndCommittedWholeOrNotAtAll(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1189);
+        int[] at = fixedRegion(1189);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 16, "minecraft:grass_block");
         // Where the trees land depends on the seed and on where the test runs, so the setup takes the first seed whose
@@ -690,7 +709,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void aMaskRulingOutEveryPlacementRefusesTheCommitReadably(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1190);
+        int[] at = fixedRegion(1190);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 16, "minecraft:grass_block");
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 7,
@@ -738,7 +757,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void droppedEncodingsAreCancelledAndShutdownStopsTheEncoder(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1188);
+        int[] at = fixedRegion(1188);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 32, 32, "minecraft:grass_block");
         ScatterArea area = region(x0, z0, x0 + 31, z0 + 31);
@@ -827,7 +846,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
     public void twoHundredTreesPlanWithinTheTickBudget(TestContext context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        int[] at = regionCorner(context, 1187);
+        int[] at = fixedRegion(1187);
         int x0 = at[0], z0 = at[1];
         Box all = floorOf(h, x0, z0, 112, 112, "minecraft:grass_block");
         ScatterArea area = region(x0, z0, x0 + 111, z0 + 111);

@@ -50,6 +50,7 @@ import dev.sculptory.core.tinker.EntityEdits;
 import dev.sculptory.core.tinker.SignText;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -207,7 +208,8 @@ class WireGoldenTest {
             ShapeSpec.Kind.class, ShapeSpec.Mode.class, Facing.class, Symmetry.Mode.class, ShapeKind.class, Mirror.class,
             PalettePattern.Kind.class,
             EntityEdit.Part.class, EntityEdit.Flag.class, EntityEdit.Billboard.class,
-            SchematicFormat.class, BuilderPower.class, OpLabel.class, NavigateMode.class, WeatherSpec.Mode.class);
+            SchematicFormat.class, BuilderPower.class, OpLabel.class, NavigateMode.class, WeatherSpec.Mode.class,
+            Resampling.class);
 
     /**
      * Named samples: every message type, and every variant of the values messages carry. Never edit one in place once
@@ -527,7 +529,20 @@ class WireGoldenTest {
                 false, ConflictPolicy.SKIP_CONFLICTS));
         s.put("run_op_stack_biomes", new C2S.RunOp(48, new OpSpec.Stack(cuboid, 0, 0, 16, 3, EntityFilter.NONE, rotate,
                 PasteOptions.Into.EVERYTHING, true, true), false, ConflictPolicy.SKIP_CONFLICTS));
-        for (OpLabel label : List.of(OpLabel.PATH_EXTRUDE, OpLabel.TAPER, OpLabel.SWEEP, OpLabel.HEIGHTMAP)) {
+        // A free orientation's resampling (bit 6, then a byte after the angles); the default sends none.
+        s.put("run_op_paste_free_exact_count", new C2S.RunOp(49, new OpSpec.Paste(new SourceRef.Clipboard(ID),
+                new BlockPos(1, 2, 3), Orientation.free(turned, 1_500, 0, 0, Resampling.EXACT, false),
+                PasteOptions.DEFAULT), false, ConflictPolicy.SKIP_CONFLICTS));
+        s.put("run_op_move_rotate_smooth_slopes", new C2S.RunOp(50, new OpSpec.Move(cuboid, BlockPos.ORIGIN,
+                Orientation.free(Transform.IDENTITY, 4_500, 1_000, 0, Resampling.SMOOTH, true), single, EntityFilter.NONE,
+                Symmetry.NONE, PasteOptions.Into.EVERYTHING), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.ROTATE));
+        s.put("run_op_paste_many_slopes", new C2S.RunOp(51, new OpSpec.PasteMany(new SourceRef.Asset(HASH), List.of(
+                new OpSpec.PasteMany.Placement(new BlockPos(10, 64, -20),
+                        Orientation.free(Transform.IDENTITY, 2_250, 0, 0, Resampling.NEAREST, true)),
+                new OpSpec.PasteMany.Placement(new BlockPos(14, 65, -18), Orientation.of(turned))),
+                PasteOptions.DEFAULT, Symmetry.NONE), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP));
+        for (OpLabel label : List.of(OpLabel.PATH_EXTRUDE, OpLabel.TAPER, OpLabel.SWEEP, OpLabel.HEIGHTMAP,
+                OpLabel.SMART_SURFACE)) {
             s.put("run_op_paste_" + label.name().toLowerCase(java.util.Locale.ROOT), new C2S.RunOp(46,
                     new OpSpec.Paste(new SourceRef.Clipboard(ID), new BlockPos(1, 2, 3), Transform.IDENTITY,
                     new PasteOptions(true, false, false)), false, ConflictPolicy.SKIP_CONFLICTS, label));

@@ -13,8 +13,10 @@ import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.settings.SettingsSchema;
 import dev.sculptory.fabric.client.editor.settings.SettingsValues;
 import dev.sculptory.fabric.client.editor.tools.brush.BrushSettings;
+import dev.sculptory.fabric.client.editor.tools.brush.ShapeSettings;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Predicate;
 
 /**
@@ -28,13 +30,24 @@ import java.util.function.Predicate;
 public final class GenerateSettings {
     /**
      * What the tool generates. Protocol 6 appends Sweep (the selection swept along a path), Stamp (the clipboard or an
-     * asset copied at each clicked point) and Heightmap (a height image over the selection), all built now. Presets save
-     * the name.
+     * asset copied at each clicked point) and Heightmap (a height image over the selection), all built now; then
+     * Smart Surface (a terrain-like sheet filled inside a closed outline of points). Presets save the name.
      */
-    public enum Kind { PATH, ROOF, LINE, SWEEP, STAMP, HEIGHTMAP }
+    public enum Kind { PATH, ROOF, LINE, SWEEP, STAMP, HEIGHTMAP, SMART_SURFACE }
 
-    /** The kinds not built yet, with why they can't be chosen: none since protocol 6's were built. */
-    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of();
+    /**
+     * The kinds not built yet, with why they can't be chosen: Smart Surface, until its kernel and host are built (which
+     * removes it from here and from {@link #KINDS_HIDDEN}).
+     */
+    private static final Map<Kind, String> KINDS_NOT_BUILT = Map.of(Kind.SMART_SURFACE,
+            "sculptory.setting.generate.kind.coming_soon");
+    /** The kinds not built yet that the Kind dropdown leaves out altogether (not promised): Smart Surface. */
+    private static final Set<Kind> KINDS_HIDDEN = Set.of(Kind.SMART_SURFACE);
+    /**
+     * Shows none of the settings whose generator work isn't built yet: Road's and Line's stairs and slabs and Line's and
+     * Sweep's Extend to Ground. Each turns to its kind's own visibility once its kernel does it.
+     */
+    private static final Predicate<SettingsValues> NOT_BUILT_YET = values -> false;
 
     /** The Heightmap import's turn of its picture, clockwise seen from above, in quarter turns. */
     public enum Turn {
@@ -63,9 +76,10 @@ public final class GenerateSettings {
     private static final Predicate<SettingsValues> SWEEP = values -> values.get(GenerateSettings.KIND) == Kind.SWEEP;
     private static final Predicate<SettingsValues> STAMP = values -> values.get(GenerateSettings.KIND) == Kind.STAMP;
     private static final Predicate<SettingsValues> HEIGHTMAP_KIND = values -> values.get(GenerateSettings.KIND) == Kind.HEIGHTMAP;
+    private static final Predicate<SettingsValues> SMART = values -> values.get(GenerateSettings.KIND) == Kind.SMART_SURFACE;
 
     public static final SettingDef.Enum<Kind> KIND = new SettingDef.Enum<>("kind", PREFIX + "kind", Kind.class, Kind.PATH,
-            SettingDef.ALWAYS, KINDS_NOT_BUILT);
+            SettingDef.ALWAYS, KINDS_NOT_BUILT, KINDS_HIDDEN);
 
     // Path
     public static final SettingDef.Int WIDTH = new SettingDef.Int("path.width", PREFIX + "width", 3, RoadKernel.MIN_WIDTH,
@@ -91,6 +105,13 @@ public final class GenerateSettings {
             RoadKernel.MAX_FILL_BELOW, null, PATH);
     public static final SettingDef.Int CLEAR_ABOVE = new SettingDef.Int("path.clear", PREFIX + "clear_above", 0, 0,
             RoadKernel.MAX_CLEAR_ABOVE, null, PATH);
+    /**
+     * On sloping stretches the step cells get stairs (facing along the climb) or slabs of the road's block family instead
+     * of full blocks, when it has them. Hidden ({@link #NOT_BUILT_YET}) until the Road kernel does it; then shown with
+     * PATH.
+     */
+    public static final SettingDef.Bool PATH_STAIRS_AND_SLABS = new SettingDef.Bool("path.stairs_slabs",
+            PREFIX + "path_stairs_slabs", false, NOT_BUILT_YET);
 
     // Roof
     public static final SettingDef.Enum<RoofKernel.Style> STYLE = new SettingDef.Enum<>("roof.style", PREFIX + "style",
@@ -140,6 +161,19 @@ public final class GenerateSettings {
                     new SettingDef.WeightedBlock(block("minecraft:cracked_stone_bricks"), 1)),
             BrushSettings.MAX_PALETTE_ENTRIES,
             values -> LINE.test(values) && values.get(GenerateSettings.LINE_MATERIAL) == Material.PALETTE);
+    /**
+     * Every column the line occupies is filled down to the terrain below (the ground rule Road uses), so walls, supports
+     * and ridges come out solid; capped like other generated volumes. Hidden ({@link #NOT_BUILT_YET}) until the Line
+     * kernel does it; then shown with LINE.
+     */
+    public static final SettingDef.Bool LINE_EXTEND_TO_GROUND = new SettingDef.Bool("line.extend_to_ground",
+            PREFIX + "line_extend_to_ground", false, NOT_BUILT_YET);
+    /**
+     * Stairs and slabs on the line's sloping stretches, as Road's {@link #PATH_STAIRS_AND_SLABS}. Hidden until the Line
+     * kernel does it; then shown with LINE.
+     */
+    public static final SettingDef.Bool LINE_STAIRS_AND_SLABS = new SettingDef.Bool("line.stairs_slabs",
+            PREFIX + "line_stairs_slabs", false, NOT_BUILT_YET);
 
     // Sweep
     public static final SettingDef.Enum<PathKind> SWEEP_PATH = new SettingDef.Enum<>("sweep.path", PREFIX + "sweep_path",
@@ -148,6 +182,12 @@ public final class GenerateSettings {
             (int) PathSpec.MAX_SAG, null, values -> SWEEP.test(values) && values.get(GenerateSettings.SWEEP_PATH) == PathKind.HANGING);
     public static final SettingDef.Bool SWEEP_FOLLOW_SLOPE = new SettingDef.Bool("sweep.follow_slope",
             PREFIX + "sweep_follow_slope", false, SWEEP);
+    /**
+     * The sweep's columns filled down to the terrain, as the Line's {@link #LINE_EXTEND_TO_GROUND}. Hidden until the
+     * Sweep kernel does it; then shown with SWEEP.
+     */
+    public static final SettingDef.Bool SWEEP_EXTEND_TO_GROUND = new SettingDef.Bool("sweep.extend_to_ground",
+            PREFIX + "sweep_extend_to_ground", false, NOT_BUILT_YET);
 
     // Stamp
     public static final SettingDef.Enum<StampSource> STAMP_SOURCE = new SettingDef.Enum<>("stamp.source",
@@ -166,18 +206,65 @@ public final class GenerateSettings {
     public static final SettingDef.Bool HEIGHTMAP_INVERT = new SettingDef.Bool("heightmap.invert", PREFIX + "heightmap_invert",
             false, HEIGHTMAP_KIND);
 
+    // Smart Surface (not offered yet: KINDS_HIDDEN)
+    /** The deepest top layer (blocks); 0 leaves the top layer out (all body). */
+    public static final int SMART_MAX_TOP_DEPTH = 32;
+    /** The thickest sheet (blocks) when Extend to Ground is off. */
+    public static final int SMART_MAX_THICKNESS = 64;
+    /** Flat triangles of a Delaunay triangulation of the points instead of the smooth surface through them. */
+    public static final SettingDef.Bool SMART_FACETED = new SettingDef.Bool("smart.faceted", PREFIX + "smart_faceted", false,
+            SMART);
+    /** The top layer's blocks: the active block (the top bar's) or the weighted mix below. */
+    public static final SettingDef.Enum<ShapeSettings.Blocks> SMART_TOP_BLOCKS = new SettingDef.Enum<>("smart.top.blocks",
+            PREFIX + "smart_top_blocks", ShapeSettings.Blocks.class, ShapeSettings.Blocks.ACTIVE_BLOCK, SMART);
+    public static final SettingDef.WeightedBlocks SMART_TOP_PALETTE = new SettingDef.WeightedBlocks("smart.top.palette",
+            PREFIX + "smart_top_palette",
+            List.of(new SettingDef.WeightedBlock(block("minecraft:grass_block"), 4),
+                    new SettingDef.WeightedBlock(block("minecraft:moss_block"), 1)),
+            BrushSettings.MAX_PALETTE_ENTRIES,
+            values -> SMART.test(values) && values.get(GenerateSettings.SMART_TOP_BLOCKS) == ShapeSettings.Blocks.PALETTE);
+    /** How many blocks deep the top layer is, from each column's surface down. */
+    public static final SettingDef.Int SMART_TOP_DEPTH = new SettingDef.Int("smart.top.depth", PREFIX + "smart_top_depth", 1,
+            0, SMART_MAX_TOP_DEPTH, null, SMART);
+    /** The body's blocks (under the top layer): the active block or the weighted mix below. */
+    public static final SettingDef.Enum<ShapeSettings.Blocks> SMART_BODY_BLOCKS = new SettingDef.Enum<>("smart.body.blocks",
+            PREFIX + "smart_body_blocks", ShapeSettings.Blocks.class, ShapeSettings.Blocks.ACTIVE_BLOCK, SMART);
+    public static final SettingDef.WeightedBlocks SMART_BODY_PALETTE = new SettingDef.WeightedBlocks("smart.body.palette",
+            PREFIX + "smart_body_palette",
+            List.of(new SettingDef.WeightedBlock(block("minecraft:dirt"), 3),
+                    new SettingDef.WeightedBlock(block("minecraft:coarse_dirt"), 1)),
+            BrushSettings.MAX_PALETTE_ENTRIES,
+            values -> SMART.test(values) && values.get(GenerateSettings.SMART_BODY_BLOCKS) == ShapeSettings.Blocks.PALETTE);
+    /** Each column filled down to the terrain under it (Road's ground rule); off: a sheet {@link #SMART_THICKNESS} thick. */
+    public static final SettingDef.Bool SMART_EXTEND_TO_GROUND = new SettingDef.Bool("smart.extend_to_ground",
+            PREFIX + "smart_extend_to_ground", false, SMART);
+    public static final SettingDef.Int SMART_THICKNESS = new SettingDef.Int("smart.thickness", PREFIX + "smart_thickness", 1, 1,
+            SMART_MAX_THICKNESS, null, values -> SMART.test(values) && !values.get(GenerateSettings.SMART_EXTEND_TO_GROUND));
+    /** Gap-free steep slopes: each column reaches down to at least its lowest neighbour's surface + 1. */
+    public static final SettingDef.Bool SMART_GAP_FREE = new SettingDef.Bool("smart.gap_free", PREFIX + "smart_gap_free", true,
+            values -> SMART.test(values) && !values.get(GenerateSettings.SMART_EXTEND_TO_GROUND));
+    /** Fill air only: blocks already there stay. */
+    public static final SettingDef.Bool SMART_KEEP_EXISTING = new SettingDef.Bool("smart.keep_existing",
+            PREFIX + "smart_keep_existing", false, SMART);
+    /** The preview also draws the surface's triangles. */
+    public static final SettingDef.Bool SMART_MESH_VIEW = new SettingDef.Bool("smart.mesh_view", PREFIX + "smart_mesh_view",
+            false, SMART);
+
     public static final SettingsSchema SCHEMA = new SettingsSchema(List.of(
             new Section("", List.of(KIND)),
             new Section(PREFIX + "path_section", List.of(WIDTH, MATERIAL, BLOCK, PALETTE, BORDER, BORDER_BLOCK, HEIGHT,
-                    LEVEL_ACROSS, FILL_BELOW, CLEAR_ABOVE)),
+                    LEVEL_ACROSS, FILL_BELOW, CLEAR_ABOVE, PATH_STAIRS_AND_SLABS)),
             new Section(PREFIX + "roof_section", List.of(STYLE, RIDGE, LOW_SIDE, PITCH, OVERHANG, THICKNESS, GABLE_WALLS,
                     INSIDE, STAIRS, SLAB, FULL)),
             new Section(PREFIX + "line_section", List.of(LINE_PATH, LINE_SAG, LINE_THICKNESS, LINE_PROFILE, LINE_MATERIAL,
-                    LINE_BLOCK, LINE_PALETTE)),
-            new Section(PREFIX + "sweep_section", List.of(SWEEP_PATH, SWEEP_SAG, SWEEP_FOLLOW_SLOPE)),
+                    LINE_BLOCK, LINE_PALETTE, LINE_EXTEND_TO_GROUND, LINE_STAIRS_AND_SLABS)),
+            new Section(PREFIX + "sweep_section", List.of(SWEEP_PATH, SWEEP_SAG, SWEEP_FOLLOW_SLOPE, SWEEP_EXTEND_TO_GROUND)),
             new Section(PREFIX + "stamp_section", List.of(STAMP_SOURCE)),
             new Section(PREFIX + "heightmap_section", List.of(HEIGHTMAP_IMAGE, HEIGHTMAP_MIN_Y, HEIGHTMAP_MAX_Y,
-                    HEIGHTMAP_TURN, HEIGHTMAP_INVERT))));
+                    HEIGHTMAP_TURN, HEIGHTMAP_INVERT)),
+            new Section(PREFIX + "smart_surface_section", List.of(SMART_FACETED, SMART_TOP_BLOCKS, SMART_TOP_PALETTE,
+                    SMART_TOP_DEPTH, SMART_BODY_BLOCKS, SMART_BODY_PALETTE, SMART_EXTEND_TO_GROUND, SMART_THICKNESS,
+                    SMART_GAP_FREE, SMART_KEEP_EXISTING, SMART_MESH_VIEW))));
 
     private GenerateSettings() {}
 

@@ -34,6 +34,7 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.ShapeKind;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
 import java.util.ArrayList;
 import java.util.List;
@@ -232,12 +233,19 @@ final class CoreCodec {
 
     /** The orientation byte's free rotation bit (protocol 6): three angles follow. */
     static final int ORIENTATION_FREE = 0x20;
+    /** The orientation byte's resampling bit (protocol 6; only with bit 5): a resampling byte follows. */
+    static final int ORIENTATION_RESAMPLED = 0x40;
+    /** The resampling byte's stairs-and-slabs-on-slopes bit; bits 0-1 are the {@link Resampling} ordinal. */
+    static final int RESAMPLING_SMOOTH_SLOPES = 0x04;
 
     /**
      * An orientation (protocol 6, in place of protocol 5's transform byte): the transform byte ({@link #writeTransform})
      * with bit 5 set when a free rotation follows as {@code varint yaw | varint pitch | varint roll}, each 0-35999
-     * (1/100 degree). Only the canonical form travels: bit 5 with angles that are all zero, out of range or foldable
-     * into the transform ({@link Orientation}) is MALFORMED, as are bits 6-7.
+     * (1/100 degree). With bit 5, bit 6 says the resampling is not the default ({@link Orientation#resamplesByDefault}):
+     * after the angles one byte follows, bits 0-1 the {@link Resampling} ordinal and bit 2 {@code smoothSlopes}. Only
+     * the canonical form travels: bit 5 with angles that are all zero, out of range or foldable into the transform
+     * ({@link Orientation}) is MALFORMED, as are bit 6 without bit 5, a resampling byte that is the default (0), names
+     * no method or sets bits 3-7, and bit 7. A default-resampled orientation is byte-identical to before bit 6.
      */
     static void writeOrientation(WireWriter out, Orientation orientation) throws ProtocolException {
         Transform t = orientation.transform();
@@ -246,23 +254,42 @@ final class CoreCodec {
             out.u8(b);
             return;
         }
-        out.u8(b | ORIENTATION_FREE);
+        boolean resampled = !orientation.resamplesByDefault();
+        out.u8(b | ORIENTATION_FREE | (resampled ? ORIENTATION_RESAMPLED : 0));
         out.varint(orientation.yaw());
         out.varint(orientation.pitch());
         out.varint(orientation.roll());
+        if (resampled) {
+            out.u8(orientation.resampling().ordinal() | (orientation.smoothSlopes() ? RESAMPLING_SMOOTH_SLOPES : 0));
+        }
     }
 
     static Orientation readOrientation(WireReader in) throws ProtocolException {
         int b = in.u8();
-        Transform t = transformOf(b & ~ORIENTATION_FREE);
-        if ((b & ORIENTATION_FREE) == 0) return Orientation.of(t);
+        Transform t = transformOf(b & ~(ORIENTATION_FREE | ORIENTATION_RESAMPLED));
+        boolean resampled = (b & ORIENTATION_RESAMPLED) != 0;
+        if ((b & ORIENTATION_FREE) == 0) {
+            if (resampled) throw WireReader.malformed("A resampling without a free rotation");
+            return Orientation.of(t);
+        }
         int yaw = in.varint();
         int pitch = in.varint();
         int roll = in.varint();
         if (yaw >= Orientation.FULL_TURN || pitch >= Orientation.FULL_TURN || roll >= Orientation.FULL_TURN) {
             throw WireReader.malformed("Orientation angle out of range");
         }
-        Orientation orientation = Orientation.free(t, yaw, pitch, roll);
+        Resampling method = Resampling.NEAREST;
+        boolean slopes = false;
+        if (resampled) {
+            int r = in.u8();
+            int ordinal = r & 0x03;
+            if (r == 0 || (r & ~(0x03 | RESAMPLING_SMOOTH_SLOPES)) != 0 || ordinal >= Resampling.values().length) {
+                throw WireReader.malformed("Invalid resampling byte " + r);
+            }
+            method = Resampling.values()[ordinal];
+            slopes = (r & RESAMPLING_SMOOTH_SLOPES) != 0;
+        }
+        Orientation orientation = Orientation.free(t, yaw, pitch, roll, method, slopes);
         if (orientation.isExact() || orientation.yaw() != yaw || orientation.pitch() != pitch
                 || orientation.roll() != roll) {
             throw WireReader.malformed("Orientation not in canonical form: " + yaw + ", " + pitch + ", " + roll);

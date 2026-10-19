@@ -10,8 +10,8 @@ import dev.sculptory.core.edit.OpSpec;
  * <p>Each label fits one kind of op ({@link #fits}): a road, roof or line (Generate's or the Shape brush's) is a paste
  * of a generated clipboard, an extrude is a stack, a carve an erase, a smear a move, a flood or drain a fill. Protocol 6
  * adds Extrude's path and taper and Generate's sweep and heightmap (pastes of generated clipboards), Generate's stamp (a
- * multi-paste), the Selection window's Rotate… (a move in place) and the Biome tool's fill (a biome fill). The server
- * refuses a label on another op.
+ * multi-paste), the Selection window's Rotate… (a move in place), the Biome tool's fill (a biome fill) and
+ * Generate's Smart Surface (a paste of a generated clipboard). The server refuses a label on another op.
  */
 public enum OpLabel {
     NONE(null),
@@ -37,7 +37,9 @@ public enum OpLabel {
     /** Protocol 6: the Selection window's Rotate… (a move in place). */
     ROTATE("Rotate"),
     /** Protocol 6: the Biome tool's Fill selection (a biome fill). */
-    BIOME_FILL("Biome fill");
+    BIOME_FILL("Biome fill"),
+    /** Protocol 6: Generate's Smart Surface (a paste of the generated surface). */
+    SMART_SURFACE("Smart surface");
 
     private final String text;
 
@@ -54,7 +56,8 @@ public enum OpLabel {
     public boolean fits(OpSpec op) {
         return switch (this) {
             case NONE -> true;
-            case ROAD, ROOF, LINE, SHAPE_LINE, PATH_EXTRUDE, TAPER, SWEEP, HEIGHTMAP -> op instanceof OpSpec.Paste;
+            case ROAD, ROOF, LINE, SHAPE_LINE, PATH_EXTRUDE, TAPER, SWEEP, HEIGHTMAP, SMART_SURFACE ->
+                    op instanceof OpSpec.Paste;
             case EXTRUDE -> op instanceof OpSpec.Stack;
             case CARVE -> op instanceof OpSpec.Erase;
             case SMEAR, ROTATE -> op instanceof OpSpec.Move;

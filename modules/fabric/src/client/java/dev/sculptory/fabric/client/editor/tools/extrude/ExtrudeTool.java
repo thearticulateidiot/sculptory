@@ -55,6 +55,7 @@ import dev.sculptory.fabric.client.editor.tools.select.SelectionModel;
 import dev.sculptory.fabric.client.editor.world.BoxFace;
 import dev.sculptory.fabric.client.editor.world.BoxHandles;
 import dev.sculptory.fabric.client.editor.world.Ray;
+import dev.sculptory.fabric.client.editor.world.ScreenProjector;
 import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.SessionNotices;
 import dev.sculptory.protocol.v2.Limits;
@@ -131,6 +132,16 @@ public final class ExtrudeTool implements Tool {
         /** Asks the player to confirm a large path or taper build; {@code onConfirm} runs only if they do. */
         default void confirm(String opNameKey, long blocks, Runnable onConfirm) {
             onConfirm.run();
+        }
+
+        /** World to screen, for the point editor's gizmo and drawn path; none by default. */
+        default Optional<ScreenProjector> projector() {
+            return Optional.empty();
+        }
+
+        /** The camera's position (the point gizmo's size); none by default. */
+        default Optional<double[]> eye() {
+            return Optional.empty();
         }
 
         /** Display text for a translation key (the air marker's distance label); the key itself by default. */
@@ -334,6 +345,16 @@ public final class ExtrudeTool implements Tool {
             @Override
             public Optional<Ray> cursorRay() {
                 return services.cursorRay();
+            }
+
+            @Override
+            public Optional<ScreenProjector> projector() {
+                return services.projector();
+            }
+
+            @Override
+            public Optional<double[]> eye() {
+                return services.eye();
             }
 
             @Override

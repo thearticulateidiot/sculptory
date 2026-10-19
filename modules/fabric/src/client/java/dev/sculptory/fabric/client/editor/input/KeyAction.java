@@ -73,7 +73,11 @@ public enum KeyAction {
     JUMP("jump", Group.MOVEMENT, false, null, "j"),
     JUMP_THROUGH("jump_through", Group.MOVEMENT, false, null, "shift+j"),
     // The global mask on every edit: on and off, keeping its rules.
-    TOGGLE_MASK("toggle_mask", Group.TOOLS, false, null, "ctrl+m");
+    TOGGLE_MASK("toggle_mask", Group.TOOLS, false, null, "ctrl+m"),
+    // Path points: a new point right after the selected one, following the cursor until a click places it (Esc drops
+    // it). Meant as E while a path point is selected (E stays the inventory key otherwise); the reserved-key rule doesn't
+    // allow that context yet (a plain E would never fire), so the default is I until it does. Rebindable.
+    EXTRUDE_POINT("extrude_point", Group.TOOLS, false, EditorAction.EXTRUDE_POINT, "i");
 
     /** Where an action is listed in the help sheet and the Keys window. */
     public enum Group { MOVEMENT, TOOLS, SELECTION, HISTORY, CLIPBOARD, WINDOWS }

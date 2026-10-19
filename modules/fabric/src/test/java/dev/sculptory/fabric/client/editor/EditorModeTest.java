@@ -177,6 +177,61 @@ class EditorModeTest {
 
     // ---- Suspending ----
 
+    /** The client player for the fly speed: its abilities, and whether it is in creative or spectator. */
+    private static final class FlyingPlayer implements Flight.Player, FlySpeedApplier.Abilities {
+        float speed = 0.05f;
+        boolean creative;
+
+        @Override
+        public Object identity() {
+            return this;
+        }
+
+        @Override
+        public FlySpeedApplier.Abilities abilities() {
+            return this;
+        }
+
+        @Override
+        public boolean scalesOutsideEditor() {
+            return creative;
+        }
+
+        @Override
+        public float flySpeed() {
+            return speed;
+        }
+
+        @Override
+        public void setFlySpeed(float value) {
+            speed = value;
+        }
+    }
+
+    @Test
+    void exitingWhileSuspendedHandsTheFlySpeedBackToTheGameMode() {
+        FlyingPlayer player = new FlyingPlayer();
+        FlySpeed speed = new FlySpeed();
+        speed.set(4);
+        Flight flight = new Flight(speed, () -> player, mode::isEditing);
+        enter();
+        flight.editorApplies(speed.multiplier()); // as the editor's platform does while it is open
+        assertEquals(0.2f, player.speed, 1e-6);
+        mode.suspend(SuspendTarget.INVENTORY);
+        flight.tick();
+        assertEquals(0.2f, player.speed, 1e-6, "suspended: still the editor's speed");
+        // The player dies with the inventory open: the editor ends from SUSPENDED, without a second deactivated().
+        mode.tick(new Observation(true, true, OVERWORLD, ScreenState.OTHER));
+        assertFalse(mode.isEditing());
+        assertEquals(List.of("deactivated SUSPENDED"), host.calls.stream().filter(c -> c.startsWith("deactivated"))
+                .toList(), "nothing hands the speed back on this exit");
+        flight.tick();
+        assertEquals(0.05f, player.speed, 1e-6, "survival: the next tick puts the own speed back");
+        player.creative = true;
+        flight.tick();
+        assertEquals(0.2f, player.speed, 1e-6, "creative: the multiplier applies outside the editor");
+    }
+
     @Test
     void suspendOpensTheVanillaScreenNextTickAndResumesWhenItCloses() {
         enter();

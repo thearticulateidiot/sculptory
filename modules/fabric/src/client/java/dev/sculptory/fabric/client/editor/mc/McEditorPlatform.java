@@ -4,6 +4,7 @@ import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.fabric.client.editor.CursorPick;
 import dev.sculptory.fabric.client.editor.EditorPlatform;
+import dev.sculptory.fabric.client.editor.Flight;
 import dev.sculptory.fabric.client.editor.hud.HelpSheet;
 import dev.sculptory.fabric.client.editor.input.CameraLook;
 import dev.sculptory.fabric.client.editor.input.EditorKeymap;
@@ -26,14 +27,12 @@ import java.util.Optional;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.client.network.PlayerListEntry;
 import net.minecraft.client.option.GameOptions;
 import net.minecraft.client.option.KeyBinding;
 import net.minecraft.client.resource.language.I18n;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.client.util.Window;
-import net.minecraft.entity.player.PlayerAbilities;
 import net.minecraft.item.ItemStack;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
@@ -49,15 +48,18 @@ public final class McEditorPlatform implements EditorPlatform {
     private final KeyBinding toggleKey;
     private final McBlockCatalog blocks;
     private final WorldRaycaster raycaster = new WorldRaycaster();
-    private Float savedFlySpeed;
+    /** The fly speed, shared with creative flight outside the editor and {@code /flyspeed}. */
+    private final Flight flight;
     /** "Aim at water and lava": lives as long as the editor (the game session); off at every game start. */
     private boolean aimAtFluids;
 
-    public McEditorPlatform(MinecraftClient client, OverlayRenderer overlay, KeyBinding toggleKey, McBlockCatalog blocks) {
+    public McEditorPlatform(MinecraftClient client, OverlayRenderer overlay, KeyBinding toggleKey, McBlockCatalog blocks,
+            Flight flight) {
         this.client = Objects.requireNonNull(client);
         this.overlay = Objects.requireNonNull(overlay);
         this.toggleKey = Objects.requireNonNull(toggleKey);
         this.blocks = Objects.requireNonNull(blocks);
+        this.flight = Objects.requireNonNull(flight);
     }
 
     // ---- Picking ----
@@ -119,27 +121,12 @@ public final class McEditorPlatform implements EditorPlatform {
 
     @Override
     public void applyFlySpeed(double multiplier) {
-        ClientPlayerEntity player = client.player;
-        if (player == null) {
-            return;
-        }
-        PlayerAbilities abilities = player.getAbilities();
-        if (savedFlySpeed == null) {
-            savedFlySpeed = abilities.getFlySpeed();
-        }
-        float speed = (float) (savedFlySpeed * multiplier);
-        if (abilities.getFlySpeed() != speed) {
-            abilities.setFlySpeed(speed);
-        }
+        flight.editorApplies(multiplier);
     }
 
     @Override
     public void restoreFlySpeed() {
-        ClientPlayerEntity player = client.player;
-        if (player != null && savedFlySpeed != null) {
-            player.getAbilities().setFlySpeed(savedFlySpeed);
-        }
-        savedFlySpeed = null;
+        flight.editorReleased();
     }
 
     @Override

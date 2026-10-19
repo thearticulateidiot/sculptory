@@ -362,6 +362,22 @@ class EditorControllerTest {
     }
 
     @Test
+    void aTypedFlySpeedAppliesInTheEditorAndTheScrollStepsOnFromIt() {
+        ctx.flySpeed().set(2.5); // /flyspeed 2.5 before the editor opens
+        rig.mode.enter();
+        assertEquals(2.5, rig.platform.flyMultiplier, "applied when the editor opens");
+        assertFalse(rig.platform.flyRestored);
+        ctx.flySpeed().set(5); // /flyspeed 5 with the editor open
+        controller.tick();
+        assertEquals(5, rig.platform.flyMultiplier, "applied at the next tick");
+        controller.flySpeed(1, 0);
+        assertEquals(6, rig.platform.flyMultiplier, "the scroll steps up from a typed value");
+        rig.mode.exit(ExitReason.TOGGLED);
+        assertTrue(rig.platform.flyRestored, "closing hands the speed back to the game mode's rule");
+        assertEquals(6, ctx.flySpeed().multiplier(), "the speed itself is kept");
+    }
+
+    @Test
     void middleClickPicksTheBlockUnderTheCursor() {
         rig.mode.enter();
         BlockDescriptor oak = BlockDescriptor.parse("minecraft:oak_log[axis=x]");

@@ -34,5 +34,10 @@ public enum EditorAction {
     /** Brushes: set the symmetry centre at the cursor (Shift: the nearest block corner). */
     SET_SYMMETRY_CENTRE,
     /** Generators: remove the Path generator's selected node, or its last one (Backspace; Delete does it too). */
-    REMOVE_NODE
+    REMOVE_NODE,
+    /**
+     * Path points: a new point right after the selected one that follows the cursor until a click places it; Esc drops
+     * it ({@code PointEditor}). Meant as E while a point is selected; see {@code KeyAction.EXTRUDE_POINT}.
+     */
+    EXTRUDE_POINT
 }

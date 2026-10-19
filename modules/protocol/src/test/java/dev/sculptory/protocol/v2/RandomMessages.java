@@ -44,6 +44,7 @@ import dev.sculptory.core.tinker.EntityEdit;
 import dev.sculptory.core.tinker.EntityEdits;
 import dev.sculptory.core.tinker.SignText;
 import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -477,13 +478,19 @@ final class RandomMessages {
         return placements;
     }
 
-    /** An orientation: mostly exact, otherwise free with angles over the whole range (multiples of 90° too). */
+    /**
+     * An orientation: mostly exact, otherwise free with angles over the whole range (multiples of 90° too), a third of
+     * the free ones with a random resampling.
+     */
     Orientation orientation() {
         Transform t = opTransform();
         if (rnd.nextInt(3) == 0) return Orientation.of(t);
         int[] angles = new int[3];
         for (int i = 0; i < 3; i++) {
             angles[i] = rnd.nextBoolean() ? rnd.nextInt(4) * Orientation.QUARTER_TURN : rnd.nextInt(Orientation.FULL_TURN);
+        }
+        if (rnd.nextInt(3) == 0) {
+            return Orientation.free(t, angles[0], angles[1], angles[2], pick(Resampling.values()), rnd.nextBoolean());
         }
         return Orientation.free(t, angles[0], angles[1], angles[2]);
     }

@@ -27,6 +27,8 @@ import dev.sculptory.fabric.client.editor.mask.EditMaskModel;
 import dev.sculptory.fabric.client.editor.mask.EditMaskStore;
 import dev.sculptory.fabric.client.editor.mc.McBlockCatalog;
 import dev.sculptory.fabric.client.editor.mc.McEditorPlatform;
+import dev.sculptory.fabric.client.editor.mc.McFlight;
+import dev.sculptory.fabric.client.editor.mc.McFlySpeedCommand;
 import dev.sculptory.fabric.client.editor.mc.McTranslator;
 import dev.sculptory.fabric.client.editor.mc.McWorldDraw;
 import dev.sculptory.fabric.client.editor.palettes.PaletteActions;
@@ -157,6 +159,10 @@ public final class EditorClient implements EditorMode.Host {
     private final UiScale uiScale = new UiScale();
     /** View > Opacity…: loaded with the UI size and saved with it. */
     private final UiOpacity uiOpacity = new UiOpacity();
+    /** The fly speed (editor scroll and {@code /flyspeed}): loaded with the UI size and saved with it. */
+    private final FlySpeed flySpeed = new FlySpeed();
+    /** Applies the fly speed in the editor and in creative and spectator flight outside it. */
+    private final Flight flight;
     /** Loaded with the UI size on first use; saves it once a change settles. */
     private UiSizeStore uiSizeStore;
     /** The keymap, loaded on first use by the editor or by builder mode (its undo and redo chords work outside). */
@@ -186,6 +192,7 @@ public final class EditorClient implements EditorMode.Host {
     private EditorClient(MinecraftClient client, KeyBinding toggleKey) {
         this.client = client;
         this.toggleKey = toggleKey;
+        this.flight = McFlight.create(client, flySpeed, mode::isEditing);
     }
 
     /** Registers the key binding and event hooks. Called once from {@code SculptoryClientMod}. */
@@ -291,6 +298,12 @@ public final class EditorClient implements EditorMode.Host {
         HudRenderCallback.EVENT.register(this::renderHud);
         ClientPlayConnectionEvents.DISCONNECT.register((handler, mc) -> mc.execute(mode::onDisconnect));
         ClientLifecycleEvents.CLIENT_STOPPING.register(ignored -> shutdown());
+        McFlySpeedCommand.register(flight, mode::isEditing);
+    }
+
+    /** The server sent the player's abilities (ClientAbilitiesMixin): their fly speed is the player's own again. */
+    public void abilitiesFromServer() {
+        flight.abilitiesFromServer();
     }
 
     // ---- Parts ----
@@ -316,7 +329,7 @@ public final class EditorClient implements EditorMode.Host {
         final GlfwCursors cursors;
 
         Parts() {
-            platform = new McEditorPlatform(client, overlay, toggleKey, blocks);
+            platform = new McEditorPlatform(client, overlay, toggleKey, blocks, flight);
             cursors = new GlfwCursors(client.getWindow().getHandle());
             Path config = configDirectory();
             AtomicFileStore store = new AtomicFileStore();
@@ -325,7 +338,7 @@ public final class EditorClient implements EditorMode.Host {
             keymap = EditorClient.this.keymap();
             layout = new LayoutStore(new ConfigFile(config.resolve(LayoutStore.FILE_NAME), store,
                     EditorClient.this::configProblem));
-            ctx = new EditorContext(SessionProvider::get, EditorClient.this::toast);
+            ctx = new EditorContext(SessionProvider::get, EditorClient.this::toast, flySpeed);
             // Exact counts of large shapes and other heavy selection work: one background thread, results back on the
             // client thread (vanilla's worker pool meshes chunks and must not wait for it).
             ctx.setRegionWork(new RegionWork(Executors.newSingleThreadExecutor(runnable -> {
@@ -614,6 +627,16 @@ public final class EditorClient implements EditorMode.Host {
                 }
 
                 @Override
+                public Optional<ScreenProjector> projector() {
+                    return platform.projector();
+                }
+
+                @Override
+                public Optional<double[]> eye() {
+                    return platform.eye();
+                }
+
+                @Override
                 public String translate(String key, Object... args) {
                     return translator.translate(key, args);
                 }
@@ -743,6 +766,16 @@ public final class EditorClient implements EditorMode.Host {
                 @Override
                 public Optional<Ray> cursorRay() {
                     return ctx.cursor().ray();
+                }
+
+                @Override
+                public Optional<ScreenProjector> projector() {
+                    return platform.projector();
+                }
+
+                @Override
+                public Optional<double[]> eye() {
+                    return platform.eye();
                 }
 
                 @Override
@@ -987,6 +1020,8 @@ public final class EditorClient implements EditorMode.Host {
             uiScale.addListener(percent -> uiSizeStore.changed(percent, Util.getMeasuringTimeMs()));
             uiOpacity.set(uiSizeStore.opacity());
             uiOpacity.addListener(values -> uiSizeStore.opacityChanged(values, Util.getMeasuringTimeMs()));
+            flySpeed.set(uiSizeStore.flySpeed());
+            flySpeed.addListener(multiplier -> uiSizeStore.flySpeedChanged(multiplier, Util.getMeasuringTimeMs()));
             // The tools' world overlays follow the Tool outlines setting.
             OverlayOpacity.follow(uiOpacity);
         }
@@ -1061,6 +1096,8 @@ public final class EditorClient implements EditorMode.Host {
 
     private void tick() {
         SessionProvider.get().tick();
+        // Loads the saved fly speed (with the UI size) at the first tick, so it applies before the editor ever opens.
+        uiScale();
         if (uiSizeStore != null) {
             uiSizeStore.saveIfSettled(Util.getMeasuringTimeMs());
         }
@@ -1079,6 +1116,7 @@ public final class EditorClient implements EditorMode.Host {
         if (mode.isActive() && parts != null) {
             parts.controller.tick();
         }
+        flight.tick();
     }
 
     private EditorMode.Observation observe() {

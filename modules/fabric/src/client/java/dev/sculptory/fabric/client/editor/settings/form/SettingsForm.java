@@ -571,8 +571,8 @@ public final class SettingsForm {
         private Dropdown<E> dropdown;
 
         EnumField(SettingDef.Enum<E> def) {
-            super(def, def.type().getEnumConstants().length <= 4 ? Kind.SEGMENTED : Kind.DROPDOWN);
-            List<E> options = List.of(def.type().getEnumConstants());
+            super(def, def.options().size() <= 4 ? Kind.SEGMENTED : Kind.DROPDOWN);
+            List<E> options = def.options();
             Function<E, String> labeler = option -> optionLabel(def, option);
             Function<E, String> optionTooltips = option -> {
                 // An option this tool can't use says why.

@@ -22,6 +22,7 @@ import dev.sculptory.core.testing.FakeExecutor;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
 import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
 import java.util.HashMap;
 import java.util.List;
@@ -106,6 +107,31 @@ class FreeCopyTest {
                 BlockPos p = cell.getKey();
                 int want = expected.getOrDefault(p, cell.getValue().state());
                 assertEquals(states.format(want), states.format(world.get(p.x(), p.y(), p.z())), o + " at " + p);
+            }
+        }
+    }
+
+    /**
+     * Until they are built, Exact count and Smooth (with or without stairs on slopes) write the nearest-block cells, so a
+     * client may send them already. The methods' own tests replace this one.
+     */
+    @Test
+    void everyResamplingWritesTheNearestBlockCellsUntilTheMethodsAreBuilt() {
+        BlockPos size = new BlockPos(5, 4, 6);
+        Clipboard clipboard = clipboard(size, 3);
+        BlockPos origin = new BlockPos(10, 64, -10);
+        Orientation nearest = Orientation.free(Transform.IDENTITY, 2_700, 1_100, 400);
+        Map<BlockPos, Integer> expected = expectedPaste(clipboard, nearest, origin);
+        Box area = grow(PasteGeometry.pasteTarget(size, clipboard.anchor(), nearest, origin), 2);
+        for (Resampling method : Resampling.values()) {
+            for (boolean slopes : new boolean[] {false, true}) {
+                Orientation o = nearest.withResampling(method, slopes);
+                FakeWorld world = new FakeWorld(states);
+                FakeExecutor.run(paste(clipboard, origin, o, Symmetry.NONE), world);
+                for (BlockPos p : snapshot(world, area).keySet()) {
+                    assertEquals(states.format(expected.getOrDefault(p, air)), states.format(world.get(p.x(), p.y(), p.z())),
+                            o + " at " + p);
+                }
             }
         }
     }

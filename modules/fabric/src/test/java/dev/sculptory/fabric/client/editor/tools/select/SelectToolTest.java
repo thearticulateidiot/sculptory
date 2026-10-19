@@ -558,6 +558,30 @@ class SelectToolTest {
         assertNull(hovered);
     }
 
+    @Test
+    void aHandleBehindBlocksIsStillHoveredAndGrabbed() {
+        ctx.setSelection(CUBE);
+        // Looking west and down at the east handle through a wall at x = 10: the cursor's block is the wall, nearer.
+        ray = new Ray(20, 12, 2, -16, -10, 0);
+        WorldCursor wall = new WorldCursor(new BlockPos(10, 5, 2), WorldCursor.Face.EAST, 11, 5.75, 2, false);
+        pointer(PointerEvent.Kind.MOVE, wall, 0);
+        assertEquals(BoxFace.EAST, hovered, "the hidden handle lights up");
+        assertTrue(pointer(PointerEvent.Kind.PRESS, wall, 0));
+        assertEquals(SelectionDrag.Mode.RESIZE, tool.drag().mode(), "the press grabs the handle, not the wall");
+        assertEquals(BoxFace.EAST, tool.drag().face());
+        ray = new Ray(20, 12, 2, -13, -10, 0); // the cursor moved on, to x = 7 at the handle's height
+        pointer(PointerEvent.Kind.DRAG, wall, 0);
+        pointer(PointerEvent.Kind.RELEASE, wall, 0);
+        assertTrue(ctx.selection().orElseThrow().max().x() > 3, "the box grew east: " + ctx.selection());
+        assertEquals(CUBE.min(), ctx.selection().orElseThrow().min());
+
+        // Past the handle (and the box), the wall is what the press is on: a new box starts there.
+        ray = new Ray(20, 12, 7, -16, -10, 0);
+        WorldCursor wallBeside = new WorldCursor(new BlockPos(10, 5, 7), WorldCursor.Face.EAST, 11, 5.75, 7, false);
+        assertTrue(pointer(PointerEvent.Kind.PRESS, wallBeside, 0));
+        assertEquals(SelectionDrag.Mode.CREATE, tool.drag().mode());
+    }
+
     // ---- Scroll and keys ----
 
     @Test

@@ -23,7 +23,7 @@ Every editor key can be changed, and `F1` always shows the keys as you have them
 | Tool size (Road width, Line thickness) | `Ctrl+Scroll` (`Shift`: steps of 4) |
 | Brush strength or height, Lasso height | `Alt+Scroll` |
 | Points in the air: the marker nearer or farther (Extrude along a path or to a point; Generate's Road, Line, Sweep and Stamp) | `Alt+Scroll` (`Shift`: steps of 4) |
-| Fly speed | `Scroll` over the world |
+| Fly speed | `Scroll` over the world, or `/sculptory flyspeed` in chat ([Editor mode](editor-mode.md#fly-speed)) |
 | Tinker: next value, another property | `Scroll`, `Shift+Scroll` over a block |
 | Pick block (eyedropper) | Middle-click |
 | Scatter: place one item of the mix | `Alt+left-click` |
