@@ -11,3 +11,9 @@ accessible field net/minecraft/client/network/PendingUpdateManager blockPosToPen
 accessible field net/minecraft/server/command/ServerCommandSource output Lnet/minecraft/server/command/CommandOutput;
 # Scatter column plants: an upward-growing two-part plant (kelp, twisting vines) grows as a column (FabricStateSpace).
 accessible field net/minecraft/block/AbstractPlantPartBlock growthDirection Lnet/minecraft/util/math/Direction;
+# Light checks of physics-off writes go to the light engine once per chunk column and batch, not once per cell
+# (LightBatch): queued as vanilla queues a checkBlock, then handed to its two providers as LightingProvider.checkBlock does.
+accessible class net/minecraft/server/world/ServerLightingProvider$Stage
+accessible method net/minecraft/server/world/ServerLightingProvider enqueue (IILnet/minecraft/server/world/ServerLightingProvider$Stage;Ljava/lang/Runnable;)V
+accessible field net/minecraft/world/chunk/light/LightingProvider blockLightProvider Lnet/minecraft/world/chunk/light/ChunkLightProvider;
+accessible field net/minecraft/world/chunk/light/LightingProvider skyLightProvider Lnet/minecraft/world/chunk/light/ChunkLightProvider;

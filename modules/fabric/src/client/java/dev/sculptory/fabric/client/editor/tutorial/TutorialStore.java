@@ -18,9 +18,11 @@ import java.util.TreeSet;
  * <pre>{@code
  * {"version": 1, "completed": ["getting_around", "menus"], "current": {"lesson": "select", "step": 2}}
  * }</pre>
- * ({@code current} is left out when no lesson is in progress). A missing or malformed file gives no progress, and the
- * next save replaces it; entries that aren't lesson ids and steps are skipped. A file of another version (from a newer
- * Sculptory) is reported and left unchanged, and progress then lasts for the session only. Nothing here throws:
+ * ({@code current} is left out when no lesson is in progress). A missing or empty file gives no progress; a malformed one
+ * too, and is first copied aside as {@code editor-tutorial.json.bad} ({@link ConfigFile#keepAside}), reported, and
+ * replaced at once by an empty one (so it isn't copied again at every start). Entries that aren't lesson ids and steps
+ * are skipped. A file of another version (from a newer Sculptory) is reported and left unchanged, and progress then
+ * lasts for the session only. Nothing here throws:
  * a file that can't be read or written is reported through the {@link ConfigFile}, and the tutorial goes on.
  */
 public final class TutorialStore {
@@ -49,7 +51,7 @@ public final class TutorialStore {
             return TutorialProgress.NONE;
         }
         Optional<String> text = file.read();
-        if (text.isEmpty()) {
+        if (text.isEmpty() || text.get().isBlank()) {
             return TutorialProgress.NONE;
         }
         try {
@@ -58,7 +60,10 @@ public final class TutorialStore {
             file.keepAsIs(newer.getMessage());
             return TutorialProgress.NONE;
         } catch (IllegalArgumentException malformed) {
-            // Written by the game, not by hand: the next save replaces it.
+            // Copied aside first, then replaced: nothing is lost.
+            if (file.keepAside(malformed.getMessage() + "; the tutorial starts from no progress").isPresent()) {
+                file.write(toJson(TutorialProgress.NONE)); // at once, so it isn't copied again at every start
+            }
             return TutorialProgress.NONE;
         }
     }

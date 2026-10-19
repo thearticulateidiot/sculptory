@@ -122,7 +122,7 @@ class SizedLayoutsTest {
     }
 
     @Test
-    void entriesThatCantBeReadAreSkipped() {
+    void entriesThatCantBeReadAreSkippedAndKept() {
         String good = "{\"id\": \"ok\", \"anchor\": \"TOP_LEFT\", \"x\": 1, \"y\": 2, \"width\": 100, \"height\": 80}";
         String json = "{\"version\": 2, \"windows\": ["
                 + "{\"id\": \"ok\", \"open\": true, \"collapsed\": false},"
@@ -143,7 +143,73 @@ class SizedLayoutsTest {
         SizedLayouts layouts = parse(json);
         assertEquals(List.of(new Shown("ok", true, false)), layouts.windows(), "the first of two with an id wins");
         assertEquals(Map.of("ok", new WindowPlacement(Corner.TOP_LEFT, 1, 2, 100, 80, false)), layouts.arrangement(50));
-        assertEquals(List.of("50"), List.copyOf(layouts.uiSizes().keySet()), "a size that isn't a list is dropped");
+        assertEquals(List.of("50"), List.copyOf(layouts.uiSizes().keySet()), "a size that isn't a list isn't used");
+
+        // Not used, but nothing is lost: every entry that couldn't be read is written back as it was.
+        com.google.gson.JsonObject original = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        com.google.gson.JsonObject saved = com.google.gson.JsonParser.parseString(
+                layouts.capture(50, layouts.at(50)).toJson()).getAsJsonObject();
+        assertEquals(original.get("windows"), saved.get("windows"));
+        com.google.gson.JsonArray before = original.getAsJsonObject("uiSizes").getAsJsonArray("50");
+        com.google.gson.JsonArray after = saved.getAsJsonObject("uiSizes").getAsJsonArray("50");
+        assertEquals(before.size(), after.size());
+        for (int i = 1; i < before.size(); i++) assertEquals(before.get(i), after.get(i), "entry " + i);
+        assertEquals(original.getAsJsonObject("uiSizes").get("60"), saved.getAsJsonObject("uiSizes").get("60"));
+        assertEquals(original.getAsJsonObject("uiSizes").get("70"), saved.getAsJsonObject("uiSizes").get("70"));
+        assertEquals(layouts, parse(layouts.toJson()), "and read the same way again");
+    }
+
+    /**
+     * Fields this version doesn't know, at the top, in a window's entry and in a placement, are written back exactly; a
+     * placement's stay while its window is placed at that size, and go with a size's arrangement when it is reset.
+     */
+    @Test
+    void fieldsThisVersionDoesntKnowAreWrittenBackExactly() {
+        String json = """
+                {"version": 2, "theme": {"accent": "#ff8800"},
+                 "windows": [
+                   {"id": "history", "open": true, "collapsed": false, "pinned": true, "tabs": ["a", "b"]},
+                   {"id": "keys", "open": false, "collapsed": false}
+                 ],
+                 "uiSizes": {
+                   "50": [{"id": "history", "anchor": "BOTTOM_LEFT", "x": 4, "y": 4, "width": 160, "height": 162,
+                           "overReserved": false, "monitor": 2, "snap": {"to": "keys"}}],
+                   "100": [{"id": "keys", "anchor": "TOP_LEFT", "x": 9, "y": 8, "width": 200, "height": 100,
+                            "overReserved": false, "monitor": 1}]
+                 },
+                 "lastSize": 50}
+                """;
+        SizedLayouts layouts = parse(json);
+        com.google.gson.JsonObject original = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+        assertEquals(original, com.google.gson.JsonParser.parseString(layouts.toJson()), "a round trip keeps them all");
+
+        // The player moves History at 50% and closes it: its fields stay with it.
+        WindowPlacement moved = new WindowPlacement(Corner.TOP_RIGHT, 30, 40, 150, 120, false);
+        LayoutState live = new LayoutState(List.of(WindowState.unplaced("history", false, false).withPlacement(moved),
+                WindowState.unplaced("keys", false, false)));
+        com.google.gson.JsonObject saved = com.google.gson.JsonParser.parseString(layouts.capture(50, live).toJson())
+                .getAsJsonObject();
+        assertEquals(original.get("theme"), saved.get("theme"));
+        assertEquals(original.get("lastSize"), saved.get("lastSize"));
+        com.google.gson.JsonObject history = saved.getAsJsonArray("windows").get(0).getAsJsonObject();
+        assertFalse(history.get("open").getAsBoolean());
+        assertTrue(history.get("pinned").getAsBoolean());
+        assertEquals(original.getAsJsonArray("windows").get(0).getAsJsonObject().get("tabs"), history.get("tabs"));
+        com.google.gson.JsonObject placement = saved.getAsJsonObject("uiSizes").getAsJsonArray("50").get(0)
+                .getAsJsonObject();
+        assertEquals(30, placement.get("x").getAsInt());
+        assertEquals(2, placement.get("monitor").getAsInt());
+        assertEquals(com.google.gson.JsonParser.parseString("{\"to\": \"keys\"}"), placement.get("snap"));
+        assertEquals(original.getAsJsonObject("uiSizes").get("100"), saved.getAsJsonObject("uiSizes").get("100"),
+                "another size is untouched");
+
+        // Back to its default place at 50%, then 100% reset: their placement fields go, the rest stays.
+        SizedLayouts unplaced = layouts.capture(50, new LayoutState(List.of(WindowState.unplaced("history", true,
+                false), WindowState.unplaced("keys", false, false)))).without(100);
+        com.google.gson.JsonObject reset = com.google.gson.JsonParser.parseString(unplaced.toJson()).getAsJsonObject();
+        assertEquals(new com.google.gson.JsonObject(), reset.getAsJsonObject("uiSizes"));
+        assertTrue(reset.getAsJsonArray("windows").get(0).getAsJsonObject().get("pinned").getAsBoolean());
+        assertEquals(original.get("theme"), reset.get("theme"));
     }
 
     @Test

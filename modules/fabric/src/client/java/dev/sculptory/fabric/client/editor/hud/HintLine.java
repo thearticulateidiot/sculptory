@@ -11,8 +11,10 @@ import dev.sculptory.fabric.client.editor.ui.Theme;
 import dev.sculptory.fabric.client.editor.ui.UiContext;
 import dev.sculptory.fabric.client.editor.ui.UiGraphics;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.StringJoiner;
 import java.util.regex.Pattern;
 
@@ -20,8 +22,9 @@ import java.util.regex.Pattern;
  * The hint line above the palette: the active tool's name in the accent colour, then what can be done with it now
  * ({@link #format}: "Raise  ·  LMB drag: raise  ·  Ctrl+Scroll: radius  ·  F1: help"). When the screen is too narrow
  * for all of it, whole hints give way from the end, the last one (the help key) kept while it fits: "Raise  ·  LMB
- * drag: raise  ·  F1: help" rather than "... Alt+Scrol...". The whole line is then the tooltip. Only when not even
- * the first hint fits does the line end in "...".
+ * drag: raise  ·  F1: help" rather than "... Alt+Scrol...", notes without keys ("Preview simplified: ...") before any
+ * key. The whole line is then the tooltip. Only when not even the first hint fits does the line end in "...". The
+ * editor gives it the room left of the job bars where they reach its height, so no bar covers the line's end.
  */
 public final class HintLine extends Node {
     public static final String SEPARATOR = "  ·  ";
@@ -31,6 +34,9 @@ public final class HintLine extends Node {
     private String hints = "";
     /** The hints drawn after the name at the last layout. */
     private String shownHints = "";
+    /** The hints one by one, and which of them are notes (no keys; never the first). */
+    private List<String> entries = List.of();
+    private Set<Integer> notes = Set.of();
     private boolean truncated;
 
     /** "keys: what" entries joined with {@link #SEPARATOR}. */
@@ -47,6 +53,24 @@ public final class HintLine extends Node {
         this.toolName = Objects.requireNonNull(toolName);
         this.hints = Objects.requireNonNull(hints);
         this.shownHints = hints;
+        this.entries = hints.isEmpty() ? List.of() : List.of(SPLIT.split(hints));
+        this.notes = Set.of();
+    }
+
+    /**
+     * The hints after the name ({@link #format}); a note among them (a hint without keys after the first, "Preview
+     * simplified: 1.2M blocks") gives way before any key when the line is short of room.
+     */
+    public void set(String toolName, List<KeyHint> hints, Translator translator) {
+        set(toolName, format(hints, translator));
+        entries = hints.stream().map(hint -> format(List.of(hint), translator)).toList();
+        Set<Integer> keyless = new HashSet<>();
+        for (int i = 1; i < hints.size(); i++) {
+            if (hints.get(i).keys().isEmpty()) {
+                keyless.add(i);
+            }
+        }
+        notes = Set.copyOf(keyless);
     }
 
     /** The name shown first ("" with no tool active). */
@@ -103,15 +127,24 @@ public final class HintLine extends Node {
     }
 
     /**
-     * The hints that fit {@code width} after the name, whole: all of them; else the first ones and the last (the help
-     * key), dropping from the one before the last backwards; else the first ones alone; else all of them (cut with
-     * "..." when drawn).
+     * The hints that fit {@code width} after the name, whole: all of them; else without the notes, the last first; else
+     * (the notes left out) the first ones and the last (the help key), dropping from the one before the last
+     * backwards; else the first ones alone; else all of them (cut with "..." when drawn).
      */
     private String fitting(TextMeasure text, int width) {
         if (hints.isEmpty() || text.width(text()) <= width) {
             return hints;
         }
-        List<String> entries = List.of(SPLIT.split(hints));
+        List<String> entries = new ArrayList<>(this.entries);
+        for (int i = entries.size() - 1; i >= 1; i--) {
+            if (notes.contains(i)) {
+                entries.remove(i);
+                String joined = String.join(SEPARATOR, entries);
+                if (text.width(line(joined)) <= width) {
+                    return joined;
+                }
+            }
+        }
         int count = entries.size();
         for (int keep = count - 2; keep >= 0; keep--) {
             List<String> shown = new ArrayList<>(entries.subList(0, keep));

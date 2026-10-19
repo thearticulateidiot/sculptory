@@ -104,7 +104,7 @@ public final class PlayCheck {
     /** The scenario groups, in the order they run. */
     static List<ScenarioGroup> groups() {
         return List.of(SelectChecks.GROUP, BrushChecks.GROUP, WaterChecks.GROUP, PlaceChecks.GROUP,
-                SelectModeChecks.GROUP, ToolChecks.GROUP, EntityChecks.GROUP, UiChecks.GROUP, FeatureChecks.GROUP,
+                SelectModeChecks.GROUP, ToolChecks.GROUP, EntityChecks.GROUP, UiChecks.GROUP, FeatureChecks.GROUP, ViewChecks.GROUP,
                 TwoPlayerChecks.GROUP_A, TwoPlayerChecks.GROUP_B);
     }
 

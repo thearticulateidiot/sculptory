@@ -1,6 +1,7 @@
 package dev.sculptory.core.mask;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.sculptory.core.BlockDescriptor;
@@ -54,6 +55,24 @@ class MaskTextTest {
         StringBuilder seventeen = new StringBuilder("v1");
         for (int i = 0; i < 17; i++) seventeen.append(" | solid");
         assertThrows(IllegalArgumentException.class, () -> MaskText.decode(seventeen.toString()));
+    }
+
+    /** What a newer version may write is told apart from what is just malformed, so a store can leave it alone. */
+    @Test
+    void aNewerVersionsTextIsToldApartFromMalformedText() {
+        for (String newer : List.of("v2", "v2 | solid", "v17 | is minecraft:stone", "v1 invert x", "v1 strict | solid",
+                "v1 | frob", "v1 | solid | glows 3", "v1 | inside blob 0 0 0", "v1 | inside shape round up 0 0 0 1 1 1",
+                "v1 | inside shape ellipsoid sideways 0 0 0 1 1 1")) {
+            assertThrows(MaskText.NewerFormatException.class, () -> MaskText.decode(newer), newer);
+        }
+        for (String malformed : List.of("", "mask", "v", "v0", "v0 | solid", "vx | solid", "v1 |", "v1 | is",
+                "v1 | height 1", "v1 | height a b", "v1 | chance 0 1", "v1 | inside box 1 2 3", "v1 | touches_air now")) {
+            IllegalArgumentException refused = assertThrows(IllegalArgumentException.class,
+                    () -> MaskText.decode(malformed), malformed);
+            assertFalse(refused instanceof MaskText.NewerFormatException, malformed);
+        }
+        assertEquals("v1 | inside shape ellipsoid up 0 0 0 1 1 1",
+                MaskText.encode(MaskText.decode("v1 | inside shape ELLIPSOID Up 0 0 0 1 1 1")), "case doesn't matter");
     }
 
     @Test

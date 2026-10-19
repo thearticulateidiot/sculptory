@@ -110,6 +110,78 @@ class KeymapStoreTest {
         assertEquals(List.of(), problems);
     }
 
+    /**
+     * What another build wrote survives a save exactly: actions this build doesn't have, fields it doesn't know, chords it
+     * can't read (kept after the action's readable ones), and an entry none of which it can read (kept instead of the
+     * defaults it uses). A rebind replaces what the player rebound; a reset replaces every action's but keeps the
+     * actions this build doesn't have.
+     */
+    @Test
+    void whatAnotherBuildWroteSurvivesASave(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("editor-keys.json");
+        String written = "{\"version\": 1, \"profile\": {\"name\": \"left hand\", \"layers\": [1, 2]},"
+                + " \"bindings\": {\"undo\": [\"ctrl+u\", \"hyper+u\", 7], \"redo\": [\"hyper+r\"],"
+                + " \"copy\": \"ctrl+c\", \"teleport_to_cursor\": [\"ctrl+t\"], \"tool_99\": [\"f9\", {\"chord\": \"x\"}]},"
+                + " \"theme\": \"dark\"}";
+        Files.writeString(file, written, StandardCharsets.UTF_8);
+        KeymapStore store = store(file);
+        EditorKeymap keymap = store.load();
+        assertEquals(chords("ctrl+u"), keymap.chords(KeyAction.UNDO), "the readable chords are bound");
+        assertEquals(KeyAction.REDO.defaultChords(), keymap.chords(KeyAction.REDO), "none readable: the defaults");
+        assertEquals(KeyAction.COPY.defaultChords(), keymap.chords(KeyAction.COPY), "not a list: the defaults");
+
+        keymap.bind(KeyAction.LIBRARY, List.of());
+        assertTrue(store.save(keymap));
+        JsonObject saved = JsonParser.parseString(Files.readString(file)).getAsJsonObject();
+        JsonObject original = JsonParser.parseString(written).getAsJsonObject();
+        JsonObject bindings = saved.getAsJsonObject("bindings");
+        JsonObject originalBindings = original.getAsJsonObject("bindings");
+        assertEquals(JsonParser.parseString("[\"ctrl+u\", \"hyper+u\", 7]"), bindings.get("undo"));
+        for (String kept : List.of("redo", "copy", "teleport_to_cursor", "tool_99")) {
+            assertEquals(originalBindings.get(kept), bindings.get(kept), kept + " kept exactly");
+        }
+        assertEquals(original.get("profile"), saved.get("profile"));
+        assertEquals(original.get("theme"), saved.get("theme"));
+        assertEquals(JsonParser.parseString("[]"), bindings.get("library"), "the player's own change is saved");
+
+        EditorKeymap again = store(file).load();
+        assertEquals(chords("ctrl+u"), again.chords(KeyAction.UNDO));
+        assertEquals(saved, JsonParser.parseString(again.toJson()), "a second round trip changes nothing");
+
+        again.bind(KeyAction.UNDO, chords("f5"));
+        again.bind(KeyAction.REDO, chords("f6"));
+        JsonObject rebound = JsonParser.parseString(again.toJson()).getAsJsonObject().getAsJsonObject("bindings");
+        assertEquals(JsonParser.parseString("[\"f5\"]"), rebound.get("undo"), "rebinding replaces the unreadable chords");
+        assertEquals(JsonParser.parseString("[\"f6\"]"), rebound.get("redo"));
+        assertEquals(originalBindings.get("copy"), rebound.get("copy"), "an action not rebound is still kept");
+
+        EditorKeymap copied = again.copy();
+        copied.resetToDefaults();
+        JsonObject reset = JsonParser.parseString(copied.toJson()).getAsJsonObject();
+        assertEquals(JsonParser.parseString("[\"ctrl+c\"]"), reset.getAsJsonObject("bindings").get("copy"));
+        assertEquals(originalBindings.get("tool_99"), reset.getAsJsonObject("bindings").get("tool_99"),
+                "another build's actions are not this build's to reset");
+        assertEquals(original.get("profile"), reset.get("profile"));
+        assertEquals(List.of(), problems);
+    }
+
+    /** A file of another version is used for nothing and left byte for byte, whatever the player rebinds. */
+    @Test
+    void aNewerVersionsFileIsLeftByteForByte(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("editor-keys.json");
+        byte[] newer = "{\"version\": 2, \"bindings\": {\"undo\": [\"ctrl+u\"]}, \"layers\": {}}\n"
+                .getBytes(StandardCharsets.UTF_8);
+        Files.write(file, newer);
+        KeymapStore store = store(file);
+        EditorKeymap keymap = store.load();
+        assertEquals(KeyAction.UNDO.defaultChords(), keymap.chords(KeyAction.UNDO));
+        keymap.bind(KeyAction.UNDO, chords("f5"));
+        store.save(keymap);
+        org.junit.jupiter.api.Assertions.assertArrayEquals(newer, Files.readAllBytes(file));
+        assertEquals(1, problems.size(), problems.toString());
+        assertTrue(problems.get(0).contains("left unchanged"), problems.get(0));
+    }
+
     @Test
     void savingTheSameKeysAgainIsNotAWrite(@TempDir Path dir) throws IOException {
         Path file = dir.resolve("editor-keys.json");

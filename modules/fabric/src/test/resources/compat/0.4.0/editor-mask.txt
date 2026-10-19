@@ -1,0 +1,1 @@
+v1 | is minecraft:grass_block;#minecraft:logs | !height 0 63 | slope 0 2 | chance 40 12345 | inside box 0 0 0 0 0 0

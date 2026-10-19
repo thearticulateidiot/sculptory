@@ -1,0 +1,70 @@
+{
+  "editingEnabled": true,
+  "permissionFallbackOpLevel": 3,
+  "singleplayerHostAlwaysAllowed": false,
+  "executor": {
+    "tickBudgetMsDedicated": 7,
+    "tickBudgetMsIntegrated": 20,
+    "maxBlocksPerTick": 0,
+    "brushLaneShare": 0.3,
+    "maxActiveJobsGlobal": 8,
+    "maxQueuedJobs": 32,
+    "maxQueuedJobsPerPlayer": 5,
+    "maxChunkTicketsPerJob": 64,
+    "maxQueuedBrushWork": 1024,
+    "maxColumnsPerJob": 16384
+  },
+  "history": {
+    "maxEntriesPerPlayer": 77,
+    "maxBytesPerPlayer": 268435456,
+    "maxBytesTotal": 1073741824,
+    "persist": true,
+    "maxDiskBytes": 1073741824,
+    "maxAgeDays": 12
+  },
+  "limits": {
+    "maxOpVolume": 2097152,
+    "maxClipboardVolume": 2097152,
+    "maxBrushRadius": 24,
+    "maxDabRate": 20,
+    "maxUploadBytes": 33554432,
+    "maxJobsPerPlayer": 2,
+    "maxSelectionCells": 2097152,
+    "maxSelectionSections": 65536,
+    "maxSelectionStoreBytes": 67108864,
+    "maxSelectionStoreBytesTotal": 536870912
+  },
+  "library": {
+    "maxFileBytes": 33554432,
+    "maxTotalBytes": 1073741824,
+    "maxPlayerBytes": 67108864,
+    "trashDays": 9,
+    "maxTrashBytes": 1073741824,
+    "maxPlayerTrashBytes": 67108864
+  },
+  "scatter": {
+    "maxSourceVolume": 262144,
+    "maxWork": 50000000,
+    "tickShare": 0.2,
+    "maxPlanningMillis": 3000,
+    "holdBudgetSeconds": 30.0,
+    "holdRefillShare": 0.5,
+    "maxFeatureCells": 1048576
+  },
+  "transform": {
+    "moddedFacingFallback": false
+  },
+  "entities": {
+    "maxPerClipboard": 1000,
+    "maxPerJob": 16384
+  },
+  "builder": {
+    "maxReach": 40,
+    "maxBlocksPerSecond": 100
+  },
+  "navigate": {
+    "maxDistance": 200,
+    "maxThroughDepth": 64
+  },
+  "unloadedChunks": "REFUSE"
+}

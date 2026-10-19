@@ -8,7 +8,8 @@ import java.util.Optional;
  * Loads and saves {@code editor-presets.json} ({@link PresetBook}) through a {@link ConfigFile}. A file that doesn't
  * parse or has another version is left unchanged ({@link ConfigFile#keepAsIs}) and presets are read-only until the
  * next game start, so a hand edit or a newer build's file is never overwritten. Presets in the file that can't be read
- * are skipped; the next save leaves them out.
+ * are skipped and counted, and kept as they are: the next save writes them back with the fields this build doesn't
+ * know ({@link PresetBook}).
  */
 public final class PresetStore {
     public static final String FILE_NAME = "editor-presets.json";

@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "bindings": {
+    "tool_1": [
+      "1"
+    ],
+    "tool_2": [
+      "2"
+    ],
+    "tool_3": [
+      "3"
+    ],
+    "tool_4": [
+      "4"
+    ],
+    "tool_5": [
+      "5"
+    ],
+    "tool_6": [
+      "6"
+    ],
+    "tool_7": [
+      "7"
+    ],
+    "tool_8": [
+      "8"
+    ],
+    "tool_9": [
+      "9"
+    ],
+    "tool_10": [
+      "0"
+    ],
+    "tool_11": [
+      "minus"
+    ],
+    "tool_12": [
+      "equal"
+    ],
+    "tool_13": [
+      "left_bracket"
+    ],
+    "tool_14": [
+      "right_bracket"
+    ],
+    "tool_15": [
+      "backslash"
+    ],
+    "tool_16": [
+      "semicolon"
+    ],
+    "tool_17": [
+      "apostrophe"
+    ],
+    "tool_size": [
+      "ctrl+scroll"
+    ],
+    "tool_strength": [
+      "alt+scroll"
+    ],
+    "eyedropper": [
+      "mouse.middle"
+    ],
+    "aim_at_fluids": [],
+    "fly_speed": [
+      "scroll"
+    ],
+    "undo": [
+      "ctrl+u"
+    ],
+    "redo": [
+      "ctrl+shift+u",
+      "f7"
+    ],
+    "erase_selection": [
+      "delete"
+    ],
+    "deselect": [
+      "ctrl+d"
+    ],
+    "nudge_forward": [
+      "up"
+    ],
+    "nudge_back": [
+      "down"
+    ],
+    "nudge_left": [
+      "left"
+    ],
+    "nudge_right": [
+      "right"
+    ],
+    "nudge_up": [
+      "page_up"
+    ],
+    "nudge_down": [
+      "page_down"
+    ],
+    "copy": [
+      "ctrl+c"
+    ],
+    "cut": [
+      "ctrl+x"
+    ],
+    "paste": [
+      "ctrl+v"
+    ],
+    "commit": [
+      "enter"
+    ],
+    "rotate_cw": [
+      "r"
+    ],
+    "rotate_ccw": [
+      "shift+r"
+    ],
+    "flip_left_right": [
+      "f"
+    ],
+    "flip_front_back": [
+      "shift+f"
+    ],
+    "flip_upside_down": [
+      "v"
+    ],
+    "hide_windows": [
+      "tab"
+    ],
+    "help": [
+      "f1"
+    ],
+    "library": [],
+    "history": [
+      "h"
+    ],
+    "ui_smaller": [
+      "ctrl+minus",
+      "ctrl+kp_subtract"
+    ],
+    "ui_larger": [
+      "ctrl+equal",
+      "ctrl+shift+equal",
+      "ctrl+kp_add"
+    ],
+    "ui_reset": [
+      "ctrl+0",
+      "ctrl+kp_0"
+    ],
+    "symmetry_centre": [
+      "m"
+    ],
+    "remove_node": [
+      "backspace"
+    ],
+    "command_search": [
+      "ctrl+k"
+    ],
+    "focus_next_window": [
+      "f6"
+    ],
+    "jump": [
+      "alt+j"
+    ],
+    "jump_through": [
+      "shift+j"
+    ],
+    "toggle_mask": [
+      "ctrl+m"
+    ],
+    "extrude_point": [
+      "e"
+    ]
+  }
+}

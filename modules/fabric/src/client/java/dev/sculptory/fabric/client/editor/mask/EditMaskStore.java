@@ -11,8 +11,11 @@ import java.util.Optional;
 /**
  * Keeps the global mask's rules across games in {@code config/sculptory/editor-mask.txt}: one line of
  * {@link MaskText} (an inside rule saved as "inside the selection"). Whether the mask is on is not kept: every game
- * starts with it off. A malformed file is set aside ({@link ConfigFile#keepAside}) and the rules
- * start empty; each change of the rules is saved at once.
+ * starts with it off. A file a newer Sculptory wrote (another version, or a rule this one doesn't know:
+ * {@link MaskText.NewerFormatException}) is reported and left as it is ({@link ConfigFile#keepAsIs}): the rules start
+ * empty and their changes last for this session only. Other malformed text is copied aside
+ * ({@link ConfigFile#keepAside}) and replaced at once by the empty rules they start with. Each change of the rules is
+ * saved at once.
  */
 public final class EditMaskStore {
     public static final String FILE_NAME = "editor-mask.txt";
@@ -32,8 +35,10 @@ public final class EditMaskStore {
         if (text.isPresent() && !text.get().isBlank()) {
             try {
                 model.setRules(MaskText.decode(text.get().strip()).entries());
+            } catch (MaskText.NewerFormatException newer) {
+                file.keepAsIs(newer.getMessage() + "; the mask rules last for this session only");
             } catch (IllegalArgumentException malformed) {
-                file.keepAside(malformed.getMessage());
+                if (file.keepAside(malformed.getMessage()).isPresent()) save(); // at once: not copied at every start
             }
         }
         if (saving == null) saving = model.onChange(this::save);

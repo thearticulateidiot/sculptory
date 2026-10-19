@@ -46,7 +46,8 @@ import org.slf4j.LoggerFactory;
  *       {@code setBlockState(pos, state, FORCE_STATE, 0)} ({@code onBlockAdded}/{@code onStateReplaced} cancelled).
  *       The old block entity is <em>not</em> {@link Clearable#clear cleared}: nothing can drop with
  *       {@code onStateReplaced} cancelled, and clearing has side effects the scope cannot suppress (lectern and
- *       jukebox clearing update comparators and neighbours).</li>
+ *       jukebox clearing update comparators and neighbours). The light checks the cell asks are collected
+ *       ({@link LightBatch}) and go to the light engine about a thousand at a time, not as a task per cell.</li>
  *   <li>Physics on: {@link Clearable#clear} the old block entity inside an {@link EditScope} (so nothing drops),
  *       remove it, then {@code NOTIFY_ALL} with update depth 512.</li>
  *   <li>Load the tile with {@code BlockEntity.createFromNbt}, replacing the default block entity through
@@ -57,9 +58,10 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code markForUpdate(pos)} so the change reaches clients, or, for physics-off writes of a writer
  *       {@link #syncThrough synced through} a {@link ClientSync} (bulk jobs), the cell noted there.</li>
  * </ol>
- * Physics-off writes remember the cells they wrote; {@link #clearTicksAtWrittenCells()} then removes scheduled
- * block and fluid ticks at exactly those cells (the executor calls it after each section; brush code after each
- * dab).
+ * Physics-off writes remember the cells they wrote; {@link #clearTicksAtWrittenCells()} then hands their light
+ * checks to the light engine and removes scheduled block and fluid ticks at exactly those cells (the executor calls
+ * it after each section; brush code after each part of a dab). Checks not handed on by then go before the next world
+ * tick.
  *
  * <p>The recorded {@link #write(int, int, int, int, BlockEntityData, RecordSink)} reads the live cell right before
  * mutating it, skips no-ops, and records every cell it touches, even when the write throws. Its {@link Guard} form
@@ -77,6 +79,8 @@ public final class BlockWriter implements WorldWriter {
     private final FabricStateSpace states;
     private final WriteOptions options;
     private final RegistryWrapper.WrapperLookup registries;
+    /** The light checks of physics-off writes, handed to the light engine per chunk column ({@code null}: per cell). */
+    private final LightBatch light;
     /** Physics-off writes not yet passed to {@link #clearTicksAtWrittenCells()}: section key → 4096-bit set. */
     private final Long2ObjectOpenHashMap<long[]> writtenCells = new Long2ObjectOpenHashMap<>();
     /** Where physics-off writes are sent to clients from; {@code null}: vanilla block updates per cell. */
@@ -96,6 +100,7 @@ public final class BlockWriter implements WorldWriter {
         this.states = Objects.requireNonNull(states);
         this.options = Objects.requireNonNull(options);
         this.registries = world.getRegistryManager();
+        this.light = LightBatch.of(world);
     }
 
     public ServerWorld world() {
@@ -214,6 +219,8 @@ public final class BlockWriter implements WorldWriter {
      */
     @Override
     public void clearTicksAtWrittenCells() {
+        // The light checks of the cells written so far go to the light engine now, about a thousand a task.
+        if (light != null) light.flush();
         if (writtenCells.isEmpty()) return;
         LongOpenHashSet columns = new LongOpenHashSet();
         for (long key : writtenCells.keySet()) columns.add(columnOf(key));
@@ -244,6 +251,14 @@ public final class BlockWriter implements WorldWriter {
         BlockBox box = new BlockBox(minX, minY, minZ, maxX, maxY, maxZ);
         world.getBlockTickScheduler().clearNextTicks(box);
         world.getFluidTickScheduler().clearNextTicks(box);
+    }
+
+    /**
+     * Light-engine tasks this writer's light checks took so far (one per chunk column and batch, {@link LightBatch}), or
+     * -1 when its checks go to the light engine one per cell.
+     */
+    public long lightTasks() {
+        return light == null ? -1 : light.flushedTasks();
     }
 
     /** Cells written so far (both write methods). */
@@ -298,7 +313,9 @@ public final class BlockWriter implements WorldWriter {
             } else {
                 try (EditScope scope = EditScope.suppressPhysics()) {
                     if (old.hasBlockEntity()) world.removeBlockEntity(pos);
-                    world.setBlockState(pos, state, Block.FORCE_STATE, 0);
+                    try (LightBatch.Scope batch = light == null ? null : light.collect()) {
+                        world.setBlockState(pos, state, Block.FORCE_STATE, 0);
+                    }
                 }
                 rememberWritten(pos);
             }

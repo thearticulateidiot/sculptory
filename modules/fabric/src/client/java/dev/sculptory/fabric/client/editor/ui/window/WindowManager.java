@@ -1022,11 +1022,25 @@ public final class WindowManager {
 
     /**
      * Lays out and draws all windows (their surfaces faded as {@link #setPanelFade} says), then popups, then the hover
-     * tooltip, each on its own layer: {@link #prepare}, then {@link #draw} with nothing over the windows.
+     * tooltip, each on its own layer (pushed only when there is something on it): {@link #prepare}, then
+     * {@link #draw} with nothing over the windows, {@link #drawPopups} and {@link #drawTooltip}.
      */
     public void render(UiGraphics g, double mouseX, double mouseY, long nowMs) {
         prepare(mouseX, mouseY, nowMs);
-        draw(g, List.of());
+        int z = draw(g, List.of());
+        if (screenWidth <= 0 || screenHeight <= 0) {
+            return;
+        }
+        if (ctx.popups().isOpen()) {
+            g.pushLayer(z);
+            drawPopups(g);
+            g.popLayer();
+        }
+        if (tooltipText() != null) {
+            g.pushLayer(z + ctx.theme().layerStep);
+            drawTooltip(g);
+            g.popLayer();
+        }
     }
 
     /**
@@ -1064,14 +1078,16 @@ public final class WindowManager {
     }
 
     /**
-     * Draws the windows as {@link #prepare} left them, then popups, then the hover tooltip, each on its own layer. A
-     * window under see-through ones (a faded window above it, or one of {@code coversAbove}: see-through things drawn
-     * over the windows later, the faded toasts) is drawn only where they leave it ({@link Covers}), so within the UI a
-     * window hides what is under it at any opacity while the world still shows through.
+     * Draws the windows as {@link #prepare} left them, each on its own layer, and returns the layer above the topmost
+     * (relative to the one this was called on), where what goes over the windows starts; the popups and the hover
+     * tooltip are drawn apart ({@link #drawPopups}, {@link #drawTooltip}), over everything else. A window under
+     * see-through ones (a faded window above it, or one of {@code coversAbove}: see-through things drawn over the
+     * windows later, the faded toasts) is drawn only where they leave it ({@link Covers}), so within the UI a window
+     * hides what is under it at any opacity while the world still shows through.
      */
-    public void draw(UiGraphics g, List<Rect> coversAbove) {
+    public int draw(UiGraphics g, List<Rect> coversAbove) {
         if (screenWidth <= 0 || screenHeight <= 0) {
-            return;
+            return 0;
         }
         Theme theme = ctx.theme();
         int z = 0;
@@ -1099,13 +1115,21 @@ public final class WindowManager {
                 z += theme.layerStep;
             }
         }
-        if (ctx.popups().isOpen()) {
-            g.pushLayer(z);
+        return z;
+    }
+
+    /** Draws the open popups (menus, dropdowns, pickers) on the layer it is called on: above the windows and toasts. */
+    public void drawPopups(UiGraphics g) {
+        if (screenWidth > 0 && screenHeight > 0 && ctx.popups().isOpen()) {
             ctx.popups().render(g, ctx);
-            g.popLayer();
-            z += theme.layerStep;
         }
-        renderTooltip(g, z, ctx.mouseX(), ctx.mouseY());
+    }
+
+    /** Draws the hovered node's tooltip after its delay; call last, on a layer above everything else. */
+    public void drawTooltip(UiGraphics g) {
+        if (screenWidth > 0 && screenHeight > 0) {
+            renderTooltip(g, ctx.mouseX(), ctx.mouseY());
+        }
     }
 
     private Window topOpenWindow() {
@@ -1211,21 +1235,24 @@ public final class WindowManager {
         }
     }
 
-    private void renderTooltip(UiGraphics g, int z, double mouseX, double mouseY) {
+    private void renderTooltip(UiGraphics g, double mouseX, double mouseY) {
+        String text = tooltipText();
+        if (text != null) {
+            Tooltip.render(g, ctx, text, (int) mouseX, (int) mouseY);
+        }
+    }
+
+    /** The hovered node's tooltip once its delay has passed, or null when none shows. */
+    private String tooltipText() {
         Node hovered = ctx.hovered();
         if (hovered == null || isInteracting() || ctx.hoverDurationMs() < ctx.theme().tooltipDelayMs) {
-            return;
+            return null;
         }
         String text = null;
         for (Node node = hovered; node != null && text == null; node = node.parent()) {
             text = node.tooltip();
         }
-        if (text == null || text.isBlank()) {
-            return;
-        }
-        g.pushLayer(z);
-        Tooltip.render(g, ctx, text, (int) mouseX, (int) mouseY);
-        g.popLayer();
+        return text == null || text.isBlank() ? null : text;
     }
 
     // ---- Persistence ----

@@ -139,10 +139,22 @@ final class FeatureChecks {
         // V once: the ghost hangs upside down, and the paste is top-half stairs.
         PlaceTool flipped = paste(run, a);
         run.picture("ghost", "The 3x3 ghost of bottom stairs at the pointer, the right way up");
+        int mark = d.toastMark();
         d.action(KeyAction.FLIP_UPSIDE_DOWN);
         d.frames(10);
         run.check("V keeps the placement", d.onClient(() -> flipped.placement().isPresent()), d.toastNote());
-        run.picture("ghost-flipped", "The ghost after V: the stairs upside down (their steps hanging), the flip toast");
+        run.check("V turns the placement upside down", d.onClient(() -> flipped.placement()
+                .map(p -> p.orientation().transform().upsideDown()).orElse(false)), "");
+        // The flipped ghost is baked once the turn has rested; a toast follows only for blocks the flip cannot turn
+        // over (none here: every stair has an upside-down form).
+        d.millis(PlaceTool.BAKE_IDLE_NANOS / 1_000_000 + 700);
+        d.frames(10);
+        List<String> flipToasts = d.toastsSince(mark).stream()
+                .filter(toast -> toast.notice().key().startsWith("sculptory.notice.flip_"))
+                .map(CheckDriver.Toast::text).toList();
+        run.check("no flip toast: every stair turns over", flipToasts.isEmpty(), "toasts: " + flipToasts);
+        run.picture("ghost-flipped", "The ghost after V: the stairs upside down (their steps hanging). No toast: one"
+                + " shows only for blocks the flip leaves as they are");
         Box once = drop(run, flipped, "V once");
         run.exact("the flipped paste places top-half stairs still facing south", filled(before, once, top));
         run.picture("pasted-flipped", "The 3x3 of top-half stairs pasted on the floor");

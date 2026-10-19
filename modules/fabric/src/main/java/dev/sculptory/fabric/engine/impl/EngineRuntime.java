@@ -22,6 +22,7 @@ import dev.sculptory.fabric.world.FabricWorldEntities;
 import dev.sculptory.fabric.world.FabricWorldReader;
 import dev.sculptory.fabric.world.FeatureGrower;
 import dev.sculptory.fabric.world.FluidTrails;
+import dev.sculptory.fabric.world.LightBatch;
 import dev.sculptory.fabric.world.Relighter;
 import dev.sculptory.fabric.world.WorldChecks;
 import dev.sculptory.protocol.v2.C2S;
@@ -136,14 +137,20 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
             runtime.executor.tick();
             runtime.fluidTrails.tick();
         });
+        // Light checks batched by writes not yet handed on (LightBatch) go before the world's light engine ticks and its
+        // chunks unload: a chunk unloaded first would save light without them.
+        ServerTickEvents.START_WORLD_TICK.register(world -> LightBatch.flushAll());
         // After the world and network ticks: bulk writes reach players after vanilla's acks (EditExecutor.endTick).
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             EngineRuntime runtime = current;
+            // Light checks batched by writes made during the world ticks (LightBatch) reach the light engine this tick.
+            LightBatch.flushAll();
             if (runtime != null && runtime.server == server) runtime.executor.endTick();
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             EngineRuntime runtime = current;
             if (runtime != null && runtime.server == server) runtime.executor.shutdown();
+            LightBatch.flushAll();
         });
         ServerLifecycleEvents.SERVER_STOPPED.register(server -> {
             EngineRuntime runtime = current;

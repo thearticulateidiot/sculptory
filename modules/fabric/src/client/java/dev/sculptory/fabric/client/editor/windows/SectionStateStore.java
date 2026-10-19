@@ -20,9 +20,11 @@ import java.util.TreeMap;
  * <pre>{@code
  * {"version": 1, "tools": {"raise": {"sculptory.setting.brush.mask": true}}}
  * }</pre>
- * A section not listed opens as its schema says. A missing or malformed file gives no remembered states and the next
- * change replaces it; a file of another version (from a newer Sculptory) is reported and left unchanged. Each
- * change is saved at once (a click, so rare; the file write is skipped when nothing changed).
+ * A section not listed opens as its schema says. A missing or empty file gives no remembered states; a malformed one
+ * too, and is first copied aside as {@code editor-sections.json.bad} ({@link ConfigFile#keepAside}), reported, and
+ * replaced at once by an empty one (so it isn't copied again at every start). A file of another version (from a newer
+ * Sculptory) is reported and left unchanged. Each change is saved at once (a click, so rare; the file write is skipped
+ * when nothing changed).
  */
 public final class SectionStateStore {
     public static final String FILE_NAME = "editor-sections.json";
@@ -56,7 +58,7 @@ public final class SectionStateStore {
             return;
         }
         Optional<String> text = file.read();
-        if (text.isEmpty()) {
+        if (text.isEmpty() || text.get().isBlank()) {
             return;
         }
         try {
@@ -64,7 +66,10 @@ public final class SectionStateStore {
         } catch (OtherVersionException newer) {
             file.keepAsIs(newer.getMessage());
         } catch (IllegalArgumentException malformed) {
-            // Written by the game, not by hand: the next change replaces it.
+            // Copied aside first, then replaced: nothing is lost.
+            if (file.keepAside(malformed.getMessage() + "; every section opens as its tool says").isPresent()) {
+                file.write(toJson(states)); // at once, so it isn't copied again at every start
+            }
         }
     }
 

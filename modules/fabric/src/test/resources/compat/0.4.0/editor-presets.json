@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "tools": {
+    "raise": {
+      "selected": "Soft hills",
+      "presets": [
+        {
+          "name": "Soft hills",
+          "values": {
+            "falloff": "LINEAR",
+            "mask.blocks": "",
+            "mask.exact": "false",
+            "mask.invert": "false",
+            "mask.rules": "",
+            "mask.selection": "false",
+            "mask.slope": "0..16",
+            "mask.y": "-64..319",
+            "mode": "SURFACE",
+            "radius": "12",
+            "shape": "CIRCLE",
+            "strength": "0.8",
+            "symmetry": "OFF"
+          }
+        }
+      ]
+    },
+    "scatter": {
+      "selected": "Forest",
+      "presets": [
+        {
+          "name": "Forest",
+          "values": {
+            "count": "50",
+            "density": "10.0",
+            "density_mode": "PERCENT",
+            "filter.elevation": "-64..319",
+            "filter.slope": "0..16",
+            "filter.substrate": "",
+            "fit.column": "1..1",
+            "fit.fluid": "false",
+            "fit.support": "50",
+            "fit.survive": "true",
+            "mirror": "true",
+            "radius": "8",
+            "seed": "1",
+            "spacing": "4",
+            "turn.0": "true",
+            "turn.180": "true",
+            "turn.270": "true",
+            "turn.90": "true"
+          },
+          "extra": {
+            "mix": "asset:3:abababababababababababababababababababababababababababababababab:trees/oak.schem;block:2:minecraft:fern"
+          }
+        }
+      ]
+    },
+    "shape": {
+      "selected": "Big cone",
+      "presets": [
+        {
+          "name": "Big cone",
+          "values": {
+            "anchor": "SURFACE",
+            "blocks": "ACTIVE_BLOCK",
+            "draw": "SHAPES",
+            "facing": "UP",
+            "height": "9",
+            "height.auto": "true",
+            "hollow": "false",
+            "hollow.thickness": "1",
+            "kind": "CONE",
+            "line.path": "STRAIGHT",
+            "line.sag": "4",
+            "mode": "PLACE",
+            "palette": "4:minecraft:stone;2:minecraft:andesite;1:minecraft:cobblestone",
+            "pattern": "RANDOM",
+            "pattern.edge": "4",
+            "pattern.seed": "0",
+            "pattern.size": "6",
+            "pattern.steepness_edge": "10",
+            "radius": "30",
+            "selection": "false",
+            "symmetry": "OFF"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -4,7 +4,7 @@
   "package": "dev.sculptory.fabric.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": ["AbstractBlockStateMixin", "BlockItemInvoker", "BuilderCaptureMixin", "EntityChunkDataAccessMixin",
-    "FluidTrailBlockChangeMixin", "FluidTrailChunkDataMixin", "FluidTrailTickMixin",
+    "FluidTrailBlockChangeMixin", "FluidTrailChunkDataMixin", "FluidTrailTickMixin", "LightBatchMixin",
     "PlayerManagerMixin", "ServerChunkLoadingManagerMixin", "ServerPlayerInteractionManagerMixin",
     "VerticallyAttachableBlockItemAccessor"],
   "injectors": { "defaultRequire": 1 }

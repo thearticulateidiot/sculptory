@@ -62,18 +62,31 @@ class TutorialStoreTest {
     }
 
     @Test
-    void aMalformedFileGivesNoProgressAndIsReplacedByTheNextSave() throws IOException {
+    void aMalformedFileGivesNoProgressIsCopiedAsideAndIsReplacedByTheNextSave() throws IOException {
         Files.writeString(file(), "{ not json", StandardCharsets.UTF_8);
         TutorialStore store = store();
         assertEquals(TutorialProgress.NONE, store.load());
+        Path aside = file().resolveSibling(TutorialStore.FILE_NAME + ".bad");
+        assertEquals("{ not json", Files.readString(aside), "copied aside, as it was, before anything replaces it");
+        assertEquals(1, problems.size(), problems.toString());
+        assertTrue(problems.get(0).contains(TutorialStore.FILE_NAME + ".bad"), problems.get(0));
+        assertEquals(TutorialStore.toJson(TutorialProgress.NONE), read(), "replaced at once");
+        store().load();
+        assertEquals(1, problems.size(), "so not copied aside again at the next start");
         assertTrue(store.save(TutorialProgress.NONE.withCompleted("terrain")));
         assertTrue(read().contains("\"terrain\""), read());
-        assertEquals(List.of(), problems, "written by the game, so not reported");
 
-        for (String broken : List.of("[]", "42", "{}", "{\"version\": \"one\"}", "")) {
-            Files.writeString(file(), broken, StandardCharsets.UTF_8);
-            assertEquals(TutorialProgress.NONE, store().load(), broken);
+        List<String> broken = List.of("[]", "42", "{}", "{\"version\": \"one\"}");
+        for (int i = 0; i < broken.size(); i++) {
+            Files.writeString(file(), broken.get(i), StandardCharsets.UTF_8);
+            assertEquals(TutorialProgress.NONE, store().load(), broken.get(i));
+            assertEquals(broken.get(i), Files.readString(file().resolveSibling(TutorialStore.FILE_NAME + ".bad-" + (i + 2))),
+                    "each one is kept, never over an earlier copy");
         }
+        problems.clear();
+        Files.writeString(file(), "  \n", StandardCharsets.UTF_8);
+        assertEquals(TutorialProgress.NONE, store().load(), "an empty file is no progress");
+        assertEquals(List.of(), problems, "and nothing to keep");
     }
 
     @Test

@@ -68,13 +68,26 @@ class SectionStateStoreTest {
     }
 
     @Test
-    void aMalformedFileGivesTheDefaultsAndIsReplacedByTheNextChange() throws IOException {
+    void aMalformedFileGivesTheDefaultsIsCopiedAsideAndIsReplacedByTheNextChange() throws IOException {
         Path file = dir.resolve(SectionStateStore.FILE_NAME);
         Files.writeString(file, "{ not json");
         SectionStateStore store = store();
         assertEquals(Optional.empty(), store.expanded(ToolId.RAISE, MASK));
+        assertEquals("{ not json", Files.readString(dir.resolve(SectionStateStore.FILE_NAME + ".bad")),
+                "copied aside, as it was, before anything replaces it");
+        assertEquals(1, problems.size(), problems.toString());
+        assertTrue(problems.get(0).contains(SectionStateStore.FILE_NAME + ".bad"), problems.get(0));
+        assertTrue(Files.readString(file).contains("\"version\": 1"), "replaced at once");
+        store();
+        assertEquals(1, problems.size(), "so not copied aside again at the next start");
         store.set(ToolId.RAISE, MASK, true);
         assertTrue(Files.readString(file).contains("\"version\": 1"));
+
+        problems.clear();
+        Files.writeString(file, "");
+        assertEquals(Optional.empty(), store().expanded(ToolId.RAISE, MASK));
+        assertEquals(List.of(), problems, "an empty file: nothing to keep");
+        assertFalse(Files.exists(dir.resolve(SectionStateStore.FILE_NAME + ".bad-2")));
     }
 
     @Test

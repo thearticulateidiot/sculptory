@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The text form of an {@link EditMask}, as the client saves it (the mask chip's rules, a brush preset's
@@ -21,12 +23,25 @@ import java.util.Objects;
  * {@code inside box <x0> <y0> <z0> <x1> <y1> <z1>}, {@code inside shape <kind> <facing> <x0> ... <z1>},
  * {@code chance <percent> <seed>}. For example {@code v1 | is minecraft:grass_block;#minecraft:logs | !height 0 63}.
  * A cell-set region ({@link Region.Cells}, {@link Region.Uploaded}) has no text form.
+ *
+ * <p>Text this version can't read because a newer one wrote it (a {@code v<number>} above 1, a word after {@code v1}
+ * other than {@code invert}, a rule, region kind, shape kind or facing this version doesn't know) is refused with a
+ * {@link NewerFormatException}, so a caller can leave it alone instead of replacing it; other malformed text with a
+ * plain {@link IllegalArgumentException}.
  */
 public final class MaskText {
     private static final String VERSION = "v1";
     private static final String SEPARATOR = " | ";
+    private static final Pattern HEAD = Pattern.compile("v([0-9]{1,9})((?: [a-z][a-z0-9_]*)*)");
 
     private MaskText() {}
+
+    /** Mask text a newer version wrote: a version, head word, rule or region this version doesn't know. */
+    public static final class NewerFormatException extends IllegalArgumentException {
+        public NewerFormatException(String message) {
+            super(message);
+        }
+    }
 
     /**
      * The text form of {@code mask}.
@@ -91,6 +106,12 @@ public final class MaskText {
         } else if (head.equals(VERSION + " invert")) {
             invert = true;
         } else {
+            Matcher versioned = HEAD.matcher(head);
+            int version = versioned.matches() ? Integer.parseInt(versioned.group(1)) : 0;
+            if (version == 1) throw new NewerFormatException("A mask head this version doesn't know: " + head);
+            if (version > 1) {
+                throw new NewerFormatException("A mask of version " + version + "; this version reads " + VERSION);
+            }
             throw new IllegalArgumentException("Not a mask: " + text);
         }
         if (parts.length - 1 > EditMask.MAX_ENTRIES) throw new IllegalArgumentException("Over " + EditMask.MAX_ENTRIES + " rules");
@@ -127,7 +148,9 @@ public final class MaskText {
                     count(words, 3);
                     yield new MaskRule.Chance(Integer.parseInt(words[1]), Long.parseLong(words[2]));
                 }
-                default -> throw new IllegalArgumentException("Unknown mask rule: " + text);
+                default -> throw words[0].matches("[a-z][a-z0-9_]*")
+                        ? new NewerFormatException("Unknown mask rule: " + text)
+                        : new IllegalArgumentException("Malformed mask rule: " + text);
             };
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Malformed mask rule: " + text, e);
@@ -153,11 +176,21 @@ public final class MaskText {
             }
             case "shape" -> {
                 count(words, 10);
-                yield new Region.Shape(box(words, 4), ShapeKind.valueOf(words[2].toUpperCase(Locale.ROOT)),
-                        Facing.valueOf(words[3].toUpperCase(Locale.ROOT)));
+                yield new Region.Shape(box(words, 4), known(ShapeKind.class, words[2]), known(Facing.class, words[3]));
             }
-            default -> throw new IllegalArgumentException("Unknown region kind: " + words[1]);
+            default -> throw words[1].matches("[a-z][a-z0-9_]*")
+                    ? new NewerFormatException("Unknown region kind: " + words[1])
+                    : new IllegalArgumentException("Malformed region: " + words[1]);
         };
+    }
+
+    /** The constant {@code word} names (ignoring case); a word that names none is a newer version's, unless malformed. */
+    private static <E extends Enum<E>> E known(Class<E> type, String word) {
+        for (E constant : type.getEnumConstants()) {
+            if (constant.name().equalsIgnoreCase(word)) return constant;
+        }
+        if (!word.matches("[A-Za-z][A-Za-z0-9_]*")) throw new IllegalArgumentException("Malformed mask word: " + word);
+        throw new NewerFormatException("Unknown " + type.getSimpleName() + ": " + word);
     }
 
     private static Box box(String[] words, int at) {

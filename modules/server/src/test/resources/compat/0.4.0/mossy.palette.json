@@ -1,0 +1,26 @@
+{
+  "format": "sculptory:palette",
+  "version": 1,
+  "dataVersion": 3955,
+  "entries": [
+    {
+      "state": "minecraft:moss_block",
+      "weight": 4
+    },
+    {
+      "state": "minecraft:sea_pickle[pickles=2,waterlogged=true]",
+      "weight": 1
+    },
+    {
+      "state": "minecraft:mossy_cobblestone",
+      "weight": 2
+    }
+  ],
+  "pattern": {
+    "kind": "patches",
+    "patchSize": 6,
+    "edge": 4,
+    "steepnessEdge": 10,
+    "seed": -8214629017740148339
+  }
+}

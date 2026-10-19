@@ -7,6 +7,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
+import dev.sculptory.fabric.client.util.KeptJson;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
@@ -36,8 +37,14 @@ import java.util.StringJoiner;
  * }</pre>
  * Actions missing from the file keep their defaults, except a default chord the file gives to another action: the
  * player's own binding wins, and the new action goes without it ({@link #yielded}, which the Keys window shows), so an
- * action added by an update (the tenth tool on 0) never takes a key the player chose. Unknown actions and malformed
- * chords are skipped; an empty list unbinds the action.
+ * action added by an update (the tenth tool on 0) never takes a key the player chose. An empty list unbinds the action.
+ *
+ * <p>Nothing in the file is lost when this build saves it: what it can't use is kept and written back as it was, so a
+ * player who tries another build and comes back finds their keys. Actions this build doesn't have (a newer build's, or
+ * an older one's) and fields other than {@code version} and {@code bindings} are kept as they are. Chords this build
+ * can't read (a newer build's syntax, a typo) are kept after the action's other chords, which it binds; an action none
+ * of whose chords it can read, or whose value isn't a list, keeps its defaults and its entry as it was. Either is kept
+ * until the player binds that action again (or resets the keymap).
  */
 public final class EditorKeymap {
     public static final int VERSION = 1;
@@ -81,6 +88,14 @@ public final class EditorKeymap {
     private final EnumMap<KeyAction, List<KeyChord>> bindings = new EnumMap<>(KeyAction.class);
     /** Default chords an action went without because the key file gives them to another action. */
     private final EnumMap<KeyAction, List<KeyChord>> yielded = new EnumMap<>(KeyAction.class);
+    /** Entries of actions this build doesn't have, by id, as JSON text: written back unchanged. */
+    private final Map<String, String> unknownActions = new LinkedHashMap<>();
+    /** An action's entry as the file had it (JSON text) when none of it could be read: written instead, until rebound. */
+    private final EnumMap<KeyAction, String> unreadableEntries = new EnumMap<>(KeyAction.class);
+    /** Chords of an action this build couldn't read (JSON text): written after its chords, until it is rebound. */
+    private final EnumMap<KeyAction, List<String>> unreadableChords = new EnumMap<>(KeyAction.class);
+    /** The file's fields other than {@code version} and {@code bindings}, as JSON text: written back unchanged. */
+    private final Map<String, String> otherFields = new LinkedHashMap<>();
     private List<ReservedKey> reserved = List.of();
 
     private EditorKeymap() {
@@ -98,6 +113,10 @@ public final class EditorKeymap {
         EditorKeymap copy = new EditorKeymap();
         copy.bindings.putAll(bindings);
         copy.yielded.putAll(yielded);
+        copy.unknownActions.putAll(unknownActions);
+        copy.unreadableEntries.putAll(unreadableEntries);
+        copy.unreadableChords.putAll(unreadableChords);
+        copy.otherFields.putAll(otherFields);
         copy.reserved = reserved;
         return copy;
     }
@@ -111,13 +130,18 @@ public final class EditorKeymap {
         Objects.requireNonNull(action);
         bindings.put(action, List.copyOf(new LinkedHashSet<>(chords)));
         yielded.remove(action);
+        unreadableEntries.remove(action);
+        unreadableChords.remove(action);
     }
 
+    /** Every action on its default chords; the file's entries of actions this build doesn't have are still kept. */
     public void resetToDefaults() {
         for (KeyAction action : KeyAction.values()) {
             bindings.put(action, action.defaultChords());
         }
         yielded.clear();
+        unreadableEntries.clear();
+        unreadableChords.clear();
     }
 
     /**
@@ -287,14 +311,28 @@ public final class EditorKeymap {
         root.addProperty("version", VERSION);
         JsonObject map = new JsonObject();
         for (KeyAction action : KeyAction.values()) {
+            String unreadable = unreadableEntries.get(action);
+            if (unreadable != null) {
+                map.add(action.id(), JsonParser.parseString(unreadable));
+                continue;
+            }
             JsonArray chords = new JsonArray();
             for (KeyChord chord : bindings.get(action)) {
                 chords.add(chord.format());
             }
+            for (String kept : unreadableChords.getOrDefault(action, List.of())) {
+                chords.add(JsonParser.parseString(kept));
+            }
             map.add(action.id(), chords);
         }
+        unknownActions.forEach((id, json) -> {
+            if (!map.has(id)) map.add(id, JsonParser.parseString(json));
+        });
         root.add("bindings", map);
-        return new GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n";
+        otherFields.forEach((key, json) -> {
+            if (!root.has(key)) root.add(key, JsonParser.parseString(json));
+        });
+        return new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root) + "\n";
     }
 
     /**
@@ -325,11 +363,17 @@ public final class EditorKeymap {
         java.util.EnumSet<KeyAction> named = java.util.EnumSet.noneOf(KeyAction.class);
         for (Map.Entry<String, JsonElement> entry : bindings.getAsJsonObject().entrySet()) {
             Optional<KeyAction> action = KeyAction.byId(entry.getKey());
-            if (action.isEmpty() || !entry.getValue().isJsonArray()) {
+            if (action.isEmpty()) {
+                keep(keymap.unknownActions, entry.getKey(), entry.getValue());
+                continue;
+            }
+            if (!entry.getValue().isJsonArray()) {
+                keep(keymap.unreadableEntries, action.get(), entry.getValue());
                 continue;
             }
             List<KeyChord> chords = new ArrayList<>();
-            boolean malformed = false;
+            List<String> malformed = new ArrayList<>();
+            boolean unreadable = false;
             for (JsonElement element : entry.getValue().getAsJsonArray()) {
                 if (element instanceof JsonPrimitive text && text.isString()) {
                     try {
@@ -339,13 +383,21 @@ public final class EditorKeymap {
                         // fall through
                     }
                 }
-                malformed = true;
+                String kept = KeptJson.text(element);
+                if (kept != null) malformed.add(kept);
+                unreadable = true;
             }
-            if (!chords.isEmpty() || !malformed) {
+            if (!chords.isEmpty() || !unreadable) {
                 keymap.bind(action.get(), chords);
                 named.add(action.get());
+                if (!malformed.isEmpty()) keymap.unreadableChords.put(action.get(), List.copyOf(malformed));
+            } else {
+                keep(keymap.unreadableEntries, action.get(), entry.getValue());
             }
         }
+        KeptJson.eachField(root.entrySet(), (key, text) -> {
+            if (!key.equals("version") && !key.equals("bindings")) keymap.otherFields.put(key, text);
+        });
         // An action the file does not name keeps its defaults, but not one the file gives to another action.
         for (KeyAction action : KeyAction.values()) {
             if (named.contains(action)) continue;
@@ -364,5 +416,11 @@ public final class EditorKeymap {
             }
         }
         return keymap;
+    }
+
+    /** Keeps {@code value} as JSON text under {@code key}, unless it nests too deep to write back. */
+    private static <K> void keep(Map<K, String> into, K key, JsonElement value) {
+        String text = KeptJson.text(value);
+        if (text != null) into.put(key, text);
     }
 }

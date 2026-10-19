@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "tools": {
+    "extrude": {
+      "values": {}
+    },
+    "flatten": {
+      "values": {}
+    },
+    "fluid": {
+      "values": {}
+    },
+    "generate": {
+      "values": {}
+    },
+    "lower": {
+      "values": {}
+    },
+    "paint": {
+      "values": {}
+    },
+    "palette": {
+      "values": {}
+    },
+    "place": {
+      "values": {}
+    },
+    "raise": {
+      "values": {
+        "falloff": "LINEAR",
+        "radius": "9",
+        "strength": "0.8"
+      }
+    },
+    "scatter": {
+      "values": {},
+      "extra": {
+        "mix": "asset:3:abababababababababababababababababababababababababababababababab:trees/oak.schem;block:2:minecraft:fern"
+      }
+    },
+    "select": {
+      "values": {}
+    },
+    "shape": {
+      "values": {
+        "kind": "CONE",
+        "radius": "30"
+      }
+    },
+    "smooth": {
+      "values": {}
+    },
+    "tinker": {
+      "values": {}
+    },
+    "weather": {
+      "values": {}
+    }
+  }
+}

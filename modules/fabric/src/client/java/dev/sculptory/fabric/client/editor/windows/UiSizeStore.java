@@ -10,8 +10,8 @@ import dev.sculptory.fabric.client.editor.ConfigFile;
 import dev.sculptory.fabric.client.editor.FlySpeed;
 import dev.sculptory.fabric.client.editor.ui.UiOpacity;
 import dev.sculptory.fabric.client.editor.ui.UiScale;
-import java.util.ArrayList;
-import java.util.List;
+import dev.sculptory.fabric.client.util.KeptJson;
+import java.nio.file.Path;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -27,13 +27,16 @@ import java.util.Set;
  *  "panelOpacity": 60, "fadeWhenNotHovered": true, "toolOutlineOpacity": 40, "flySpeed": 2.5}
  * }</pre>
  * A fly speed that isn't a number reads as 1×; one outside 0.25-8 is clamped into it ({@link FlySpeed#clamp}).
- * A missing or malformed file gives 100%, an unseen card and everything opaque, and the next save replaces it (a
- * malformed or missing flag reads as unseen: the card shows once more). An opacity that isn't a number reads as its
- * default (100); a number outside its range (20–100 for the panels, 10–100 for the tool outlines) is clamped into it,
- * and rounded to a whole percent. The switch is on only for a JSON {@code true}. A JSON object without a numeric
- * version is malformed for the size (100%), but its flag, opacity and other fields are still read, as the flag always
- * was; the next save writes it as version 1. A file of another version (from a newer Sculptory) also gives 100%
- * and the defaults, but is reported and left unchanged; the card then counts as seen, since that can't be saved.
+ * A missing, empty or malformed file gives 100%, an unseen card and everything opaque, and the next save replaces it; a
+ * file that isn't a JSON object is copied aside as {@code editor-ui.json.bad} ({@link ConfigFile#keepAside}), reported
+ * and replaced at once by a version-1 file, so it isn't copied again at every start (a malformed or missing flag reads
+ * as unseen: the card shows once more). An opacity that isn't a number
+ * reads as its default (100); a number outside its range (20–100 for the panels, 10–100 for the tool outlines) is
+ * clamped into it, and rounded to a whole percent. The switch is on only for a JSON {@code true}. A JSON object without
+ * a numeric version is malformed for the size (100%), but its flag, opacity and other fields are still read, as the
+ * flag always was; it is copied aside the same way ({@link ConfigFile#copyAside}) and at once written again as
+ * version 1. A file of another version (from a newer Sculptory) also gives 100% and the defaults, but is reported and
+ * left unchanged; the card then counts as seen, since that can't be saved.
  *
  * <p>The opacity and fly speed fields are new in the same version 1: a build from before reads the size and the flag as
  * always (it ignores fields it doesn't know) and drops them when it saves. This build keeps the fields it doesn't know
@@ -56,11 +59,6 @@ public final class UiSizeStore {
     /** The fields this build writes itself; any other field of a version-1 file is kept as it was. */
     private static final Set<String> KNOWN = Set.of("version", "uiSize", QUICK_START_SEEN, PANEL_OPACITY,
             FADE_WHEN_NOT_HOVERED, TOOL_OUTLINE_OPACITY, FLY_SPEED);
-    /**
-     * How deep a field this build doesn't know may nest and still be kept. Parsing has no depth limit, but writing JSON
-     * recurses: a deeper field (only a hand edit makes one) is dropped rather than overflow the stack.
-     */
-    static final int MAX_KEPT_DEPTH = 64;
 
     private final ConfigFile file;
     /** Whether the size or the opacity changed since the last save. */
@@ -86,7 +84,7 @@ public final class UiSizeStore {
         opacity = UiOpacity.Values.DEFAULT;
         flySpeed = FlySpeed.DEFAULT;
         unknown = new JsonObject();
-        if (text.isEmpty()) {
+        if (text.isEmpty() || text.get().isBlank()) {
             percent = UiScale.DEFAULT_PERCENT;
             return percent;
         }
@@ -99,10 +97,24 @@ public final class UiSizeStore {
             return percent;
         }
         JsonObject root = object(text.get());
+        boolean keptAside = false;
+        if (root == null) {
+            keptAside = file.keepAside("not a JSON object; the editor UI starts at 100%, opaque").isPresent();
+        } else if (!(root.get("version") instanceof JsonPrimitive version) || !version.isNumber()) {
+            // Its size can't be read, and a save writes 100%: the file as it is is kept beside it.
+            Optional<Path> aside = file.copyAside("no version; the UI size starts at 100%");
+            aside.ifPresent(copy -> file.report("no version; the UI size starts at 100%, the other settings were"
+                    + " read; the file was kept as " + copy.getFileName()));
+            keptAside = aside.isPresent();
+        }
         quickStartSeen = readSeen(root);
         opacity = readOpacity(root);
         flySpeed = readFlySpeed(root);
         unknown = unknownFields(root);
+        if (keptAside) {
+            // Replaced at once with what was read, so the next start doesn't copy it aside again.
+            write();
+        }
         return percent;
     }
 
@@ -263,37 +275,17 @@ public final class UiSizeStore {
 
     /**
      * The fields of {@code root} this build doesn't write itself (none for a file that isn't a JSON object), without
-     * those nested deeper than {@link #MAX_KEPT_DEPTH}. The parsed tree is this store's own, so nothing is copied.
+     * those nested deeper than {@link KeptJson#MAX_DEPTH}. The parsed tree is this store's own, so nothing is copied.
      */
     private static JsonObject unknownFields(JsonObject root) {
         JsonObject fields = new JsonObject();
         if (root != null) {
             for (Map.Entry<String, JsonElement> field : root.entrySet()) {
-                if (!KNOWN.contains(field.getKey()) && !deeperThan(field.getValue(), MAX_KEPT_DEPTH)) {
+                if (!KNOWN.contains(field.getKey()) && !KeptJson.deeperThan(field.getValue(), KeptJson.MAX_DEPTH)) {
                     fields.add(field.getKey(), field.getValue());
                 }
             }
         }
         return fields;
-    }
-
-    /** Whether {@code element} nests arrays or objects more than {@code limit} levels deep, looked at level by level. */
-    static boolean deeperThan(JsonElement element, int limit) {
-        List<JsonElement> level = List.of(element);
-        for (int depth = 0; !level.isEmpty(); depth++) {
-            if (depth > limit) {
-                return true;
-            }
-            List<JsonElement> next = new ArrayList<>();
-            for (JsonElement node : level) {
-                if (node.isJsonArray()) {
-                    node.getAsJsonArray().forEach(next::add);
-                } else if (node.isJsonObject()) {
-                    node.getAsJsonObject().entrySet().forEach(entry -> next.add(entry.getValue()));
-                }
-            }
-            level = next;
-        }
-        return false;
     }
 }

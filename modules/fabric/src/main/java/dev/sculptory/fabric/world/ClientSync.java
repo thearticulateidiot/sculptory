@@ -208,6 +208,8 @@ public final class ClientSync implements ClientUpdates {
      */
     @Override
     public void flush(long tick, boolean force) {
+        // Light checks still batched go to the light engine first: the light follow-ups queued below sit behind them.
+        LightBatch.flushAll();
         if (!lastResend.isEmpty()) lastResend.values().removeIf(at -> tick - at >= RESEND_INTERVAL_TICKS);
         sendLight(tick);
         ServerChunkManager manager = world.getChunkManager();

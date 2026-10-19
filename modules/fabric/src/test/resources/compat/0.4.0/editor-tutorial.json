@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "completed": [
+    "getting_around",
+    "menus",
+    "select"
+  ],
+  "current": {
+    "lesson": "edit",
+    "step": 3
+  }
+}

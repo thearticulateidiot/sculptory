@@ -60,7 +60,7 @@ param(
     [switch]$Check,
     [string]$CheckDir = '',
     [string]$CheckSuite = '',
-    [string]$CheckOnly = '',
+    [string[]]$CheckOnly = @(),
     [switch]$Demo,
     [string]$DemoFrom = '',
     [string]$DemoDir = '',
@@ -304,7 +304,8 @@ if ($Tour) {
     $gradleArgs += "-PbsCheckRole=$role"
     $gradleArgs += "-PbsCheckSuite=$CheckSuite"
     $gradleArgs += "-PbsCheckLabel=$renderer"
-    if ($CheckOnly) { $gradleArgs += "-PbsCheckOnly=$CheckOnly" }
+    # From PowerShell, water,select arrives as a list; from cmd or quoted, as one string. Either way one comma list.
+    if ($CheckOnly) { $gradleArgs += "-PbsCheckOnly=$(($CheckOnly | ForEach-Object { $_ -split '[, ]+' } | Where-Object { $_ }) -join ',')" }
     Write-Host "Play check ($role, $renderer, $CheckSuite) into $CheckDir (the client quits by itself when done)"
 } elseif ($Demo) {
     $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim()
@@ -344,7 +345,7 @@ if ($Tour) {
     Write-Host "Demo into $DemoDir. Start recording, then press Enter in the game; close the game when it is over."
 } elseif ($Server) {
     $gradleArgs += '-PbsServer=localhost:25580'
-} elseif (Test-Path (Join-Path $root ".local\run\client\saves\$World")) {
+} elseif (Test-Path -LiteralPath (Join-Path $clientDir "saves\$World")) {
     $gradleArgs += "-PbsWorld=$World"
 } else {
     Write-Host "World '$World' not found yet. Minecraft will open at the title screen:"

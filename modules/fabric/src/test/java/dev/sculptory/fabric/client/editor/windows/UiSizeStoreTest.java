@@ -10,6 +10,7 @@ import dev.sculptory.fabric.client.editor.ConfigFile;
 import dev.sculptory.fabric.client.editor.ui.UiOpacity;
 import dev.sculptory.fabric.client.editor.ui.UiScale;
 import dev.sculptory.fabric.client.util.AtomicFileStore;
+import dev.sculptory.fabric.client.util.KeptJson;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -165,7 +166,9 @@ class UiSizeStoreTest {
         assertEquals(UiOpacity.Values.DEFAULT, loaded(path, "{\"version\": 1, \"uiSize\": 100, \"panelOpacity\": NaN}"));
         assertEquals(UiOpacity.Values.DEFAULT, loaded(path, "not json"));
         assertEquals(UiOpacity.Values.DEFAULT, loaded(path, "[60, true, 40]"));
-        assertEquals(List.of(), problems);
+        assertEquals(2, problems.size(), "the two files that aren't a JSON object were copied aside: " + problems);
+        assertTrue(Files.exists(dir.resolve("editor-ui.json.bad")) && Files.exists(dir.resolve("editor-ui.json.bad-2")));
+        problems.clear();
 
         // The next save replaces what couldn't be used.
         Files.writeString(path, "{\"version\": 1, \"uiSize\": 90, \"panelOpacity\": \"half\", \"toolOutlineOpacity\": 3}",
@@ -267,7 +270,7 @@ class UiSizeStoreTest {
     }
 
     @Test
-    void aFileThatIsntJsonIsReplacedByAVersionOneFile(@TempDir Path dir) throws Exception {
+    void aFileThatIsntJsonIsCopiedAsideThenReplacedByAVersionOneFile(@TempDir Path dir) throws Exception {
         Path path = dir.resolve("editor-ui.json");
         Files.writeString(path, "not json {", StandardCharsets.UTF_8);
         UiSizeStore store = store(path);
@@ -277,7 +280,54 @@ class UiSizeStoreTest {
         String written = read(path);
         assertEquals(100, UiScale.fromJson(written), "a valid version-1 file");
         assertEquals(CHANGED, loaded(path, written));
-        assertEquals(List.of(), problems);
+        assertEquals("not json {", read(dir.resolve("editor-ui.json.bad")), "copied aside first, as it was");
+        assertEquals(1, problems.size(), problems.toString());
+        assertTrue(problems.get(0).contains("editor-ui.json.bad"), problems.get(0));
+    }
+
+    /** Replaced at once, a broken file isn't copied aside again at the next start (nor at every one after). */
+    @Test
+    void aBrokenFileIsCopiedAsideOnceNotAtEveryStart(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("editor-ui.json");
+        Files.writeString(path, "[1, 2]", StandardCharsets.UTF_8);
+        assertEquals(100, store(path).load());
+        assertEquals(100, UiScale.fromJson(read(path)), "replaced at once by a version-1 file");
+        for (int start = 0; start < 3; start++) {
+            store(path).load();
+        }
+        assertEquals(1, problems.size(), problems.toString());
+        assertFalse(Files.exists(dir.resolve("editor-ui.json.bad-2")));
+    }
+
+    /**
+     * An object without a version: its size can't be read, but its flag, opacity, fly speed and other fields are; the
+     * file as it was is copied aside, and it is written again at once as version 1 with what was read.
+     */
+    @Test
+    void anObjectWithoutAVersionKeepsWhatCanBeReadAndIsCopiedAsideFirst(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("editor-ui.json");
+        String unversioned = "{\"uiSize\": 80, \"quickStartSeen\": true, \"panelOpacity\": 60, \"fadeWhenNotHovered\":"
+                + " true, \"toolOutlineOpacity\": 40, \"flySpeed\": 3, \"theme\": \"dark\"}";
+        Files.writeString(path, unversioned, StandardCharsets.UTF_8);
+        UiSizeStore store = store(path);
+        assertEquals(100, store.load(), "no version: the size is the default");
+        assertTrue(store.quickStartSeen());
+        assertEquals(CHANGED, store.opacity());
+        assertEquals(3.0, store.flySpeed());
+        assertEquals(unversioned, read(dir.resolve("editor-ui.json.bad")), "kept as it was");
+        assertEquals(1, problems.size(), problems.toString());
+        assertTrue(problems.get(0).contains("no version") && problems.get(0).contains("editor-ui.json.bad"),
+                problems.get(0));
+
+        JsonObject written = JsonParser.parseString(read(path)).getAsJsonObject();
+        assertEquals(1, written.get("version").getAsInt());
+        assertEquals(100, written.get("uiSize").getAsInt());
+        assertEquals("dark", written.get("theme").getAsString(), "a field this version doesn't know is kept");
+        UiSizeStore again = store(path);
+        assertEquals(100, again.load());
+        assertEquals(CHANGED, again.opacity());
+        assertEquals(3.0, again.flySpeed());
+        assertEquals(1, problems.size(), "nothing to copy aside the second time");
     }
 
     @Test
@@ -345,9 +395,9 @@ class UiSizeStoreTest {
         assertEquals(List.of("version", "uiSize", "panelOpacity", "toolOutlineOpacity", "shallow"),
                 List.copyOf(kept.keySet()));
 
-        assertTrue(UiSizeStore.deeperThan(JsonParser.parseString(hundred), UiSizeStore.MAX_KEPT_DEPTH));
-        assertFalse(UiSizeStore.deeperThan(JsonParser.parseString("{\"a\": [[{\"b\": [1, [2]]}]]}"),
-                UiSizeStore.MAX_KEPT_DEPTH));
+        assertTrue(KeptJson.deeperThan(JsonParser.parseString(hundred), KeptJson.MAX_DEPTH));
+        assertFalse(KeptJson.deeperThan(JsonParser.parseString("{\"a\": [[{\"b\": [1, [2]]}]]}"),
+                KeptJson.MAX_DEPTH));
     }
 
     @Test

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "tools": {
+    "raise": {
+      "sculptory.setting.brush.mask": true,
+      "sculptory.setting.brush.symmetry_section": false
+    },
+    "select": {
+      "sculptory.setting.select.copy_section": false
+    }
+  }
+}

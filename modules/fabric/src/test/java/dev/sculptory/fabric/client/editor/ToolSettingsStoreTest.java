@@ -321,6 +321,40 @@ class ToolSettingsStoreTest {
         assertEquals("whatever", saved.tools().get("later_tool").extra().get("mix"));
     }
 
+    /** Fields this version doesn't know, at the top and in a tool's entry, are written back exactly at every save. */
+    @Test
+    void fieldsThisVersionDoesntKnowAreWrittenBackExactly() throws IOException {
+        write("""
+                {"version": 1, "profile": {"name": "terrain", "order": [3, 1]}, "tools": {
+                  "raise": {"values": {"radius": "12"}, "pinned": true, "history": [{"radius": "8"}]},
+                  "later_tool": {"values": {}, "colour": "#ff8800"}
+                }, "written": "0.9.0"}""");
+        Game game = new Game();
+        game.open();
+        BrushSettings raise = game.brush(ToolId.RAISE);
+        game.set(ToolId.RAISE, game.settings(ToolId.RAISE).with(raise.radius, 20));
+        assertTrue(game.store.saveNow());
+        com.google.gson.JsonObject saved = com.google.gson.JsonParser.parseString(onDisk()).getAsJsonObject();
+        assertEquals(com.google.gson.JsonParser.parseString("{\"name\": \"terrain\", \"order\": [3, 1]}"),
+                saved.get("profile"));
+        assertEquals("0.9.0", saved.get("written").getAsString());
+        com.google.gson.JsonObject raiseEntry = saved.getAsJsonObject("tools").getAsJsonObject("raise");
+        assertEquals("20", raiseEntry.getAsJsonObject("values").get("radius").getAsString(), "the player's change");
+        assertTrue(raiseEntry.get("pinned").getAsBoolean());
+        assertEquals(com.google.gson.JsonParser.parseString("[{\"radius\": \"8\"}]"), raiseEntry.get("history"));
+        assertEquals("#ff8800", saved.getAsJsonObject("tools").getAsJsonObject("later_tool").get("colour").getAsString());
+
+        Game second = new Game();
+        second.open();
+        assertEquals(20, second.settings(ToolId.RAISE).get(second.brush(ToolId.RAISE).radius));
+        second.set(ToolId.RAISE, second.settings(ToolId.RAISE).with(second.brush(ToolId.RAISE).radius, 21));
+        assertTrue(second.store.saveNow());
+        com.google.gson.JsonObject again = com.google.gson.JsonParser.parseString(onDisk()).getAsJsonObject();
+        again.getAsJsonObject("tools").getAsJsonObject("raise").getAsJsonObject("values").addProperty("radius", "20");
+        assertEquals(saved, again, "a second build's save keeps them too");
+        assertEquals(List.of(), fileProblems);
+    }
+
     @Test
     void valuesOutOfRangeAreClampedThroughTheSchemaAndTheServersLimits() throws IOException {
         write("""

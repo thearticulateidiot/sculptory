@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "uiSize": 80,
+  "quickStartSeen": true,
+  "panelOpacity": 55,
+  "fadeWhenNotHovered": true,
+  "toolOutlineOpacity": 35,
+  "flySpeed": 2.5
+}

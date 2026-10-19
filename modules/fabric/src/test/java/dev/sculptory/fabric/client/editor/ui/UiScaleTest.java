@@ -168,9 +168,13 @@ class UiScaleTest {
         edited.saveNow();
         assertEquals(90, UiScale.fromJson(read(path)));
 
+        assertEquals(List.of(), problems, "an unusable size is just the default");
+
         Files.writeString(path, "not json", StandardCharsets.UTF_8);
         assertEquals(100, store(path, problems).load());
-        assertEquals(List.of(), problems, "a broken file is quietly replaced later");
+        assertEquals(1, problems.size(), "a broken file is copied aside first, and said so: " + problems);
+        assertEquals("not json", read(dir.resolve("editor-ui.json.bad")));
+        assertEquals(100, UiScale.fromJson(read(path)), "and replaced at once by a version-1 file");
     }
 
     @Test

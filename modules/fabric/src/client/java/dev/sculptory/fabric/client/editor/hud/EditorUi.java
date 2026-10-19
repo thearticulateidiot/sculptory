@@ -169,6 +169,10 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
     private static final Object TOAST_PANEL = new Object();
     /** The gap under the palette and between the palette and the hint line. */
     private static final int HUD_GAP = 3;
+    /** The layer the windows start on, over the HUD. */
+    private static final int WINDOWS_LAYER = 200;
+    /** The lowest layer of what goes over the windows (higher when many windows are open). */
+    private static final int OVER_WINDOWS_LAYER = 3000;
     /**
      * The top bar's "Aim at water and lava" button shows this item: a lily pad sits on the water's surface, where the
      * tools then aim (the Fluid tool has the water bucket).
@@ -344,24 +348,14 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         paletteNode = new Panel(slots, Insets.all(2), theme.paletteBackground, 0);
         hud.add(paletteNode, (size, w, h) -> new Rect((w - size.width()) / 2, h - size.height() - HUD_GAP,
                 size.width(), size.height()), this::showsEditorHud, () -> hudAlpha);
-        Panel hint = new Panel(hintLine, new Insets(6, 2, 6, 2), theme.hintBackground, 0);
-        hud.add(hint, (size, w, h) -> {
-            // Measured for the room it gets, 4 in from each edge: as wide as the whole hints it shows there.
-            int widthLimit = Math.min(hint.measure(hud.context(), w - 8).width(), w - 8);
-            int top = paletteNode.bounds().y() - size.height() - HUD_GAP;
-            return new Rect((w - widthLimit) / 2, top, widthLimit, size.height());
-        }, () -> showsEditorHud() && !hintLine.isEmpty(), () -> hudAlpha);
 
-        // Job bars
-        jobs = new JobBars(tr, this::cancelJob);
+        // Job bars, at the bottom right (above the palette when it reaches that far), as many as fit under the windows
+        // there (jobRows); faded with the top bar, palette and hint line (over gameplay: at the Panels opacity).
+        jobs = new JobBars(tr, this::cancelJob, () -> hud.context().now());
         hud.add(jobs.node(), (size, w, h) -> {
             int x = w - size.width() - 4;
-            int y = h - size.height() - 4;
-            if (showsEditorHud() && x < paletteNode.bounds().right() + 4) {
-                y = paletteNode.bounds().y() - size.height() - 4;
-            }
-            return new Rect(x, y, size.width(), size.height());
-        }, () -> !jobs.isEmpty());
+            return new Rect(x, jobColumnBottom(x, h) - size.height(), size.width(), size.height());
+        }, () -> !jobs.isEmpty(), this::sideColumnAlpha);
 
         // Transfers (previews, exports, uploads), above the job bars
         hudTransfers = new TransferBars(tr);
@@ -370,12 +364,28 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         hudTransfersPanel = new Panel(transferColumn, Insets.all(2), 0xC0101216, 0);
         hud.add(hudTransfersPanel, (size, w, h) -> {
             int x = w - size.width() - 4;
-            int bottom = jobs.isEmpty() ? h - 4 : jobs.node().bounds().y() - 2;
-            if (jobs.isEmpty() && showsEditorHud() && x < paletteNode.bounds().right() + 4) {
-                bottom = paletteNode.bounds().y() - 4;
-            }
+            int bottom = jobs.isEmpty() ? jobColumnBottom(x, h) : jobs.node().bounds().y() - JobBars.GAP;
             return new Rect(x, bottom - size.height(), size.width(), size.height());
-        }, () -> !hudTransfers.isEmpty());
+        }, () -> !hudTransfers.isEmpty(), this::sideColumnAlpha);
+
+        // The hint line, laid out after the bars so it can keep clear of them: centred over the palette, or left of the
+        // bars where they reach its height, measured for the room it gets there (4 in from each edge): as wide as the
+        // whole hints it shows ({@link HintLine} drops whole hints rather than cut one).
+        Panel hint = new Panel(hintLine, new Insets(6, 2, 6, 2), theme.hintBackground, 0);
+        hud.add(hint, (size, w, h) -> {
+            int top = paletteNode.bounds().y() - size.height() - HUD_GAP;
+            int right = w - 4;
+            for (Node side : List.of(jobs.node(), hudTransfersPanel)) {
+                Rect at = side.bounds();
+                if (side.isVisible() && !at.isEmpty() && at.y() < top + size.height() && at.bottom() > top) {
+                    right = Math.min(right, at.x() - 4);
+                }
+            }
+            int room = Math.max(0, right - 4);
+            int widthLimit = Math.min(hint.measure(hud.context(), room).width(), room);
+            int x = Math.max(4, Math.min((w - widthLimit) / 2, right - widthLimit));
+            return new Rect(x, top, widthLimit, size.height());
+        }, () -> showsEditorHud() && !hintLine.isEmpty(), () -> hudAlpha);
 
         // Undo anyway, above the toasts
         historyOffer = new HistoryOfferToast(tr, ctx::session);
@@ -713,6 +723,11 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         return hintLine;
     }
 
+    /** The job bars at the bottom right. */
+    public JobBars jobBars() {
+        return jobs;
+    }
+
     /** Palette slot {@code slot}'s button (1-based), if the palette has it. */
     public Optional<PaletteButton> paletteButton(int slot) {
         return palette.stream().filter(button -> button.slot() == slot).findFirst();
@@ -742,6 +757,49 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
     /** The top bar, palette and hint line show only in the editor itself, not over chat or gameplay. */
     private boolean showsEditorHud() {
         return editing && !passiveFrame;
+    }
+
+    /**
+     * The bottom of the job column whose left edge is {@code x}: 4 above the screen's bottom, or above the palette where
+     * the column would reach over it (in the editor).
+     */
+    private int jobColumnBottom(int x, int screenHeight) {
+        if (showsEditorHud() && x < paletteNode.bounds().right() + 4) {
+            return paletteNode.bounds().y() - 4;
+        }
+        return screenHeight - 4;
+    }
+
+    /**
+     * How many job bars fit at the bottom right in the editor: from the column's bottom up to the lowest open window
+     * over the column (Tool Settings, docked there) or the top bar, less the transfers shown above the bars; so no bar
+     * is ever drawn under a window. Over gameplay {@link JobBars#MAX_ROWS}.
+     */
+    private int jobRows() {
+        if (!showsEditorHud()) {
+            return JobBars.MAX_ROWS;
+        }
+        int right = width - 4;
+        int left = right - JobBars.WIDTH;
+        int top = topBarBottom() + 4;
+        if (!windows.isAllHidden()) {
+            for (Window window : windows.windows()) {
+                Rect rect = window.rect();
+                if (window.isOpen() && rect.x() < right && rect.right() > left) {
+                    top = Math.max(top, rect.bottom() + 4);
+                }
+            }
+        }
+        int room = jobColumnBottom(left, height) - top;
+        if (!hudTransfers.isEmpty()) {
+            room -= hudTransfersPanel.measure(hud.context(), width).height() + JobBars.GAP;
+        }
+        return JobBars.rowsFitting(room, theme);
+    }
+
+    /** The job bars' and transfers' opacity: the top bar's in the editor, the Panels opacity over gameplay. */
+    private double sideColumnAlpha() {
+        return passiveFrame ? panelFade.opacity().values().panelAlpha() : hudAlpha;
     }
 
     // ---- Layout and drawing ----
@@ -929,24 +987,32 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         List<Rect> hudCovers = new ArrayList<>(windows.fadedRects());
         hudCovers.addAll(toastCovers);
         hud.render(g, nowMs, hudCovers);
-        g.pushLayer(200);
-        windows.draw(g, toastCovers);
+        g.pushLayer(WINDOWS_LAYER);
+        int windowsTop = WINDOWS_LAYER + windows.draw(g, toastCovers);
         g.popLayer();
-        g.pushLayer(3000);
+        // Everything over the windows starts above the topmost of them, however many are open: the toasts and the
+        // Undo anyway offer, then the popups (menus, dropdowns, pickers), the tutorial's highlight, the key sheet, and
+        // last the tooltips, over all of it. Each layer leaves room for the item icons drawn in it.
+        int over = Math.max(OVER_WINDOWS_LAYER, windowsTop);
+        g.pushLayer(over);
         offerLayer.render(g, nowMs);
         toasts.draw(FadedGraphics.of(g, theme, toastAlpha), text, theme);
         g.popLayer();
+        g.pushLayer(over + theme.layerStep);
+        windows.drawPopups(g);
+        g.popLayer();
         // Tutorial: the step's highlight, above the windows, menus and the lesson card, under the key sheet.
-        g.pushLayer(3100);
+        g.pushLayer(over + 2 * theme.layerStep);
         tutorial.renderHighlight(g, nowMs);
         g.popLayer();
         if (keySheet.isOpen()) {
-            g.pushLayer(3200);
+            g.pushLayer(over + 3 * theme.layerStep);
             keySheet.layout(width, height, topBarBottom());
             keySheet.render(g, nowMs);
             g.popLayer();
         }
-        g.pushLayer(3400);
+        g.pushLayer(over + 4 * theme.layerStep);
+        windows.drawTooltip(g);
         hud.renderTooltip(g, mouseX, mouseY);
         offerLayer.renderTooltip(g, mouseX, mouseY);
         keySheet.renderTooltip(g, mouseX, mouseY);
@@ -957,6 +1023,7 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
     public void renderPassive(UiGraphics g, int screenWidth, int screenHeight, long nowMs) {
         setScreen(screenWidth, screenHeight);
         List<JobTracker.Job> list = ctx.session().map(session -> session.jobs().jobs()).orElse(List.of());
+        jobs.setMaxRows(JobBars.MAX_ROWS);
         jobs.update(list, false);
         scale.draw(g, () -> {
             passiveFrame = true;
@@ -973,9 +1040,9 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
     }
 
     /**
-     * Whether the top bar, palette and hint line count as in use for "Fade only when not hovered": the pointer is over
-     * one of them (not over a popup or a window dragged over them), one of their controls has the keyboard or the
-     * pointer, or a menu of the menu bar is open.
+     * Whether the top bar, palette and hint line (and the job bars) count as in use for "Fade only when not hovered":
+     * the pointer is over one of them (not over a popup or a window dragged over them), one of their controls has the
+     * keyboard or the pointer, or a menu of the menu bar is open.
      */
     private boolean isHudEngaged(double x, double y) {
         if (menuBar.isMenuOpen() || hud.context().captured() != null || hud.context().focused() != null) {
@@ -984,7 +1051,7 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         if (windows.context().popups().popupAt(x, y) != null || windows.hitTest(x, y).window() != null) {
             return false;
         }
-        for (Node panel : List.of(topBarNode, paletteNode, hintNode)) {
+        for (Node panel : List.of(topBarNode, paletteNode, hintNode, jobs.node(), hudTransfersPanel)) {
             if (panel.isVisible() && panel.bounds().contains(x, y)) {
                 return true;
             }
@@ -1032,7 +1099,8 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
         refreshStatus(session);
         refreshPalette();
         hintLine.set(ctx.tools().active().map(tool -> tr.translate(tool.descriptor().nameKey())).orElse(""),
-                HintLine.format(controller.hints(), tr));
+                controller.hints(), tr);
+        jobs.setMaxRows(jobRows());
         jobs.update(session.map(s -> s.jobs().jobs()).orElse(List.of()), true);
         historyOffer.refresh();
         if (windows.isOpen(EditorWindows.TOOL_SETTINGS)) {

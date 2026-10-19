@@ -22,6 +22,7 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
+import dev.sculptory.fabric.world.LightBatch;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.SculptoryConfig;
@@ -60,7 +61,8 @@ public final class HeightmapWideGameTest implements FabricGameTest {
      * dab's working out spans several ticks and the whole dab many more, with at most
      * {@link ShapeBrushLaneGameTest#LONG_TICKS_ALLOWED} ticks past {@link ShapeBrushLaneGameTest#TICK_MICROS} and none
      * past {@link ShapeBrushLaneGameTest#STALL_MICROS} (garbage collection pauses left out); the centre rises and is cut
-     * by 128; each stroke is one entry, and undoing both restores the area exactly. Logged: ticks and the longest tick.
+     * by 128; each stroke is one entry, and undoing both restores the area exactly; the light engine gets the writes'
+     * light checks per chunk column and part, not a task per cell. Logged: ticks and the longest tick.
      */
     @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_wide", tickLimit = LIMIT)
     public void aRadius128DabSpreadsOverTicksAndUndoesExactly(TestContext context) {
@@ -88,6 +90,7 @@ public final class HeightmapWideGameTest implements FabricGameTest {
             int cx = x0 + SIDE / 2, cz = z0 + SIDE / 2;
             int top = surface(world, cx, cz);
             StringBuilder report = new StringBuilder();
+            long batchedBefore = LightBatch.batchedCells();
             int strokeId = 1;
             for (boolean lower : new boolean[] {false, true}) {
                 BrushSpec spec = heightmap(128, cone(128), 128, lower, SurfaceMask.ANY, null, Symmetry.NONE);
@@ -128,6 +131,12 @@ public final class HeightmapWideGameTest implements FabricGameTest {
                 check(now == (lower ? top : top + 128), (lower ? "cut" : "raised") + " centre at " + now
                         + ", was " + top);
             }
+            // The light checks of the cells written so far went to the light engine a batch at a time (LightBatch): a
+            // vanilla light task per cell, about 100 bytes each, held 1.4 GB here.
+            long batched = LightBatch.batchedCells() - batchedBefore;
+            check(batched > 2_000_000, "light checks batched by the two dabs: " + batched);
+            long lightTasks = LightBatchGameTest.lightTaskObjects();
+            check(lightTasks < 50_000, "vanilla light tasks queued: " + lightTasks);
             LoggerFactory.getLogger("sculptory").info("Heightmap radius-128 dabs on a dedicated server's lane:{}", report);
             check(h.service.historyService().undoEntries(h.player.getUuid()).size() == entries + 2, "one entry a stroke");
             for (int i = 0; i < 2; i++) {

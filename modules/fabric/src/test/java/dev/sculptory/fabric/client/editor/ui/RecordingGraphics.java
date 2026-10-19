@@ -241,6 +241,11 @@ public final class RecordingGraphics implements UiGraphics {
         return paints.stream().filter(paint -> text.equals(paint.text())).map(Paint::rect).findFirst().orElse(null);
     }
 
+    /** The layer (the sum of the pushed z values) the first text equal to {@code text} was drawn on, or -1. */
+    public int layerOf(String text) {
+        return paints.stream().filter(paint -> text.equals(paint.text())).mapToInt(Paint::z).findFirst().orElse(-1);
+    }
+
     /** The texts drawn with their top left at this point, in drawing order. */
     public List<String> textsAt(int x, int y) {
         return paints.stream().filter(paint -> paint.text() != null && paint.rect().x() == x && paint.rect().y() == y)

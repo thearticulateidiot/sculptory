@@ -17,3 +17,6 @@ gradlew text eol=lf
 *.jar binary
 *.schem binary
 *.nbt binary
+*.bshist binary
+# Saved-file samples are frozen: stored and checked out byte for byte.
+modules/*/src/*/resources/compat/** -text

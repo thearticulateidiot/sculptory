@@ -4,16 +4,21 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import dev.sculptory.fabric.client.editor.ui.window.LayoutState.WindowState;
+import dev.sculptory.fabric.client.util.KeptJson;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.function.Predicate;
 import java.util.function.UnaryOperator;
 
@@ -41,22 +46,93 @@ import java.util.function.UnaryOperator;
  * size ({@link WindowPlacement}: the corner a window is anchored to, {@code x}/{@code y} in from it, its expanded
  * size, in UI units; {@code overReserved}, optional, that it was left over the screen edges kept for the HUD). A
  * window not listed for a size opens at its default place there, and a size not listed shows the default layout.
- * What this version doesn't use is kept as it is: a size it doesn't offer, a window it doesn't have. Fields it doesn't
- * know are dropped when it saves, so a later format that adds any must have a new version.
+ *
+ * <p>What this version doesn't use is kept as it is and written back ({@link Kept}), so a player who tries another
+ * build and comes back loses nothing: a size it doesn't offer, a window it doesn't have, fields it doesn't know (at the
+ * top, in a window's entry, in a placement), and entries it can't read (a window or placement entry that isn't one, the
+ * second of two with the same id, a size whose value isn't a list). A window's and a placement's unknown fields stay
+ * with that window's entry while it has one; a size whose arrangement is reset ({@link #without}) loses its own.
  *
  * <p>A version-1 file ({@link LayoutState#fromJson(String, Predicate)}: one layout for every size) is read as the
- * arrangement of the UI size it was used at ({@link #fromJson}). Entries that can't be read are skipped, the first of
- * two with the same id wins, and a size whose value isn't a list is dropped. Immutable.
+ * arrangement of the UI size it was used at ({@link #fromJson}). Immutable.
  */
-public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPlacement>> uiSizes) {
+public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPlacement>> uiSizes, Kept kept) {
     public static final int VERSION = 2;
     /** No saved layout: the default layout at every size, the windows open as they are by default. */
     public static final SizedLayouts EMPTY = new SizedLayouts(List.of(), Map.of());
+
+    private static final Set<String> ROOT_FIELDS = Set.of("version", "windows", "uiSizes");
+    private static final Set<String> SHOWN_FIELDS = Set.of("id", "open", "collapsed");
+    private static final Set<String> PLACEMENT_FIELDS = Set.of("id", "anchor", "x", "y", "width", "height",
+            "overReserved");
 
     /** Whether a window is open, and collapsed, at every UI size. */
     public record Shown(String id, boolean open, boolean collapsed) {
         public Shown {
             Objects.requireNonNull(id);
+        }
+    }
+
+    /**
+     * What a layout file held that this version doesn't use, as JSON text, written back as it was.
+     *
+     * @param root                 the fields other than {@code version}, {@code windows} and {@code uiSizes}
+     * @param windowFields         per window id, its entry's fields other than {@code id}, {@code open}, {@code collapsed}
+     * @param unreadableWindows    the window entries that couldn't be read, in order
+     * @param placementFields      per UI size key and window id, the placement's unknown fields
+     * @param unreadablePlacements per UI size key, the placement entries that couldn't be read, in order
+     * @param unreadableSizes      per UI size key, a value that isn't a list
+     */
+    public record Kept(SortedMap<String, String> root, Map<String, SortedMap<String, String>> windowFields,
+                       List<String> unreadableWindows, Map<String, Map<String, SortedMap<String, String>>> placementFields,
+                       Map<String, List<String>> unreadablePlacements, Map<String, String> unreadableSizes) {
+        public static final Kept NONE = new Kept(new TreeMap<>(), Map.of(), List.of(), Map.of(), Map.of(), Map.of());
+
+        public Kept {
+            root = Collections.unmodifiableSortedMap(new TreeMap<>(root));
+            windowFields = fieldsCopy(windowFields);
+            unreadableWindows = List.copyOf(unreadableWindows);
+            Map<String, Map<String, SortedMap<String, String>>> placements = new LinkedHashMap<>();
+            placementFields.forEach((size, fields) -> {
+                Map<String, SortedMap<String, String>> copy = fieldsCopy(fields);
+                if (!copy.isEmpty()) placements.put(size, copy);
+            });
+            placementFields = Collections.unmodifiableMap(placements);
+            Map<String, List<String>> unreadable = new LinkedHashMap<>();
+            unreadablePlacements.forEach((size, entries) -> {
+                if (!entries.isEmpty()) unreadable.put(size, List.copyOf(entries));
+            });
+            unreadablePlacements = Collections.unmodifiableMap(unreadable);
+            unreadableSizes = Collections.unmodifiableMap(new LinkedHashMap<>(unreadableSizes));
+        }
+
+        private static Map<String, SortedMap<String, String>> fieldsCopy(Map<String, SortedMap<String, String>> fields) {
+            Map<String, SortedMap<String, String>> copy = new LinkedHashMap<>();
+            fields.forEach((id, values) -> {
+                if (!values.isEmpty()) copy.put(id, Collections.unmodifiableSortedMap(new TreeMap<>(values)));
+            });
+            return Collections.unmodifiableMap(copy);
+        }
+
+        /** This, with UI size {@code key}'s placement fields only for the windows in {@code placed}. */
+        Kept placedAt(String key, Set<String> placed) {
+            Map<String, SortedMap<String, String>> fields = new LinkedHashMap<>(placementFields.getOrDefault(key,
+                    Map.of()));
+            fields.keySet().retainAll(placed);
+            Map<String, Map<String, SortedMap<String, String>>> placements = new LinkedHashMap<>(placementFields);
+            placements.put(key, fields);
+            return new Kept(root, windowFields, unreadableWindows, placements, unreadablePlacements, unreadableSizes);
+        }
+
+        /** This without anything kept of UI size {@code key}. */
+        Kept without(String key) {
+            Map<String, Map<String, SortedMap<String, String>>> placements = new LinkedHashMap<>(placementFields);
+            placements.remove(key);
+            Map<String, List<String>> unreadable = new LinkedHashMap<>(unreadablePlacements);
+            unreadable.remove(key);
+            Map<String, String> sizes = new LinkedHashMap<>(unreadableSizes);
+            sizes.remove(key);
+            return new Kept(root, windowFields, unreadableWindows, placements, unreadable, sizes);
         }
     }
 
@@ -70,6 +146,12 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
             sizes.put(Objects.requireNonNull(size.getKey()), Collections.unmodifiableMap(arrangement));
         }
         uiSizes = Collections.unmodifiableMap(sizes);
+        Objects.requireNonNull(kept);
+    }
+
+    /** Layouts with nothing kept from a file. */
+    public SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPlacement>> uiSizes) {
+        this(windows, uiSizes, Kept.NONE);
     }
 
     /** The key of UI size {@code percent} in {@link #uiSizes}: {@code "50"}. */
@@ -100,7 +182,8 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
      * These layouts with {@code live} (a window manager's layout at UI size {@code percent}) as that size's
      * arrangement, and as the windows' open and collapsed flags and order. A window {@code live} doesn't have keeps
      * what these layouts say of it: its flags (after those of {@code live}) and its place at every size. Other sizes'
-     * arrangements are unchanged. A size left with no placed window is dropped: it shows the default layout.
+     * arrangements are unchanged. A size left with no placed window is dropped: it shows the default layout. What was
+     * kept from the file stays, but a placement's unknown fields only while its window is still placed at that size.
      */
     public SizedLayouts capture(int percent, LayoutState live) {
         Set<String> known = new HashSet<>();
@@ -128,14 +211,14 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
         } else {
             sizes.put(key(percent), arrangement);
         }
-        return new SizedLayouts(shown, sizes);
+        return new SizedLayouts(shown, sizes, kept.placedAt(key(percent), arrangement.keySet()));
     }
 
     /** These layouts without UI size {@code percent}'s arrangement: that size shows the default layout. */
     public SizedLayouts without(int percent) {
         Map<String, Map<String, WindowPlacement>> sizes = new LinkedHashMap<>(uiSizes);
         sizes.remove(key(percent));
-        return new SizedLayouts(windows, sizes);
+        return new SizedLayouts(windows, sizes, kept.without(key(percent)));
     }
 
     /** These layouts with window {@code id}'s place at every UI size but {@code percent} changed by {@code change}. */
@@ -150,7 +233,7 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
                 sizes.put(size, changed);
             }
         });
-        return new SizedLayouts(windows, sizes);
+        return new SizedLayouts(windows, sizes, kept);
     }
 
     /** A single layout ({@link LayoutState}, as a version-1 file holds) as the arrangement of UI size {@code percent}. */
@@ -160,7 +243,10 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
 
     // ---- File format ----
 
-    /** The file's text: sizes in increasing order (sizes that aren't a number after them, as they were). */
+    /**
+     * The file's text: sizes in increasing order (sizes that aren't a number after them, as they were), each entry's
+     * kept fields after its own, entries that couldn't be read after the others, the kept top-level fields last.
+     */
     public String toJson() {
         JsonObject root = new JsonObject();
         root.addProperty("version", VERSION);
@@ -170,16 +256,21 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
             entry.addProperty("id", shown.id());
             entry.addProperty("open", shown.open());
             entry.addProperty("collapsed", shown.collapsed());
+            addKept(entry, kept.windowFields().getOrDefault(shown.id(), new TreeMap<>()));
             shownArray.add(entry);
         }
+        kept.unreadableWindows().forEach(json -> shownArray.add(JsonParser.parseString(json)));
         root.add("windows", shownArray);
         JsonObject sizes = new JsonObject();
-        List<String> keys = new ArrayList<>(uiSizes.keySet());
+        Set<String> sizeKeys = new LinkedHashSet<>(uiSizes.keySet());
+        sizeKeys.addAll(kept.unreadablePlacements().keySet());
+        List<String> keys = new ArrayList<>(sizeKeys);
         keys.sort(Comparator.comparing((String key) -> number(key) == null)
                 .thenComparingInt(key -> number(key) == null ? 0 : number(key)));
         for (String key : keys) {
             JsonArray arrangement = new JsonArray();
-            uiSizes.get(key).forEach((id, placement) -> {
+            Map<String, SortedMap<String, String>> fields = kept.placementFields().getOrDefault(key, Map.of());
+            uiSizes.getOrDefault(key, Map.of()).forEach((id, placement) -> {
                 JsonObject entry = new JsonObject();
                 entry.addProperty("id", id);
                 entry.addProperty("anchor", placement.anchor().name());
@@ -188,12 +279,25 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
                 entry.addProperty("width", placement.width());
                 entry.addProperty("height", placement.height());
                 entry.addProperty("overReserved", placement.overReserved());
+                addKept(entry, fields.getOrDefault(id, new TreeMap<>()));
                 arrangement.add(entry);
             });
+            kept.unreadablePlacements().getOrDefault(key, List.of())
+                    .forEach(json -> arrangement.add(JsonParser.parseString(json)));
             sizes.add(key, arrangement);
         }
+        kept.unreadableSizes().forEach((key, json) -> {
+            if (!sizes.has(key)) sizes.add(key, JsonParser.parseString(json));
+        });
         root.add("uiSizes", sizes);
-        return new GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n";
+        addKept(root, kept.root());
+        return new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root) + "\n";
+    }
+
+    private static void addKept(JsonObject object, Map<String, String> fields) {
+        fields.forEach((key, json) -> {
+            if (!object.has(key)) object.add(key, JsonParser.parseString(json));
+        });
     }
 
     private static Integer number(String key) {
@@ -233,27 +337,44 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
             throw new IllegalArgumentException("Editor layout's uiSizes is not an object");
         }
         List<Shown> windows = new ArrayList<>();
+        Map<String, SortedMap<String, String>> windowFields = new LinkedHashMap<>();
+        List<String> unreadableWindows = new ArrayList<>();
         Set<String> seen = new HashSet<>();
         for (JsonElement element : shownArray) {
             Shown shown = parseShown(element);
             if (shown != null && seen.add(shown.id())) {
                 windows.add(shown);
+                windowFields.put(shown.id(), other(element.getAsJsonObject(), SHOWN_FIELDS));
+            } else {
+                keep(unreadableWindows, element);
             }
         }
         Map<String, Map<String, WindowPlacement>> sizes = new LinkedHashMap<>();
+        Map<String, Map<String, SortedMap<String, String>>> placementFields = new LinkedHashMap<>();
+        Map<String, List<String>> unreadablePlacements = new LinkedHashMap<>();
+        Map<String, String> unreadableSizes = new LinkedHashMap<>();
         if (sizesElement != null) {
             for (Map.Entry<String, JsonElement> size : sizesElement.getAsJsonObject().entrySet()) {
                 if (!(size.getValue() instanceof JsonArray entries)) {
+                    String text = KeptJson.text(size.getValue());
+                    if (text != null) unreadableSizes.put(size.getKey(), text);
                     continue;
                 }
                 Map<String, WindowPlacement> arrangement = new LinkedHashMap<>();
+                Map<String, SortedMap<String, String>> fields = new LinkedHashMap<>();
+                List<String> unreadable = new ArrayList<>();
                 for (JsonElement element : entries) {
-                    parsePlacement(element, arrangement);
+                    if (!parsePlacement(element, arrangement, fields)) {
+                        keep(unreadable, element);
+                    }
                 }
                 sizes.put(size.getKey(), arrangement);
+                placementFields.put(size.getKey(), fields);
+                unreadablePlacements.put(size.getKey(), unreadable);
             }
         }
-        return new SizedLayouts(windows, sizes);
+        return new SizedLayouts(windows, sizes, new Kept(other(root, ROOT_FIELDS), windowFields, unreadableWindows,
+                placementFields, unreadablePlacements, unreadableSizes));
     }
 
     private static Shown parseShown(JsonElement element) {
@@ -266,10 +387,14 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
         return id == null || id.isEmpty() || open == null || collapsed == null ? null : new Shown(id, open, collapsed);
     }
 
-    /** Adds the entry's placement to {@code arrangement}, unless it can't be read or its window is there already. */
-    private static void parsePlacement(JsonElement element, Map<String, WindowPlacement> arrangement) {
+    /**
+     * Adds the entry's placement to {@code arrangement} and its unknown fields to {@code fields}; false when it can't be
+     * read or its window is there already.
+     */
+    private static boolean parsePlacement(JsonElement element, Map<String, WindowPlacement> arrangement,
+            Map<String, SortedMap<String, String>> fields) {
         if (!(element instanceof JsonObject entry)) {
-            return;
+            return false;
         }
         String id = LayoutState.stringValue(entry.get("id"));
         Corner anchor = LayoutState.corner(entry.get("anchor"));
@@ -278,9 +403,27 @@ public record SizedLayouts(List<Shown> windows, Map<String, Map<String, WindowPl
         Integer width = LayoutState.intValue(entry.get("width"));
         Integer height = LayoutState.intValue(entry.get("height"));
         Boolean overReserved = LayoutState.optionalBoolean(entry, "overReserved", false);
-        if (id == null || id.isEmpty() || overReserved == null || !LayoutState.validPlace(anchor, x, y, width, height)) {
-            return;
+        if (id == null || id.isEmpty() || overReserved == null || !LayoutState.validPlace(anchor, x, y, width, height)
+                || arrangement.containsKey(id)) {
+            return false;
         }
-        arrangement.putIfAbsent(id, new WindowPlacement(anchor, x, y, width, height, overReserved));
+        arrangement.put(id, new WindowPlacement(anchor, x, y, width, height, overReserved));
+        fields.put(id, other(entry, PLACEMENT_FIELDS));
+        return true;
+    }
+
+    /** The object's fields other than {@code known}, as JSON text (those nested too deep to write back left out). */
+    private static SortedMap<String, String> other(JsonObject object, Set<String> known) {
+        SortedMap<String, String> other = new TreeMap<>();
+        KeptJson.eachField(object.entrySet(), (key, json) -> {
+            if (!known.contains(key)) other.put(key, json);
+        });
+        return other;
+    }
+
+    /** Adds {@code element} as JSON text to {@code into}, unless it nests too deep to write back. */
+    private static void keep(List<String> into, JsonElement element) {
+        String text = KeptJson.text(element);
+        if (text != null) into.add(text);
     }
 }

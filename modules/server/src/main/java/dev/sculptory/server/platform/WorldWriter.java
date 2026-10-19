@@ -37,7 +37,8 @@ public interface WorldWriter {
 
     /**
      * Removes scheduled block and fluid ticks at exactly the cells written with physics off since the last call.
-     * Ticks at cells this writer skipped are kept.
+     * Ticks at cells this writer skipped are kept. The platform may also hand the light engine the light checks of those
+     * cells here, if it collects them rather than passing each on as it is written.
      */
     void clearTicksAtWrittenCells();
 

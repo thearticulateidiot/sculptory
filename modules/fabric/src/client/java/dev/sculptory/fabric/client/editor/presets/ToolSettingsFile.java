@@ -7,9 +7,11 @@ import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 import dev.sculptory.fabric.client.editor.tool.ToolId;
+import dev.sculptory.fabric.client.util.KeptJson;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 
@@ -38,24 +40,40 @@ import java.util.TreeMap;
  * ({@link OtherVersionException}). Inside a version-1 file an entry that can't be read (a tool id that isn't one, a
  * tool that isn't an object, a value or extra that isn't text) is skipped and counted. Tools this build doesn't have
  * and settings a tool doesn't have are read like the others; {@link ToolSettingsStore} leaves them unused and writes
- * them back unchanged. Fields this version doesn't know are dropped when it saves, so a later format that adds any
- * must have a new version.
+ * them back unchanged. Fields this version doesn't know (at the top and in a tool's entry) are kept as they are
+ * ({@code other}) and written back after the known ones, so a newer build of version 1 can add some.
  *
  * @param tools   by tool id
  * @param skipped how many entries couldn't be read
+ * @param other   the fields other than {@code version} and {@code tools}, as JSON text
  */
-public record ToolSettingsFile(SortedMap<String, Entry> tools, int skipped) {
+public record ToolSettingsFile(SortedMap<String, Entry> tools, int skipped, SortedMap<String, String> other) {
     public static final int VERSION = 1;
     public static final ToolSettingsFile EMPTY = new ToolSettingsFile(new TreeMap<>(), 0);
+    private static final Set<String> ROOT_FIELDS = Set.of("version", "tools");
+    private static final Set<String> ENTRY_FIELDS = Set.of("values", "extra");
 
-    /** One tool's saved state: settings that differ from its defaults, and its extras, each by key. */
-    public record Entry(SortedMap<String, String> values, SortedMap<String, String> extra) {
+    /**
+     * One tool's saved state: settings that differ from its defaults, and its extras, each by key; and its entry's
+     * fields this version doesn't know, as JSON text.
+     */
+    public record Entry(SortedMap<String, String> values, SortedMap<String, String> extra,
+                        SortedMap<String, String> other) {
         public static final Entry DEFAULTS = new Entry(new TreeMap<>(), new TreeMap<>());
 
         public Entry {
             values = Collections.unmodifiableSortedMap(new TreeMap<>(values));
             extra = Collections.unmodifiableSortedMap(new TreeMap<>(extra));
+            other = Collections.unmodifiableSortedMap(new TreeMap<>(other));
         }
+
+        public Entry(SortedMap<String, String> values, SortedMap<String, String> extra) {
+            this(values, extra, new TreeMap<>());
+        }
+    }
+
+    public ToolSettingsFile(SortedMap<String, Entry> tools, int skipped) {
+        this(tools, skipped, new TreeMap<>());
     }
 
     /** A file written by another version of Sculptory. */
@@ -67,12 +85,13 @@ public record ToolSettingsFile(SortedMap<String, Entry> tools, int skipped) {
 
     public ToolSettingsFile {
         tools = Collections.unmodifiableSortedMap(new TreeMap<>(tools));
+        other = Collections.unmodifiableSortedMap(new TreeMap<>(other));
         if (skipped < 0) {
             throw new IllegalArgumentException("Negative skipped count");
         }
     }
 
-    /** The file's text: tools by id, values and extras by key. */
+    /** The file's text: tools by id, values and extras by key, then the fields this version doesn't know. */
     public String toJson() {
         JsonObject root = new JsonObject();
         root.addProperty("version", VERSION);
@@ -83,10 +102,28 @@ public record ToolSettingsFile(SortedMap<String, Entry> tools, int skipped) {
             if (!tool.getValue().extra().isEmpty()) {
                 entry.add("extra", strings(tool.getValue().extra()));
             }
+            addOther(entry, tool.getValue().other());
             toolsObject.add(tool.getKey(), entry);
         }
         root.add("tools", toolsObject);
+        addOther(root, other);
         return new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(root) + "\n";
+    }
+
+    /** Adds the kept fields {@code other} (JSON text) that {@code object} doesn't have already. */
+    private static void addOther(JsonObject object, Map<String, String> other) {
+        other.forEach((key, json) -> {
+            if (!object.has(key)) object.add(key, JsonParser.parseString(json));
+        });
+    }
+
+    /** The object's fields other than {@code known}, as JSON text (those nested too deep to write back left out). */
+    private static SortedMap<String, String> other(JsonObject object, Set<String> known) {
+        SortedMap<String, String> other = new TreeMap<>();
+        KeptJson.eachField(object.entrySet(), (key, json) -> {
+            if (!known.contains(key)) other.put(key, json);
+        });
+        return other;
     }
 
     private static JsonObject strings(Map<String, String> map) {
@@ -123,7 +160,7 @@ public record ToolSettingsFile(SortedMap<String, Entry> tools, int skipped) {
         }
         JsonElement toolsElement = root.get("tools");
         if (toolsElement == null) {
-            return EMPTY;
+            return new ToolSettingsFile(new TreeMap<>(), 0, other(root, ROOT_FIELDS));
         }
         if (!toolsElement.isJsonObject()) {
             throw new IllegalArgumentException("its tools are not an object");
@@ -140,9 +177,9 @@ public record ToolSettingsFile(SortedMap<String, Entry> tools, int skipped) {
             SortedMap<String, String> extra = new TreeMap<>();
             skipped += readStrings(entry.get("values"), values);
             skipped += readStrings(entry.get("extra"), extra);
-            tools.put(tool.getKey(), new Entry(values, extra));
+            tools.put(tool.getKey(), new Entry(values, extra, other(entry, ENTRY_FIELDS)));
         }
-        return new ToolSettingsFile(tools, skipped);
+        return new ToolSettingsFile(tools, skipped, other(root, ROOT_FIELDS));
     }
 
     /**

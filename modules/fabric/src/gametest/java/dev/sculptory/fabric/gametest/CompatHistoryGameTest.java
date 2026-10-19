@@ -1,0 +1,384 @@
+package dev.sculptory.fabric.gametest;
+
+import static dev.sculptory.fabric.gametest.EditTestSupport.capture;
+import static dev.sculptory.fabric.gametest.EditTestSupport.checkSame;
+import static dev.sculptory.fabric.gametest.EditTestSupport.loadAndForce;
+import static dev.sculptory.fabric.gametest.EngineTestSupport.box;
+import static dev.sculptory.fabric.gametest.EngineTestSupport.check;
+import static dev.sculptory.fabric.gametest.EngineTestSupport.pos;
+
+import com.mojang.authlib.GameProfile;
+import dev.sculptory.core.Box;
+import dev.sculptory.core.history.store.HistoryStore;
+import dev.sculptory.core.history.store.StorageIo;
+import dev.sculptory.fabric.engine.impl.EditServiceHost;
+import dev.sculptory.fabric.engine.impl.FabricHistoryCodec;
+import dev.sculptory.fabric.gametest.DurableHistoryGameTest.Run;
+import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
+import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
+import dev.sculptory.fabric.schem.FabricDataFixHook;
+import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.server.engine.JobResult;
+import dev.sculptory.server.engine.impl.HistorySnapshot;
+import dev.sculptory.server.platform.WorldBiomes;
+import dev.sculptory.server.platform.WriteOptions;
+import io.netty.channel.embedded.EmbeddedChannel;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
+import net.minecraft.block.Block;
+import net.minecraft.block.Blocks;
+import net.minecraft.block.entity.ChestBlockEntity;
+import net.minecraft.block.entity.SignBlockEntity;
+import net.minecraft.block.entity.SignText;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.decoration.ArmorStandEntity;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
+import net.minecraft.network.ClientConnection;
+import net.minecraft.network.NetworkSide;
+import net.minecraft.server.OperatorEntry;
+import net.minecraft.server.network.ConnectedClientData;
+import net.minecraft.server.network.ServerPlayerEntity;
+import net.minecraft.server.world.ServerWorld;
+import net.minecraft.test.GameTest;
+import net.minecraft.test.GameTestException;
+import net.minecraft.test.TestContext;
+import net.minecraft.text.Text;
+import net.minecraft.util.math.BlockPos;
+
+/**
+ * Undo history journals real older builds wrote ({@code src/gametest/resources/compat/<version>/history/}, frozen: see
+ * the README there) undo and redo exactly with this build. Each sample was made by that version's own edit service on
+ * a GameTest world, at the fixed place {@link #X0}, {@link #Z0}, by the player {@link #PLAYER}: over grass, a sign
+ * ("Sculptory &lt;version&gt;"), a chest (5 diamonds, 3 oak logs) and a stone pedestal under a named armor stand
+ * ({@link #STAND}), all on cherry grove in 0.4.0, it filled glass over the sign and chest, (0.4.0: a desert biome
+ * fill), filled gold over part of the glass, moved the pedestal and stand 8 north, then undid the move and the gold.
+ *
+ * <p>Here the world is laid out as that build left it (written directly, no history), the journal is put in the
+ * history folder, and the player joins: the steps read back as saved; redo brings the gold and the move back, every
+ * undo then restores the world exactly (blocks, the sign's text and the chest's items, the stand with its UUID, the
+ * biomes), and redo again gives the same world. Also: steps recorded by another Minecraft data version are dropped, by
+ * design (they would undo with another game's block states).
+ */
+public final class CompatHistoryGameTest implements FabricGameTest {
+    private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
+    /** The player the samples belong to (their file name). */
+    static final UUID PLAYER = UUID.fromString("3f2a9c1e-7b4d-4e8a-9c3b-5d6e7f809a1b");
+    /** The armor stand the samples moved. */
+    static final UUID STAND = UUID.fromString("0a0b0c0d-0e0f-4a1b-8c2d-3e4f50617283");
+    /** Where the samples were made: far from every other GameTest region. */
+    static final int X0 = -1_600_000, Z0 = 1_600_000;
+    private static final Box AREA = box(X0, 96, Z0, X0 + 15, 107, Z0 + 15);
+    private static final Box GLASS = box(X0 + 1, 100, Z0 + 1, X0 + 8, 102, Z0 + 8);
+    private static final Box GOLD = box(X0 + 4, 101, Z0 + 4, X0 + 6, 105, Z0 + 6);
+    private static final Box MOVED = box(X0 + 10, 101, Z0 + 10, X0 + 12, 103, Z0 + 12);
+    private static final int MOVE_Z = -8;
+    /** The desert fill of the 0.4.0 sample: the quarts holding this box's cells. */
+    private static final Box DESERT = box(X0 + 1, 100, Z0 + 9, X0 + 6, 103, Z0 + 14);
+    private static final String CHERRY = "minecraft:cherry_grove";
+
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_compat_history", tickLimit = LIMIT)
+    public void journalsOfOlderBuildsUndoAndRedoExactly(TestContext context) {
+        Harness h = new Harness(context);
+        loadAndForce(h.world, AREA);
+        context.createTimedTaskRunner()
+                .createAndAdd(() -> EntitiesGameTest.ready(h.world, AREA))
+                .createAndAdd(EntitiesGameTest.once(() -> {
+                    try {
+                        sample(h, "0.3.0", false);
+                        sample(h, "0.4.0", true);
+                    } finally {
+                        clearEntities(h.world);
+                        EngineTestSupport.forceChunks(h.world, AREA, false);
+                        h.close();
+                    }
+                }))
+                .completeIfSuccessful();
+    }
+
+    /** One sample set's journal: the world as its build left it, then redo, undo everything, redo everything. */
+    private static void sample(Harness h, String version, boolean biomes) {
+        clearEntities(h.world);
+        fixture(h, version);
+        WorldSnapshot original = capture(h.world, AREA);
+        List<String> originalBiomes = biomes(h);
+
+        // As the build left it: the glass (and the desert) done, the gold and the move undone.
+        BlockWriter writer = h.runtime.writer(h.world, new WriteOptions(false, true));
+        fill(writer, GLASS, h.state("minecraft:glass"));
+        if (biomes) paint(h, DESERT, "minecraft:desert");
+        WorldSnapshot glass = capture(h.world, AREA);
+        List<String> glassBiomes = biomes(h);
+        WorldSnapshot gold = with(glass, GOLD, Block.getRawIdFromState(Blocks.GOLD_BLOCK.getDefaultState()));
+        WorldSnapshot moved = movedNorth(gold);
+
+        Path folder = folder(version);
+        ServerPlayerEntity player = player(h.context);
+        Run run = new Run(h, folder, 0, StorageIo.SYSTEM);
+        try {
+            run.load(player);
+            HistorySnapshot history = run.service.history(player);
+            List<String> undo = biomes ? List.of("Biome fill · 4 biome cells", "Fill · 192 blocks")
+                    : List.of("Fill · 192 blocks");
+            check(history.undoLabels().equals(undo) && history.redoLabels().equals(List.of("Fill · 45 blocks",
+                    "Move · 2 blocks · 2 entities")), version + ": the steps read back " + history);
+
+            step(run, player, false, version + " redo of the gold");
+            checkSame(gold, capture(h.world, AREA), version + ": the gold redone");
+            step(run, player, false, version + " redo of the move");
+            checkSame(moved, capture(h.world, AREA), version + ": the move redone");
+            checkStand(h.world, version, false);
+
+            step(run, player, true, version + " undo of the move");
+            checkSame(gold, capture(h.world, AREA), version + ": the move undone");
+            checkStand(h.world, version, true);
+            step(run, player, true, version + " undo of the gold");
+            checkSame(glass, capture(h.world, AREA), version + ": the gold undone");
+            if (biomes) {
+                check(biomes(h).equals(glassBiomes), version + ": the biomes before the desert's undo");
+                step(run, player, true, version + " undo of the desert");
+                check(biomes(h).equals(originalBiomes), version + ": the desert undone: " + biomes(h));
+            }
+            step(run, player, true, version + " undo of the glass");
+            checkSame(original, capture(h.world, AREA), version + ": everything undone");
+            check(biomes(h).equals(originalBiomes), version + ": the biomes as they were");
+            checkSignAndChest(h.world, version);
+            checkStand(h.world, version, true);
+
+            for (int i = 0; i < (biomes ? 4 : 3); i++) step(run, player, false, version + " redo " + (i + 1));
+            checkSame(moved, capture(h.world, AREA), version + ": everything redone");
+            if (biomes) check(biomes(h).equals(glassBiomes), version + ": the desert redone");
+            checkStand(h.world, version, false);
+        } finally {
+            run.stop();
+            h.world.getServer().getPlayerManager().getOpList().remove(player.getGameProfile());
+            h.world.getServer().getPlayerManager().remove(player);
+            EngineTestBootstrap.deleteTree(folder);
+        }
+    }
+
+    /**
+     * Steps saved by another Minecraft version can't be undone with this one's block states: they are left out (by
+     * design; the history of a Minecraft update starts empty) and the reason is reported.
+     */
+    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_compat_history_dataversion", tickLimit = LIMIT)
+    public void stepsOfAnotherMinecraftDataVersionAreDropped(TestContext context) {
+        Harness h = new Harness(context);
+        Path folder = folder("0.4.0");
+        try {
+            HistoryStore store = HistoryStore.open(folder, new FabricHistoryCodec(h.runtime.states(),
+                    FabricDataFixHook.currentDataVersion() + 1), HistoryStore.Settings.DEFAULTS, StorageIo.SYSTEM,
+                    HistoryStore.Log.NONE);
+            try {
+                store.load(PLAYER);
+                HistoryStore.Loaded loaded = awaitLoaded(store);
+                check(loaded.entries().isEmpty() && loaded.failed().size() == 4,
+                        "entries " + loaded.entries().size() + ", failed " + loaded.failed());
+                check(loaded.problems().stream().anyMatch(problem -> problem.contains("data version")),
+                        "the reason: " + loaded.problems());
+            } finally {
+                check(store.close(10_000), "the store closed");
+            }
+        } catch (IOException e) {
+            throw new GameTestException("the history store did not open: " + e);
+        } finally {
+            EngineTestBootstrap.deleteTree(folder);
+            h.close();
+        }
+        context.complete();
+    }
+
+    private static HistoryStore.Loaded awaitLoaded(HistoryStore store) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+        while (System.nanoTime() < deadline) {
+            for (HistoryStore.Event event : store.poll()) {
+                if (event instanceof HistoryStore.Loaded loaded && loaded.player().equals(PLAYER)) return loaded;
+            }
+            try {
+                Thread.sleep(2);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        throw new GameTestException("the history did not load");
+    }
+
+    private static void step(Run run, ServerPlayerEntity player, boolean undo, String what) {
+        JobResult result = run.step(player, undo);
+        check(result.skippedConflicts() == 0, what + " met conflicts: " + result);
+    }
+
+    /** A fresh history folder holding the sample journal of {@code version}. */
+    private static Path folder(String version) {
+        String root = System.getProperty(EditServiceHost.HISTORY_DIR_PROPERTY);
+        Path base = root != null ? Path.of(root)
+                : Path.of(System.getProperty("java.io.tmpdir"), "sculptory-gametest-history");
+        Path folder = base.resolve("compat-tests").resolve(UUID.randomUUID().toString()).normalize();
+        String name = PLAYER + HistoryStore.EXTENSION;
+        try (InputStream in = CompatHistoryGameTest.class.getResourceAsStream("/compat/" + version + "/history/"
+                + name)) {
+            check(in != null, "the " + version + " sample journal is missing");
+            Files.createDirectories(folder);
+            Files.write(folder.resolve(name), in.readAllBytes());
+        } catch (IOException e) {
+            throw new GameTestException("copying the sample journal failed: " + e);
+        }
+        return folder;
+    }
+
+    /** The world before the sample's edits, as its build laid it out. */
+    private static void fixture(Harness h, String version) {
+        BlockWriter writer = h.runtime.writer(h.world, new WriteOptions(false, true));
+        int stone = h.state("minecraft:stone"), dirt = h.state("minecraft:dirt");
+        int grass = h.state("minecraft:grass_block"), air = h.state("minecraft:air");
+        for (int y = AREA.min().y(); y <= AREA.max().y(); y++) {
+            int state = y < 98 ? stone : y < 100 ? dirt : y == 100 ? grass : air;
+            fill(writer, box(X0, y, Z0, X0 + 15, y, Z0 + 15), state);
+        }
+        BlockPos sign = pos(X0 + 2, 101, Z0 + 2);
+        writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign[rotation=4]"), null);
+        ((SignBlockEntity) h.world.getBlockEntity(sign))
+                .setText(new SignText().withMessage(0, Text.literal("Sculptory " + version)), true);
+        BlockPos chest = pos(X0 + 5, 101, Z0 + 5);
+        writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
+        ChestBlockEntity chestEntity = (ChestBlockEntity) h.world.getBlockEntity(chest);
+        chestEntity.setStack(0, new ItemStack(Items.DIAMOND, 5));
+        chestEntity.setStack(13, new ItemStack(Items.OAK_LOG, 3));
+        writer.write(X0 + 11, 101, Z0 + 11, stone, null);
+        ArmorStandEntity stand = new ArmorStandEntity(h.world, X0 + 11.5, 102, Z0 + 11.5);
+        stand.setUuid(STAND);
+        stand.setYaw(30f);
+        stand.equipStack(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
+        stand.setCustomName(Text.literal("Frozen sample"));
+        check(h.world.spawnEntity(stand), "the stand spawned");
+        paint(h, AREA, CHERRY);
+    }
+
+    private static void fill(BlockWriter writer, Box box, int state) {
+        for (int y = box.min().y(); y <= box.max().y(); y++) {
+            for (int z = box.min().z(); z <= box.max().z(); z++) {
+                for (int x = box.min().x(); x <= box.max().x(); x++) writer.write(x, y, z, state, null);
+            }
+        }
+    }
+
+    /** {@code base} with every cell of {@code box} holding {@code state} (and no block entity there). */
+    private static WorldSnapshot with(WorldSnapshot base, Box box, int state) {
+        WorldSnapshot out = new WorldSnapshot(base.box, base.states.clone());
+        base.tiles.forEach((key, nbt) -> {
+            BlockPos at = BlockPos.fromLong(key);
+            if (!box.contains(at.getX(), at.getY(), at.getZ())) out.tiles.put(key, nbt);
+        });
+        for (int y = box.min().y(); y <= box.max().y(); y++) {
+            for (int z = box.min().z(); z <= box.max().z(); z++) {
+                for (int x = box.min().x(); x <= box.max().x(); x++) out.states[out.index(x, y, z)] = state;
+            }
+        }
+        return out;
+    }
+
+    /** {@code base} after the sample's move: {@link #MOVED}'s cells 8 north, air left behind. */
+    private static WorldSnapshot movedNorth(WorldSnapshot base) {
+        WorldSnapshot out = with(base, MOVED, Block.getRawIdFromState(Blocks.AIR.getDefaultState()));
+        for (int y = MOVED.min().y(); y <= MOVED.max().y(); y++) {
+            for (int z = MOVED.min().z(); z <= MOVED.max().z(); z++) {
+                for (int x = MOVED.min().x(); x <= MOVED.max().x(); x++) {
+                    out.states[out.index(x, y, z + MOVE_Z)] = base.get(x, y, z);
+                }
+            }
+        }
+        return out;
+    }
+
+    /** The sign's text and the chest's items, back from the journal. */
+    private static void checkSignAndChest(ServerWorld world, String version) {
+        String text = ((SignBlockEntity) world.getBlockEntity(pos(X0 + 2, 101, Z0 + 2))).getText(true)
+                .getMessage(0, false).getString();
+        check(text.equals("Sculptory " + version), version + ": the sign reads \"" + text + "\"");
+        ChestBlockEntity chest = (ChestBlockEntity) world.getBlockEntity(pos(X0 + 5, 101, Z0 + 5));
+        check(chest.getStack(0).isOf(Items.DIAMOND) && chest.getStack(0).getCount() == 5
+                && chest.getStack(13).isOf(Items.OAK_LOG) && chest.getStack(13).getCount() == 3,
+                version + ": the chest holds " + chest.getStack(0) + " and " + chest.getStack(13));
+    }
+
+    /** The one armor stand: on the pedestal with its own UUID ({@code home}), or 8 north of it after the move. */
+    private static void checkStand(ServerWorld world, String version, boolean home) {
+        Box from = home ? MOVED : box(MOVED.min().x(), MOVED.min().y(), MOVED.min().z() + MOVE_Z, MOVED.max().x(),
+                MOVED.max().y(), MOVED.max().z() + MOVE_Z);
+        Box other = home ? box(MOVED.min().x(), MOVED.min().y(), MOVED.min().z() + MOVE_Z, MOVED.max().x(),
+                MOVED.max().y(), MOVED.max().z() + MOVE_Z) : MOVED;
+        List<Entity> there = EntitiesGameTest.entitiesIn(world, from);
+        check(there.size() == 1 && there.get(0) instanceof ArmorStandEntity, version + ": stands " + there);
+        ArmorStandEntity stand = (ArmorStandEntity) there.get(0);
+        check(stand.getCustomName() != null && stand.getCustomName().getString().equals("Frozen sample")
+                && stand.getEquippedStack(EquipmentSlot.HEAD).isOf(Items.IRON_HELMET)
+                && Math.abs(stand.getYaw() - 30f) < 1e-3, version + ": the stand " + stand);
+        check(Math.abs(stand.getX() - (X0 + 11.5)) < 1e-6 && Math.abs(stand.getY() - 102) < 1e-6
+                && Math.abs(stand.getZ() - (Z0 + 11.5 + (home ? 0 : MOVE_Z))) < 1e-6, version + ": at " + stand.getPos());
+        check(home == stand.getUuid().equals(STAND), version + ": the stand's UUID " + stand.getUuid());
+        check(EntitiesGameTest.entitiesIn(world, other).isEmpty(), version + ": a stand left behind");
+    }
+
+    private static void clearEntities(ServerWorld world) {
+        EntitiesGameTest.entitiesIn(world, AREA).forEach(Entity::discard);
+    }
+
+    /** Every quart of the area's columns, at the area's heights, in order. */
+    private static List<String> biomes(Harness h) {
+        WorldBiomes world = h.runtime.biomes(h.world);
+        List<String> out = new ArrayList<>();
+        for (int qx = AREA.min().x() >> 2; qx <= AREA.max().x() >> 2; qx++) {
+            for (int qz = AREA.min().z() >> 2; qz <= AREA.max().z() >> 2; qz++) {
+                for (int qy = AREA.min().y() >> 2; qy <= AREA.max().y() >> 2; qy++) {
+                    out.add(world.id(world.get(qx, qy, qz)));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** Sets every quart holding a cell of {@code box} to {@code id}. */
+    private static void paint(Harness h, Box box, String id) {
+        WorldBiomes world = h.runtime.biomes(h.world);
+        int handle = world.handle(id);
+        for (int qx = box.min().x() >> 2; qx <= box.max().x() >> 2; qx++) {
+            for (int qz = box.min().z() >> 2; qz <= box.max().z() >> 2; qz++) {
+                for (int qy = box.min().y() >> 2; qy <= box.max().y() >> 2; qy++) world.set(qx, qy, qz, handle);
+            }
+        }
+        world.flush();
+    }
+
+    /** A creative mock player with the samples' UUID and operator rights. */
+    private static ServerPlayerEntity player(TestContext context) {
+        ServerWorld world = context.getWorld();
+        GameProfile profile = new GameProfile(PLAYER, "CompatSample");
+        ConnectedClientData data = ConnectedClientData.createDefault(profile, false);
+        ServerPlayerEntity player = new ServerPlayerEntity(world.getServer(), world, data.gameProfile(),
+                data.syncedOptions()) {
+            @Override
+            public boolean isSpectator() {
+                return false;
+            }
+
+            @Override
+            public boolean isCreative() {
+                return true;
+            }
+        };
+        ClientConnection connection = new ClientConnection(NetworkSide.SERVERBOUND);
+        new EmbeddedChannel(connection);
+        world.getServer().getPlayerManager().onPlayerConnect(connection, player, data);
+        world.getServer().getPlayerManager().getOpList().add(new OperatorEntry(profile, 2, false));
+        return player;
+    }
+}

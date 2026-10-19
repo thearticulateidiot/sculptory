@@ -55,8 +55,8 @@ import java.util.function.Predicate;
  * when the editor closes. Every registered tool is written, with the values that differ from its defaults; a value
  * the player hasn't changed since it was restored is written back as the file had it (a radius the server's limit
  * clamped, a block this game lacks, text that didn't decode), not as restore fitted it, so the file keeps what the
- * player set until they set something else; settings and tools this build doesn't have are written back as they
- * were read. Presets are unchanged: they are still saved only by Save and Save as. Client thread only.
+ * player set until they set something else; settings, tools and fields this build doesn't have are written back as
+ * they were read. Presets are unchanged: they are still saved only by Save and Save as. Client thread only.
  */
 public final class ToolSettingsStore {
     public static final String FILE_NAME = "editor-tool-settings.json";
@@ -307,9 +307,9 @@ public final class ToolSettingsStore {
                     extra.put(key, written);
                 }
             });
-            tools.put(id.value(), new ToolSettingsFile.Entry(values, extra));
+            tools.put(id.value(), new ToolSettingsFile.Entry(values, extra, before.other()));
         }
-        return new ToolSettingsFile(tools, 0);
+        return new ToolSettingsFile(tools, 0, loaded.other());
     }
 
     /**

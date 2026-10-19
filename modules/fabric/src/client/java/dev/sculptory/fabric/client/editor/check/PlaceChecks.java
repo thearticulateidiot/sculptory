@@ -365,7 +365,7 @@ final class PlaceChecks {
      * Starts a placement as the player does ({@code "paste"}: Ctrl+V; {@code "move"} or {@code "stack"}: the Selection
      * window's button) and waits until the Place tool has it.
      */
-    private static PlaceTool startPlacing(CheckRun run, String how) {
+    static PlaceTool startPlacing(CheckRun run, String how) {
         CheckDriver d = run.driver();
         switch (how) {
             case "paste" -> d.action(KeyAction.PASTE);
