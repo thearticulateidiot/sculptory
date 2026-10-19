@@ -21,6 +21,8 @@ import dev.sculptory.core.state.OrientedStates;
 import dev.sculptory.core.testing.FakeExecutor;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
+import dev.sculptory.core.state.BufferCells;
+import dev.sculptory.core.state.ResampledCopy;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
@@ -112,28 +114,151 @@ class FreeCopyTest {
     }
 
     /**
-     * Until they are built, Exact count and Smooth (with or without stairs on slopes) write the nearest-block cells, so a
-     * client may send them already. The methods' own tests replace this one.
+     * Every method, with and without stairs on slopes, pastes the cells its {@link ResampledCopy} gives (the way's
+     * cells, two-cell blocks whole, slopes shaped) where the anchor puts the method's result box, and undoes exactly;
+     * exact count writes every block of the source once.
      */
     @Test
-    void everyResamplingWritesTheNearestBlockCellsUntilTheMethodsAreBuilt() {
-        BlockPos size = new BlockPos(5, 4, 6);
-        Clipboard clipboard = clipboard(size, 3);
-        BlockPos origin = new BlockPos(10, 64, -10);
-        Orientation nearest = Orientation.free(Transform.IDENTITY, 2_700, 1_100, 400);
-        Map<BlockPos, Integer> expected = expectedPaste(clipboard, nearest, origin);
-        Box area = grow(PasteGeometry.pasteTarget(size, clipboard.anchor(), nearest, origin), 2);
-        for (Resampling method : Resampling.values()) {
-            for (boolean slopes : new boolean[] {false, true}) {
-                Orientation o = nearest.withResampling(method, slopes);
-                FakeWorld world = new FakeWorld(states);
-                FakeExecutor.run(paste(clipboard, origin, o, Symmetry.NONE), world);
-                for (BlockPos p : snapshot(world, area).keySet()) {
-                    assertEquals(states.format(expected.getOrDefault(p, air)), states.format(world.get(p.x(), p.y(), p.z())),
-                            o + " at " + p);
+    void everyMethodPastesItsOwnCellsAndUndoesExactly() {
+        BlockPos size = new BlockPos(7, 5, 6);
+        Clipboard plain = clipboard(size, 3);
+        // A door, a bed and planks to shape, on top of the random blocks.
+        Clipboard.Builder builder = Clipboard.builder(states, size).anchor(plain.anchor());
+        for (int x = 0; x < size.x(); x++) {
+            for (int y = 0; y < size.y(); y++) {
+                for (int z = 0; z < size.z(); z++) {
+                    int s = plain.toSource().cells().get(x, y, z);
+                    if (s >= 0) builder.set(x, y, z, y == size.y() - 1 ? states.state("minecraft:oak_planks") : s);
                 }
             }
         }
+        builder.set(1, 1, 1, states.state("minecraft:oak_door[facing=east,half=lower]"));
+        builder.set(1, 2, 1, states.state("minecraft:oak_door[facing=east,half=upper]"));
+        builder.set(4, 0, 2, states.state("minecraft:red_bed[facing=south,part=foot]"));
+        builder.set(4, 0, 3, states.state("minecraft:red_bed[facing=south,part=head]"));
+        Clipboard clipboard = builder.build();
+        long blocks = 0;
+        for (int x = 0; x < size.x(); x++) {
+            for (int y = 0; y < size.y(); y++) {
+                for (int z = 0; z < size.z(); z++) {
+                    int s = clipboard.toSource().cells().get(x, y, z);
+                    if (s >= 0 && s != air) blocks++;
+                }
+            }
+        }
+        BlockPos origin = new BlockPos(10, 64, -10);
+        for (Orientation turn : List.of(Orientation.free(Transform.IDENTITY, 2_700, 1_100, 400),
+                Orientation.free(new Transform(1, dev.sculptory.core.transform.Mirror.X), 4_500, 2_000, 0))) {
+            for (Resampling method : Resampling.values()) {
+                for (boolean slopes : new boolean[] {false, true}) {
+                    Orientation o = turn.withResampling(method, slopes);
+                    Box target = PasteGeometry.pasteTarget(size, clipboard.anchor(), o, origin);
+                    assertEquals(o.bounds(size.x(), size.y(), size.z()).size(),
+                            new BlockPos(target.sizeX(), target.sizeY(), target.sizeZ()), o + ": the method's box");
+                    ResampledCopy copy = ResampledCopy.of(o.resampler(size.x(), size.y(), size.z()),
+                            new BufferCells(clipboard.toSource().cells(), size, states), new OrientedStates(states, o),
+                            slopes, null);
+                    Map<BlockPos, Integer> expected = new HashMap<>();
+                    int[] cell = new int[3];
+                    for (int x = 0; x < target.sizeX(); x++) {
+                        for (int y = 0; y < target.sizeY(); y++) {
+                            for (int z = 0; z < target.sizeZ(); z++) {
+                                if (!copy.cells().source(x, y, z, new BufferCells(clipboard.toSource().cells(), size,
+                                        states), cell)) {
+                                    continue;
+                                }
+                                int state = clipboard.toSource().cells().get(cell[0], cell[1], cell[2]);
+                                if (state < 0 || state == air) continue;
+                                expected.put(target.min().offset(x, y, z), copy.state(x, y, z, state));
+                            }
+                        }
+                    }
+                    if (method == Resampling.EXACT) assertEquals(blocks, expected.size(), o + ": exact count");
+                    FakeWorld world = new FakeWorld(states);
+                    Box area = grow(target, 2);
+                    world.fill(area, states.state("minecraft:dirt"));
+                    Map<BlockPos, Cell> before = snapshot(world, area);
+                    runAndUndo(paste(clipboard, origin, o, Symmetry.NONE), world, area, o.toString());
+                    for (Map.Entry<BlockPos, Cell> c : before.entrySet()) {
+                        BlockPos p = c.getKey();
+                        int want = expected.getOrDefault(p, c.getValue().state());
+                        assertEquals(states.format(want), states.format(world.get(p.x(), p.y(), p.z())), o + " at " + p);
+                    }
+                    if (slopes && method != Resampling.EXACT) {
+                        assertTrue(expected.values().stream().anyMatch(s -> states.format(s).contains("_stairs")
+                                || states.format(s).contains("_slab")), o + ": the planks roof gets stairs or slabs");
+                    }
+                }
+            }
+        }
+    }
+
+
+    /**
+     * Every method, with and without smooth slopes, turns a build in place by a free move and undoes exactly: exact
+     * count leaves every block (doors and beds included) and lands each once, so the world keeps its block count; doors
+     * and beds stay whole in every method; the move is refused past the cells its resampling work allows.
+     */
+    @Test
+    void everyMethodMovesInPlaceAndUndoesExactly() {
+        Box from = box(0, 64, 0, 6, 68, 5);
+        int planks = states.state("minecraft:oak_planks");
+        Orientation turn = Orientation.free(Transform.IDENTITY, 3_300, 1_200, 0);
+        for (Resampling method : Resampling.values()) {
+            for (boolean slopes : new boolean[] {false, true}) {
+                Orientation o = turn.withResampling(method, slopes);
+                FakeWorld world = new FakeWorld(states);
+                Box area = grow(from, 6);
+                for (int x = from.min().x(); x <= from.max().x(); x++) {
+                    for (int y = from.min().y(); y <= from.max().y(); y++) {
+                        for (int z = from.min().z(); z <= from.max().z(); z++) {
+                            world.set(x, y, z, y == from.max().y() ? planks : (x + y + z) % 5 == 0 ? air : stone);
+                        }
+                    }
+                }
+                world.set(2, 65, 2, states.state("minecraft:oak_door[facing=east,half=lower]"));
+                world.set(2, 66, 2, states.state("minecraft:oak_door[facing=east,half=upper]"));
+                world.set(4, 65, 1, states.state("minecraft:red_bed[facing=south,part=foot]"));
+                world.set(4, 65, 2, states.state("minecraft:red_bed[facing=south,part=head]"));
+                long blocksBefore = blocks(world, area);
+                OpSpec.Move move = new OpSpec.Move(new Region.Cuboid(from), BlockPos.ORIGIN, o, new Pattern.Single(air),
+                        EntityFilter.NONE, Symmetry.NONE, PasteOptions.Into.EVERYTHING);
+                runAndUndo(OpCompiler.compile(move, context), world, area, o.toString());
+                if (method == Resampling.EXACT) assertEquals(blocksBefore, blocks(world, area), o + ": exact count");
+                int halves = 0;
+                for (int x = area.min().x(); x <= area.max().x(); x++) {
+                    for (int y = area.min().y(); y <= area.max().y(); y++) {
+                        for (int z = area.min().z(); z <= area.max().z(); z++) {
+                            String s = states.format(world.get(x, y, z));
+                            if (s.contains("half=lower")) {
+                                halves++;
+                                assertTrue(states.format(world.get(x, y + 1, z)).contains("half=upper"), o + " door");
+                            }
+                            if (s.contains("part=foot")) halves++;
+                        }
+                    }
+                }
+                assertEquals(2, halves, o + ": the door and the bed, whole");
+                // Refused past the cells the method's work allows (a budget of the build's own cells).
+                long cells = (long) from.sizeX() * from.sizeY() * from.sizeZ();
+                assertEquals(OpCompiler.maxFreeMoveCells(cells) / OpCompiler.resamplingWork(o),
+                        OpCompiler.maxFreeMoveCells(cells, o));
+                if (OpCompiler.resamplingWork(o) > 1) {
+                    assertThrows(EditTooLargeException.class, () -> OpCompiler.freeLanding(move, -64, 319, cells,
+                            Long.MAX_VALUE));
+                }
+            }
+        }
+    }
+
+    private long blocks(FakeWorld world, Box area) {
+        long n = 0;
+        for (int x = area.min().x(); x <= area.max().x(); x++) {
+            for (int y = area.min().y(); y <= area.max().y(); y++) {
+                for (int z = area.min().z(); z <= area.max().z(); z++) if (world.get(x, y, z) != air) n++;
+            }
+        }
+        return n;
     }
 
     @Test

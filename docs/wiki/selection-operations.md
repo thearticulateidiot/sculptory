@@ -71,11 +71,13 @@ The first other block is the column's highest block. When it is water or lava (o
 
 ## Rotate
 
-1. Select the blocks. To turn them around a particular point, set the symmetry centre there with `M`; otherwise they turn around the selection's middle.
-2. Click **Rotate…** and set **Yaw** (around up), **Pitch** (around east-west) and **Roll** (around north-south), from -180° to 180°. Double-click a slider (or `Ctrl`+click it) to type an exact angle.
-3. Click **Rotate**.
+1. Select the blocks.
+2. Click **Rotate…**. A ghost of the selection appears where it stands, with the gizmo of the [Place](place.md) tool.
+3. Drag a ring (steps of 15°, `Ctrl` turns freely), or type **Yaw** (around up), **Pitch** (around east-west) and **Roll** (around north-south) in Tool Settings. The ghost shows the result.
+4. Pick the **Method** and **Smooth slopes** under **Free rotation** in Tool Settings if you like: see [Free rotation](free-rotation.md).
+5. Press `Enter` to turn the blocks, or `Esc` to leave them.
 
-The blocks turn where they stand, around the symmetry centre at the selection's middle height, as one undo step named "Rotate". What they leave becomes air, and the entities the Select tool's **Entities** setting takes turn with them. As with a turned paste, each block takes the nearest block of the original and directional blocks snap to the nearest facing (see [Place](place.md#turn-by-any-angle)). Afterwards the selection is exactly the turned blocks. Biomes stay where they are (to carry them, turn a Move with **Biomes** ticked in [Place](place.md)).
+The blocks turn around the symmetry centre (set with `M`) at the selection's middle height, or around the selection's middle without one, as one undo step named "Rotate". Nudge the ghost with the arrow keys first to put the turned blocks somewhere else. What the blocks leave becomes air, and the entities the Place tool's **Entities** setting takes turn with them. Directional blocks snap to the nearest facing, and doors, beds and tall plants stay whole (see [Place](place.md#turn-by-any-angle)). Afterwards the selection is exactly the turned blocks. Biomes stay where they are unless **Biomes** is ticked in [Place](place.md).
 
 ## Update blocks
 

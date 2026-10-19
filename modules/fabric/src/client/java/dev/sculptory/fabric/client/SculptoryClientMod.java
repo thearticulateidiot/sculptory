@@ -10,6 +10,7 @@ import dev.sculptory.fabric.client.editor.check.PlayCheck;
 import dev.sculptory.fabric.client.editor.demo.DemoConfig;
 import dev.sculptory.fabric.client.editor.demo.PlayDemo;
 import dev.sculptory.fabric.client.editor.render.ghost.GhostDebug;
+import dev.sculptory.fabric.client.editor.tools.place.RotationCompare;
 import dev.sculptory.fabric.client.editor.tour.TourConfig;
 import dev.sculptory.fabric.client.editor.tour.UiTour;
 import dev.sculptory.fabric.client.net.ClientNet;
@@ -20,6 +21,7 @@ import dev.sculptory.fabric.client.world.ClientStateSpaces;
 import dev.sculptory.fabric.client.world.ResentChunks;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.MinecraftClient;
 
 /**
@@ -50,6 +52,10 @@ public final class SculptoryClientMod implements ClientModInitializer {
         // Builder mode (hold G): the same session and state space as the editor.
         BuilderClient.init(editor, ClientNet::session, states);
         GhostDebug.register();
+        // /bsclient rotation compare: the free-rotation methods side by side, for playtests (development runs only).
+        if (FabricLoader.getInstance().isDevelopmentEnvironment()) {
+            RotationCompare.register(states);
+        }
         // The dev-only harnesses: the screenshot tour, the play check and the scripted demo.
         // They run only from a dev checkout (runClient) and are left out of the mod jar. Their property constants are
         // inlined, so without a property no harness class is loaded; with one on a jar without them, it only logs.

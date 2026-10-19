@@ -21,6 +21,7 @@ A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to 
 
 - [Clipboard](clipboard.md): copy and cut
 - [Place](place.md): paste, move and stack, turn and flip
+- [Free rotation](free-rotation.md): turn a paste, a move or the selection by any angle; Nearest, Exact count or Smooth
 - [Library](library.md): the server's shared schematics and palettes
 - [Import and export](import-export.md): `.schem`, `.litematic` and `.nbt` files
 

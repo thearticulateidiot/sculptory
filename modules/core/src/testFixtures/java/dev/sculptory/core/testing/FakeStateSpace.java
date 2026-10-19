@@ -33,7 +33,7 @@ import java.util.function.ToIntFunction;
  * tube_coral_fan[waterlogged] (aquatic, waterlogged by default), lily_pad (goes on water), sugar_cane[age 0-15] (a
  * column of itself), lava[level 0-15] and bubble_column (holds water, not a plant); for the upside-down flip torch,
  * lantern[hanging], hopper[facing] (down and the sides), oak_door[facing,half] (double-tall) and the modded
- * {@code testmod:gizmo[facing,spin]}, whose {@code spin} no vanilla block has.
+ * {@code testmod:gizmo[facing,spin]}, whose {@code spin} no vanilla block has; and red_bed[facing,occupied,part].
  * Tags: {@code minecraft:logs}, {@code minecraft:dirt}, {@code minecraft:sand}, {@code minecraft:stairs}.
  *
  * <p>Rotation turns horizontal facings clockwise (north, east, south, west) and swaps log axis x/z on odd
@@ -146,6 +146,9 @@ public final class FakeStateSpace implements StateSpace {
         define("testmod:gizmo", s -> 0, Set.of(),
                 new Property("facing", List.of("north", "east", "south", "west", "up", "down")),
                 new Property("spin", List.of("false", "true")));
+        // Two-cell blocks under a free rotation (appended): a bed, its head one cell along its facing from its foot.
+        define("minecraft:red_bed", s -> 0, Set.of(), new Property("facing", HORIZONTAL),
+                new Property("occupied", List.of("false", "true")), new Property("part", List.of("foot", "head")));
         flags = flagList.stream().mapToInt(Integer::intValue).toArray();
     }
 
@@ -320,13 +323,13 @@ public final class FakeStateSpace implements StateSpace {
         return built;
     }
 
-    /** The plants and the torch upright; the chest, lily pad, sea pickle and coral fan lopsided. */
+    /** The plants and the torch upright; the chest, lily pad, sea pickle, coral fan and bed lopsided. */
     private VerticalFlip.Hints hints() {
         Set<String> upright = Set.of("minecraft:poppy", "minecraft:tall_grass", "minecraft:pink_petals",
                 "minecraft:seagrass", "minecraft:kelp", "minecraft:kelp_plant", "minecraft:tall_seagrass",
                 "minecraft:short_grass", "minecraft:torch");
         Set<String> lopsided = Set.of("minecraft:chest", "minecraft:lily_pad", "minecraft:sea_pickle",
-                "minecraft:tube_coral_fan");
+                "minecraft:tube_coral_fan", "minecraft:red_bed");
         return new VerticalFlip.Hints() {
             @Override
             public boolean upright(int h) {

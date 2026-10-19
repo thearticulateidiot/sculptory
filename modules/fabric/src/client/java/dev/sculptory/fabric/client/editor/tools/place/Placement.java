@@ -11,6 +11,7 @@ import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +25,8 @@ import java.util.Objects;
  * {@link #pivotWorld()} is the world cell the pivot lands on. The placement's {@link #orientation()} maps the box onto
  * its result box ({@link Orientation#bounds}), which starts at {@link #targetMin()}: the pivot cell, mapped by
  * {@link Orientation#mapCell} (as the server's paste maps its anchor), lands on the pivot's column, and the result
- * box's bottom on the pivot's height. For an exact orientation (a {@link Transform}) that is pivotWorld − T(pivot), T
+ * box's bottom on the pivot's height (a Rotate…, {@link #rotate}, keeps its pivot cell on the pivot itself, height
+ * included). For an exact orientation (a {@link Transform}) that is pivotWorld − T(pivot), T
  * extended affinely to cells outside the box, exactly as before free turns.
  *
  * <p>Modes:
@@ -64,18 +66,29 @@ public final class Placement {
     private final BlockPos dims;
     private final BlockPos anchor;
     private final BlockPos pivot;
+    /** Whether the result box keeps the pivot cell where it is in height too (Rotate…), not the box's bottom. */
+    private final boolean pivotTurns;
     private Orientation orientation = Orientation.IDENTITY;
+    /** How a free turn lands on the grid (kept while the turn is exact, which has none). */
+    private Resampling method = Resampling.NEAREST;
+    private boolean smoothSlopes;
     private BlockPos pivotWorld;
     private int count = 1;
 
     private Placement(Mode mode, SourceRef source, Region region, BlockPos dims, BlockPos anchor, BlockPos pivotWorld) {
+        this(mode, source, region, dims, anchor, pivotWorld, bottomCentre(dims), false);
+    }
+
+    private Placement(Mode mode, SourceRef source, Region region, BlockPos dims, BlockPos anchor, BlockPos pivotWorld,
+                      BlockPos pivot, boolean pivotTurns) {
         this.mode = mode;
         this.source = source;
         this.region = region;
         this.box = region == null ? null : region.bounds();
         this.dims = dims;
         this.anchor = anchor;
-        this.pivot = bottomCentre(dims);
+        this.pivot = Objects.requireNonNull(pivot);
+        this.pivotTurns = pivotTurns;
         this.pivotWorld = Objects.requireNonNull(pivotWorld);
     }
 
@@ -101,6 +114,23 @@ public final class Placement {
         Box box = region.bounds();
         BlockPos dims = sizeOf(box);
         return new Placement(Mode.MOVE, null, region, dims, BlockPos.ORIGIN, box.min().add(bottomCentre(dims)));
+    }
+
+    /**
+     * Turning {@code region} where it stands (Rotate…): a move whose pivot is world cell {@code pivotWorld} (the
+     * symmetry centre's column at the selection's middle height, or the selection's middle), which every turn keeps in
+     * place, height included, so a pitch or roll tilts the blocks about it.
+     */
+    public static Placement rotate(Region region, BlockPos pivotWorld) {
+        Objects.requireNonNull(region);
+        Box box = region.bounds();
+        BlockPos local = pivotWorld.offset(-box.min().x(), -box.min().y(), -box.min().z());
+        return new Placement(Mode.MOVE, null, region, sizeOf(box), BlockPos.ORIGIN, pivotWorld, local, true);
+    }
+
+    /** Whether turns keep the pivot cell in place in height too (Rotate…), not the result box's bottom. */
+    public boolean pivotTurns() {
+        return pivotTurns;
     }
 
     /** Stacking {@code box}, starting with one copy right next to it, one box length along {@code direction}. */
@@ -152,7 +182,7 @@ public final class Placement {
         return anchor;
     }
 
-    /** The local pivot: the bottom centre of the source box. */
+    /** The local pivot: the bottom centre of the source box (for Rotate…, the cell it turns about). */
     public BlockPos pivot() {
         return pivot;
     }
@@ -202,7 +232,7 @@ public final class Placement {
 
     /** Turns the placement upside down (or back): a stack's copies too. */
     public boolean flipUpsideDown() {
-        orientation = orientation.then(Transform.UPSIDE_DOWN);
+        orientation = resampled(orientation.then(Transform.UPSIDE_DOWN));
         return true;
     }
 
@@ -219,13 +249,37 @@ public final class Placement {
     public boolean setOrientation(Orientation next) {
         Objects.requireNonNull(next);
         if (mode == Mode.STACK && (!next.isExact() || !next.transform().horizontal().isIdentity())) return false;
-        orientation = next;
+        orientation = resampled(next);
         return true;
+    }
+
+    /**
+     * Sets how a free turn lands on the grid (the paste and move ghost's Method and Smooth slopes settings): kept for
+     * every later turn; an exact turn has nothing to resample.
+     */
+    public void setResampling(Resampling method, boolean smoothSlopes) {
+        this.method = Objects.requireNonNull(method);
+        this.smoothSlopes = smoothSlopes;
+        orientation = resampled(orientation);
+    }
+
+    /** The method free turns use. */
+    public Resampling resampling() {
+        return method;
+    }
+
+    /** Whether free turns get stairs and slabs on their slopes. */
+    public boolean smoothSlopes() {
+        return smoothSlopes;
+    }
+
+    private Orientation resampled(Orientation o) {
+        return o.withResampling(method, smoothSlopes);
     }
 
     private boolean apply(Transform step) {
         if (mode == Mode.STACK) return false;
-        orientation = orientation.then(step);
+        orientation = resampled(orientation.then(step));
         return true;
     }
 
@@ -252,7 +306,7 @@ public final class Placement {
      */
     public boolean setAngles(int yaw, int pitch, int roll) {
         if (mode == Mode.STACK) return false;
-        orientation = Orientation.free(reflection(), yaw, pitch, roll);
+        orientation = resampled(Orientation.free(reflection(), yaw, pitch, roll));
         return true;
     }
 
@@ -287,10 +341,12 @@ public final class Placement {
     public static Orientation turnedAbout(Orientation start, int axis, int angle) {
         int[] a = angles(start);
         Transform reflection = reflection(start);
-        if (axis == 1) return Orientation.free(reflection, a[0] + angle, a[1], a[2]);
+        if (axis == 1) {
+            return Orientation.free(reflection, a[0] + angle, a[1], a[2], start.resampling(), start.smoothSlopes());
+        }
         double[] step = axis == 0 ? Orientation.rotationMatrix(0, angle, 0) : Orientation.rotationMatrix(0, 0, angle);
         double[] r = Orientation.rotationMatrix(a[0], a[1], a[2]);
-        return Orientation.nearest(reflection, times(step, r));
+        return Orientation.nearest(reflection, times(step, r)).withResampling(start.resampling(), start.smoothSlopes());
     }
 
     private static double[] yaw(int angle) {
@@ -313,8 +369,8 @@ public final class Placement {
     /** The world cell of the result box's minimum corner (the flip upside down never moves it). */
     public BlockPos targetMin() {
         long[] mapped = map(orientation, dims, pivot);
-        return new BlockPos(clampInt(pivotWorld.x() - mapped[0]), pivotWorld.y() - pivot.y(),
-                clampInt(pivotWorld.z() - mapped[2]));
+        int y = pivotTurns ? clampInt(pivotWorld.y() - mapped[1]) : pivotWorld.y() - pivot.y();
+        return new BlockPos(clampInt(pivotWorld.x() - mapped[0]), y, clampInt(pivotWorld.z() - mapped[2]));
     }
 
     /** The box the (first) copy covers. */

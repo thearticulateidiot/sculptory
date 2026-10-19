@@ -198,6 +198,9 @@ public record GhostMapping(Box frame, Orientation orientation, int originX, int 
         if (free()) {
             hash = SplitMix64.mix(hash ^ orientation.yaw() ^ ((long) orientation.pitch() << 16)
                     ^ ((long) orientation.roll() << 32));
+            // The method and smooth slopes change which blocks land where.
+            hash = SplitMix64.mix(hash ^ orientation.resampling().ordinal()
+                    ^ (orientation.smoothSlopes() ? 1L << 8 : 0));
         }
         hash = SplitMix64.mix(hash ^ frame.min().x());
         hash = SplitMix64.mix(hash ^ frame.min().y());

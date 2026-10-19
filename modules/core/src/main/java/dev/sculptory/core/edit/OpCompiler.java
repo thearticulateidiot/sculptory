@@ -6,6 +6,8 @@ import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.region.Regions;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -117,14 +119,18 @@ public final class OpCompiler {
                     () -> new IllegalArgumentException("Unknown paste source: " + paste.src()));
             // The cells the paste can write: the source's present cells, not its box (a sparse source writes far
             // fewer), times the symmetric copies, as the server admits it.
-            long cells = source.cells().cellCount();
+            long cells = product(source.cells().cellCount(), resamplingWork(paste.orientation()));
             int pasteCopies = OpSymmetry.copyCount(paste);
             checkBudget(cells > Long.MAX_VALUE / pasteCopies ? Long.MAX_VALUE : cells * pasteCopies, budget);
         } else if (s instanceof OpSpec.PasteMany many) {
             source = Objects.requireNonNull(c.source(many.src())).orElseThrow(
                     () -> new IllegalArgumentException("Unknown paste source: " + many.src()));
-            // As a paste's, once per placement.
-            long cells = product(source.cells().cellCount(), many.placements().size());
+            // As a paste's, once per placement (weighted by its resampling work).
+            long work = 0;
+            for (OpSpec.PasteMany.Placement placement : many.placements()) {
+                work += resamplingWork(placement.orientation());
+            }
+            long cells = product(source.cells().cellCount(), work);
             checkBudget(product(cells, OpSymmetry.copyCount(many)), budget);
         }
         Symmetry symmetry = OpSymmetry.of(s);
@@ -184,8 +190,26 @@ public final class OpCompiler {
     }
 
     /**
+     * {@link #maxFreeMoveCells(long)} for a move turned by {@code orientation}: divided by its {@link #resamplingWork}, as
+     * smooth resampling weighs 27 points per landing cell at admission and in the job.
+     */
+    public static long maxFreeMoveCells(long budget, Orientation orientation) {
+        return maxFreeMoveCells(budget) / resamplingWork(orientation);
+    }
+
+    /**
+     * How many plain cells one cell of a copy turned by {@code orientation} costs against the op budget: 1, plus 3 for
+     * smooth resampling (27 points per cell, about three cell writes' worth of work), plus 1 for smooth slopes (8 points
+     * per written cell, 64 on a slope).
+     */
+    public static int resamplingWork(Orientation orientation) {
+        if (orientation.isExact()) return 1;
+        return 1 + (orientation.resampling() == Resampling.SMOOTH ? 3 : 0) + (orientation.smoothSlopes() ? 1 : 0);
+    }
+
+    /**
      * The landing cells of a move with a free orientation (without symmetry): the result cells whose source cell is a
-     * region cell between {@code bottomY} and {@code topY}, the region's whole bounds turning about their middle cell.
+     * region cell between {@code bottomY} and {@code topY}, the region's whole bounds turning about their true centre.
      * The work is at most 27 per cell; regions of more cells than {@link #maxFreeMoveCells} allows are refused.
      *
      * @throws EditTooLargeException past the sections or the work allowed
@@ -195,14 +219,15 @@ public final class OpCompiler {
     public static Region freeLanding(OpSpec.Move move, int bottomY, int topY, long budget, long maxSections) {
         if (move.orientation().isExact()) throw new IllegalArgumentException("Not a free move");
         return MoveProgram.landing(move, new RegionProgram.Height(bottomY, topY), maxSections,
-                maxFreeMoveCells(budget));
+                maxFreeMoveCells(budget, move.orientation()));
     }
 
     /** The context's landing cells of a free move, else worked out here (refused past the work allowed). */
     private static Region landingOf(OpSpec.Move move, CompileContext c, RegionProgram.Height height, long sections,
                                     long budget) {
         Region given = c.movedRegion(move);
-        return given != null ? given : MoveProgram.landing(move, height, sections, maxFreeMoveCells(budget));
+        return given != null ? given
+                : MoveProgram.landing(move, height, sections, maxFreeMoveCells(budget, move.orientation()));
     }
 
     /**

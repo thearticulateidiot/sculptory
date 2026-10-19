@@ -7,16 +7,24 @@ import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.CopySupport.InverseMap;
 import dev.sculptory.core.edit.CopySupport.SectionCursor;
 import dev.sculptory.core.edit.CopySupport.StateMapper;
+import dev.sculptory.core.state.BufferCells;
 import dev.sculptory.core.state.OrientedStates;
+import dev.sculptory.core.state.ResampledCopy;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
+import dev.sculptory.core.state.TwoCellPairs;
+import dev.sculptory.core.transform.CellResampler;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
+import dev.sculptory.core.world.WorldReader;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
 /**
@@ -26,8 +34,9 @@ import java.util.function.Consumer;
  * transform (heights too when it is flipped upside down); states go through {@link Transform#applyToState} (cached per
  * handle). A free orientation resamples: the target box is the result box ({@link Orientation#bounds}) placed by the
  * anchor ({@link PasteGeometry#pasteTarget(BlockPos, BlockPos, Orientation, BlockPos)}), each of its cells takes the
- * source cell {@link Orientation.Sampler#source} gives (the nearest, so a turned solid has no holes), and states take
- * the nearest cube turn ({@link OrientedStates}). A symmetric copy of a free paste ({@link #compileImage}) writes the
+ * source cell the orientation's method gives (nearest, exact count or smooth; {@link Orientation#resampler}), two-cell
+ * blocks stay whole, and states take the nearest cube turn ({@link OrientedStates}), or with smooth slopes a stair or
+ * slab where the turned slope reads smoother ({@link ResampledCopy}). A symmetric copy of a free paste ({@link #compileImage}) writes the
  * exact image of the original's cells.
  *
  * <p>Tiles are copied unchanged (their NBT content is not rotated: signs, banners and the like keep their stored data).
@@ -48,13 +57,18 @@ final class PasteProgram implements ClaimingProgram {
     private final InverseMap inverse;
     /** Whether the paste is flipped upside down (a landing height maps back to {@code size.y() - 1 - y}). */
     private final boolean upsideDown;
-    /** The free path's inverse map and states; null on the exact path. */
-    private final Orientation.Sampler sampler;
-    private final OrientedStates oriented;
+    /** The free path's cells and states (the orientation's method, two-cell blocks, smooth slopes); null when exact. */
+    private final ResampledCopy copy;
+    /** The source as the free path reads it. */
+    private final CellResampler.SourceCells sourceCells;
     /** A symmetric copy of a free paste: how its cells map to the original's; null for the original. */
     private final CopyFrame frame;
     /** The minimum corner of the box the sampler's result cells are local to (the original's, for a copy). */
     private final BlockPos sampleMin;
+    /** The free path's "Paste into" decisions for two-cell blocks, by pair (see {@link #pairWritable}). */
+    private final ConcurrentHashMap<Long, Boolean> pairDecisions = new ConcurrentHashMap<>();
+    /** Section → the chunk columns of two-cell halves its halves are judged with ({@link #listPairColumns}). */
+    private final Long2ObjectOpenHashMap<long[]> pairColumns = new Long2ObjectOpenHashMap<>();
     /** The whole transformed box in world coordinates. */
     private final Box target;
     /** {@link #target} clipped to the build height. */
@@ -63,7 +77,7 @@ final class PasteProgram implements ClaimingProgram {
     private final long[] order;
 
     private PasteProgram(SourceBlocks source, OpSpec.Paste op, StateSpace states, Box target, Box bounds,
-                         long estimatedCells, long[] order, Orientation.Sampler sampler, CopyFrame frame,
+                         long estimatedCells, long[] order, ResampledCopy copy, CopyFrame frame,
                          BlockPos sampleMin) {
         this.cells = source.cells();
         this.size = source.size();
@@ -71,12 +85,12 @@ final class PasteProgram implements ClaimingProgram {
         this.includeAir = op.o().includeAir();
         this.into = op.o().into();
         Transform t = op.orientation().transform();
-        boolean exact = sampler == null;
+        boolean exact = copy == null;
         this.mapper = exact ? new StateMapper(states, t) : null;
         this.inverse = exact ? InverseMap.of(t, size.x(), size.z()) : null;
         this.upsideDown = t.upsideDown();
-        this.sampler = sampler;
-        this.oriented = exact ? null : new OrientedStates(states, op.orientation());
+        this.copy = copy;
+        this.sourceCells = exact ? null : new BufferCells(source.cells(), source.size(), states, op.o().includeAir());
         this.frame = frame;
         this.sampleMin = sampleMin;
         this.target = target;
@@ -238,12 +252,18 @@ final class PasteProgram implements ClaimingProgram {
                 placement.orientation().then(image.transform()), o), source, states, height, scans);
     }
 
-    /** The free path: the result box placed by the anchor, the target sections of each source section's turned bounds. */
+    /**
+     * The free path: the result box placed by the anchor, the target sections of each source section's turned bounds;
+     * the cells filled the orientation's way ({@link Orientation#resampler}) with two-cell blocks kept whole and, with
+     * smooth slopes, stairs and slabs on turned slopes ({@link ResampledCopy}).
+     */
     private static PasteProgram compileFree(OpSpec.Paste op, SourceBlocks source, StateSpace states,
                                             RegionProgram.Height height, CopyFrame frame) {
         Orientation orientation = op.orientation();
         BlockPos size = source.size();
-        Orientation.Sampler sampler = orientation.sampler(size.x(), size.y(), size.z());
+        CellResampler sampler = orientation.resampler(size.x(), size.y(), size.z());
+        ResampledCopy.Tables tables = ResampledCopy.Tables.shared(states);
+        LongArrayList halves = new LongArrayList();
         Box original = PasteGeometry.pasteTarget(size, source.anchor(), orientation, op.origin());
         Box target = frame == null ? original : frame.imageBox(original);
         Box bounds = height.clip(target);
@@ -251,6 +271,7 @@ final class PasteProgram implements ClaimingProgram {
         LongOpenHashSet sections = new LongOpenHashSet();
         long counted = 0;
         int[] local = new int[7];
+        List<int[]> parts = new ArrayList<>();
         for (long key : source.cells().sortedKeys()) {
             SectionBuffer section = source.cells().section(key);
             if (section.isEmpty()) continue;
@@ -265,6 +286,7 @@ final class PasteProgram implements ClaimingProgram {
                 if (state >= states.size()) {
                     throw new IllegalArgumentException("Paste source state " + state + " is outside the state space");
                 }
+                TwoCellPairs.addHalf(halves, tables.blocks(), state, x, y, z);
                 if (!op.o().includeAir() && StateFlags.has(states.flags(state), StateFlags.AIR)) return;
                 local[0] = Math.min(local[0], x);
                 local[1] = Math.min(local[1], y);
@@ -276,14 +298,27 @@ final class PasteProgram implements ClaimingProgram {
             });
             if (local[6] == 0) continue;
             counted += local[6];
-            Box part = turnedPart(original, sampler, local);
-            if (part == null) continue;
-            if (frame != null) part = frame.imageBox(part);
-            Box clipped = height.clip(part);
+            parts.add(java.util.Arrays.copyOf(local, 6));
+        }
+        // Air the paste leaves out weighs as nothing (as in the ghost, whose previews carry no air).
+        BufferCells cells = new BufferCells(source.cells(), size, states, op.o().includeAir());
+        // A two-cell block stays inside the build height whole, or is left out whole.
+        int bottom = bounds.min().y(), top = bounds.max().y(), originY = original.min().y();
+        ResampledCopy copy = ResampledCopy.of(sampler, cells, new OrientedStates(states, orientation),
+                orientation.smoothSlopes(), halves.toLongArray(), tables,
+                (x, y, z) -> originY + y >= bottom && originY + y <= top);
+        for (int[] part : parts) {
+            Box turned = turnedPart(original, copy.cells(), part);
+            if (turned == null) continue;
+            if (frame != null) turned = frame.imageBox(turned);
+            Box clipped = height.clip(turned);
             if (clipped != null) CopySupport.addSections(clipped, sections);
         }
         long[] order = sections.isEmpty() ? NO_SECTIONS : CopySupport.ordered(sections);
-        return new PasteProgram(source, op, states, target, bounds, counted, order, sampler, frame, original.min());
+        PasteProgram program = new PasteProgram(source, op, states, target, bounds, counted, order, copy, frame,
+                original.min());
+        if (op.o().into() != PasteOptions.Into.EVERYTHING) program.listPairColumns(original.min(), frame);
+        return program;
     }
 
     /**
@@ -292,7 +327,7 @@ final class PasteProgram implements ClaimingProgram {
      * cell takes the source cell its centre turns back into, which lies within a cell of where that cell turns to),
      * cut to the target. Null when nothing is left.
      */
-    private static Box turnedPart(Box target, Orientation.Sampler sampler, int[] local) {
+    private static Box turnedPart(Box target, CellResampler sampler, int[] local) {
         int[] b = sampler.turnedBox(local[0], local[1], local[2], local[3], local[4], local[5]);
         if (b == null) return null;
         BlockPos min = target.min();
@@ -313,6 +348,34 @@ final class PasteProgram implements ClaimingProgram {
     @Override
     public long estimatedCells() {
         return estimatedCells;
+    }
+
+    /**
+     * For a free paste with a "Paste into" filter: each section holding a two-cell block's half lists the chunk column of
+     * the other half when it is another column ({@link #readColumns}), so the runner has it loaded when the pair is
+     * judged ({@link #pairWritable}).
+     */
+    private void listPairColumns(BlockPos min, CopyFrame image) {
+        Long2ObjectOpenHashMap<LongOpenHashSet> columns = new Long2ObjectOpenHashMap<>();
+        copy.forEachHalf((x, y, z, px, py, pz) -> {
+            int[] own = world(min, image, x, z), other = world(min, image, px, pz);
+            if (own[0] >> 4 == other[0] >> 4 && own[1] >> 4 == other[1] >> 4) return;
+            long key = BlockBuffer.keyOfBlock(own[0], min.y() + y, own[1]);
+            columns.computeIfAbsent(key, k -> new LongOpenHashSet()).add(EditProgram.column(other[0] >> 4, other[1] >> 4));
+        });
+        columns.forEach((key, set) -> pairColumns.put((long) key, set.toLongArray()));
+    }
+
+    /** The world (x, z) of result-local cell (x, z) of the original's box at {@code min}, imaged for a copy. */
+    private static int[] world(BlockPos min, CopyFrame image, int x, int z) {
+        int wx = min.x() + x, wz = min.z() + z;
+        return image == null ? new int[] {wx, wz} : new int[] {image.imageX(wx, wz), image.imageZ(wx, wz)};
+    }
+
+    @Override
+    public long[] readColumns(long key) {
+        long[] columns = pairColumns.get(key);
+        return columns == null ? NO_COLUMNS : columns.clone();
     }
 
     @Override
@@ -342,8 +405,8 @@ final class PasteProgram implements ClaimingProgram {
         int z0 = Math.max(bounds.min().z(), oz), z1 = Math.min(bounds.max().z(), oz + 15);
         if (x0 > x1 || y0 > y1 || z0 > z1) return;
         SectionCursor source = new SectionCursor(cells::section);
-        if (sampler != null) {
-            computeFree(ox, oy, oz, x0, x1, y0, y1, z0, z1, source, before, out, claimed);
+        if (copy != null) {
+            computeFree(ox, oy, oz, x0, x1, y0, y1, z0, z1, source, before, out, claimed, ctx);
             return;
         }
         BlockPos min = target.min();
@@ -371,10 +434,16 @@ final class PasteProgram implements ClaimingProgram {
         }
     }
 
-    /** The free path: each result cell resampled through the sampler (from its pre-image's, for a copy). */
+    /**
+     * The free path: each result cell resampled through the copy (from its pre-image's, for a copy), its state turned
+     * (and shaped, with smooth slopes) as the copy says.
+     */
     private void computeFree(int ox, int oy, int oz, int x0, int x1, int y0, int y1, int z0, int z1,
-                             SectionCursor source, SectionBuffer before, SectionBuffer out, long[] claimed) {
+                             SectionCursor source, SectionBuffer before, SectionBuffer out, long[] claimed,
+                             ComputeContext ctx) {
         int[] cell = new int[3];
+        int[] partner = new int[3];
+        boolean pairs = into != PasteOptions.Into.EVERYTHING && copy.hasPairs();
         for (int y = y0; y <= y1; y++) {
             int ty = y - sampleMin.y();
             for (int z = z0; z <= z1; z++) {
@@ -390,20 +459,46 @@ final class PasteProgram implements ClaimingProgram {
                         tx = frame.preX(x, z) - sampleMin.x();
                         tz = frame.preZ(x, z) - sampleMin.z();
                     }
-                    if (!sampler.source(tx, ty, tz, cell)) continue;
+                    if (!copy.cells().source(tx, ty, tz, sourceCells, cell)) continue;
                     SectionBuffer section = source.at(cell[0], cell[1], cell[2]);
                     if (section == null) continue;
                     int si = SectionBuffer.index(cell[0] & 15, cell[1] & 15, cell[2] & 15);
                     int state = section.get(si);
                     if (state < 0) continue;
                     if (!includeAir && StateFlags.has(states.flags(state), StateFlags.AIR)) continue;
-                    if (!CopySupport.writable(into, states, before.get(i))) continue;
+                    if (pairs && copy.partner(tx, ty, tz, partner)) {
+                        if (!pairWritable(tx, ty, tz, partner, before.get(i), ctx)) continue;
+                    } else if (!CopySupport.writable(into, states, before.get(i))) {
+                        continue;
+                    }
                     ClaimingProgram.claim(claimed, i);
-                    int next = oriented.map(state);
+                    int next = copy.state(tx, ty, tz, state);
                     if (frame != null) next = frame.mapState(next);
                     CopySupport.copyCell(before, out, i, next, section.tile(si));
                 }
             }
         }
+    }
+
+    /**
+     * Whether a placed two-cell block may be written under the "Paste into" filter: both its cells must allow it, or
+     * neither half is written. Decided once per pair, by whichever half is computed first: its own cell from
+     * {@code before}, the other from the live world, which this job has not written there yet (the other half's
+     * section would have decided first). A cell the world cannot tell (not loaded) refuses the pair.
+     */
+    private boolean pairWritable(int tx, int ty, int tz, int[] partner, int beforeState, ComputeContext ctx) {
+        long self = TwoCellPairs.pack(tx, ty, tz), other = TwoCellPairs.pack(partner[0], partner[1], partner[2]);
+        return pairDecisions.computeIfAbsent(Math.min(self, other), key -> {
+            if (!CopySupport.writable(into, states, beforeState)) return false;
+            int wx = sampleMin.x() + partner[0], wy = sampleMin.y() + partner[1], wz = sampleMin.z() + partner[2];
+            if (frame != null) {
+                int ix = frame.imageX(wx, wz), iz = frame.imageZ(wx, wz);
+                wx = ix;
+                wz = iz;
+            }
+            WorldReader world = ctx.world();
+            if (world == null || !world.isLoaded(wx >> 4, wz >> 4)) return false;
+            return CopySupport.writable(into, states, world.get(wx, wy, wz));
+        });
     }
 }

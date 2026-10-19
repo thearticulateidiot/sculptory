@@ -24,8 +24,11 @@ import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.state.OrientedStates;
+import dev.sculptory.core.state.ResampledCopy;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.state.StateTips;
+import dev.sculptory.core.state.TwoCellPairs;
+import dev.sculptory.core.transform.CellResampler;
 import dev.sculptory.core.transform.CubeTurn;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Orientation;
@@ -79,34 +82,93 @@ public final class FreeRotationGameTest implements FabricGameTest {
 
     /**
      * Checks the world against the resampled model: every cell of the result box of {@code size} at {@code targetMin}
-     * whose source cell (in {@code before}, a snapshot of the source box) is not air holds that state turned by
-     * {@code orientation}; the rest of the box holds what {@code around} says (null: air).
+     * whose source cell (in {@code before}, a snapshot of the source box) is not air holds that state as the programs
+     * resample it ({@link ResampledCopy}: the orientation's method, two-cell blocks whole, smooth slopes); the rest
+     * of the box holds what {@code around} says (null: air).
      */
     static void checkResampled(ServerWorld world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
                                Orientation orientation, WorldSnapshot around, String what) {
-        checkResampled(world, states, before, targetMin, orientation, around, null, what);
+        checkResampled(world, states, before, targetMin, orientation, around, null, false, what);
     }
 
-    /** {@link #checkResampled}; a cell of {@code vacated} the result does not land on must be air. */
+    /**
+     * {@link #checkResampled}; with {@code move}, the result is a move's (two-cell blocks keep to its landing cells),
+     * and a cell of {@code vacated} the result does not land on must be air.
+     */
     static void checkResampled(ServerWorld world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
-                               Orientation orientation, WorldSnapshot around, Box vacated, String what) {
+                               Orientation orientation, WorldSnapshot around, Box vacated, boolean move, String what) {
+        ResampledCopy copy = model(states, before, orientation, move);
         Box source = before.box;
-        Orientation.Sampler sampler = orientation.sampler(source.sizeX(), source.sizeY(), source.sizeZ());
-        OrientedStates oriented = new OrientedStates(states, orientation);
+        CellResampler base = orientation.resampler(source.sizeX(), source.sizeY(), source.sizeZ());
+        CellResampler.SourceCells cells = snapshotCells(before, move);
+        modelCheck(world, before, targetMin, orientation, around, vacated, what, copy, base, cells);
+    }
+
+    /**
+     * The source box's snapshot as the programs read it: every cell present, air included for a move ({@code air});
+     * a paste that leaves air out reads its air as absent.
+     */
+    static CellResampler.SourceCells snapshotCells(WorldSnapshot before, boolean air) {
+        Box source = before.box;
+        return new CellResampler.SourceCells() {
+            @Override
+            public int state(int x, int y, int z) {
+                if (x < 0 || y < 0 || z < 0 || x >= source.sizeX() || y >= source.sizeY() || z >= source.sizeZ()) {
+                    return -1;
+                }
+                int state = before.get(source.min().x() + x, source.min().y() + y, source.min().z() + z);
+                return !air && Block.getStateFromRawId(state).isAir() ? -1 : state;
+            }
+
+            @Override
+            public boolean solid(int state) {
+                return !Block.getStateFromRawId(state).isAir();
+            }
+        };
+    }
+
+    /**
+     * The programs' own composition of a turned copy of {@code before}: the method's cells, two-cell blocks whole
+     * (within a move's landing cells), smooth slopes.
+     */
+    static ResampledCopy model(StateSpace states, WorldSnapshot before, Orientation orientation, boolean move) {
+        Box source = before.box;
+        CellResampler base = orientation.resampler(source.sizeX(), source.sizeY(), source.sizeZ());
+        CellResampler.SourceCells cells = snapshotCells(before, move);
+        int[] taken = new int[3];
+        TwoCellPairs.Writable writable = move
+                ? (x, y, z) -> base.source(x, y, z, cells, taken) && cells.state(taken[0], taken[1], taken[2]) >= 0
+                : (x, y, z) -> true;
+        return ResampledCopy.of(base, cells, new OrientedStates(states, orientation), orientation.smoothSlopes(), null,
+                ResampledCopy.Tables.shared(states), writable);
+    }
+
+    /** The blocks of two-cell blocks a turned copy of {@code before} leaves out for want of room. */
+    static int droppedBlocks(StateSpace states, WorldSnapshot before, Orientation orientation, boolean move) {
+        return 2 * model(states, before, orientation, move).droppedPairs();
+    }
+
+    private static void modelCheck(ServerWorld world, WorldSnapshot before, BlockPos targetMin, Orientation orientation,
+                                   WorldSnapshot around, Box vacated, String what, ResampledCopy copy,
+                                   CellResampler base, CellResampler.SourceCells cells) {
+        CellResampler sampler = copy.cells();
         BlockPos size = sampler.size();
         int[] cell = new int[3];
+        int[] baseCell = new int[3];
         for (int y = 0; y < size.y(); y++) {
             for (int z = 0; z < size.z(); z++) {
                 for (int x = 0; x < size.x(); x++) {
                     int wx = targetMin.x() + x, wy = targetMin.y() + y, wz = targetMin.z() + z;
                     int got = Block.getRawIdFromState(world.getBlockState(pos(wx, wy, wz)));
                     int want = -1;
-                    if (sampler.source(x, y, z, cell)) {
-                        int from = before.get(source.min().x() + cell[0], source.min().y() + cell[1],
-                                source.min().z() + cell[2]);
-                        if (!Block.getStateFromRawId(from).isAir()) want = oriented.map(from);
-                    }
                     int air = Block.getRawIdFromState(net.minecraft.block.Blocks.AIR.getDefaultState());
+                    if (sampler.source(x, y, z, cells, cell)) {
+                        int from = cells.state(cell[0], cell[1], cell[2]);
+                        if (from >= 0 && !Block.getStateFromRawId(from).isAir()) want = copy.state(x, y, z, from);
+                    } else if (vacated != null && base.source(x, y, z, cells, baseCell)) {
+                        // A move's landing cell whose block a kept-whole door or bed took is left as air.
+                        want = air;
+                    }
                     if (want < 0) {
                         want = around == null || (vacated != null && vacated.contains(wx, wy, wz)) ? air
                                 : around.get(wx, wy, wz);
@@ -195,8 +257,11 @@ public final class FreeRotationGameTest implements FabricGameTest {
                         checkResampled(world, h.runtime.states(), before, target.min(), o, null, "paste");
                         if (o.pitch() == Orientation.QUARTER_TURN && o.yaw() == 0 && o.roll() == 0) {
                             // An exact permutation: every block is there once.
-                            check(nonAir(world, target) == nonAir(world, source), "the quarter pitch keeps every block: "
-                                    + nonAir(world, target) + " of " + nonAir(world, source));
+                            // An exact permutation: every block is there once, but for a bed that cannot stand on end
+                            // (two-cell blocks stay whole or are left out whole).
+                            int dropped = droppedBlocks(h.runtime.states(), before, o, false);
+                            check(nonAir(world, target) == nonAir(world, source) - dropped, "the quarter pitch keeps "
+                                    + "every block: " + nonAir(world, target) + " of " + nonAir(world, source) + " - " + dropped);
                         }
                     }
                     check(h.history().undoLabel().startsWith("Paste"), "history " + h.history().undoLabel());
@@ -240,7 +305,7 @@ public final class FreeRotationGameTest implements FabricGameTest {
                     check(moved.result.outcome() == JobOutcome.COMPLETED, "move " + moved.result);
                     Orientation.Bounds bounds = away.bounds(6, 4, 6);
                     BlockPos targetMin = source.min().add(bounds.offset()).add(offset);
-                    checkResampled(world, h.runtime.states(), before, targetMin, away, null, "moved away");
+                    checkResampled(world, h.runtime.states(), before, targetMin, away, null, null, true, "moved away");
                     for (int y = source.min().y(); y <= source.max().y(); y++) {
                         for (int z = source.min().z(); z <= source.max().z(); z++) {
                             for (int x = source.min().x(); x <= source.max().x(); x++) {
@@ -263,7 +328,7 @@ public final class FreeRotationGameTest implements FabricGameTest {
                     Orientation.Bounds bounds = inPlace.bounds(6, 4, 6);
                     // The source box's cells the turned blocks do not land on are air; the rest is the model.
                     checkResampled(world, h.runtime.states(), before, source.min().add(bounds.offset()), inPlace,
-                            allBefore, source, "rotated in place");
+                            allBefore, source, true, "rotated in place");
                     check(h.history().undoLabel().startsWith("Rotate"), "the step is labelled Rotate: "
                             + h.history().undoLabel());
                     check(h.history().undoLabels().size() == 1, "one step: " + h.history().undoLabels());

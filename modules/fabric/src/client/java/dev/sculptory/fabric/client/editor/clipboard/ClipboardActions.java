@@ -10,6 +10,7 @@ import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.client.editor.input.KeyAction;
 import dev.sculptory.fabric.client.editor.tool.RegionWork;
+import dev.sculptory.fabric.client.editor.tools.brush.SymmetryCentre;
 import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.session.ClipboardCache;
 import dev.sculptory.fabric.client.session.EditorSession;
@@ -199,6 +200,23 @@ public final class ClipboardActions {
     public boolean move() {
         Optional<Region> region = selectionFor(Perm.REGION);
         return region.isPresent() && host.place(new PlaceTool.Request.Move(region.get()));
+    }
+
+    /**
+     * Rotate…: the selection's move ghost in place, to turn with the rings (Ctrl: freely) or the angles typed in Tool
+     * Settings, previewed with the chosen method, and sent with Enter as one step labelled "Rotate". It turns about the
+     * symmetry centre's column (M) at the selection's middle height when {@code centre} is set, else about the
+     * selection's middle. Refused as a move is (the {@code region} node).
+     */
+    public boolean rotateSelection(SymmetryCentre centre) {
+        Optional<Region> region = selectionFor(Perm.REGION);
+        if (region.isEmpty()) return false;
+        Box b = region.get().bounds();
+        boolean set = centre != null && centre.isSet();
+        int x = set ? Math.floorDiv(centre.x2(), 2) : b.min().x() + b.sizeX() / 2;
+        int z = set ? Math.floorDiv(centre.z2(), 2) : b.min().z() + b.sizeZ() / 2;
+        BlockPos pivot = new BlockPos(x, b.min().y() + b.sizeY() / 2, z);
+        return host.place(new PlaceTool.Request.Rotate(region.get(), pivot));
     }
 
     /** Stacks copies of the selection (its own blocks) with the Place tool. */

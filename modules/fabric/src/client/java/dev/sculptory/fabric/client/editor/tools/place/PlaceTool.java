@@ -4,6 +4,7 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.CellMask;
+import dev.sculptory.core.edit.OpCompiler;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.OpSymmetry;
 import dev.sculptory.core.edit.PasteOptions;
@@ -56,6 +57,7 @@ import dev.sculptory.fabric.client.session.Subscription;
 import dev.sculptory.fabric.client.session.ToolAction;
 import dev.sculptory.fabric.client.session.ToolResult;
 import dev.sculptory.fabric.client.session.Transfer;
+import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.net.PreviewPayload;
@@ -132,6 +134,18 @@ public final class PlaceTool implements Tool {
 
             public Move(Box box) {
                 this(new Region.Cuboid(box));
+            }
+        }
+
+        /**
+         * Rotate… in the Selection window: the selection's move ghost where it stands, turning about world cell
+         * {@code pivot} ({@link Placement#rotate}) with the rings or the typed angles, sent as one step labelled "Rotate"
+         * once turned.
+         */
+        record Rotate(Region region, BlockPos pivot) implements Request {
+            public Rotate {
+                Objects.requireNonNull(region);
+                Objects.requireNonNull(pivot);
             }
         }
 
@@ -276,6 +290,8 @@ public final class PlaceTool implements Tool {
     private long sourceCells;
     private boolean following;
     private boolean positioned;
+    /** Whether the move is the Selection window's Rotate… (sent labelled "Rotate"). */
+    private boolean rotating;
     private boolean returnWhenDone;
     /** The pasted clipboard was replaced or cleared; the placement ends at the next frame (or Enter). */
     private boolean clipboardGone;
@@ -484,6 +500,16 @@ public final class PlaceTool implements Tool {
                 following = false;
                 positioned = true;
             }
+            case Request.Rotate rotate -> {
+                placement = Placement.rotate(rotate.region(), rotate.pivot());
+                label = "selection";
+                capture(c, rotate.region());
+                following = false;
+                positioned = true;
+                rotating = true;
+                c.notify(Notice.of(Notice.Level.INFO, "sculptory.notice.rotate_rings",
+                        services.keyLabel(KeyAction.COMMIT)));
+            }
             case Request.Stack stack -> {
                 int[] direction = Nudge.direction(EditorAction.NUDGE_FORWARD, services.cameraYaw()).orElse(new int[] {1, 0, 0});
                 placement = Placement.stack(stack.region(), direction);
@@ -595,6 +621,7 @@ public final class PlaceTool implements Tool {
         previewTransfer = null;
         placement = null;
         waitingFor = null;
+        rotating = false;
         volume = null;
         sourceCells = 0;
         entities = List.of();
@@ -652,6 +679,7 @@ public final class PlaceTool implements Tool {
         }
         updateCapture();
         updateCopies(c);
+        placement.setResampling(c.settings().get(settings.method()), c.settings().get(settings.smoothSlopes()));
         if (sourceCells < 0 && placement.region() != null) {
             c.regionWork().countNow(placement.region()).ifPresent(cells -> sourceCells = cells);
         }
@@ -686,7 +714,8 @@ public final class PlaceTool implements Tool {
 
     private double[] gizmoOrigin() {
         BlockPos pivot = placement.pivotWorld();
-        return new double[] {pivot.x() + 0.5, pivot.y(), pivot.z() + 0.5};
+        // A Rotate…'s gizmo sits in its pivot cell, the cell it turns about.
+        return new double[] {pivot.x() + 0.5, pivot.y() + (placement.pivotTurns() ? 0.5 : 0), pivot.z() + 0.5};
     }
 
     private Optional<GizmoPick.Handle> pickGizmo(double mouseX, double mouseY) {
@@ -742,8 +771,13 @@ public final class PlaceTool implements Tool {
         GhostBaker.FlipTally tally = orientation.transform().upsideDown() || !orientation.isExact()
                 ? new GhostBaker.FlipTally() : null;
         bakingTally = tally;
-        baking = CompletableFuture.supplyAsync(() -> GhostBaker.bake(frame, sections, orientation, states, tally),
-                services.background());
+        // A move's own cells (air included) are what it turns; a paste's are the clipboard's blocks.
+        Region moving = placement.mode() == Placement.Mode.MOVE ? placement.region() : null;
+        BlockPos movingMin = moving == null ? null : moving.bounds().min();
+        GhostBaker.CellFilter filter = moving == null ? null
+                : (x, y, z) -> moving.contains(movingMin.x() + x, movingMin.y() + y, movingMin.z() + z);
+        baking = CompletableFuture.supplyAsync(
+                () -> GhostBaker.bake(frame, sections, orientation, states, tally, filter), services.background());
         if (baking.isDone()) updateBake(c, now);
     }
 
@@ -787,6 +821,10 @@ public final class PlaceTool implements Tool {
     private void announceFlip(ToolContext c, GhostBaker.FlipTally tally, boolean turned) {
         long kept = tally.kept();
         long unknown = tally.unknown();
+        if (turned && tally.dropped() > 0) {
+            c.notify(Notice.of(Notice.Level.INFO, "sculptory.notice.turn_dropped",
+                    SessionNotices.count(tally.dropped())));
+        }
         if (kept == 0 && unknown == 0) return;
         // A free turn: the blocks it cannot turn (no tipped form, or a stair on its side); else the flip's.
         String prefix = turned ? "sculptory.notice.turn_" : "sculptory.notice.flip_";
@@ -1359,7 +1397,8 @@ public final class PlaceTool implements Tool {
         }
         if (placement.unmoved()) {
             c.notify(Notice.of(Notice.Level.INFO, placement.mode() == Placement.Mode.MOVE
-                    ? "sculptory.notice.move_first" : "sculptory.notice.stack_first"));
+                    ? rotating ? "sculptory.notice.rotate_nothing" : "sculptory.notice.move_first"
+                    : "sculptory.notice.stack_first"));
             return;
         }
         Permissions permissions = c.session().permissions();
@@ -1415,7 +1454,8 @@ public final class PlaceTool implements Tool {
             case MOVE -> cells.orElse(RegionWork.atMost(placement.region()));
             case STACK -> saturatingTimes(cells.orElse(RegionWork.atMost(placement.region())), placement.count());
         }, copyCount);
-        if (blocks > opLimit(permissions)) {
+        // A free turn's resampling work counts against the limit as the server counts it (smooth: four cells a block).
+        if (saturatingTimes(blocks, OpCompiler.resamplingWork(placement.orientation())) > opLimit(permissions)) {
             c.notify(Notice.of(Notice.Level.WARNING, "sculptory.notice.too_large",
                     SessionNotices.count(blocks), SessionNotices.count(permissions.limits().maxOpVolume())));
             return;
@@ -1435,7 +1475,8 @@ public final class PlaceTool implements Tool {
         BlockPos targetMin = placement.targetMin();
         Orientation orientation = placement.orientation();
         Runnable send = () -> {
-            send(c, op, physics, mode);
+            // A Rotate… is labelled so only once it turns; nudged alone, it is a move like any other.
+            send(c, op, physics, mode, rotating && !orientation.isIdentity() ? OpLabel.ROTATE : OpLabel.NONE);
             if (mode == Placement.Mode.MOVE) {
                 selectMoved(c, source, targetMin, orientation);
                 done();
@@ -1448,10 +1489,10 @@ public final class PlaceTool implements Tool {
         }
     }
 
-    private void send(ToolContext c, OpSpec op, boolean physics, Placement.Mode mode) {
+    private void send(ToolContext c, OpSpec op, boolean physics, Placement.Mode mode, OpLabel opLabel) {
         EditorSession session = c.session();
         int sentFor = generation;
-        session.send(new ToolAction.RunOp(op, physics)).thenAccept(result -> {
+        session.send(new ToolAction.RunOp(op, physics, opLabel)).thenAccept(result -> {
             if (!(result instanceof ToolResult.Rejected rejected)) return;
             // A paste of an asset the server's shared asset cache let go of is refused as ASSET_NOT_LOADED. Previewing
             // it again loads it there again: done once per placement, and only while that placement is still the one

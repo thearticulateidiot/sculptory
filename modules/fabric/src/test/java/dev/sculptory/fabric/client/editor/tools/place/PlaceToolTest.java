@@ -23,6 +23,8 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
 import dev.sculptory.core.transform.Mirror;
+import dev.sculptory.core.transform.Orientation;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.fabric.client.editor.EditorBackend;
@@ -58,6 +60,7 @@ import dev.sculptory.fabric.client.session.Reply;
 import dev.sculptory.fabric.client.session.ToolAction;
 import dev.sculptory.fabric.client.session.Transfers;
 import dev.sculptory.protocol.v2.Limits;
+import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
@@ -782,6 +785,47 @@ class PlaceToolTest {
                 "a stack takes decorations along by default");
         assertFalse(tool.placing());
         assertEquals(1, finished);
+    }
+
+    @Test
+    void rotateIsTheMoveGhostInPlaceSentLabelledRotateWithTheChosenMethod() {
+        Box box = new Box(new BlockPos(0, 64, 0), new BlockPos(3, 66, 3));
+        world.fill(box, states.state("minecraft:stone"));
+        view.setSelection(box);
+        view.updateSettings(view.settings().with(tool.settings().method(), Resampling.EXACT)
+                .with(tool.settings().smoothSlopes(), true));
+        BlockPos middle = new BlockPos(2, 65, 2);
+        tool.request(new PlaceTool.Request.Rotate(new Region.Cuboid(box), middle));
+        frame(WorldCursor.miss(0, 0, 0));
+        assertFalse(tool.following(), "Rotate starts on the selection, where it is");
+        // Nothing turned yet: nothing to send.
+        action(EditorAction.COMMIT, 0);
+        assertTrue(session.sent().isEmpty());
+        assertTrue(tool.setAngles(3_000, 1_500, 0));
+        frame(WorldCursor.miss(0, 0, 0));
+        assertEquals(Resampling.EXACT, tool.placement().orElseThrow().orientation().resampling(),
+                "the ghost bakes the chosen method");
+        action(EditorAction.COMMIT, 0);
+        ToolAction.RunOp run = assertInstanceOf(ToolAction.RunOp.class, session.sent().get(session.sent().size() - 1));
+        assertEquals(OpLabel.ROTATE, run.label());
+        OpSpec.Move move = assertInstanceOf(OpSpec.Move.class, run.op());
+        // Turned where it stands, about its middle (height included).
+        Placement expected = Placement.rotate(new Region.Cuboid(box), middle);
+        expected.setResampling(Resampling.EXACT, true);
+        expected.setAngles(3_000, 1_500, 0);
+        assertEquals(expected.offset(), move.offset());
+        // The middle cell stays where it is.
+        Orientation turned = expected.orientation();
+        assertEquals(middle, expected.targetMin().add(turned.mapCell(2, 1, 2, 4, 3, 4)));
+        assertEquals(Orientation.free(Transform.IDENTITY, 3_000, 1_500, 0, Resampling.EXACT, true), move.orientation());
+        // A Rotate… only nudged is a plain move, not labelled.
+        view.setSelection(box);
+        tool.request(new PlaceTool.Request.Rotate(new Region.Cuboid(box), middle));
+        frame(WorldCursor.miss(0, 0, 0));
+        action(EditorAction.NUDGE_RIGHT, 0);
+        action(EditorAction.COMMIT, 0);
+        run = assertInstanceOf(ToolAction.RunOp.class, session.sent().get(session.sent().size() - 1));
+        assertEquals(OpLabel.NONE, run.label());
     }
 
     @Test

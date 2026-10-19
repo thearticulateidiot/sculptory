@@ -6,8 +6,8 @@ package dev.sculptory.core.transform;
  * resampling (it is always {@link #NEAREST} there). Written by ordinal on the wire (protocol 6, see
  * {@code CoreCodec.writeOrientation}): new methods go at the end.
  *
- * <p>Until they are built, the programs and the ghost treat {@link #EXACT} and {@link #SMOOTH} as
- * {@link #NEAREST} (same cells, same counts), so a client may already send them.
+ * <p>{@link Orientation#resampler} gives each method's {@link CellResampler}; the paste and move programs and the
+ * client ghost all fill a free copy through it.
  */
 public enum Resampling {
     /**

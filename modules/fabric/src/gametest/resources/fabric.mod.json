@@ -70,6 +70,7 @@
       "dev.sculptory.fabric.gametest.BiomesGameTest",
       "dev.sculptory.fabric.gametest.ExtrudePathsGameTest",
       "dev.sculptory.fabric.gametest.FreeRotationGameTest",
+      "dev.sculptory.fabric.gametest.ResamplingGameTest",
       "dev.sculptory.fabric.gametest.AirPathsGameTest"
     ]
   },

@@ -5,12 +5,14 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.edit.SectionOrder;
+import dev.sculptory.core.transform.CellResampler;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.Arrays;
 import java.util.Objects;
 
@@ -315,15 +317,16 @@ public final class Regions {
      * {@link #moved(Region, Box, BlockPos, Transform)} for an orientation: an exact one moves as its transform does; a
      * free one turns {@code pivot} (the box the move turns: its result box lands with its minimum corner on
      * {@code destinationMin}) and gives the cells of the result box whose source cell
-     * ({@link Orientation.Sampler#source}) is a cell of {@code region}: the cells a free move writes, as a cell set
-     * ({@link #moved(Region, Box, BlockPos, Orientation.Sampler, int, int, long, long)}, every height, no caps).
+     * (by the orientation's method, {@link Orientation#resampler}) is a cell of {@code region}: the cells a free move
+     * writes, as a cell set
+     * ({@link #moved(Region, Box, BlockPos, CellResampler, int, int, long, long)}, every height, no caps).
      *
      * @throws IllegalArgumentException if a cell would leave the coordinate range, or a free move would have no cell
      */
     public static Region moved(Region region, Box pivot, BlockPos destinationMin, Orientation orientation) {
         Objects.requireNonNull(orientation);
         if (orientation.isExact()) return moved(region, pivot, destinationMin, orientation.transform());
-        return moved(region, pivot, destinationMin, orientation.sampler(pivot.sizeX(), pivot.sizeY(), pivot.sizeZ()),
+        return moved(region, pivot, destinationMin, orientation.resampler(pivot.sizeX(), pivot.sizeY(), pivot.sizeZ()),
                 Integer.MIN_VALUE, Integer.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE);
     }
 
@@ -333,14 +336,17 @@ public final class Regions {
      * and {@code maxY} (the build height: cells outside it do not move), as a cell set.
      *
      * <p>Mapped forwards, cell by cell: each region cell keeps the result cells around where it lands that take it
-     * ({@link Orientation.Sampler#takers}, at most 27 looked at), so the work is at most 27 per cell whatever the angle
-     * or the spread of the cells. Regions of more than {@code maxCells} cells (between those heights) or
+     * ({@link CellResampler#takers}: at most 27 looked at by the nearest way, one by exact count), so the work is fixed
+     * per cell whatever the angle or the spread of the cells. The smooth way, whose cells weigh 27 points each, asks
+     * each result cell near a region cell once instead (the region's cells count as present, air or not), and is refused
+     * past {@link #SMOOTH_POINTS_PER_CELL} points per cell {@code maxCells} allows.
+     * Regions of more than {@code maxCells} cells (between those heights) or
      * {@code maxSections} sections are refused before anything is mapped.
      *
      * @throws RegionTooLargeException past {@code maxSections} sections or {@code maxCells} cells
      * @throws IllegalArgumentException if a cell would leave the coordinate range, or no cell is left
      */
-    public static Region moved(Region region, Box pivot, BlockPos destinationMin, Orientation.Sampler sampler,
+    public static Region moved(Region region, Box pivot, BlockPos destinationMin, CellResampler sampler,
                                int minY, int maxY, long maxSections, long maxCells) {
         Objects.requireNonNull(region);
         Objects.requireNonNull(pivot);
@@ -359,11 +365,27 @@ public final class Regions {
             throw new RegionTooLargeException("Turning " + cells + " cells by a free angle > " + maxCells, cells, maxCells);
         }
         CellSet.Builder builder = CellSet.builder();
-        int[] takers = new int[81];
-        double[] point = new double[3];
-        int[] cell = new int[3];
-        int[] rows = new int[ROWS];
         BlockPos from = pivot.min();
+        // What moves: the region's cells between the heights (a resampler that weighs points counts them as present).
+        CellResampler.SourceCells moving = new CellResampler.SourceCells() {
+            @Override
+            public int state(int x, int y, int z) {
+                int wy = from.y() + y;
+                return wy >= lo && wy <= hi && region.contains(from.x() + x, wy, from.z() + z) ? 0 : -1;
+            }
+
+            @Override
+            public boolean solid(int state) {
+                return true;
+            }
+        };
+        if (sampler.maxTakers() > 27) {
+            movedByResultCells(region, sampler, moving, from, destinationMin, lo, hi, maxSections, maxCells, builder);
+            if (builder.size() == 0) throw new IllegalArgumentException("The turned region has no cells");
+            return new Region.Cells(builder.build());
+        }
+        int[] takers = new int[3 * sampler.maxTakers()];
+        int[] rows = new int[ROWS];
         for (long key : sectionKeysBetween(region, lo, hi, maxSections)) {
             if (rows(region, key, lo, hi, rows) == 0) continue;
             int ox = BlockBuffer.keyX(key) << 4, oy = BlockBuffer.keyY(key) << 4, oz = BlockBuffer.keyZ(key) << 4;
@@ -371,7 +393,7 @@ public final class Regions {
                 int ly = oy + (r >>> 4) - from.y(), lz = oz + (r & 15) - from.z();
                 for (int bits = rows[r]; bits != 0; bits &= bits - 1) {
                     int lx = ox + Integer.numberOfTrailingZeros(bits) - from.x();
-                    int n = sampler.takers(lx, ly, lz, takers, point, cell);
+                    int n = sampler.takers(lx, ly, lz, moving, takers);
                     for (int i = 0; i < n; i++) {
                         builder.add(destinationMin.x() + takers[3 * i], destinationMin.y() + takers[3 * i + 1],
                                 destinationMin.z() + takers[3 * i + 2]);
@@ -381,6 +403,58 @@ public final class Regions {
         }
         if (builder.size() == 0) throw new IllegalArgumentException("The turned region has no cells");
         return new Region.Cells(builder.build());
+    }
+
+    /** The points a smooth landing walk may weigh per region cell allowed ({@code maxCells}) before it is refused. */
+    public static final long SMOOTH_POINTS_PER_CELL = 64;
+
+    /**
+     * The landing cells for a resampler that weighs many points per cell (smooth): for each moving cell, the result
+     * cells within reach of where it lands (5 by 5 by 5 around it: a result cell's points reach a block and a half from
+     * its centre) are asked once each whether they take a moving cell. The work follows the region's own cells, not its
+     * sections' boxes: a sparse selection asks only around its cells. Every result cell asked weighs 27 points; past
+     * {@link #SMOOTH_POINTS_PER_CELL} points per cell {@code maxCells} allows, the turn is refused before more is asked.
+     *
+     * @throws RegionTooLargeException past the points allowed
+     */
+    private static void movedByResultCells(Region region, CellResampler sampler, CellResampler.SourceCells moving,
+                                           BlockPos from, BlockPos destinationMin, int lo, int hi, long maxSections,
+                                           long maxCells, CellSet.Builder builder) {
+        BlockPos size = sampler.size();
+        long budget = maxCells > Long.MAX_VALUE / SMOOTH_POINTS_PER_CELL ? Long.MAX_VALUE
+                : maxCells * SMOOTH_POINTS_PER_CELL;
+        LongOpenHashSet asked = new LongOpenHashSet();
+        long points = 0;
+        int[] cell = new int[3];
+        int[] rows = new int[ROWS];
+        double[] landed = new double[3];
+        for (long key : sectionKeysBetween(region, lo, hi, maxSections)) {
+            if (rows(region, key, lo, hi, rows) == 0) continue;
+            int ox = BlockBuffer.keyX(key) << 4, oy = BlockBuffer.keyY(key) << 4, oz = BlockBuffer.keyZ(key) << 4;
+            for (int r = 0; r < ROWS; r++) {
+                int ly = oy + (r >>> 4) - from.y(), lz = oz + (r & 15) - from.z();
+                for (int bits = rows[r]; bits != 0; bits &= bits - 1) {
+                    int lx = ox + Integer.numberOfTrailingZeros(bits) - from.x();
+                    sampler.forward(lx + 0.5, ly + 0.5, lz + 0.5, landed);
+                    int bx = (int) Math.floor(landed[0]), by = (int) Math.floor(landed[1]);
+                    int bz = (int) Math.floor(landed[2]);
+                    for (int y = Math.max(0, by - 2); y <= Math.min(size.y() - 1, by + 2); y++) {
+                        for (int z = Math.max(0, bz - 2); z <= Math.min(size.z() - 1, bz + 2); z++) {
+                            for (int x = Math.max(0, bx - 2); x <= Math.min(size.x() - 1, bx + 2); x++) {
+                                if (!asked.add(((long) y * size.z() + z) * size.x() + x)) continue;
+                                points += 27;
+                                if (points > budget) {
+                                    throw new RegionTooLargeException("Turning these cells smoothly weighs more than "
+                                            + budget + " points", points / SMOOTH_POINTS_PER_CELL, maxCells);
+                                }
+                                if (!sampler.source(x, y, z, moving, cell)) continue;
+                                builder.add(destinationMin.x() + x, destinationMin.y() + y, destinationMin.z() + z);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**

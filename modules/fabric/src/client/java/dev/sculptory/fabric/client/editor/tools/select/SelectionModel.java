@@ -3,6 +3,7 @@ package dev.sculptory.fabric.client.editor.tools.select;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
+import dev.sculptory.core.edit.OpCompiler;
 import dev.sculptory.core.region.CellSet;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.region.Region;
@@ -147,8 +148,9 @@ public final class SelectionModel {
         if (region instanceof Region.Uploaded) throw new IllegalArgumentException("An uploaded region has no cells here");
         Box bounds = region.bounds();
         return Regions.moved(region, bounds, destinationMin,
-                orientation.sampler(bounds.sizeX(), bounds.sizeY(), bounds.sizeZ()), minY, maxY, Long.MAX_VALUE,
-                Long.MAX_VALUE);
+                orientation.resampler(bounds.sizeX(), bounds.sizeY(), bounds.sizeZ()), minY, maxY, Long.MAX_VALUE,
+                // The most the server would turn, so a sparse smooth turn cannot keep the background thread for long.
+                OpCompiler.maxFreeMoveCells(Long.MAX_VALUE, orientation));
     }
 
     /**

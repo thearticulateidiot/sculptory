@@ -259,6 +259,16 @@ class ClipboardActionsTest {
         assertEquals(new PlaceTool.Request.Move(cells), rig.placeRequests.get(rig.placeRequests.size() - 1));
         assertTrue(rig.clipboard.stack());
         assertEquals(new PlaceTool.Request.Stack(cells), rig.placeRequests.get(rig.placeRequests.size() - 1));
+        // Rotate…: about the selection's middle, or about the symmetry centre's column at the middle height.
+        dev.sculptory.fabric.client.editor.tools.brush.SymmetryCentre centre =
+                new dev.sculptory.fabric.client.editor.tools.brush.SymmetryCentre();
+        assertTrue(rig.clipboard.rotateSelection(centre));
+        assertEquals(new PlaceTool.Request.Rotate(cells, new BlockPos(3, 61, 1)),
+                rig.placeRequests.get(rig.placeRequests.size() - 1));
+        centre.set(21, -7);
+        assertTrue(rig.clipboard.rotateSelection(centre));
+        assertEquals(new PlaceTool.Request.Rotate(cells, new BlockPos(10, 61, -4)),
+                rig.placeRequests.get(rig.placeRequests.size() - 1));
     }
 
     @Test

@@ -7,9 +7,16 @@ same build.
 
 - **Free rotation**: turn a paste or a move by any angle around any axis.
   - Three rings on the ghost snap every 15°; hold `Ctrl` to turn freely, or type the angles in Tool Settings.
-  - **Rotate…** in the Selection window turns blocks where they stand.
+  - **Rotate…** in the Selection window opens the same ghost on the selection, turning about the symmetry centre (M)
+    or the selection's middle.
   - Blocks that face a way take the nearest facing, including tipped onto their side or upside down, and 90° turns are
     exact.
+  - A **Method** setting picks how a free turn lands on the block grid: Nearest (the default), Exact count (every
+    block lands once) or Smooth (fuller shapes); **Smooth slopes** puts stairs and slabs on turned slopes.
+  - Doors, beds and tall plants stay whole, or are left out whole when they have no room. This also changes quarter
+    turns of pitch and roll: a bed that cannot stand on end is now left out instead of split.
+  - Builds turn about their true centre: an even-sized build turned in place by a free angle (a move or Rotate…) can
+    land up to a block from where it did before.
 - **Extrude along a path and to a point**: Extrude gets a Direction setting. Carry a face along a curve you click, or
   taper it to a tip for pyramids, spires and cones.
 - **Generate Sweep, Stamp and Heightmap**:

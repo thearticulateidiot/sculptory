@@ -3,6 +3,7 @@ package dev.sculptory.fabric.client.editor.tools.place;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.entity.EntityFilter;
+import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.fabric.client.editor.settings.Section;
 import dev.sculptory.fabric.client.editor.settings.SettingDef;
 import dev.sculptory.fabric.client.editor.settings.SettingsSchema;
@@ -26,6 +27,8 @@ public final class PlaceSettings {
     public static final String ENTITIES_KEY = "entities";
     public static final String BIOMES_KEY = "biomes";
     public static final String SYMMETRY_KEY = "symmetry";
+    public static final String METHOD_KEY = "resampling";
+    public static final String SMOOTH_SLOPES_KEY = "smooth_slopes";
 
     private final SettingDef.Bool includeAir;
     private final SettingDef.Enum<PasteOptions.Into> into;
@@ -33,6 +36,8 @@ public final class PlaceSettings {
     private final SettingDef.Enum<EntityFilter> entities;
     private final SettingDef.Bool biomes;
     private final SettingDef.Enum<Symmetry.Mode> symmetry;
+    private final SettingDef.Enum<Resampling> method;
+    private final SettingDef.Bool smoothSlopes;
     private final SettingsSchema schema;
 
     /** @param physicsAllowed whether the player has {@code sculptory.physics} right now */
@@ -58,7 +63,11 @@ public final class PlaceSettings {
                 values -> biomesAllowed.getAsBoolean());
         symmetry = new SettingDef.Enum<>(SYMMETRY_KEY, "sculptory.setting.place.symmetry", Symmetry.Mode.class,
                 Symmetry.Mode.OFF);
+        method = new SettingDef.Enum<>(METHOD_KEY, "sculptory.setting.place.method", Resampling.class,
+                Resampling.NEAREST);
+        smoothSlopes = new SettingDef.Bool(SMOOTH_SLOPES_KEY, "sculptory.setting.place.smooth_slopes", false);
         schema = new SettingsSchema(List.of(new Section("", List.of(includeAir, into, physics, entities, biomes)),
+                new Section("sculptory.setting.place.rotation_section", List.of(method, smoothSlopes), true),
                 new Section("sculptory.setting.place.symmetry_section", List.of(symmetry), true)));
     }
 
@@ -95,6 +104,20 @@ public final class PlaceSettings {
     /** The symmetry mode a paste, move or stack runs with, around the shared centre. */
     public SettingDef.Enum<Symmetry.Mode> symmetry() {
         return symmetry;
+    }
+
+    /**
+     * How a turn by a free angle (not a multiple of 90° about the vertical) lands on the grid: Nearest (each cell takes
+     * the nearest block; the default), Exact count (every block lands once) or Smooth (fuller shapes). Paste, move and
+     * Rotate… share it.
+     */
+    public SettingDef.Enum<Resampling> method() {
+        return method;
+    }
+
+    /** Whether a free turn puts stairs and slabs on its turned slopes, whatever the method. */
+    public SettingDef.Bool smoothSlopes() {
+        return smoothSlopes;
     }
 
     public SettingsSchema schema() {

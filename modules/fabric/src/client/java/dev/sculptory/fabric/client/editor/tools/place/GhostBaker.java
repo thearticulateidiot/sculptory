@@ -8,10 +8,13 @@ import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.mask.BoundMask;
 import dev.sculptory.core.generate.GeneratedSource;
 import dev.sculptory.core.state.OrientedStates;
+import dev.sculptory.core.state.ResampledCopy;
 import dev.sculptory.core.state.StateFlags;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.state.StateTips;
+import dev.sculptory.core.state.TwoCellPairs;
 import dev.sculptory.core.state.VerticalFlip;
+import dev.sculptory.core.transform.CellResampler;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.core.world.WorldReader;
@@ -21,6 +24,7 @@ import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
@@ -80,6 +84,7 @@ public final class GhostBaker {
     public static final class FlipTally {
         private volatile long kept;
         private volatile long unknown;
+        private volatile long dropped;
 
         public long kept() {
             return kept;
@@ -87,6 +92,11 @@ public final class GhostBaker {
 
         public long unknown() {
             return unknown;
+        }
+
+        /** Blocks of doors, beds and tall plants left out whole for want of room at a free angle. */
+        public long dropped() {
+            return dropped;
         }
     }
 
@@ -155,12 +165,23 @@ public final class GhostBaker {
     /**
      * {@link #bake(Box, Collection, Transform, StateSpace, FlipTally)} for an orientation: an exact one bakes as its
      * transform does; a free one resamples exactly as the server's paste and move do: each cell of the result box
-     * ({@link Orientation#bounds}, local cells {@code 0..size-1}) takes the source cell
-     * {@link Orientation.Sampler#source} gives, its state turned by {@link OrientedStates}. The tally then counts the
-     * blocks the turn keeps as they are (no tipped or upside-down form) and the modded ones it only partly knows.
+     * ({@link Orientation#bounds}, local cells {@code 0..size-1}) takes the source cell the orientation's method gives,
+     * two-cell blocks kept whole, its state turned (and with smooth slopes shaped) by the same {@link ResampledCopy} the
+     * server builds. The tally then counts the blocks the turn keeps as they are (no tipped or upside-down form), the
+     * modded ones it only partly knows, and the halves of two-cell blocks left out for want of room.
      */
     public static GhostVolume bake(Box frame, Collection<GhostSection> sections, Orientation orientation,
                                    StateSpace states, FlipTally tally) {
+        return bake(frame, sections, orientation, states, tally, null);
+    }
+
+    /**
+     * {@link #bake(Box, Collection, Orientation, StateSpace, FlipTally)} for a move: {@code moving} (frame-local) says
+     * which cells of the frame move (the selection's), so its air cells, which a capture leaves out, weigh as air, and
+     * two-cell blocks keep to the cells the move writes, as the server's move does. Null for a paste.
+     */
+    public static GhostVolume bake(Box frame, Collection<GhostSection> sections, Orientation orientation,
+                                   StateSpace states, FlipTally tally, CellFilter moving) {
         Objects.requireNonNull(orientation);
         if (orientation.isExact()) return bake(frame, sections, orientation.transform(), states, tally);
         Objects.requireNonNull(frame);
@@ -169,17 +190,56 @@ public final class GhostBaker {
         for (GhostSection section : List.copyOf(sections)) {
             byKey.put(BlockBuffer.key(section.sectionX(), section.sectionY(), section.sectionZ()), section);
         }
-        Orientation.Sampler sampler = orientation.sampler(frame.sizeX(), frame.sizeY(), frame.sizeZ());
-        OrientedStates oriented = new OrientedStates(states, orientation);
-        BlockPos size = sampler.size();
         BlockPos min = frame.min();
+        CellResampler.SourceCells cells = new CellResampler.SourceCells() {
+            @Override
+            public int state(int x, int y, int z) {
+                if (x < 0 || y < 0 || z < 0 || x >= frame.sizeX() || y >= frame.sizeY() || z >= frame.sizeZ()) return -1;
+                int wx = min.x() + x, wy = min.y() + y, wz = min.z() + z;
+                GhostSection section = byKey.get(BlockBuffer.keyOfBlock(wx, wy, wz));
+                int handle = section == null ? -1 : section.handle(SectionBuffer.index(wx & 15, wy & 15, wz & 15));
+                if (handle < 0 && moving != null && moving.contains(x, y, z)) return states.air();
+                return handle;
+            }
+
+            @Override
+            public boolean solid(int state) {
+                return !StateFlags.has(states.flags(state), StateFlags.AIR);
+            }
+        };
+        OrientedStates oriented = new OrientedStates(states, orientation);
+        ResampledCopy.Tables tables = ResampledCopy.Tables.shared(states);
+        LongArrayList halves = new LongArrayList();
+        for (GhostSection source : byKey.values()) {
+            int baseX = (source.sectionX() << 4) - min.x();
+            int baseY = (source.sectionY() << 4) - min.y();
+            int baseZ = (source.sectionZ() << 4) - min.z();
+            for (int i = 0; i < SectionBuffer.SIZE; i++) {
+                int handle = source.handle(i);
+                int x = baseX + SectionBuffer.localX(i), y = baseY + SectionBuffer.localY(i);
+                int z = baseZ + SectionBuffer.localZ(i);
+                if (handle >= 0 && cells.state(x, y, z) >= 0) TwoCellPairs.addHalf(halves, tables.blocks(), handle, x, y, z);
+            }
+        }
+        CellResampler base = orientation.resampler(frame.sizeX(), frame.sizeY(), frame.sizeZ());
+        int[] taken = new int[3];
+        // A move writes only its landing cells: the cells the method fills from a moving cell.
+        TwoCellPairs.Writable writable = moving == null ? (x, y, z) -> true
+                : (x, y, z) -> base.source(x, y, z, cells, taken) && cells.state(taken[0], taken[1], taken[2]) >= 0;
+        ResampledCopy copy = ResampledCopy.of(base, cells, oriented, orientation.smoothSlopes(), halves.toLongArray(),
+                tables, writable);
+        CellResampler resampler = copy.cells();
+        BlockPos size = resampler.size();
         BlockBuffer out = new BlockBuffer();
         int[] cell = new int[3];
         long kept = 0;
         long unknown = 0;
-        // Mapped forwards, cell by cell: each source cell fills the result cells that take it (at most 27 looked at), so
-        // the work follows the cells, not the turned box (a sparse selection over a large box costs its cells).
-        int[] takers = new int[81];
+        // From each block of the source, the result cells that take it, exactly as the server's programs fill them: the
+        // takers the resampler names, or for smooth (whose takers are dear) the cells within reach of where it lands,
+        // each asked once. The work follows the blocks, not their sections' boxes.
+        boolean dear = resampler.maxTakers() > 27;
+        LongOpenHashSet asked = new LongOpenHashSet();
+        int[] takers = new int[3 * resampler.maxTakers()];
         double[] point = new double[3];
         for (GhostSection source : byKey.values()) {
             int baseX = (source.sectionX() << 4) - min.x();
@@ -188,21 +248,46 @@ public final class GhostBaker {
             for (int i = 0; i < SectionBuffer.SIZE; i++) {
                 int handle = source.handle(i);
                 if (handle < 0) continue;
-                int n = sampler.takers(baseX + SectionBuffer.localX(i), baseY + SectionBuffer.localY(i),
-                        baseZ + SectionBuffer.localZ(i), takers, point, cell);
-                if (n == 0) continue;
-                int state = oriented.map(handle);
-                for (int k = 0; k < n; k++) out.set(takers[3 * k], takers[3 * k + 1], takers[3 * k + 2], state);
-                if (tally != null) {
-                    int kind = oriented.kind(handle);
-                    if (kind == StateTips.KEPT) kept += n;
-                    else if (kind == StateTips.UNKNOWN_PROPERTIES) unknown += n;
+                int sx = baseX + SectionBuffer.localX(i), sy = baseY + SectionBuffer.localY(i);
+                int sz = baseZ + SectionBuffer.localZ(i);
+                if (cells.state(sx, sy, sz) < 0) continue;
+                if (!dear) {
+                    int n = resampler.takers(sx, sy, sz, cells, takers);
+                    for (int k = 0; k < n; k++) {
+                        int x = takers[3 * k], y = takers[3 * k + 1], z = takers[3 * k + 2];
+                        out.set(x, y, z, copy.state(x, y, z, handle));
+                    }
+                    if (tally != null) {
+                        int kind = oriented.kind(handle);
+                        if (kind == StateTips.KEPT) kept += n;
+                        else if (kind == StateTips.UNKNOWN_PROPERTIES) unknown += n;
+                    }
+                    continue;
+                }
+                resampler.forward(sx + 0.5, sy + 0.5, sz + 0.5, point);
+                int bx = (int) Math.floor(point[0]), by = (int) Math.floor(point[1]), bz = (int) Math.floor(point[2]);
+                for (int y = Math.max(0, by - 2); y <= Math.min(size.y() - 1, by + 2); y++) {
+                    for (int z = Math.max(0, bz - 2); z <= Math.min(size.z() - 1, bz + 2); z++) {
+                        for (int x = Math.max(0, bx - 2); x <= Math.min(size.x() - 1, bx + 2); x++) {
+                            if (!asked.add(((long) y * size.z() + z) * size.x() + x)) continue;
+                            if (!resampler.source(x, y, z, cells, cell)) continue;
+                            int from = cells.state(cell[0], cell[1], cell[2]);
+                            if (from < 0) continue;
+                            out.set(x, y, z, copy.state(x, y, z, from));
+                            if (tally != null) {
+                                int kind = oriented.kind(from);
+                                if (kind == StateTips.KEPT) kept++;
+                                else if (kind == StateTips.UNKNOWN_PROPERTIES) unknown++;
+                            }
+                        }
+                    }
                 }
             }
         }
         if (tally != null) {
             tally.kept = kept;
             tally.unknown = unknown;
+            tally.dropped = 2L * copy.droppedPairs() + copy.lostBlocks();
         }
         GhostVolume volume = GhostVolume.of(out, air(states));
         volume.setFrame(new Box(BlockPos.ORIGIN, new BlockPos(size.x() - 1, size.y() - 1, size.z() - 1)));

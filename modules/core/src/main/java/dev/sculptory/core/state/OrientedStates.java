@@ -39,6 +39,10 @@ public final class OrientedStates {
         this.kinds = new byte[states.size()];
     }
 
+    public StateSpace states() {
+        return states;
+    }
+
     public Orientation orientation() {
         return orientation;
     }

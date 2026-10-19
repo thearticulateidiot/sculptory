@@ -57,19 +57,20 @@ class OrientationTest {
 
     /**
      * Where the reference model puts source cell {@code c}: the exact transform first (as {@link Transform#apply}), then
-     * the quarter-turn matrix about the intermediate box's middle cell, in doubled coordinates (cell centres are odd).
+     * the quarter-turn matrix about the intermediate box's true centre, in doubled coordinates (a box of size s has its
+     * centre at s; cell centres are odd), the centre landing half a block lower on a result axis that the turn fills
+     * from an axis of the other parity (so cell centres land on cell centres).
      */
     private static int[] referenceCell(Transform t, int[] m, int[] c, int[] size) {
         BlockPos s = t.size(size[0], size[1], size[2]);
         int[] ts = {s.x(), s.y(), s.z()};
         BlockPos q = t.apply(c[0], c[1], c[2], size[0], size[1], size[2]);
         int[] centre2 = {2 * q.x() + 1, 2 * q.y() + 1, 2 * q.z() + 1};
-        int[] pivot2 = new int[3];
-        for (int i = 0; i < 3; i++) pivot2[i] = 2 * ((ts[i] - 1) / 2) + 1;
         int[] out = new int[3];
         for (int i = 0; i < 3; i++) {
-            int sum = pivot2[i];
-            for (int j = 0; j < 3; j++) sum += m[3 * i + j] * (centre2[j] - pivot2[j]);
+            int from = m[3 * i] != 0 ? 0 : m[3 * i + 1] != 0 ? 1 : 2;
+            int sum = ts[i] - ((ts[i] & 1) != (ts[from] & 1) ? 1 : 0);
+            for (int j = 0; j < 3; j++) sum += m[3 * i + j] * (centre2[j] - ts[j]);
             out[i] = Math.floorDiv(sum - 1, 2); // an odd doubled centre back to its cell
         }
         return out;
@@ -306,9 +307,14 @@ class OrientationTest {
         assertEquals(0, bounds.offset().y());
         assertTrue(bounds.size().x() >= 5 && bounds.size().x() <= 6, bounds.toString());
         assertEquals(bounds, o.bounds(4, 3, 4), "deterministic");
-        // The pivot cell (the middle cell, towards the minimum: 1, 1, 1) stays where it is.
-        BlockPos pivot = o.mapCell(1, 1, 1, 4, 3, 4);
-        assertEquals(new BlockPos(1 - bounds.offset().x(), 1, 1 - bounds.offset().z()), pivot);
+        // The box's true centre (2, 1.5, 2) stays where it is.
+        double[] centre = o.mapPoint(2, 1.5, 2, 4, 3, 4);
+        assertEquals(2 - bounds.offset().x(), centre[0], 1e-9);
+        assertEquals(1.5, centre[1], 1e-9);
+        assertEquals(2 - bounds.offset().z(), centre[2], 1e-9);
+        // So the turned box is centred in its result box: 4·√2 ≈ 5.66 wide, 6 cells, one each side of the centre's 4.
+        assertEquals(6, bounds.size().x());
+        assertEquals(-1, bounds.offset().x());
         assertThrows(IllegalArgumentException.class, () -> o.bounds(0, 1, 1));
     }
 

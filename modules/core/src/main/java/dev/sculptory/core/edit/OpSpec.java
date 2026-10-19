@@ -188,7 +188,7 @@ public sealed interface OpSpec {
      * ({@link Orientation#bounds}); the result box lands with its minimum corner on
      * {@code bounds.min() + orientation.bounds(size).offset() + offset}, so an exact orientation keeps the bounds'
      * minimum corner (offset 0, as before protocol 6) and a free one with {@code offset} 0 turns in place about the
-     * bounds' middle cell (the pivot). {@code into} filters the landing cells only: a moved block whose landing cell is
+     * bounds' true centre (the pivot). {@code into} filters the landing cells only: a moved block whose landing cell is
      * left out is not placed, while its source cell is vacated all the same. The constructors taking a transform mean
      * its exact orientation.
      *

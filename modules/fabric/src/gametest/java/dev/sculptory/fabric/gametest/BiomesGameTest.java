@@ -979,7 +979,8 @@ public final class BiomesGameTest implements FabricGameTest {
             OpSpec.PasteMany stamp = new OpSpec.PasteMany(new SourceRef.Clipboard(id), List.of(
                     new OpSpec.PasteMany.Placement(new BlockPos(x + 8, 100, z + 4), dev.sculptory.core.transform
                             .Orientation.IDENTITY),
-                    new OpSpec.PasteMany.Placement(new BlockPos(x + 4, 100, z + 36), turned)),
+                    // Turned about its true centre, the free placement reaches a few columns west of its origin.
+                    new OpSpec.PasteMany.Placement(new BlockPos(x + 10, 100, z + 36), turned)),
                     PasteOptions.DEFAULT.withBiomes(true), mirror);
             List<dev.sculptory.core.edit.OpSymmetry.Copy> copies = dev.sculptory.core.edit.OpSymmetry.copies(stamp);
             List<OpSpec.PasteMany.Placement> originals = stamp.placements();

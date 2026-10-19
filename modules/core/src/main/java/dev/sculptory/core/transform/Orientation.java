@@ -29,10 +29,14 @@ import java.util.Objects;
  * <ol>
  *   <li>The exact transform maps the source box onto the <i>intermediate box</i> of size
  *       {@code transform.size(sx, sy, sz)}, cell for cell, exactly as {@link Transform#apply} does.</li>
- *   <li>The free rotation turns the intermediate box about its <b>pivot</b>: the centre of its middle cell,
- *       {@code P = ((sx'-1)/2 + 0.5, (sy'-1)/2 + 0.5, (sz'-1)/2 + 0.5)} with integer division (the exact centre for an
- *       odd size, half a block towards the minimum for an even one). Pivoting on a cell centre keeps every multiple of
- *       90° on every axis an exact permutation of cells, with no ties and no holes.</li>
+ *   <li>The free rotation turns the intermediate box about its <b>true centre</b> {@code C = (sx'/2, sy'/2, sz'/2)},
+ *       and the centre lands on {@code L = C + δ}: {@code δ} is 0 on an axis, or half a block towards the minimum on a
+ *       result axis whose cells would otherwise land on cell corners. That happens where the nearest quarter turns
+ *       ({@link #quarterTurns}: each angle rounded to a multiple of 90°, halfway rounding down) bring an axis of the
+ *       other parity there (an even width turned onto an odd depth), so a quarter turn on any axis stays an exact
+ *       permutation of cells, with no ties and no holes, and an even-sized build turns about its middle, not half a
+ *       block off it. (Before fix round 2 of batch 2026-10-07 the pivot was the centre of the middle cell, towards the
+ *       minimum for an even size; odd sizes turn exactly as they did.)</li>
  *   <li>The result box holds every cell whose centre lies in the half-open axis-aligned bounds {@code [L, H)} of the
  *       turned intermediate box. {@link Bounds#offset()} is its minimum corner in the intermediate box's coordinates.
  *       For an exact orientation the result box is the intermediate box ({@code offset} 0). A free orientation's
@@ -40,9 +44,10 @@ import java.util.Objects;
  *       returns {@code null} for them.</li>
  * </ol>
  * {@link #inverseCell} maps a result cell back to the source cell it takes: the centre of the result cell is turned
- * back about the pivot and the cell containing that point is taken ("nearest source cell"; a point on a cell boundary
- * takes the higher cell). Resampling every result cell this way leaves no holes. {@link #mapCell} and
- * {@link #mapPoint} map forwards (anchors, entities).
+ * back ({@code p = Rᵀ(q - L) + C}) and the cell containing that point is taken ("nearest source cell"; a point on a
+ * cell boundary takes the higher cell). Resampling every result cell this way leaves no holes. {@link #mapCell} and
+ * {@link #mapPoint} map forwards (anchors, entities). {@link CellResampler} has the other ways to fill the result box
+ * (an exact-count bijection, a smoothing majority).
  *
  * <h2>Canonical form</h2>
  * The constructor normalises each angle into {@code 0..35999}. When all three are multiples of 90° and the rotation
@@ -62,9 +67,10 @@ import java.util.Objects;
  * method). They travel with the angles (Paste, PasteMany placements and Move all carry an orientation) and are part
  * of equality. An exact orientation is a permutation of cells: the constructor sets them to {@link Resampling#NEAREST}
  * and {@code false}, its canonical form. {@link #then} and {@link #conjugated} keep them; {@link #free(Transform, int,
- * int, int)} and {@link #nearest} give the defaults. Until those methods are built, every map here
- * ({@link #inverseCell}, {@link Sampler}, {@link #bounds}) is the nearest-block one whatever the method, so the
- * programs and the ghost treat every method as {@link Resampling#NEAREST}.
+ * int, int)} and {@link #nearest} give the defaults. {@link #resampler} fills a result box the method's way
+ * ({@link CellResampler}); {@link #bounds} is the method's result box (exact count's can be a cell wider or narrower),
+ * and {@link #mapCell}, {@link #mapPoint}, {@link #inverseCell} and {@link Sampler} work in its frame, so a paste
+ * placed by its anchor lands in the same place whatever the method.
  *
  * @param transform the exact part, applied first
  * @param yaw clockwise seen from above, 1/100 degree
@@ -207,11 +213,11 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
      * This orientation followed by a horizontal {@code image} (a symmetry image: mirrors, quarter turns about the
      * vertical, and the flip), as one orientation: the copy a symmetric paste places. For an exact orientation it is
      * {@code transform.compose(image)}. For a free one the image's quarter turns add to the yaw (the exact part keeps
-     * its box, so the copy turns about the same middle cell) and its mirror and flip move into the exact part, with the
+     * its box, so the copy turns about the same centre) and its mirror and flip move into the exact part, with the
      * angles they reverse negated (a mirror across x reverses yaw and roll, across z yaw and pitch, the flip pitch and
      * roll). The matrix is exactly {@code image · matrix()}. For a free orientation this names the copy but does not
      * place it as the exact mirror image of the original when the box has an even size along a mirrored axis (the
-     * copy turns about its own middle cell): programs write a free paste's copies with
+     * copy turns about its own centre): programs write a free paste's copies with
      * {@code PasteProgram.compileImage} instead.
      */
     public Orientation then(Transform image) {
@@ -291,25 +297,35 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
 
     /**
      * The result box of a source box of size {@code (sx, sy, sz)}: its size, and its minimum corner in the intermediate
-     * box's coordinates ({@code offset} 0 for an exact orientation, whose result box is {@link Transform#size}).
+     * box's coordinates ({@code offset} 0 for an exact orientation, whose result box is {@link Transform#size}). It is
+     * the method's ({@link #resampling()}): the cells whose centres lie in the turned box for nearest and smooth, the
+     * cells the exact-count bijection can reach for exact count ({@link ShearTurn}); {@link #mapCell}, {@link #mapPoint},
+     * {@link #inverseCell} and {@link #sampler} are all local to it.
      *
      * @throws IllegalArgumentException if a size is not positive, or a free orientation's result box would be more than
      *     {@link #MAX_TURNED_SIDE} cells along an axis (callers are bounded by the world far below that)
      */
     public Bounds bounds(int sx, int sy, int sz) {
+        if (resampling == Resampling.EXACT && !isExact()) return ShearTurn.bounds(this, sx, sy, sz);
+        return turnedBounds(sx, sy, sz);
+    }
+
+    /** The cells whose centres lie in the turned box: the nearest and smooth result box. */
+    Bounds turnedBounds(int sx, int sy, int sz) {
         BlockPos size = transform.size(sx, sy, sz);
         if (isExact()) return new Bounds(size, BlockPos.ORIGIN);
         double[] r = rotation(yaw, pitch, roll);
         int[] s = {size.x(), size.y(), size.z()};
-        double[] pivot = pivot(s);
+        double[] centre = centre(s);
+        double[] landing = landing(s, yaw, pitch, roll);
         int[] lo = new int[3];
         int[] count = new int[3];
         for (int i = 0; i < 3; i++) {
-            double low = pivot[i];
-            double high = pivot[i];
+            double low = landing[i];
+            double high = landing[i];
             for (int j = 0; j < 3; j++) {
-                double a = r[3 * i + j] * (0 - pivot[j]);
-                double b = r[3 * i + j] * (s[j] - pivot[j]);
+                double a = r[3 * i + j] * (0 - centre[j]);
+                double b = r[3 * i + j] * (s[j] - centre[j]);
                 low += Math.min(a, b);
                 high += Math.max(a, b);
             }
@@ -340,6 +356,22 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
     }
 
     /**
+     * How this orientation's method fills the result box of a source box of size {@code (sx, sy, sz)}
+     * ({@link #resampling()}: {@link CellResampler#nearest}, {@link CellResampler#exact} or {@link CellResampler#smooth}),
+     * in the frame of {@link #bounds}. An exact orientation's is its {@link #sampler} (the inverse transform).
+     *
+     * @throws IllegalArgumentException if a size is not positive (or the result box is too large: {@link #bounds})
+     */
+    public CellResampler resampler(int sx, int sy, int sz) {
+        if (isExact()) return sampler(sx, sy, sz);
+        return switch (resampling) {
+            case NEAREST -> sampler(sx, sy, sz);
+            case EXACT -> CellResampler.exact(this, sx, sy, sz);
+            case SMOOTH -> CellResampler.smooth(this, sx, sy, sz);
+        };
+    }
+
+    /**
      * The cached inverse map of a source box of size {@code (sx, sy, sz)}: {@link #inverseCell} with the matrix, pivot
      * and result box worked out once, for programs and ghosts that map every cell of a result box.
      *
@@ -352,9 +384,10 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
     /**
      * {@link Orientation#inverseCell} for one source box size, precomputed: {@link #source} maps a result cell back to
      * its source cell without allocating, with exactly the arithmetic of {@code inverseCell} (so every caller, the
-     * server's programs and the client's ghost, takes the same cells). Immutable and thread-safe.
+     * server's programs and the client's ghost, takes the same cells). It is the {@link CellResampler#nearest nearest}
+     * resampler. Immutable and thread-safe.
      */
-    public static final class Sampler {
+    public static final class Sampler implements CellResampler {
         private final Orientation orientation;
         private final Transform inverse;
         private final int sx, sy, sz;
@@ -366,7 +399,8 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
         private final int ox, oy, oz;
         /** The free rotation, row-major; read transposed (its inverse). */
         private final double r0, r1, r2, r3, r4, r5, r6, r7, r8;
-        private final double px, py, pz;
+        /** The centre the rotation turns about, and where it lands (see {@link Orientation}). */
+        private final double cx, cy, cz, lx, ly, lz;
         /** The exact transform's signed permutation, row-major (the forward map). */
         private final int t0, t1, t2, t3, t4, t5, t6, t7, t8;
 
@@ -398,37 +432,46 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
             r6 = r[6];
             r7 = r[7];
             r8 = r[8];
-            double[] p = pivot(new int[] {tx, ty, tz});
-            px = p[0];
-            py = p[1];
-            pz = p[2];
-            int[] l = linear(t);
-            t0 = l[0];
-            t1 = l[1];
-            t2 = l[2];
-            t3 = l[3];
-            t4 = l[4];
-            t5 = l[5];
-            t6 = l[6];
-            t7 = l[7];
-            t8 = l[8];
+            int[] s = {tx, ty, tz};
+            double[] c = centre(s);
+            double[] l = landing(s, orientation.yaw, orientation.pitch, orientation.roll);
+            cx = c[0];
+            cy = c[1];
+            cz = c[2];
+            lx = l[0];
+            ly = l[1];
+            lz = l[2];
+            int[] m = linear(t);
+            t0 = m[0];
+            t1 = m[1];
+            t2 = m[2];
+            t3 = m[3];
+            t4 = m[4];
+            t5 = m[5];
+            t6 = m[6];
+            t7 = m[7];
+            t8 = m[8];
         }
 
+        @Override
         public Orientation orientation() {
             return orientation;
         }
 
         /** The result box's size ({@link Bounds#size}). */
+        @Override
         public BlockPos size() {
             return size;
         }
 
         /** The result box's minimum corner in the intermediate box's coordinates ({@link Bounds#offset}). */
+        @Override
         public BlockPos offset() {
             return offset;
         }
 
         /** The source box's size. */
+        @Override
         public BlockPos sourceSize() {
             return new BlockPos(sx, sy, sz);
         }
@@ -437,21 +480,58 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
          * {@link Orientation#mapPoint} with this sampler's cached numbers (the same arithmetic, no allocation but
          * {@code out}): where source point (x, y, z) lands, result-local, into {@code out[0..2]}.
          */
+        @Override
         public void forward(double x, double y, double z, double[] out) {
-            double cx = x - sx / 2.0, cy = y - sy / 2.0, cz = z - sz / 2.0;
-            double qx = t0 * cx + t1 * cy + t2 * cz + tx / 2.0;
-            double qy = t3 * cx + t4 * cy + t5 * cz + ty / 2.0;
-            double qz = t6 * cx + t7 * cy + t8 * cz + tz / 2.0;
+            double dx = x - sx / 2.0, dy = y - sy / 2.0, dz = z - sz / 2.0;
+            double qx = t0 * dx + t1 * dy + t2 * dz + tx / 2.0;
+            double qy = t3 * dx + t4 * dy + t5 * dz + ty / 2.0;
+            double qz = t6 * dx + t7 * dy + t8 * dz + tz / 2.0;
             if (exact) {
                 out[0] = qx;
                 out[1] = qy;
                 out[2] = qz;
                 return;
             }
-            double dx = qx - px, dy = qy - py, dz = qz - pz;
-            out[0] = r0 * dx + r1 * dy + r2 * dz + px - ox;
-            out[1] = r3 * dx + r4 * dy + r5 * dz + py - oy;
-            out[2] = r6 * dx + r7 * dy + r8 * dz + pz - oz;
+            double ex = qx - cx, ey = qy - cy, ez = qz - cz;
+            out[0] = r0 * ex + r1 * ey + r2 * ez + lx - ox;
+            out[1] = r3 * ex + r4 * ey + r5 * ez + ly - oy;
+            out[2] = r6 * ex + r7 * ey + r8 * ez + lz - oz;
+        }
+
+        /**
+         * The inverse of {@link #forward}: the source point (source-local, continuous) that result-local point
+         * (x, y, z) turns back to, into {@code out[0..2]}. No allocation.
+         */
+        @Override
+        public void back(double x, double y, double z, double[] out) {
+            double qx, qy, qz;
+            if (exact) {
+                qx = x;
+                qy = y;
+                qz = z;
+            } else {
+                double dx = ox + x - lx, dy = oy + y - ly, dz = oz + z - lz;
+                qx = r0 * dx + r3 * dy + r6 * dz + cx;
+                qy = r1 * dx + r4 * dy + r7 * dz + cy;
+                qz = r2 * dx + r5 * dy + r8 * dz + cz;
+            }
+            // The exact part's inverse: its signed permutation transposed, about the boxes' centres.
+            double ex = qx - tx / 2.0, ey = qy - ty / 2.0, ez = qz - tz / 2.0;
+            out[0] = t0 * ex + t3 * ey + t6 * ez + sx / 2.0;
+            out[1] = t1 * ex + t4 * ey + t7 * ez + sy / 2.0;
+            out[2] = t2 * ex + t5 * ey + t8 * ez + sz / 2.0;
+        }
+
+        /** At most 27 result cells take one source cell ({@link #takers(int, int, int, int[], double[], int[])}). */
+        @Override
+        public int maxTakers() {
+            return 27;
+        }
+
+        /** {@link #takers(int, int, int, int[], double[], int[])}; the blocks play no part. */
+        @Override
+        public int takers(int x, int y, int z, SourceCells cells, int[] out) {
+            return takers(x, y, z, out, new double[3], new int[3]);
         }
 
         /**
@@ -489,7 +569,13 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
          * {@code {x0, y0, z0, x1, y1, z1}} inclusive; {@code null} when nothing is left. Lets a caller visit only the
          * result cells near the source cells it has, so the work follows the cells, not the turned box.
          */
+        @Override
         public int[] turnedBox(int x0, int y0, int z0, int x1, int y1, int z1) {
+            return turnedBox(x0, y0, z0, x1, y1, z1, 1);
+        }
+
+        /** {@link #turnedBox(int, int, int, int, int, int)} grown by {@code margin} cells instead of one. */
+        int[] turnedBox(int x0, int y0, int z0, int x1, int y1, int z1, int margin) {
             double[] lo = {Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY};
             double[] hi = {Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY};
             for (int corner = 0; corner < 8; corner++) {
@@ -504,11 +590,17 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
             int[] max = {size.x() - 1, size.y() - 1, size.z() - 1};
             int[] out = new int[6];
             for (int i = 0; i < 3; i++) {
-                out[i] = (int) Math.max(0, Math.min(Integer.MAX_VALUE, Math.floor(lo[i]) - 1));
-                out[3 + i] = (int) Math.min(max[i], Math.max(Integer.MIN_VALUE, Math.ceil(hi[i])));
+                out[i] = (int) Math.max(0, Math.min(Integer.MAX_VALUE, Math.floor(lo[i]) - margin));
+                out[3 + i] = (int) Math.min(max[i], Math.max(Integer.MIN_VALUE, Math.ceil(hi[i]) + margin - 1));
                 if (out[i] > out[3 + i]) return null;
             }
             return out;
+        }
+
+        /** {@link #source(int, int, int, int[])}; the blocks play no part. */
+        @Override
+        public boolean source(int x, int y, int z, SourceCells cells, int[] out) {
+            return source(x, y, z, out);
         }
 
         /**
@@ -516,19 +608,28 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
          * {@link Orientation#inverseCell}; false (and {@code out} unspecified) when it takes none.
          */
         public boolean source(int x, int y, int z, int[] out) {
+            return sourceAt(x, y, z, 0, 0, 0, out);
+        }
+
+        /**
+         * The source cell holding the point {@code (ex, ey, ez)} away from result cell (x, y, z)'s centre, turned back
+         * (result-box axes, in blocks): {@link #source(int, int, int, int[])} for a point other than the centre, with the
+         * same arithmetic (at offset 0 it is {@code source}). False when the point turns back outside the source box.
+         */
+        boolean sourceAt(int x, int y, int z, double ex, double ey, double ez, int[] out) {
             int ix, iy, iz;
             if (exact) {
-                ix = x;
-                iy = y;
-                iz = z;
+                ix = (int) Math.floor(x + 0.5 + ex);
+                iy = (int) Math.floor(y + 0.5 + ey);
+                iz = (int) Math.floor(z + 0.5 + ez);
             } else {
-                double dx = ox + x + 0.5 - px;
-                double dy = oy + y + 0.5 - py;
-                double dz = oz + z + 0.5 - pz;
+                double dx = ox + x + 0.5 - lx + ex;
+                double dy = oy + y + 0.5 - ly + ey;
+                double dz = oz + z + 0.5 - lz + ez;
                 // The inverse of a rotation is its transpose.
-                ix = (int) Math.floor(r0 * dx + r3 * dy + r6 * dz + px);
-                iy = (int) Math.floor(r1 * dx + r4 * dy + r7 * dz + py);
-                iz = (int) Math.floor(r2 * dx + r5 * dy + r8 * dz + pz);
+                ix = (int) Math.floor(r0 * dx + r3 * dy + r6 * dz + cx);
+                iy = (int) Math.floor(r1 * dx + r4 * dy + r7 * dz + cy);
+                iz = (int) Math.floor(r2 * dx + r5 * dy + r8 * dz + cz);
             }
             if (ix < 0 || ix >= tx || iy < 0 || iy >= ty || iz < 0 || iz >= tz) return false;
             out[0] = inverse.mapX(ix, iz, tx, tz);
@@ -578,13 +679,15 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
         double qz = t[6] * cx + t[7] * cy + t[8] * cz + size.z() / 2.0;
         if (isExact()) return new double[] {qx, qy, qz};
         double[] r = rotation(yaw, pitch, roll);
-        double[] pivot = pivot(new int[] {size.x(), size.y(), size.z()});
+        int[] s = {size.x(), size.y(), size.z()};
+        double[] centre = centre(s);
+        double[] landing = landing(s, yaw, pitch, roll);
         BlockPos offset = bounds(sx, sy, sz).offset();
-        double dx = qx - pivot[0], dy = qy - pivot[1], dz = qz - pivot[2];
+        double dx = qx - centre[0], dy = qy - centre[1], dz = qz - centre[2];
         return new double[] {
-                r[0] * dx + r[1] * dy + r[2] * dz + pivot[0] - offset.x(),
-                r[3] * dx + r[4] * dy + r[5] * dz + pivot[1] - offset.y(),
-                r[6] * dx + r[7] * dy + r[8] * dz + pivot[2] - offset.z()};
+                r[0] * dx + r[1] * dy + r[2] * dz + landing[0] - offset.x(),
+                r[3] * dx + r[4] * dy + r[5] * dz + landing[1] - offset.y(),
+                r[6] * dx + r[7] * dy + r[8] * dz + landing[2] - offset.z()};
     }
 
     /**
@@ -632,9 +735,50 @@ public record Orientation(Transform transform, int yaw, int pitch, int roll, Res
         return null;
     }
 
-    /** The centre of the middle cell of a box of size {@code s} (towards the minimum for an even size). */
-    private static double[] pivot(int[] s) {
-        return new double[] {(s[0] - 1) / 2 + 0.5, (s[1] - 1) / 2 + 0.5, (s[2] - 1) / 2 + 0.5};
+    /** The centre a free rotation turns a box of size {@code s} about: its true centre. */
+    static double[] centre(int[] s) {
+        return new double[] {s[0] / 2.0, s[1] / 2.0, s[2] / 2.0};
+    }
+
+    /**
+     * Where the {@link #centre} of a box of size {@code s} lands under the free rotation (yaw, pitch, roll): the centre,
+     * minus half a block on each result axis that the nearest quarter turns ({@link #quarterTurns}) bring an axis of the
+     * other parity onto (whose cell centres would otherwise land on cell corners).
+     */
+    static double[] landing(int[] s, int yaw, int pitch, int roll) {
+        int[] q = quarterTurns(yaw, pitch, roll);
+        double[] out = centre(s);
+        for (int i = 0; i < 3; i++) {
+            int from = q[3 * i] != 0 ? 0 : q[3 * i + 1] != 0 ? 1 : 2;
+            if ((s[i] & 1) != (s[from] & 1)) out[i] -= 0.5;
+        }
+        return out;
+    }
+
+    /**
+     * The nearest quarter turns of a free rotation: {@code Yaw · Pitch · Roll} with each angle rounded to a multiple of
+     * 90° (halfway rounds down: 45° to 0°, 135° to 90°), as a signed permutation, row-major. A free rotation that is
+     * a quarter turn on every axis is its own.
+     */
+    static int[] quarterTurns(int yaw, int pitch, int roll) {
+        double[] r = rotation(quarters(yaw) * QUARTER_TURN, quarters(pitch) * QUARTER_TURN,
+                quarters(roll) * QUARTER_TURN);
+        int[] q = new int[9];
+        for (int i = 0; i < 9; i++) q[i] = (int) r[i];
+        return q;
+    }
+
+    /** The multiple of 90° nearest {@code angle} (normalised), in quarter turns 0..3; halfway rounds down. */
+    static int quarters(int angle) {
+        return roundedQuarters(angle) % 4;
+    }
+
+    /**
+     * {@link #quarters} before it wraps: 0..4 for an angle normalised into 0..35999, so {@code angle - 9000 * it} is the
+     * rest, within ±45°.
+     */
+    static int roundedQuarters(int angle) {
+        return (Math.floorMod(angle, FULL_TURN) + QUARTER_TURN / 2 - 1) / QUARTER_TURN;
     }
 
     private static double[] times(double[] a, double[] b) {

@@ -7,6 +7,7 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.transform.Transform;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -111,6 +112,18 @@ final class PasteManyProgram implements ClaimingProgram {
     @Override
     public long[] sectionOrder() {
         return order.clone();
+    }
+
+    /** The columns the placements touching section {@code key} read (their two-cell blocks' other halves). */
+    @Override
+    public long[] readColumns(long key) {
+        IntArrayList touching = bySection.get(key);
+        if (touching == null) return NO_COLUMNS;
+        LongLinkedOpenHashSet columns = new LongLinkedOpenHashSet();
+        for (int i = 0; i < touching.size(); i++) {
+            for (long column : placements.get(touching.getInt(i)).readColumns(key)) columns.add(column);
+        }
+        return columns.isEmpty() ? NO_COLUMNS : columns.toLongArray();
     }
 
     @Override
