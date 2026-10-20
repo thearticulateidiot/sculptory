@@ -135,9 +135,13 @@ public final class BuilderModeGameTest implements FabricGameTest {
         check(placed.accepted() && placed.changed() == 1, "only the new fence: " + placed);
         check(!h.world.getBlockState(fence).get(HorizontalConnectingBlock.EAST), "the old fence did not join");
         hold(h.player, Items.AIR);
-        BuilderOutcome broken = breakCells(h, h.player, 1, List.of(grass, support), keep, false, true);
-        check(broken.accepted() && broken.changed() == 2, "two blocks broken: " + broken);
+        // The sand set above has its own fall check scheduled (2 ticks): break its support only after that has run on
+        // the stone, as for sand that has lain there a while; breaking first left the sand to that check and its timing.
         context.createTimedTaskRunner()
+                .expectMinDurationAndRun(5, () -> {
+                    BuilderOutcome broken = breakCells(h, h.player, 1, List.of(grass, support), keep, false, true);
+                    check(broken.accepted() && broken.changed() == 2, "two blocks broken: " + broken);
+                })
                 .expectMinDurationAndRun(10, () -> {
                     check(h.world.getBlockState(grass.up()).isOf(Blocks.POPPY), "the flower floats");
                     check(h.world.getBlockState(support.up()).isOf(Blocks.SAND), "the sand stayed");
