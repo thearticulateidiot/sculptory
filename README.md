@@ -93,8 +93,8 @@ dedicated servers, where the server decides who may edit.
 settings, layouts, presets, undo history and library carry over: [Updating Sculptory](docs/wiki/updating.md) lists
 what is kept and where the files are.
 
-Downloads: [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (Modrinth and CurseForge pages
-follow). [Server setup](docs/wiki/server-setup.md) in the wiki has the details: updating, which build you have, removing
+Downloads: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) and
+[GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (a Modrinth page follows). [Server setup](docs/wiki/server-setup.md) in the wiki has the details: updating, which build you have, removing
 the mod.
 
 ## Quick start
