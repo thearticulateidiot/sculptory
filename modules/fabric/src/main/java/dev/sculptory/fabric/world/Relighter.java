@@ -1,14 +1,14 @@
 package dev.sculptory.fabric.world;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.world.LightType;
-import net.minecraft.world.chunk.ChunkNibbleArray;
-import net.minecraft.world.chunk.ChunkSection;
-import net.minecraft.world.chunk.WorldChunk;
-import net.minecraft.world.chunk.light.LightingProvider;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.DataLayer;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.lighting.LevelLightEngine;
 
 /**
  * Update blocks' "fix lighting": asks the light engine to check
@@ -27,19 +27,19 @@ public final class Relighter {
      * Queues a light check of the cells of section (sx, sy, sz) but those that need none; nothing when its chunk is not
      * loaded. Returns the cells checked.
      */
-    public static int relightSection(ServerWorld world, int sx, int sy, int sz) {
-        if (sy < world.getBottomSectionCoord() || sy >= world.getTopSectionCoord()) return 0;
-        WorldChunk chunk = world.getChunkManager().getWorldChunk(sx, sz);
+    public static int relightSection(ServerLevel world, int sx, int sy, int sz) {
+        if (sy < world.getMinSection() || sy >= world.getMaxSection()) return 0;
+        LevelChunk chunk = world.getChunkSource().getChunkNow(sx, sz);
         if (chunk == null) return 0;
-        LightingProvider light = world.getChunkManager().getLightingProvider();
-        ChunkSectionPos sectionPos = ChunkSectionPos.from(sx, sy, sz);
-        ChunkNibbleArray blockLight = light.get(LightType.BLOCK).getLightSection(sectionPos);
+        LevelLightEngine light = world.getChunkSource().getLightEngine();
+        SectionPos sectionPos = SectionPos.of(sx, sy, sz);
+        DataLayer blockLight = light.getLayerListener(LightLayer.BLOCK).getDataLayerData(sectionPos);
         // An absent sky section is not "no sky light" (above the terrain it is full): nothing is skipped then.
-        ChunkNibbleArray skyLight = world.getDimension().hasSkyLight()
-                ? light.get(LightType.SKY).getLightSection(sectionPos) : null;
-        boolean skyKnown = !world.getDimension().hasSkyLight() || skyLight != null;
-        ChunkSection section = chunk.getSection(world.sectionCoordToIndex(sy));
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+        DataLayer skyLight = world.dimensionType().hasSkyLight()
+                ? light.getLayerListener(LightLayer.SKY).getDataLayerData(sectionPos) : null;
+        boolean skyKnown = !world.dimensionType().hasSkyLight() || skyLight != null;
+        LevelChunkSection section = chunk.getSection(world.getSectionIndexFromSectionY(sy));
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int ox = sx << 4, oy = sy << 4, oz = sz << 4;
         int checked = 0;
         for (int y = 0; y < 16; y++) {
@@ -58,9 +58,9 @@ public final class Relighter {
     }
 
     /** An opaque full cube without light of its own, holding none: already right. */
-    private static boolean dark(BlockState state, ServerWorld world, BlockPos pos, ChunkNibbleArray blockLight,
-                                ChunkNibbleArray skyLight, int x, int y, int z) {
-        if (state.getLuminance() != 0 || !state.isOpaqueFullCube(world, pos)) return false;
+    private static boolean dark(BlockState state, ServerLevel world, BlockPos pos, DataLayer blockLight,
+                                DataLayer skyLight, int x, int y, int z) {
+        if (state.getLightEmission() != 0 || !state.isSolidRender(world, pos)) return false;
         if (blockLight != null && blockLight.get(x, y, z) != 0) return false;
         return skyLight == null || skyLight.get(x, y, z) == 0;
     }

@@ -6,8 +6,8 @@ import dev.sculptory.fabric.client.editor.ui.McFontText;
 import dev.sculptory.fabric.client.editor.ui.Rect;
 import dev.sculptory.fabric.client.editor.ui.Theme;
 import dev.sculptory.fabric.client.editor.ui.UiContext;
-import net.minecraft.client.font.FontStorage;
-import net.minecraft.client.font.TextRenderer;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.font.FontSet;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -17,8 +17,8 @@ import org.junit.jupiter.api.Test;
  * without a running client (fonts without glyphs).
  */
 class TextInputSelectAllTest {
-    private static TextRenderer renderer() {
-        return new TextRenderer(id -> new FontStorage(null, id), false);
+    private static Font renderer() {
+        return new Font(id -> new FontSet(null, id), false);
     }
 
     private static TextInput typedOver(String before, String typed, boolean selectAll) {

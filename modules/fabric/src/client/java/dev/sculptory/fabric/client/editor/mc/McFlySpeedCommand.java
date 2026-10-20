@@ -9,10 +9,10 @@ import java.util.function.BooleanSupplier;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.command.CommandSource;
-import net.minecraft.network.packet.c2s.play.CommandExecutionC2SPacket;
-import net.minecraft.text.Text;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.commands.SharedSuggestionProvider;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ServerboundChatCommandPacket;
 
 /**
  * Registers {@link FlySpeedCommand}'s tree as Fabric client commands (no operator rights, works on any server) and
@@ -44,7 +44,7 @@ public final class McFlySpeedCommand implements FlySpeedCommand.Handler<FabricCl
      * The server's command tree arrived, as the server sent it (before the client commands are merged in): notes whether
      * it has a {@code /flyspeed} and readies it for the merge ({@link FlySpeedCommand#prepareServerTree}).
      */
-    public static void serverTree(CommandDispatcher<CommandSource> server) {
+    public static void serverTree(CommandDispatcher<SharedSuggestionProvider> server) {
         serverHasFlySpeed = server.getRoot().getChild(FlySpeedCommand.NAME) != null;
         FlySpeedCommand.prepareServerTree(server.getRoot());
     }
@@ -54,24 +54,24 @@ public final class McFlySpeedCommand implements FlySpeedCommand.Handler<FabricCl
         boolean appliesNow = editing.getAsBoolean() || flight.scalesOutsideEditor();
         FlySpeedCommand.Reply reply = FlySpeedCommand.run(flight.speed(), argument, appliesNow);
         flight.tick();
-        Text text = Text.translatable(reply.key(), reply.args().toArray());
+        Component text = Component.translatable(reply.key(), reply.args().toArray());
         if (reply.error()) {
             source.sendError(text);
             return 0;
         }
         source.sendFeedback(text);
         if (reply.notFlyingHint()) {
-            source.sendFeedback(Text.translatable(FlySpeedCommand.NOT_FLYING_KEY));
+            source.sendFeedback(Component.translatable(FlySpeedCommand.NOT_FLYING_KEY));
         }
         return 1;
     }
 
     @Override
     public int forward(FabricClientCommandSource source, String command) {
-        ClientPlayNetworkHandler network = source.getClient().getNetworkHandler();
+        ClientPacketListener network = source.getClient().getConnection();
         if (network == null) return 0;
         // As vanilla sends a command without signed arguments; not sendChatCommand, which would come back here.
-        network.sendPacket(new CommandExecutionC2SPacket(command));
+        network.send(new ServerboundChatCommandPacket(command));
         return 1;
     }
 }

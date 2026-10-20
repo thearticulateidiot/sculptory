@@ -2,11 +2,11 @@ package dev.sculptory.fabric.client.editor.render;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.sculptory.fabric.client.editor.ui.UiOpacity;
 import java.util.ArrayList;
 import java.util.List;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.util.math.MatrixStack;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -42,7 +42,7 @@ class OverlayOpacityTest {
     void theToolOutlinesSettingReachesTheOutlineRenderersVertices() {
         UiOpacity opacity = new UiOpacity();
         OverlayOpacity.follow(opacity);
-        MatrixStack.Entry entry = new MatrixStack().peek();
+        PoseStack.Pose entry = new PoseStack().last();
         RecordingConsumer full = new RecordingConsumer();
         LineBatch.emitLine(full, entry, 0, 0, 0, 1, 2, 3, 0xFFFF7A7A);
         assertEquals(List.of(0xFF, 0xFF), full.alphas);
@@ -65,34 +65,34 @@ class OverlayOpacityTest {
         final List<Integer> reds = new ArrayList<>();
 
         @Override
-        public VertexConsumer vertex(float x, float y, float z) {
+        public VertexConsumer addVertex(float x, float y, float z) {
             return this;
         }
 
         @Override
-        public VertexConsumer color(int red, int green, int blue, int alpha) {
+        public VertexConsumer setColor(int red, int green, int blue, int alpha) {
             reds.add(red);
             alphas.add(alpha);
             return this;
         }
 
         @Override
-        public VertexConsumer texture(float u, float v) {
+        public VertexConsumer setUv(float u, float v) {
             return this;
         }
 
         @Override
-        public VertexConsumer overlay(int u, int v) {
+        public VertexConsumer setUv1(int u, int v) {
             return this;
         }
 
         @Override
-        public VertexConsumer light(int u, int v) {
+        public VertexConsumer setUv2(int u, int v) {
             return this;
         }
 
         @Override
-        public VertexConsumer normal(float x, float y, float z) {
+        public VertexConsumer setNormal(float x, float y, float z) {
             return this;
         }
     }

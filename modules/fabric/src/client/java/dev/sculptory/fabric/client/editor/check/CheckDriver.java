@@ -1,5 +1,6 @@
 package dev.sculptory.fabric.client.editor.check;
 
+import com.mojang.blaze3d.platform.NativeImage;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.NamespacedId;
@@ -44,17 +45,16 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.toast.SystemToast;
-import net.minecraft.client.util.ScreenshotRecorder;
-import net.minecraft.client.world.ClientWorld;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
+import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.integrated.IntegratedServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.util.math.MathHelper;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -99,7 +99,7 @@ public final class CheckDriver {
         void run() throws Exception;
     }
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final EditorClient editor;
     private final Path dir;
     private final CheckReport report;
@@ -114,7 +114,7 @@ public final class CheckDriver {
     private int pictureNumber;
     private String scenario = "setup";
 
-    CheckDriver(MinecraftClient client, EditorClient editor, Path dir, CheckReport report, AtomicLong frames) {
+    CheckDriver(Minecraft client, EditorClient editor, Path dir, CheckReport report, AtomicLong frames) {
         this.client = client;
         this.editor = editor;
         this.dir = dir;
@@ -128,7 +128,7 @@ public final class CheckDriver {
      * A driver for another dev harness (the scripted demo): the same steps, with its pictures and their notes going to
      * {@code dir} and a report of its own that nobody writes.
      */
-    public CheckDriver(MinecraftClient client, EditorClient editor, Path dir, AtomicLong frames) {
+    public CheckDriver(Minecraft client, EditorClient editor, Path dir, AtomicLong frames) {
         this(client, editor, dir, new CheckReport("Sculptory driver"), frames);
     }
 
@@ -150,7 +150,7 @@ public final class CheckDriver {
         scenario = name;
     }
 
-    public MinecraftClient client() {
+    public Minecraft client() {
         return client;
     }
 
@@ -186,7 +186,7 @@ public final class CheckDriver {
 
     /** The integrated server (singleplayer only). */
     public Optional<IntegratedServer> server() {
-        return Optional.ofNullable(client.getServer());
+        return Optional.ofNullable(client.getSingleplayerServer());
     }
 
     /** Runs {@code task} on the integrated server's thread and returns its result. Singleplayer only. */
@@ -281,13 +281,13 @@ public final class CheckDriver {
     public void enterEditor() {
         onClient(() -> {
             if (!editor.mode().isActive()) {
-                if (client.currentScreen != null) {
+                if (client.screen != null) {
                     client.setScreen(null);
                 }
                 editor.mode().enter();
             }
         });
-        if (!until(10_000, () -> editor.mode().isActive() && client.currentScreen != null)) {
+        if (!until(10_000, () -> editor.mode().isActive() && client.screen != null)) {
             throw new Failed("the editor did not open");
         }
     }
@@ -490,7 +490,7 @@ public final class CheckDriver {
         return onClient(() -> {
             List<String> shown = new ArrayList<>();
             editor.toastStack().visible().forEach(toast -> shown.add(toast.text()));
-            InGameHudAccessor hud = (InGameHudAccessor) client.inGameHud;
+            InGameHudAccessor hud = (InGameHudAccessor) client.gui;
             if (hud.sculptory$overlayRemaining() > 0 && hud.sculptory$overlayMessage() != null) {
                 shown.add(hud.sculptory$overlayMessage().getString());
             }
@@ -503,8 +503,8 @@ public final class CheckDriver {
      * joining a server) is gone: it draws over the editor's own toasts there, which a picture must show.
      */
     public boolean awaitJoinToastGone(long timeoutMs) {
-        return until(timeoutMs, () -> client.getToastManager().getToast(SystemToast.class,
-                SystemToast.Type.UNSECURE_SERVER_WARNING) == null);
+        return until(timeoutMs, () -> client.getToasts().getToast(SystemToast.class,
+                SystemToast.SystemToastId.UNSECURE_SERVER_WARNING) == null);
     }
 
     // ---- Weather ----
@@ -515,7 +515,7 @@ public final class CheckDriver {
      * would otherwise show rain or snow falling. Returns whether the client shows no rain; the reason if it does.
      */
     public String clearClientWeather() {
-        boolean stopped = until(15_000, () -> !client.world.getLevelProperties().isRaining());
+        boolean stopped = until(15_000, () -> !client.level.getLevelData().isRaining());
         if (!stopped) {
             return "the server has not told the client the rain stopped";
         }
@@ -526,10 +526,10 @@ public final class CheckDriver {
         float rain = 1f;
         while (quiet < 20 && System.currentTimeMillis() < deadline) {
             rain = onClient(() -> {
-                ClientWorld world = client.world;
-                float seen = Math.max(world.getRainGradient(1f), world.getThunderGradient(1f));
-                world.setRainGradient(0f);
-                world.setThunderGradient(0f);
+                ClientLevel world = client.level;
+                float seen = Math.max(world.getRainLevel(1f), world.getThunderLevel(1f));
+                world.setRainLevel(0f);
+                world.setThunderLevel(0f);
                 return seen;
             });
             quiet = rain == 0f ? quiet + 1 : 0;
@@ -548,34 +548,34 @@ public final class CheckDriver {
         double dx = tx - ex;
         double dy = ty - ey;
         double dz = tz - ez;
-        float yaw = (float) (MathHelper.atan2(dz, dx) * MathHelper.DEGREES_PER_RADIAN) - 90f;
-        float pitch = (float) -(MathHelper.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * MathHelper.DEGREES_PER_RADIAN);
+        float yaw = (float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90f;
+        float pitch = (float) -(Mth.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * Mth.RAD_TO_DEG);
         double feetY = ey - EYE_HEIGHT;
         if (server().isPresent()) {
             onServer(server -> {
-                ServerPlayerEntity player = server.getPlayerManager().getPlayer(client.player.getUuid());
+                ServerPlayer player = server.getPlayerList().getPlayer(client.player.getUUID());
                 if (player == null) {
                     throw new Failed("no server player");
                 }
                 player.getAbilities().flying = true;
-                player.sendAbilitiesUpdate();
-                player.networkHandler.requestTeleport(ex, feetY, ez, yaw, pitch);
+                player.onUpdateAbilities();
+                player.connection.teleport(ex, feetY, ez, yaw, pitch);
                 return null;
             });
         } else {
             command(String.format(Locale.ROOT, "tp @s %.3f %.3f %.3f %.2f %.2f", ex, feetY, ez, yaw, pitch));
             onClient(() -> {
                 client.player.getAbilities().flying = true;
-                client.player.sendAbilitiesUpdate();
+                client.player.onUpdateAbilities();
             });
         }
         boolean arrived = until(15_000, () -> {
-            ClientPlayerEntity player = client.player;
+            LocalPlayer player = client.player;
             if (player == null) {
                 return false;
             }
             player.getAbilities().flying = true;
-            player.setVelocity(0, 0, 0);
+            player.setDeltaMovement(0, 0, 0);
             return Math.abs(player.getX() - ex) < 0.01 && Math.abs(player.getY() - feetY) < 0.01
                     && Math.abs(player.getZ() - ez) < 0.01;
         });
@@ -584,7 +584,7 @@ public final class CheckDriver {
         }
         onClient(() -> look(yaw, pitch));
         // Chunks and their meshes around the new place.
-        until(20_000, () -> client.worldRenderer.isTerrainRenderComplete());
+        until(20_000, () -> client.levelRenderer.hasRenderedAllSections());
         frames(10);
         onClient(() -> look(yaw, pitch));
         frames(2);
@@ -637,24 +637,24 @@ public final class CheckDriver {
         double dx = tx - ex;
         double dy = ty - ey;
         double dz = tz - ez;
-        float yaw = (float) (MathHelper.atan2(dz, dx) * MathHelper.DEGREES_PER_RADIAN) - 90f;
-        float pitch = (float) -(MathHelper.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * MathHelper.DEGREES_PER_RADIAN);
+        float yaw = (float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90f;
+        float pitch = (float) -(Mth.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * Mth.RAD_TO_DEG);
         onClient(() -> look(yaw, pitch));
         frames(3);
     }
 
     private void look(float yaw, float pitch) {
-        ClientPlayerEntity player = client.player;
+        LocalPlayer player = client.player;
         if (player == null) {
             return;
         }
-        player.setYaw(yaw);
-        player.setPitch(pitch);
-        player.prevYaw = yaw;
-        player.prevPitch = pitch;
-        player.setHeadYaw(yaw);
-        player.prevHeadYaw = yaw;
-        player.setBodyYaw(yaw);
+        player.setYRot(yaw);
+        player.setXRot(pitch);
+        player.yRotO = yaw;
+        player.xRotO = pitch;
+        player.setYHeadRot(yaw);
+        player.yHeadRotO = yaw;
+        player.setYBodyRot(yaw);
     }
 
     /** Sends a chat command ({@code "tp @s 0 100 0"}, without the slash) as the player typing it would. */
@@ -663,7 +663,7 @@ public final class CheckDriver {
             if (client.player == null) {
                 throw new Failed("no player");
             }
-            client.player.networkHandler.sendChatCommand(command);
+            client.player.connection.sendCommand(command);
         });
         frames(2);
     }
@@ -679,8 +679,8 @@ public final class CheckDriver {
             if (!projector.project(x, y, z, out)) {
                 throw new Failed(String.format(Locale.ROOT, "%.1f %.1f %.1f is behind the camera", x, y, z));
             }
-            int width = client.getWindow().getScaledWidth();
-            int height = client.getWindow().getScaledHeight();
+            int width = client.getWindow().getGuiScaledWidth();
+            int height = client.getWindow().getGuiScaledHeight();
             if (out[0] < 0 || out[1] < 0 || out[0] >= width || out[1] >= height) {
                 throw new Failed(String.format(Locale.ROOT, "%.1f %.1f %.1f is off screen (%.0f, %.0f)", x, y, z,
                         out[0], out[1]));
@@ -719,7 +719,7 @@ public final class CheckDriver {
         if (cursor.missed() || cursor.pos().x() != x || cursor.pos().y() != y || cursor.pos().z() != z
                 || cursor.face() != face) {
             String hit = cursor.missed() ? "nothing" : onClient(() -> cursor.pos() + " " + cursor.face() + " ("
-                    + client.world.getBlockState(new net.minecraft.util.math.BlockPos(cursor.pos().x(),
+                    + client.level.getBlockState(new net.minecraft.core.BlockPos(cursor.pos().x(),
                             cursor.pos().y(), cursor.pos().z())) + ")");
             throw new Failed("aimed at " + x + " " + y + " " + z + " " + face + " but the editor's cursor is on " + hit);
         }
@@ -734,7 +734,7 @@ public final class CheckDriver {
     // ---- Mouse ----
 
     private Screen screen() {
-        Screen screen = client.currentScreen;
+        Screen screen = client.screen;
         if (screen == null || !editor.mode().isActive()) {
             throw new Failed("the editor screen is not open");
         }
@@ -811,13 +811,13 @@ public final class CheckDriver {
     /** Presses and releases a key with {@code modifiers}, through vanilla's keyboard handler. */
     public void key(int key, int modifiers) {
         onClient(() -> {
-            long window = client.getWindow().getHandle();
-            client.keyboard.onKey(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_PRESS, modifiers);
+            long window = client.getWindow().getWindow();
+            client.keyboardHandler.keyPress(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_PRESS, modifiers);
         });
         frames(1);
         onClient(() -> {
-            long window = client.getWindow().getHandle();
-            client.keyboard.onKey(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_RELEASE, modifiers);
+            long window = client.getWindow().getWindow();
+            client.keyboardHandler.keyPress(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_RELEASE, modifiers);
         });
         frames(1);
     }
@@ -825,8 +825,8 @@ public final class CheckDriver {
     /** Presses a key and holds it (until {@link #keyUp}), through vanilla's keyboard handler. */
     public void keyDown(int key) {
         onClient(() -> {
-            long window = client.getWindow().getHandle();
-            client.keyboard.onKey(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_PRESS, 0);
+            long window = client.getWindow().getWindow();
+            client.keyboardHandler.keyPress(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_PRESS, 0);
         });
         frames(1);
     }
@@ -834,8 +834,8 @@ public final class CheckDriver {
     /** Releases a key held by {@link #keyDown}. */
     public void keyUp(int key) {
         onClient(() -> {
-            long window = client.getWindow().getHandle();
-            client.keyboard.onKey(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_RELEASE, 0);
+            long window = client.getWindow().getWindow();
+            client.keyboardHandler.keyPress(window, key, GLFW.glfwGetKeyScancode(key), GLFW.GLFW_RELEASE, 0);
         });
         frames(1);
     }
@@ -965,7 +965,7 @@ public final class CheckDriver {
 
     /** Lays the editor UI out now (it does so every frame anyway). Client thread. */
     public void relayout() {
-        ui().layout(client.getWindow().getScaledWidth(), client.getWindow().getScaledHeight());
+        ui().layout(client.getWindow().getGuiScaledWidth(), client.getWindow().getGuiScaledHeight());
     }
 
     public static <T extends Node> void collect(Node node, Class<T> type, List<T> into) {
@@ -981,12 +981,12 @@ public final class CheckDriver {
 
     /** The integrated server's cells of {@code box} (singleplayer). */
     public Cells serverCells(Box box) {
-        return onServer(server -> Cells.of(server.getOverworld(), box));
+        return onServer(server -> Cells.of(server.overworld(), box));
     }
 
     /** The client's cells of {@code box}. */
     public Cells clientCells(Box box) {
-        return onClient(() -> Cells.of(client.world, box));
+        return onClient(() -> Cells.of(client.level, box));
     }
 
     /**
@@ -1031,8 +1031,8 @@ public final class CheckDriver {
      */
     public void parkPointer() {
         onClient(() -> {
-            int width = client.getWindow().getScaledWidth();
-            int height = client.getWindow().getScaledHeight();
+            int width = client.getWindow().getGuiScaledWidth();
+            int height = client.getWindow().getGuiScaledHeight();
             double[][] spots = {{0.5, 0.12}, {0.35, 0.12}, {0.65, 0.12}, {0.5, 0.3}, {0.5, 0.5}};
             for (double[] spot : spots) {
                 double x = width * spot[0];
@@ -1051,8 +1051,8 @@ public final class CheckDriver {
         String file = String.format(Locale.ROOT, "%02d-%s-%s.png", ++pictureNumber, scenario, name);
         try {
             onClient(() -> {
-                try (NativeImage frame = ScreenshotRecorder.takeScreenshot(client.getFramebuffer())) {
-                    frame.writeTo(dir.resolve(file));
+                try (NativeImage frame = Screenshot.takeScreenshot(client.getMainRenderTarget())) {
+                    frame.writeToFile(dir.resolve(file));
                 }
             });
             report.picture(new CheckReport.Picture(file, scenario, lookFor));

@@ -50,17 +50,17 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.IntFunction;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -80,10 +80,10 @@ public final class HeightmapGameTest implements FabricGameTest {
      * the area's height, so the kernel reads only the snapshot's cells. The world then equals the kernel's replay on the
      * snapshot cell for cell; each stroke made one entry; undoing them all restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_strokes", tickLimit = LIMIT)
-    public void strokesMatchTheKernelAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_strokes", timeoutTicks = LIMIT)
+    public void strokesMatchTheKernelAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1400);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 200, z0 + 79);
@@ -111,19 +111,19 @@ public final class HeightmapGameTest implements FabricGameTest {
         strokes.add(onGround(world, 1, i -> new int[] {x0 + 62, z0 + 64}));
 
         int[] seq = {1};
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 begin(h, h.player, 400 + current, specs.get(current));
                 DabOutcome outcome = h.service.dabs(h.player, 400 + current, seq[0]++, strokes.get(current));
                 check(outcome.accepted(), "stroke " + current + ": " + outcome);
             });
-            runner.createAndAdd(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
-            runner.createAndAdd(() -> h.service.endStroke(h.player, 400 + current));
+            runner.thenWaitUntil(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
+            runner.thenWaitUntil(() -> h.service.endStroke(h.player, 400 + current));
         }
         String[] replay = {null};
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
             if (replay[0] == null) replay[0] = replay(specs, strokes, snapshot);
             check(replay[0].isEmpty(), replay[0]);
@@ -140,7 +140,7 @@ public final class HeightmapGameTest implements FabricGameTest {
                 }
             }
             check(mismatches == 0, mismatches + " cells differ from the kernel; first " + first);
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
             check(h.history().undoLabel().startsWith("Heightmap stroke"), "named " + h.history().undoLabel());
             // The ridge rose, the trench holds water, the mirrored copies did their share.
             int ridge = 0;
@@ -165,26 +165,26 @@ public final class HeightmapGameTest implements FabricGameTest {
         List<RecordingListener> undos = new ArrayList<>();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 if (undos.size() == current) {
                     RecordingListener undo = new RecordingListener();
                     undos.add(undo);
                     h.undo(undo);
                 }
             });
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 RecordingListener undo = undos.get(current);
                 check(undo.result != null, "undo " + current + " running");
                 check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                         "undo " + current + ": " + undo.result);
             });
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(before, capture(world, area), "after undoing every Heightmap stroke");
             forceChunks(world, area, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
@@ -192,11 +192,11 @@ public final class HeightmapGameTest implements FabricGameTest {
      * refused {@code UNLOADED}; a stroke wholly on protected columns is refused {@code PROTECTED} and writes nothing; one
      * across the protected area's edge writes only outside it and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_refused", tickLimit = LIMIT)
-    public void refusedWithoutTheBrushNodeUnloadedAndWhereProtected(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_refused", timeoutTicks = LIMIT)
+    public void refusedWithoutTheBrushNodeUnloadedAndWhereProtected(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1402);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 63, 160, z0 + 63);
@@ -205,12 +205,12 @@ public final class HeightmapGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         BrushSpec stamp = heightmap(4, cone(4), 6, false, SurfaceMask.ANY, null, Symmetry.NONE);
         try {
-            ServerPlayerEntity user = h.addPlayer(false);
+            ServerPlayer user = h.addPlayer(false);
             EditTestSupport.grant(user, Perm.USE, Perm.REGION);
             EditRejected refused = ClipboardGameTest.refusal(() -> h.service.beginStroke(user, 40, stamp));
             check(refused.reason() == RejectReason.NO_PERMISSION && refused.getMessage().contains(Perm.BRUSH.node()),
                     "without brush: " + refused.reason() + " " + refused.getMessage());
-            check(h.service.openStroke(user.getUuid()).isEmpty(), "a refused stroke is open");
+            check(h.service.openStroke(user.getUUID()).isEmpty(), "a refused stroke is open");
 
             // A dab 3,000 blocks away, in a chunk nobody loaded.
             begin(h, h.player, 41, stamp);
@@ -231,8 +231,8 @@ public final class HeightmapGameTest implements FabricGameTest {
                 check(outcome.reason() == RejectReason.PROTECTED, "protected: " + outcome);
             }
             h.service.endStroke(h.player, 42);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 40, "commit");
-            check(h.service.historyService().undoEntries(h.player.getUuid()).isEmpty(), "a protected stroke made an entry");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 40, "commit");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).isEmpty(), "a protected stroke made an entry");
             checkSame(before, capture(world, area), "after the refused strokes");
 
             // Across the edge (columns from x0 + 32 east protected): only the west side changes, and undoes exactly.
@@ -244,7 +244,7 @@ public final class HeightmapGameTest implements FabricGameTest {
             check(across.accepted(), "across the edge: " + across);
             MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == acks2 + 1, 40, "the dabs across the edge");
             h.service.endStroke(h.player, 43);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 40, "commit");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 40, "commit");
             WorldSnapshot partial = capture(world, area);
             int changed = 0;
             for (int y = area.min().y(); y <= area.max().y(); y++) {
@@ -268,7 +268,7 @@ public final class HeightmapGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -278,21 +278,21 @@ public final class HeightmapGameTest implements FabricGameTest {
      * named Heightmap, and undo restores it exactly. A player without {@code region} is refused the upload, holding
      * nothing.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_import", tickLimit = LIMIT)
-    public void anImportBuildsThroughTheGeneratedPasteAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_import", timeoutTicks = LIMIT)
+    public void anImportBuildsThroughTheGeneratedPasteAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1404);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 31, 140, z0 + 31);
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 32, 32);
         // A chest in the air above a column the import cuts, one where a column it raises grows: both stay, contents too.
-        List<net.minecraft.util.math.BlockPos> chests = List.of(new net.minecraft.util.math.BlockPos(x0 + 6, 112, z0 + 6),
-                new net.minecraft.util.math.BlockPos(x0 + 20, 112, z0 + 15));
-        for (net.minecraft.util.math.BlockPos chest : chests) {
-            world.setBlockState(chest, Blocks.CHEST.getDefaultState());
-            ((ChestBlockEntity) world.getBlockEntity(chest)).setStack(3, new ItemStack(Items.DIAMOND, 5));
+        List<net.minecraft.core.BlockPos> chests = List.of(new net.minecraft.core.BlockPos(x0 + 6, 112, z0 + 6),
+                new net.minecraft.core.BlockPos(x0 + 20, 112, z0 + 15));
+        for (net.minecraft.core.BlockPos chest : chests) {
+            world.setBlockAndUpdate(chest, Blocks.CHEST.defaultBlockState());
+            ((ChestBlockEntity) world.getBlockEntity(chest)).setItem(3, new ItemStack(Items.DIAMOND, 5));
         }
         Box selection = box(x0 + 4, 102, z0 + 4, x0 + 27, 118, z0 + 19);
         byte[] picture = new byte[24 * 16];
@@ -301,7 +301,7 @@ public final class HeightmapGameTest implements FabricGameTest {
         }
         HeightmapAreaKernel.Spec spec = new HeightmapAreaKernel.Spec(selection, 100, 118, picture);
         FabricWorldReader reader = new FabricWorldReader(world, h.runtime.states());
-        int bottom = world.getBottomY(), top = world.getTopY();
+        int bottom = world.getMinBuildHeight(), top = world.getMaxBuildHeight();
         int[] range = HeightmapAreaKernel.range(spec, bottom, top);
         HeightmapAreaKernel.Result imported = HeightmapAreaKernel.generate(spec,
                 (x, z) -> HeightmapAreaKernel.capture(reader, x, z, range[0], range[1], spec.minY()), h.runtime.states(),
@@ -313,34 +313,34 @@ public final class HeightmapGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
 
-        ServerPlayerEntity clipboardOnly = h.addPlayer(false);
+        ServerPlayer clipboardOnly = h.addPlayer(false);
         EditTestSupport.grant(clipboardOnly, Perm.USE, Perm.CLIPBOARD);
         EditRejected refused = ClipboardGameTest.refusal(() -> clips.beginGeneratedUpload(clipboardOnly, source.bounds(),
                 source.cells(), payload.length));
         check(refused.reason() == RejectReason.NO_PERMISSION, "without region: " + refused.reason());
-        check(h.service.clipboards().get(clipboardOnly.getUuid()).isEmpty(), "a refused upload held a clipboard");
+        check(h.service.clipboards().get(clipboardOnly.getUUID()).isEmpty(), "a refused upload held a clipboard");
 
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         try {
             clips.beginGeneratedUpload(h.player, source.bounds(), source.cells(), payload.length).completed(payload, uploaded);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
         RecordingListener paste = new RecordingListener(), undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "decoding the upload"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "decoding the upload"))
+                .thenWaitUntil(() -> {
                     OpSpec.Paste op = new OpSpec.Paste(new SourceRef.Clipboard(uploaded.get("the upload").clipboardId()),
                             source.bounds().min(), Transform.IDENTITY, new PasteOptions(true, false, false));
                     try {
                         h.service.run(h.player, op, new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.HEIGHTMAP),
                                 paste);
                     } catch (EditRejected e) {
-                        throw new GameTestException("paste refused: " + e.getMessage());
+                        throw new GameTestAssertException("paste refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED, "paste " + paste.result);
                     WorldSnapshot now = capture(world, area);
                     for (int y = area.min().y(); y <= area.max().y(); y++) {
@@ -356,8 +356,8 @@ public final class HeightmapGameTest implements FabricGameTest {
                     checkChests(world, chests, "after the import");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                             "undo " + undo.result);
                     checkSame(before, capture(world, area), "after undoing the import");
@@ -365,7 +365,7 @@ public final class HeightmapGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -376,12 +376,12 @@ public final class HeightmapGameTest implements FabricGameTest {
      * ridge may run past {@link ShapeBrushLaneGameTest#TICK_MICROS} at most
      * {@link ShapeBrushLaneGameTest#LONG_TICKS_ALLOWED} times (a slow machine), the rest only catches a stall.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_timing", tickLimit = LIMIT)
-    public void aRadius32DabComputesInMilliseconds(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_timing", timeoutTicks = LIMIT)
+    public void aRadius32DabComputesInMilliseconds(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 EditExecutor.Settings.from(SculptoryConfig.defaults(), true));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1406);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 111, 260, z0 + 79);
@@ -434,7 +434,7 @@ public final class HeightmapGameTest implements FabricGameTest {
                 check(outcome.accepted(), tall + " tall: " + outcome);
                 long[] stroke = timedTicks(executor, h, () -> h.acks.seqs.size() == acks + 1, 600, tall + " tall stroke");
                 h.service.endStroke(h.player, id);
-                long[] commit = timedTicks(executor, h, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 600,
+                long[] commit = timedTicks(executor, h, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 600,
                         tall + " tall commit");
                 lane.append(String.format(Locale.ROOT, " %d tall (%s): %d ticks, longest %.1f ms, %d over %d ms; commit"
                         + " %d ticks, longest %.1f ms; %.1f ms of GC left out;", tall, lower ? "lower" : "raise", stroke[0],
@@ -451,7 +451,7 @@ public final class HeightmapGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -460,7 +460,7 @@ public final class HeightmapGameTest implements FabricGameTest {
      * with its GC pauses}, times in microseconds, each tick's time otherwise without the garbage collectors' pauses
      * during it.
      */
-    static long[] timedTicks(EditExecutor<ServerWorld> executor, Harness h,
+    static long[] timedTicks(EditExecutor<ServerLevel> executor, Harness h,
                          java.util.function.BooleanSupplier done, int max, String what) {
         long ticks = 0, longest = 0, over = 0, gc = 0, longestPause = 0, longestRaw = 0;
         while (!done.getAsBoolean() && ticks < max) {
@@ -485,11 +485,11 @@ public final class HeightmapGameTest implements FabricGameTest {
     // ------------------------------------------------------------------ helpers
 
     /** Each chest is still a chest holding its five diamonds. */
-    private static void checkChests(ServerWorld world, List<net.minecraft.util.math.BlockPos> chests, String what) {
-        for (net.minecraft.util.math.BlockPos chest : chests) {
-            check(world.getBlockState(chest).isOf(Blocks.CHEST), what + ": no chest at " + chest);
-            ItemStack held = ((ChestBlockEntity) world.getBlockEntity(chest)).getStack(3);
-            check(held.isOf(Items.DIAMOND) && held.getCount() == 5, what + ": the chest at " + chest + " holds " + held);
+    private static void checkChests(ServerLevel world, List<net.minecraft.core.BlockPos> chests, String what) {
+        for (net.minecraft.core.BlockPos chest : chests) {
+            check(world.getBlockState(chest).is(Blocks.CHEST), what + ": no chest at " + chest);
+            ItemStack held = ((ChestBlockEntity) world.getBlockEntity(chest)).getItem(3);
+            check(held.is(Items.DIAMOND) && held.getCount() == 5, what + ": the chest at " + chest + " holds " + held);
         }
     }
 
@@ -525,7 +525,7 @@ public final class HeightmapGameTest implements FabricGameTest {
     }
 
     /** {@code count} dabs on the ground's top face at the columns {@code column} gives, where the cursor would hit it. */
-    private static List<Dab> onGround(ServerWorld world, int count, IntFunction<int[]> column) {
+    private static List<Dab> onGround(ServerLevel world, int count, IntFunction<int[]> column) {
         List<Dab> dabs = new ArrayList<>();
         for (int i = 0; i < count; i++) {
             int[] c = column.apply(i);
@@ -535,10 +535,10 @@ public final class HeightmapGameTest implements FabricGameTest {
     }
 
     /** The topmost ground of a column (not air, plants or water), from y 150 down. */
-    static int ground(ServerWorld world, int x, int z) {
+    static int ground(ServerLevel world, int x, int z) {
         for (int y = 150; y >= 100; y--) {
-            BlockState state = world.getBlockState(new net.minecraft.util.math.BlockPos(x, y, z));
-            if (!state.isAir() && !state.isReplaceable() && state.getFluidState().isEmpty()) return y;
+            BlockState state = world.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+            if (!state.isAir() && !state.canBeReplaced() && state.getFluidState().isEmpty()) return y;
         }
         return 100;
     }
@@ -564,11 +564,11 @@ public final class HeightmapGameTest implements FabricGameTest {
         return "";
     }
 
-    private static void begin(Harness h, ServerPlayerEntity player, int strokeId, BrushSpec spec) {
+    private static void begin(Harness h, ServerPlayer player, int strokeId, BrushSpec spec) {
         try {
             h.service.beginStroke(player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 }

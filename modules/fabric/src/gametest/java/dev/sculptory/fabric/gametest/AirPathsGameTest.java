@@ -22,9 +22,9 @@ import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.level.block.Block;
 
 /**
  * Paths into the air on a real world: a Straight road ramping from the ground into the sky is a floating deck, its fill
@@ -35,8 +35,8 @@ import net.minecraft.test.TestContext;
 public final class AirPathsGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_air_road", tickLimit = LIMIT)
-    public void aRoadRampingIntoTheSkyIsADeckWithFillOnlyNearTheGround(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_air_road", timeoutTicks = LIMIT)
+    public void aRoadRampingIntoTheSkyIsADeckWithFillOnlyNearTheGround(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1600);
         int x0 = at[0], z0 = at[1];
@@ -50,7 +50,7 @@ public final class AirPathsGameTest implements FabricGameTest {
         RoadKernel.Path path = RoadKernel.path(spec);
         // What the fill meets, read as the client reads it: down from the deck in the real world.
         GroundMap ground = RoadKernel.deckGround(spec, path, new FabricWorldReader(h.world, h.runtime.states()));
-        RoadKernel.Result result = RoadKernel.generate(spec, path, ground, h.world.getBottomY(), h.world.getTopY(), 1 << 16);
+        RoadKernel.Result result = RoadKernel.generate(spec, path, ground, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight(), 1 << 16);
         check(result.unloaded().isEmpty() && result.bareColumns() == 0, "every column is loaded: " + result.unloaded());
         GeneratedSource source = result.source();
         for (int x = x0; x <= x0 + 24; x++) {
@@ -64,8 +64,8 @@ public final class AirPathsGameTest implements FabricGameTest {
         ExtrudePathsGameTest.buildAndUndo(context, h, area, source, OpLabel.ROAD, undone -> {});
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_air_extrude", tickLimit = LIMIT)
-    public void aWallCarriedStraightUpACurveKeepsItsStairsTheWayTheyFaced(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_air_extrude", timeoutTicks = LIMIT)
+    public void aWallCarriedStraightUpACurveKeepsItsStairsTheWayTheyFaced(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1602);
         int x0 = at[0], z0 = at[1];
@@ -85,13 +85,13 @@ public final class AirPathsGameTest implements FabricGameTest {
                 xs[i] = x0;
                 ys[i] = y;
                 zs[i] = z;
-                states[i++] = Block.getRawIdFromState(h.world.getBlockState(pos(x0, y, z)));
+                states[i++] = Block.getId(h.world.getBlockState(pos(x0, y, z)));
             }
         }
         FaceCells face = new FaceCells(0, 1, xs, ys, zs, states);
         GeneratedSource source = PathExtrudeKernel.generate(new PathExtrudeKernel.Spec(face,
                 List.of(new BlockPos(x0 + 1, 101, z0 + 1), new BlockPos(x0 + 1, 133, z0 + 1)), PathKind.CURVE, 0, false),
-                h.runtime.states(), 1 << 20, h.world.getBottomY(), h.world.getTopY()).source();
+                h.runtime.states(), 1 << 20, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight()).source();
         int[] flipped = {0};
         source.forEach((x, y, z, state) -> {
             if (state != bricks && state != stairs) flipped[0]++;

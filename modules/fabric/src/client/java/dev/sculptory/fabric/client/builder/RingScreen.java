@@ -6,11 +6,11 @@ import dev.sculptory.protocol.v2.BuilderPower;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.text.Text;
-import net.minecraft.util.Util;
+import net.minecraft.Util;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -35,11 +35,11 @@ public final class RingScreen extends Screen {
     private final BuilderClient owner;
     private final RingMenu menu;
     private final Translator translator;
-    private final KeyBinding ringKey;
+    private final KeyMapping ringKey;
     private boolean released;
 
-    RingScreen(BuilderClient owner, RingMenu menu, Translator translator, KeyBinding ringKey) {
-        super(Text.translatable(TITLE));
+    RingScreen(BuilderClient owner, RingMenu menu, Translator translator, KeyMapping ringKey) {
+        super(Component.translatable(TITLE));
         this.owner = Objects.requireNonNull(owner);
         this.menu = Objects.requireNonNull(menu);
         this.translator = Objects.requireNonNull(translator);
@@ -76,12 +76,12 @@ public final class RingScreen extends Screen {
     private void release() {
         if (released) return;
         released = true;
-        owner.ringReleased(menu.release(Util.getMeasuringTimeMs()));
-        close();
+        owner.ringReleased(menu.release(Util.getMillis()));
+        onClose();
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         PowerSet powers = owner.powers();
         List<String> names = new ArrayList<>(menu.entries().size());
         for (BuilderPower power : menu.entries()) names.add(translator.translate(BuilderClient.nameKey(power)));
@@ -101,7 +101,7 @@ public final class RingScreen extends Screen {
             detail = translator.translate(HINT, translator.translate(BuilderClient.nameKey(powers.last())));
         }
         // Widest plate first, so the ring does not shift while the pointer moves between chips and the middle.
-        RingLayout layout = new RingLayout(menu, names, title, detail, textRenderer::getWidth, textRenderer.fontHeight);
+        RingLayout layout = new RingLayout(menu, names, title, detail, font::width, font.lineHeight);
         menu.pointer(mouseX, mouseY);
         for (int i = 0; i < names.size(); i++) {
             BuilderPower power = menu.entries().get(i);
@@ -115,20 +115,20 @@ public final class RingScreen extends Screen {
                 context.fill(chip.x() - 1, chip.y(), chip.x(), chip.bottom(), OUTLINE);
                 context.fill(chip.right(), chip.y(), chip.right() + 1, chip.bottom(), OUTLINE);
             }
-            context.drawText(textRenderer, names.get(i), chip.x() + 4, chip.y() + 3, available ? TEXT : TEXT_DISABLED, false);
+            context.drawString(font, names.get(i), chip.x() + 4, chip.y() + 3, available ? TEXT : TEXT_DISABLED, false);
         }
         Rect plate = layout.plate();
         context.fill(plate.x(), plate.y(), plate.right(), plate.bottom(), PLATE);
         int cx = (int) Math.round(menu.centreX());
         int y = plate.y() + 5;
         for (int i = 0; i < layout.lines().size(); i++) {
-            context.drawCenteredTextWithShadow(textRenderer, layout.lines().get(i), cx, y, i == 0 ? TEXT : detailColour);
-            y += textRenderer.fontHeight + RingLayout.LINE_GAP;
+            context.drawCenteredString(font, layout.lines().get(i), cx, y, i == 0 ? TEXT : detailColour);
+            y += font.lineHeight + RingLayout.LINE_GAP;
         }
     }
 
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
         // The world stays fully visible behind the ring.
     }
 
@@ -149,13 +149,13 @@ public final class RingScreen extends Screen {
 
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
-        if (ringKey.matchesKey(keyCode, scanCode)) return true;
+        if (ringKey.matches(keyCode, scanCode)) return true;
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
 
     @Override
     public boolean keyReleased(int keyCode, int scanCode, int modifiers) {
-        if (ringKey.matchesKey(keyCode, scanCode)) {
+        if (ringKey.matches(keyCode, scanCode)) {
             release();
             return true;
         }
@@ -163,7 +163,7 @@ public final class RingScreen extends Screen {
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 }

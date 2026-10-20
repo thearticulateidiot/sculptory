@@ -59,13 +59,13 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.border.WorldBorder;
 
 /**
  * Server scatter (M3-B) against a real server world: previews planned over ticks, commits, undo, ownership, expiry,
@@ -149,10 +149,10 @@ public final class ScatterGameTest implements FabricGameTest {
     }
 
     /** One block of {@code state}, anchored on it: installed as the player's clipboard. */
-    static SourceRef block(Harness h, ServerPlayerEntity player, String state) {
+    static SourceRef block(Harness h, ServerPlayer player, String state) {
         Clipboard clipboard = Clipboard.builder(h.runtime.states(), new BlockPos(1, 1, 1)).set(0, 0, 0, h.state(state))
                 .build();
-        return new SourceRef.Clipboard(h.service.clipboards().install(player.getUuid(), clipboard).id());
+        return new SourceRef.Clipboard(h.service.clipboards().install(player.getUUID(), clipboard).id());
     }
 
     /** A 3 × 1 × 3 slab of {@code state} anchored at its centre, as a clipboard. */
@@ -168,17 +168,17 @@ public final class ScatterGameTest implements FabricGameTest {
         try {
             return LibraryPath.file(path);
         } catch (dev.sculptory.server.library.LibraryPathException e) {
-            throw new GameTestException("bad library path " + path);
+            throw new GameTestAssertException("bad library path " + path);
         }
     }
 
-    static Reply preview(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, ServerPlayerEntity player,
+    static Reply preview(ServerScatter<ServerPlayer, ServerLevel> scatter, ServerPlayer player,
                          C2S.ScatterPreview request) {
         Reply reply = new Reply();
         try {
             scatter.preview(player, request, reply);
         } catch (EditRejected e) {
-            throw new GameTestException("preview refused: " + e.getMessage());
+            throw new GameTestAssertException("preview refused: " + e.getMessage());
         }
         return reply;
     }
@@ -188,32 +188,32 @@ public final class ScatterGameTest implements FabricGameTest {
     }
 
     /** Plans synchronously (one simulated tick after another) until the reply arrives. */
-    static void planNow(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, Reply reply) {
+    static void planNow(ServerScatter<ServerPlayer, ServerLevel> scatter, Reply reply) {
         for (int i = 0; i < 100_000 && !reply.finished(); i++) scatter.tick();
         check(reply.finished(), "planning did not finish");
     }
 
-    static RecordingListener commit(Harness h, ServerPlayerEntity player, UUID planId) {
+    static RecordingListener commit(Harness h, ServerPlayer player, UUID planId) {
         RecordingListener listener = new RecordingListener();
         try {
             h.service.run(player, new OpSpec.ScatterCommit(planId), RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException("commit refused: " + e.getMessage());
+            throw new GameTestAssertException("commit refused: " + e.getMessage());
         }
         return listener;
     }
 
-    static ScatterPlan heldPlan(Harness h, ServerPlayerEntity player) {
-        return h.service.scatterPlans().get(player.getUuid()).orElseThrow(() -> new GameTestException("no plan held"))
+    static ScatterPlan heldPlan(Harness h, ServerPlayer player) {
+        return h.service.scatterPlans().get(player.getUUID()).orElseThrow(() -> new GameTestAssertException("no plan held"))
                 .plan();
     }
 
     /** Positions of {@code block} in the layer y of the box. */
-    static List<net.minecraft.util.math.BlockPos> find(ServerWorld world, Box box, int y, net.minecraft.block.Block block) {
-        List<net.minecraft.util.math.BlockPos> found = new ArrayList<>();
+    static List<net.minecraft.core.BlockPos> find(ServerLevel world, Box box, int y, net.minecraft.world.level.block.Block block) {
+        List<net.minecraft.core.BlockPos> found = new ArrayList<>();
         for (int x = box.min().x(); x <= box.max().x(); x++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
-                if (world.getBlockState(pos(x, y, z)).isOf(block)) found.add(pos(x, y, z));
+                if (world.getBlockState(pos(x, y, z)).is(block)) found.add(pos(x, y, z));
             }
         }
         return found;
@@ -225,8 +225,8 @@ public final class ScatterGameTest implements FabricGameTest {
      * The same seed gives the same plan (hash and placements payload), another seed another plan; the preview holds
      * its area while it plans; the committed blocks keep the spacing.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_determinism", tickLimit = LIMIT)
-    public void scatterDeterministicAndSpaced(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_determinism", timeoutTicks = LIMIT)
+    public void scatterDeterministicAndSpaced(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 70);
@@ -241,23 +241,23 @@ public final class ScatterGameTest implements FabricGameTest {
         Reply[] later = new Reply[3];
         Sha256[] hashes = new Sha256[3];
         RecordingListener[] committed = new RecordingListener[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(first.finished(), "first preview planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     first.get("first preview");
                     check(!h.service.executor().isLocked(h.world, all), "the area is still held after planning");
                     hashes[0] = heldPlan(h, h.player).hash();
                     check(first.plan.placements() > 40, "only " + first.plan.placements() + " placements");
                     later[0] = preview(scatter, h.player, request(area, spacing, 42L, gold));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(later[0].finished(), "second preview planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady again = later[0].get("second preview");
                     hashes[1] = heldPlan(h, h.player).hash();
                     check(hashes[0].equals(hashes[1]), "same seed, different plans");
@@ -267,29 +267,29 @@ public final class ScatterGameTest implements FabricGameTest {
                     check(first.plan.rejectedCounts().equals(again.rejectedCounts()), "different outcome counts");
                     later[1] = preview(scatter, h.player, request(area, spacing, 43L, gold));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(later[1].finished(), "third preview planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     later[1].get("third preview");
                     hashes[2] = heldPlan(h, h.player).hash();
                     check(!hashes[2].equals(hashes[0]), "another seed gave the same plan");
                     later[2] = preview(scatter, h.player, request(area, spacing, 42L, gold));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(later[2].finished(), "fourth preview planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = later[2].get("fourth preview");
                     check(heldPlan(h, h.player).hash().equals(hashes[0]), "the seed-42 plan changed");
                     committed[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(committed[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(committed[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(committed[0].result.outcome() == JobOutcome.COMPLETED, "commit " + committed[0].result);
-                    List<net.minecraft.util.math.BlockPos> placed = find(h.world, all, FLOOR_Y + 1, Blocks.GOLD_BLOCK);
+                    List<net.minecraft.core.BlockPos> placed = find(h.world, all, FLOOR_Y + 1, Blocks.GOLD_BLOCK);
                     check(placed.size() == later[2].plan.placements(), placed.size() + " gold blocks for "
                             + later[2].plan.placements() + " placements");
                     check(committed[0].result.changed() == placed.size(), "changed " + committed[0].result.changed());
@@ -306,15 +306,15 @@ public final class ScatterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A commit of small trees is one job and one history entry labelled with its placements; undo restores the area
      * exactly, and the plan cannot be committed twice.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_undo", tickLimit = LIMIT)
-    public void scatterCommitUndoExact(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_undo", timeoutTicks = LIMIT)
+    public void scatterCommitUndoExact(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 71);
@@ -330,17 +330,17 @@ public final class ScatterGameTest implements FabricGameTest {
             for (int z = 0; z < 3; z++) tree.set(x, 3, z, h.state("minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]"));
         }
         tree.set(0, 2, 1, h.state("minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]"));
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), tree.build()).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), tree.build()).id());
         Box area = box(x0 - 4, FLOOR_Y - 1, z0 - 4, x0 + 51, FLOOR_Y + 8, z0 + 51);
         WorldSnapshot before = capture(h.world, area);
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 47, z0 + 47), 5, 7L, source));
         RecordingListener[] jobs = new RecordingListener[2];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 10, "only " + plan.placements() + " placements");
                     jobs[0] = commit(h, h.player, plan.planId());
@@ -348,8 +348,8 @@ public final class ScatterGameTest implements FabricGameTest {
                             RunOptions.DEFAULT, null));
                     check(twice.reason() == RejectReason.INVALID, "a plan committed twice: " + twice.reason());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     String label = h.history().undoLabel();
                     String expected = "Scatter · " + reply.plan.placements() + " placements · ";
@@ -359,8 +359,8 @@ public final class ScatterGameTest implements FabricGameTest {
                     jobs[1] = new RecordingListener();
                     h.undo(jobs[1]);
                 })
-                .createAndAdd(() -> check(jobs[1].result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[1].result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(jobs[1].result.outcome() == JobOutcome.COMPLETED && jobs[1].result.skippedConflicts() == 0,
                             "undo " + jobs[1].result);
                     checkSame(before, capture(h.world, area), "after undo");
@@ -368,19 +368,19 @@ public final class ScatterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Only the owner commits a plan; previews and commits need {@code scatter}; variants follow the paste rule (own
      * clipboard or a cached asset the player may read), and an asset's rotations restrict its turns.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_ownership", tickLimit = LIMIT)
-    public void scatterRefusesUnownedPlan(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_ownership", timeoutTicks = LIMIT)
+    public void scatterRefusesUnownedPlan(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        ServerPlayerEntity other = h.addPlayer();
-        ServerPlayerEntity noScatter = h.addPlayer(false);
+        ServerPlayer other = h.addPlayer();
+        ServerPlayer noScatter = h.addPlayer(false);
         EditTestSupport.grant(noScatter, Perm.USE, Perm.REGION, Perm.CLIPBOARD);
         int[] at = regionCorner(context, 72);
         int x0 = at[0], z0 = at[1];
@@ -401,12 +401,12 @@ public final class ScatterGameTest implements FabricGameTest {
         h.service.assets().put(new AssetCache.Asset(hash, libraryFile("rocks/flat.schem"), slab,
                 new AssetInfo(List.of(), new BlockPos(1, 0, 1), List.of(0), 1)));
         Reply reply = preview(scatter, h.player, request(area, 5, 1L, new SourceRef.Asset(hash)));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 5, "only " + plan.placements() + " placements");
                     for (ScatterPlan.Placement p : heldPlan(h, h.player).placements()) {
@@ -418,13 +418,13 @@ public final class ScatterGameTest implements FabricGameTest {
                             RunOptions.DEFAULT, null)).reason() == RejectReason.NO_PERMISSION, "a commit without scatter");
                     check(refusal(() -> h.service.run(h.player, new OpSpec.ScatterCommit(UUID.randomUUID()),
                             RunOptions.DEFAULT, null)).reason() == RejectReason.INVALID, "an unknown plan");
-                    check(h.service.scatterPlans().get(h.player.getUuid()).isPresent(), "a refusal dropped the plan");
+                    check(h.service.scatterPlans().get(h.player.getUUID()).isPresent(), "a refusal dropped the plan");
                     check(!h.service.executor().isLocked(h.world, all), "a refusal left a job or hold behind");
                     scatter.shutdown();
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -434,15 +434,15 @@ public final class ScatterGameTest implements FabricGameTest {
      * commit writes nothing east of it, and a placement reaching past it is skipped whole (reported as skipped, no
      * half slab) rather than cut. The border is restored when the job ends.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_protect", tickLimit = LIMIT)
-    public void scatterRespectsProtection(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_protect", timeoutTicks = LIMIT)
+    public void scatterRespectsProtection(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 73);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 16);
         Clipboard slab = slab(h, "minecraft:gold_block");
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), slab).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), slab).id());
         Reply reply;
         WorldBorder border = h.world.getWorldBorder();
         double centerX = border.getCenterX(), centerZ = border.getCenterZ(), size = border.getSize();
@@ -453,8 +453,8 @@ public final class ScatterGameTest implements FabricGameTest {
         try {
             border.setCenter(x0 + 16 - 100_000, z0);
             border.setSize(200_000);
-            check(!h.world.canPlayerModifyAt(h.player, pos(x0 + 16, FLOOR_Y + 1, z0 + 5))
-                    && h.world.canPlayerModifyAt(h.player, pos(x0 + 15, FLOOR_Y + 1, z0 + 5)), "the border is not at x0 + 16");
+            check(!h.world.mayInteract(h.player, pos(x0 + 16, FLOOR_Y + 1, z0 + 5))
+                    && h.world.mayInteract(h.player, pos(x0 + 15, FLOOR_Y + 1, z0 + 5)), "the border is not at x0 + 16");
             reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 4, 3L, source));
             planNow(scatter, reply);
         } finally {
@@ -480,11 +480,11 @@ public final class ScatterGameTest implements FabricGameTest {
             h.service.run(h.player, new OpSpec.ScatterCommit(plan.planId()), RunOptions.DEFAULT, job);
         } catch (EditRejected | RuntimeException e) {
             restore.run();
-            throw new GameTestException("commit refused: " + e.getMessage());
+            throw new GameTestAssertException("commit refused: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(job.result != null, "commit running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(job.result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(job.result.outcome() == JobOutcome.COMPLETED, "commit " + job.result);
                     check(job.result.skippedConflicts() == crossing && job.result.skippedProtected() == 0,
                             "commit " + job.result + ", " + crossing + " placements reach past the border");
@@ -500,15 +500,15 @@ public final class ScatterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * An area reaching far into chunks nobody loaded: those columns end as UNLOADED, and planning leaves the chunks
      * unloaded.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_unloaded", tickLimit = LIMIT)
-    public void scatterPreviewDoesNotLoadChunks(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_unloaded", timeoutTicks = LIMIT)
+    public void scatterPreviewDoesNotLoadChunks(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 74);
@@ -526,12 +526,12 @@ public final class ScatterGameTest implements FabricGameTest {
         }
         SourceRef gold = block(h, h.player, "minecraft:gold_block");
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 127, z0 + 15), 3, 5L, gold));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     Integer unloaded = plan.rejectedCounts().get("UNLOADED");
                     check(unloaded != null && unloaded >= 5 * 256, "UNLOADED " + plan.rejectedCounts());
@@ -546,12 +546,12 @@ public final class ScatterGameTest implements FabricGameTest {
                     forceChunks(h.world, loaded, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A plan may be committed for ten minutes (service clock), then it is gone. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_expiry", tickLimit = LIMIT)
-    public void scatterPlanExpires(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_expiry", timeoutTicks = LIMIT)
+    public void scatterPlanExpires(GameTestHelper context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
         var scatter = new ServerScatter<>(h.service);
@@ -562,11 +562,11 @@ public final class ScatterGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 15, z0 + 15), 4, 9L, gold));
         planNow(scatter, reply);
         ScatterService.PlanReady plan = reply.get("preview");
-        String world = h.world.getRegistryKey().getValue().toString();
+        String world = h.world.dimension().location().toString();
         clock.addAndGet(ScatterPlans.TTL_NANOS - 1_000_000_000L);
-        check(h.service.scatterPlans().find(h.player.getUuid(), plan.planId(), world, clock.get()).isPresent(),
+        check(h.service.scatterPlans().find(h.player.getUUID(), plan.planId(), world, clock.get()).isPresent(),
                 "the plan expired early");
-        check(h.service.scatterPlans().find(h.player.getUuid(), plan.planId(), "minecraft:the_nether", clock.get())
+        check(h.service.scatterPlans().find(h.player.getUUID(), plan.planId(), "minecraft:the_nether", clock.get())
                 .isEmpty(), "a plan resolved in another world");
         // Looking it up from another world dropped it: plan again.
         Reply again = preview(scatter, h.player, request(region(x0, z0, x0 + 15, z0 + 15), 4, 9L, gold));
@@ -576,20 +576,20 @@ public final class ScatterGameTest implements FabricGameTest {
         EditRejected expired = refusal(() -> h.service.run(h.player, new OpSpec.ScatterCommit(fresh.planId()),
                 RunOptions.DEFAULT, null));
         check(expired.reason() == RejectReason.INVALID, "an expired plan: " + expired.reason());
-        check(h.service.scatterPlans().get(h.player.getUuid()).isEmpty(), "the expired plan is still held");
+        check(h.service.scatterPlans().get(h.player.getUUID()).isEmpty(), "the expired plan is still held");
         check(find(h.world, all, FLOOR_Y + 1, Blocks.GOLD_BLOCK).isEmpty(), "an expired plan wrote blocks");
         scatter.shutdown();
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * Water covers the west half: by default nothing is placed in it (COLLISION), and the committed blocks leave the
      * water alone; with {@code allowInFluid} placements go into it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_fluid", tickLimit = LIMIT)
-    public void scatterFluidDefault(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_fluid", timeoutTicks = LIMIT)
+    public void scatterFluidDefault(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 76);
@@ -612,13 +612,13 @@ public final class ScatterGameTest implements FabricGameTest {
             check(p.anchor().x() >= x0 + 16, "a placement in the water: " + p.anchor());
         }
         RecordingListener job = commit(h, h.player, plan.planId());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(job.result != null, "commit running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(job.result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(job.result.outcome() == JobOutcome.COMPLETED, "commit " + job.result);
                     for (int x = x0; x < x0 + 16; x++) {
                         for (int z = z0; z < z0 + 32; z++) {
-                            check(h.world.getBlockState(pos(x, FLOOR_Y + 1, z)).isOf(Blocks.WATER),
+                            check(h.world.getBlockState(pos(x, FLOOR_Y + 1, z)).is(Blocks.WATER),
                                     "the water changed at " + x + "," + z);
                         }
                     }
@@ -632,7 +632,7 @@ public final class ScatterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -640,8 +640,8 @@ public final class ScatterGameTest implements FabricGameTest {
      * {@code SCATTER_PLACEMENTS} stream whose placements equal the plan; a preview sent right after another
      * supersedes it; the commit runs as a {@code RunOp}.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_stream", tickLimit = LIMIT)
-    public void scatterPlacementsStream(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_stream", timeoutTicks = LIMIT)
+    public void scatterPlacementsStream(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 77);
@@ -651,37 +651,37 @@ public final class ScatterGameTest implements FabricGameTest {
         Clipboard slab = slab(h, "minecraft:emerald_block");
         String hash = Sha256.digest(new byte[] {7}).hex();
         h.service.assets().put(new AssetCache.Asset(hash, libraryFile("rocks/slab.schem"), slab));
-        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, ClipboardService.disabled(), scatter,
+        ServerDispatcher<ServerPlayer> dispatcher = new ServerDispatcher<>(h.service, ClipboardService.disabled(), scatter,
                 h.runtime.permissions(), () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h);
-        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
+        NetSession<ServerPlayer> session = dispatcher.open(transport);
         ScatterArea area = new ScatterArea.Stamps(List.of(ScatterArea.Stamp.paint(x0 + 20, z0 + 20, 18),
                 ScatterArea.Stamp.erase(x0 + 20, z0 + 20, 4), ScatterArea.Stamp.paint(x0 + 38, z0 + 38, 8)));
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.SCATTER)));
         check(transport.first(S2C.Welcome.class).features().has(Features.SCATTER), "scatter is not offered");
         transport.receive(dispatcher, session, request(1, area, 3, new ScatterSettings.Density.Fraction(0.8),
                 ScatterSettings.Fit.DEFAULT, 5L, ScatterSettings.Transforms.ALL, gold));
-        int firstTick = h.world.getServer().getTicks();
+        int firstTick = h.world.getServer().getTickCount();
         // A second preview in the same tick is refused; on a later tick it replaces the first.
         transport.receive(dispatcher, session, request(9, area, 3, new ScatterSettings.Density.Fraction(0.8),
                 ScatterSettings.Fit.DEFAULT, 5L, ScatterSettings.Transforms.ALL, gold));
         check(transport.sent.contains(new S2C.JobRejected(9, RejectReason.RATE_LIMITED)), "two previews in one tick");
         UUID[] planId = new UUID[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
-                    check(h.world.getServer().getTicks() > firstTick, "waiting for the next tick");
+        context.startSequence()
+                .thenWaitUntil(() -> {
+                    check(h.world.getServer().getTickCount() > firstTick, "waiting for the next tick");
                     transport.receive(dispatcher, session, request(2, area, 3, new ScatterSettings.Density.Fraction(0.8),
                             ScatterSettings.Fit.DEFAULT, 5L, ScatterSettings.Transforms.ALL, gold, new SourceRef.Asset(hash)));
                     check(transport.sent.contains(new S2C.JobRejected(1, RejectReason.QUEUE_FULL)),
                             "the first preview was not superseded: " + transport.sent);
                     check(scatter.active() == 1, scatter.active() + " previews in flight");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     dispatcher.tick(session);
                     check(!transport.sent(StreamEnd.class).isEmpty(), "planning and streaming");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     S2C.ScatterPlan summary = transport.first(S2C.ScatterPlan.class);
                     ScatterPlan plan = heldPlan(h, h.player);
                     check(summary.reqId() == 2 && summary.placements() == plan.placements().size()
@@ -703,7 +703,7 @@ public final class ScatterGameTest implements FabricGameTest {
                                 assembler.finish(transport.first(StreamEnd.class)), 2);
                         check(received.equals(plan.placements()), "the streamed placements differ from the plan");
                     } catch (ProtocolException e) {
-                        throw new GameTestException("stream: " + e.getMessage());
+                        throw new GameTestAssertException("stream: " + e.getMessage());
                     }
                     check(plan.placements().stream().anyMatch(p -> p.variant() == 1), "no asset placements");
                     planId[0] = summary.planId();
@@ -712,8 +712,8 @@ public final class ScatterGameTest implements FabricGameTest {
                     check(transport.sent(S2C.JobAccepted.class).stream().anyMatch(a -> a.reqId() == 3), "commit not accepted: "
                             + transport.sent);
                 })
-                .createAndAdd(() -> check(!transport.sent(S2C.JobFinished.class).isEmpty(), "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(!transport.sent(S2C.JobFinished.class).isEmpty(), "commit running"))
+                .thenWaitUntil(() -> {
                     S2C.JobFinished finished = transport.first(S2C.JobFinished.class);
                     check(finished.outcome() == JobOutcome.COMPLETED && finished.changed() > 0, "finished " + finished);
                     dispatcher.close(session);
@@ -721,7 +721,7 @@ public final class ScatterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A transport collecting what the dispatcher sends, decoded. */
@@ -733,17 +733,17 @@ public final class ScatterGameTest implements FabricGameTest {
             this.h = h;
         }
 
-        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayer> dispatcher, NetSession<ServerPlayer> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {
-                throw new GameTestException("encode: " + e.getMessage());
+                throw new GameTestAssertException("encode: " + e.getMessage());
             }
         }
 
         <T> T first(Class<T> type) {
             List<T> all = sent(type);
-            if (all.isEmpty()) throw new GameTestException("no " + type.getSimpleName() + " sent: " + sent);
+            if (all.isEmpty()) throw new GameTestAssertException("no " + type.getSimpleName() + " sent: " + sent);
             return all.get(0);
         }
 
@@ -752,7 +752,7 @@ public final class ScatterGameTest implements FabricGameTest {
         }
 
         @Override
-        public ServerPlayerEntity player() {
+        public ServerPlayer player() {
             return h.player;
         }
 
@@ -766,7 +766,7 @@ public final class ScatterGameTest implements FabricGameTest {
             try {
                 sent.add(Codec.decodeS2C(frame, h.runtime.states()));
             } catch (ProtocolException e) {
-                throw new GameTestException("the server sent an undecodable frame: " + e.getMessage());
+                throw new GameTestAssertException("the server sent an undecodable frame: " + e.getMessage());
             }
         }
 
@@ -785,7 +785,7 @@ public final class ScatterGameTest implements FabricGameTest {
 
         @Override
         public void disconnect(String reason) {
-            throw new GameTestException("disconnected: " + reason);
+            throw new GameTestAssertException("disconnected: " + reason);
         }
     }
 }

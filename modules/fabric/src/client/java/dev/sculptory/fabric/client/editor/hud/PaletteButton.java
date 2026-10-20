@@ -8,7 +8,7 @@ import dev.sculptory.fabric.client.editor.ui.UiGraphics;
 import dev.sculptory.fabric.client.editor.ui.widget.IconButton;
 import java.util.List;
 import java.util.Objects;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * A tool palette slot: the tool's icon with its key in the top-left corner, as bound now ({@link #keyLabel(List)}:

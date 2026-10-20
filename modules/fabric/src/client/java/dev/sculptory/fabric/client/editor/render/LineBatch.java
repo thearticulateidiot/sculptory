@@ -1,14 +1,14 @@
 package dev.sculptory.fabric.client.editor.render;
 
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.sculptory.fabric.client.editor.world.Aabb;
 import java.util.LinkedHashMap;
 import java.util.SequencedMap;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.render.WorldRenderer;
-import net.minecraft.client.util.BufferAllocator;
-import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.client.renderer.LevelRenderer;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
 
 /**
  * Collects overlay lines for one frame and draws them on its own
@@ -22,11 +22,11 @@ import net.minecraft.client.util.math.MatrixStack;
 public final class LineBatch implements AutoCloseable {
     private static final int LAYER_BUFFER_BYTES = 1 << 16;
 
-    private final BufferAllocator seeThroughBuffer = new BufferAllocator(LAYER_BUFFER_BYTES);
-    private final BufferAllocator depthTestedBuffer = new BufferAllocator(LAYER_BUFFER_BYTES);
-    private final BufferAllocator fallbackBuffer = new BufferAllocator(256);
-    private final VertexConsumerProvider.Immediate immediate;
-    private final MatrixStack matrices = new MatrixStack();
+    private final ByteBufferBuilder seeThroughBuffer = new ByteBufferBuilder(LAYER_BUFFER_BYTES);
+    private final ByteBufferBuilder depthTestedBuffer = new ByteBufferBuilder(LAYER_BUFFER_BYTES);
+    private final ByteBufferBuilder fallbackBuffer = new ByteBufferBuilder(256);
+    private final MultiBufferSource.BufferSource immediate;
+    private final PoseStack matrices = new PoseStack();
     private VertexConsumer seeThrough;
     private VertexConsumer depthTested;
     private double cameraX;
@@ -34,10 +34,10 @@ public final class LineBatch implements AutoCloseable {
     private double cameraZ;
 
     public LineBatch() {
-        SequencedMap<RenderLayer, BufferAllocator> layers = new LinkedHashMap<>();
+        SequencedMap<RenderType, ByteBufferBuilder> layers = new LinkedHashMap<>();
         layers.put(OverlayLayers.LINES_SEE_THROUGH, seeThroughBuffer);
         layers.put(OverlayLayers.LINES, depthTestedBuffer);
-        immediate = VertexConsumerProvider.immediate(layers, fallbackBuffer);
+        immediate = MultiBufferSource.immediateWithBuffers(layers, fallbackBuffer);
     }
 
     /** Starts a frame: later coordinates are made relative to this camera position. */
@@ -64,12 +64,12 @@ public final class LineBatch implements AutoCloseable {
      * Zero-length lines are skipped.
      */
     public void line(double x1, double y1, double z1, double x2, double y2, double z2, int argb, boolean seeThrough) {
-        emitLine(consumer(seeThrough), matrices.peek(), (float) (x1 - cameraX), (float) (y1 - cameraY),
+        emitLine(consumer(seeThrough), matrices.last(), (float) (x1 - cameraX), (float) (y1 - cameraY),
                 (float) (z1 - cameraZ), (float) (x2 - cameraX), (float) (y2 - cameraY), (float) (z2 - cameraZ), argb);
     }
 
     /** Writes one line between two camera-relative points, its alpha scaled by {@link OverlayOpacity}. */
-    static void emitLine(VertexConsumer consumer, MatrixStack.Entry entry, float ax, float ay, float az, float bx,
+    static void emitLine(VertexConsumer consumer, PoseStack.Pose entry, float ax, float ay, float az, float bx,
             float by, float bz, int argb) {
         float nx = bx - ax;
         float ny = by - ay;
@@ -83,8 +83,8 @@ public final class LineBatch implements AutoCloseable {
         nz /= length;
         int color = OverlayOpacity.apply(argb);
         // The lines shader expands each segment in screen space along its normal (= direction).
-        consumer.vertex(entry, ax, ay, az).color(color).normal(entry, nx, ny, nz);
-        consumer.vertex(entry, bx, by, bz).color(color).normal(entry, nx, ny, nz);
+        consumer.addVertex(entry, ax, ay, az).setColor(color).setNormal(entry, nx, ny, nz);
+        consumer.addVertex(entry, bx, by, bz).setColor(color).setNormal(entry, nx, ny, nz);
     }
 
     /**
@@ -96,7 +96,7 @@ public final class LineBatch implements AutoCloseable {
                 box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ(),
                 cameraX, cameraY, cameraZ, inflate);
         int color = OverlayOpacity.apply(argb);
-        WorldRenderer.drawBox(
+        LevelRenderer.renderLineBox(
                 matrices, consumer(seeThrough),
                 b.minX(), b.minY(), b.minZ(), b.maxX(), b.maxY(), b.maxZ(),
                 OverlayColors.red(color), OverlayColors.green(color), OverlayColors.blue(color),
@@ -105,7 +105,7 @@ public final class LineBatch implements AutoCloseable {
 
     /** Draws everything collected since {@link #begin} and resets the batch. */
     public void draw() {
-        immediate.draw();
+        immediate.endBatch();
         seeThrough = null;
         depthTested = null;
     }

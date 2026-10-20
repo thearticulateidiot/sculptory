@@ -10,17 +10,17 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.entity.decoration.painting.PaintingEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.Direction;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.entity.decoration.Painting;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -43,15 +43,15 @@ final class EntityChecks {
     private static void buildRoom(Fixtures.Build b) {
         b.fill(10, 0, 10, 16, 3, 16, "minecraft:oak_planks");
         b.fill(11, 0, 11, 15, 3, 15, "minecraft:air");
-        ServerWorld world = b.world();
-        ItemFrameEntity frame = new ItemFrameEntity(world, b.pos(13, 2, 11), Direction.SOUTH);
-        frame.setHeldItemStack(new ItemStack(Items.DIAMOND));
-        world.spawnEntity(frame);
-        PaintingEntity.placePainting(world, b.pos(11, 2, 13), Direction.EAST).ifPresent(world::spawnEntity);
-        ArmorStandEntity stand = new ArmorStandEntity(world, b.pos(13, 0, 13).getX() + 0.5, b.pos(13, 0, 13).getY(),
+        ServerLevel world = b.world();
+        ItemFrame frame = new ItemFrame(world, b.pos(13, 2, 11), Direction.SOUTH);
+        frame.setItem(new ItemStack(Items.DIAMOND));
+        world.addFreshEntity(frame);
+        Painting.create(world, b.pos(11, 2, 13), Direction.EAST).ifPresent(world::addFreshEntity);
+        ArmorStand stand = new ArmorStand(world, b.pos(13, 0, 13).getX() + 0.5, b.pos(13, 0, 13).getY(),
                 b.pos(13, 0, 13).getZ() + 0.5);
-        stand.equipStack(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
-        world.spawnEntity(stand);
+        stand.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
+        world.addFreshEntity(stand);
     }
 
     private static void copyPasteCut(CheckRun run) {
@@ -135,19 +135,19 @@ final class EntityChecks {
      */
     private static List<String> entities(CheckDriver d, Box box, int dx, int dy, int dz) {
         return d.onServer(server -> {
-            ServerWorld world = server.getOverworld();
-            net.minecraft.util.math.Box bounds = new net.minecraft.util.math.Box(box.min().x(), box.min().y(),
+            ServerLevel world = server.overworld();
+            net.minecraft.world.phys.AABB bounds = new net.minecraft.world.phys.AABB(box.min().x(), box.min().y(),
                     box.min().z(), box.max().x() + 1, box.max().y() + 1, box.max().z() + 1);
             List<String> found = new ArrayList<>();
-            for (Entity entity : world.getOtherEntities(null, bounds, entity -> !entity.isPlayer())) {
+            for (Entity entity : world.getEntities((Entity) null, bounds, entity -> !entity.isAlwaysTicking())) {
                 String holds = switch (entity) {
-                    case ItemFrameEntity frame -> Registries.ITEM.getId(frame.getHeldItemStack().getItem()).toString();
-                    case ArmorStandEntity stand -> Registries.ITEM.getId(stand.getEquippedStack(EquipmentSlot.HEAD)
+                    case ItemFrame frame -> BuiltInRegistries.ITEM.getKey(frame.getItem().getItem()).toString();
+                    case ArmorStand stand -> BuiltInRegistries.ITEM.getKey(stand.getItemBySlot(EquipmentSlot.HEAD)
                             .getItem()).toString();
                     default -> "";
                 };
                 found.add(String.format(Locale.ROOT, "%s %s at %.2f %.2f %.2f",
-                        Registries.ENTITY_TYPE.getId(entity.getType()), holds, entity.getX() - dx, entity.getY() - dy,
+                        BuiltInRegistries.ENTITY_TYPE.getKey(entity.getType()), holds, entity.getX() - dx, entity.getY() - dy,
                         entity.getZ() - dz));
             }
             found.sort(null);

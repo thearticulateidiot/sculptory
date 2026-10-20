@@ -18,13 +18,12 @@ import dev.sculptory.protocol.v2.Features;
 import dev.sculptory.server.net.ServerDispatcher;
 import java.util.List;
 import java.util.Map;
-import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.BlockMirror;
-import net.minecraft.util.BlockRotation;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -34,8 +33,8 @@ class FabricStateSpaceTest {
 
     @BeforeAll
     static void bootstrap() {
-        SharedConstants.createGameVersion();
-        Bootstrap.initialize();
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
         space = FabricStateSpace.build();
     }
 
@@ -51,10 +50,10 @@ class FabricStateSpaceTest {
 
     @Test
     void everyRegisteredStateRoundTrips() {
-        assertEquals(Block.STATE_IDS.size(), space.size());
+        assertEquals(Block.BLOCK_STATE_REGISTRY.size(), space.size());
         assertTrue(space.size() > 20_000, "suspiciously few states: " + space.size());
         for (int handle = 0; handle < space.size(); handle++) {
-            BlockState state = Block.getStateFromRawId(handle);
+            BlockState state = Block.stateById(handle);
             assertSame(state, space.state(handle));
             String text = space.format(handle);
             assertEquals(handle, space.parse(text), text);
@@ -62,7 +61,7 @@ class FabricStateSpaceTest {
             assertEquals(text, descriptor.format());
             assertEquals(handle, space.resolve(descriptor), text);
             assertEquals(handle, space.resolve(BlockDescriptor.parse(text)), text);
-            assertEquals(Registries.BLOCK.getId(state.getBlock()).toString(), space.blockId(handle).value());
+            assertEquals(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(), space.blockId(handle).value());
             assertEquals(state.getProperties().size(), descriptor.properties().size(), text);
         }
         assertEquals("minecraft:air", space.format(space.air()));
@@ -70,7 +69,7 @@ class FabricStateSpaceTest {
 
     @Test
     void missingPropertiesTakeDefaults() {
-        assertEquals(Block.getRawIdFromState(net.minecraft.block.Blocks.OAK_STAIRS.getDefaultState()),
+        assertEquals(Block.getId(net.minecraft.world.level.block.Blocks.OAK_STAIRS.defaultBlockState()),
                 h("minecraft:oak_stairs"));
         assertEquals(h("minecraft:oak_log[axis=y]"), h("minecraft:oak_log"));
         assertEquals(h("minecraft:oak_stairs[facing=east,half=bottom,shape=straight,waterlogged=false]"),
@@ -117,17 +116,17 @@ class FabricStateSpaceTest {
 
     @Test
     void rotateAndMirrorMatchVanillaForEveryState() {
-        BlockRotation[] rotations = {BlockRotation.NONE, BlockRotation.CLOCKWISE_90, BlockRotation.CLOCKWISE_180,
-            BlockRotation.COUNTERCLOCKWISE_90};
+        Rotation[] rotations = {Rotation.NONE, Rotation.CLOCKWISE_90, Rotation.CLOCKWISE_180,
+            Rotation.COUNTERCLOCKWISE_90};
         for (int handle = 0; handle < space.size(); handle++) {
             BlockState state = space.state(handle);
             for (int turns = -4; turns <= 7; turns++) {
-                int expected = Block.getRawIdFromState(state.rotate(rotations[Math.floorMod(turns, 4)]));
+                int expected = Block.getId(state.rotate(rotations[Math.floorMod(turns, 4)]));
                 assertEquals(expected, space.rotate(handle, turns));
             }
             assertEquals(handle, space.mirror(handle, Mirror.NONE));
-            assertEquals(Block.getRawIdFromState(state.mirror(BlockMirror.FRONT_BACK)), space.mirror(handle, Mirror.X));
-            assertEquals(Block.getRawIdFromState(state.mirror(BlockMirror.LEFT_RIGHT)), space.mirror(handle, Mirror.Z));
+            assertEquals(Block.getId(state.mirror(net.minecraft.world.level.block.Mirror.FRONT_BACK)), space.mirror(handle, Mirror.X));
+            assertEquals(Block.getId(state.mirror(net.minecraft.world.level.block.Mirror.LEFT_RIGHT)), space.mirror(handle, Mirror.Z));
         }
     }
 

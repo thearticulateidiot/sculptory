@@ -25,13 +25,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.LongConsumer;
-import net.minecraft.server.world.ChunkTicket;
-import net.minecraft.server.world.ChunkTicketManager;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.collection.SortedArraySet;
-import net.minecraft.util.math.ChunkPos;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.DistanceManager;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.Ticket;
+import net.minecraft.util.SortedArraySet;
+import net.minecraft.world.level.ChunkPos;
 
 /** Helpers shared by the engine GameTests. Everything here runs on the server thread. */
 final class EngineTestSupport {
@@ -43,26 +43,26 @@ final class EngineTestSupport {
 
     private EngineTestSupport() {}
 
-    static EngineRuntime runtime(TestContext context) {
-        return EngineRuntime.get(context.getWorld().getServer());
+    static EngineRuntime runtime(GameTestHelper context) {
+        return EngineRuntime.get(context.getLevel().getServer());
     }
 
     static int handle(StateSpace states, String spec) {
         int h = states.parse(spec);
-        if (h < 0) throw new GameTestException("Unknown block state " + spec);
+        if (h < 0) throw new GameTestAssertException("Unknown block state " + spec);
         return h;
     }
 
     static void check(boolean condition, String message) {
-        if (!condition) throw new GameTestException(message);
+        if (!condition) throw new GameTestAssertException(message);
     }
 
     static Box box(int x0, int y0, int z0, int x1, int y1, int z1) {
         return new Box(new BlockPos(x0, y0, z0), new BlockPos(x1, y1, z1));
     }
 
-    static net.minecraft.util.math.BlockPos pos(int x, int y, int z) {
-        return new net.minecraft.util.math.BlockPos(x, y, z);
+    static net.minecraft.core.BlockPos pos(int x, int y, int z) {
+        return new net.minecraft.core.BlockPos(x, y, z);
     }
 
     /**
@@ -70,13 +70,13 @@ final class EngineTestSupport {
      * The GameTest world persists between runs but tests are placed at a random origin each run, so regions
      * relative to the test are fresh (fixed coordinates would still hold the previous run's blocks).
      */
-    static int[] regionCorner(TestContext context, int slot) {
-        net.minecraft.util.math.BlockPos origin = context.getAbsolutePos(net.minecraft.util.math.BlockPos.ORIGIN);
+    static int[] regionCorner(GameTestHelper context, int slot) {
+        net.minecraft.core.BlockPos origin = context.absolutePos(net.minecraft.core.BlockPos.ZERO);
         return new int[] {((origin.getX() >> 4) << 4) + slot * 4096, (origin.getZ() >> 4) << 4};
     }
 
     /** Forces (or releases) every chunk under {@code box}; idempotent. */
-    static void forceChunks(ServerWorld world, Box box, boolean forced) {
+    static void forceChunks(ServerLevel world, Box box, boolean forced) {
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
                 world.setChunkForced(cx, cz, forced);
@@ -150,30 +150,30 @@ final class EngineTestSupport {
 
     /**
      * The number of {@code sculptory:edit} tickets vanilla holds for chunk (cx, cz), read from the chunk ticket
-     * manager (reflection on the yarn-named dev runtime; test-only).
+     * manager (reflection on the Mojang-named dev runtime; test-only).
      */
     @SuppressWarnings("unchecked")
-    static int editTickets(ServerWorld world, int cx, int cz) {
+    static int editTickets(ServerLevel world, int cx, int cz) {
         try {
-            ChunkTicketManager manager = world.getChunkManager().chunkLoadingManager.getTicketManager();
-            Field field = ChunkTicketManager.class.getDeclaredField("ticketsByPosition");
+            DistanceManager manager = world.getChunkSource().chunkMap.getDistanceManager();
+            Field field = DistanceManager.class.getDeclaredField("tickets");
             field.setAccessible(true);
-            Long2ObjectOpenHashMap<SortedArraySet<ChunkTicket<?>>> byPosition =
-                    (Long2ObjectOpenHashMap<SortedArraySet<ChunkTicket<?>>>) field.get(manager);
-            SortedArraySet<ChunkTicket<?>> tickets = byPosition.get(ChunkPos.toLong(cx, cz));
+            Long2ObjectOpenHashMap<SortedArraySet<Ticket<?>>> byPosition =
+                    (Long2ObjectOpenHashMap<SortedArraySet<Ticket<?>>>) field.get(manager);
+            SortedArraySet<Ticket<?>> tickets = byPosition.get(ChunkPos.asLong(cx, cz));
             if (tickets == null) return 0;
             int count = 0;
-            for (ChunkTicket<?> ticket : tickets) {
+            for (Ticket<?> ticket : tickets) {
                 if (ticket.getType() == EngineRuntime.EDIT_TICKET) count++;
             }
             return count;
         } catch (ReflectiveOperationException e) {
-            throw new GameTestException("cannot read chunk tickets: " + e);
+            throw new GameTestAssertException("cannot read chunk tickets: " + e);
         }
     }
 
     /** Fails unless no edit ticket (vanilla side) and no holder (executor side) remains on any column of box. */
-    static void checkNoEditTickets(EditExecutor<ServerWorld> executor, ServerWorld world, Box box) {
+    static void checkNoEditTickets(EditExecutor<ServerLevel> executor, ServerLevel world, Box box) {
         check(executor.ticketsInFlight() == 0, executor.ticketsInFlight() + " edit tickets still held");
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
@@ -187,7 +187,7 @@ final class EngineTestSupport {
 
     /** A RecordSink keeping the first before and last after per cell, like the history's coalescing. */
     static final class MapSink implements RecordSink {
-        private final Map<net.minecraft.util.math.BlockPos, Rec> cells = new HashMap<>();
+        private final Map<net.minecraft.core.BlockPos, Rec> cells = new HashMap<>();
         long records;
 
         @Override
@@ -198,7 +198,7 @@ final class EngineTestSupport {
                     (first, last) -> new Rec(first.before(), first.beforeTile(), last.after(), last.afterTile()));
         }
 
-        Rec get(net.minecraft.util.math.BlockPos pos) {
+        Rec get(net.minecraft.core.BlockPos pos) {
             return cells.get(pos);
         }
 

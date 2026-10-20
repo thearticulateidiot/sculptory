@@ -20,25 +20,25 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 import java.util.zip.Deflater;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
-import net.minecraft.network.ClientConnection;
-import net.minecraft.network.NetworkSide;
-import net.minecraft.network.RegistryByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.listener.ClientPlayPacketListener;
-import net.minecraft.network.message.ChatVisibility;
-import net.minecraft.network.packet.Packet;
-import net.minecraft.network.packet.c2s.common.SyncedClientOptions;
-import net.minecraft.network.packet.s2c.play.BundleS2CPacket;
-import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
-import net.minecraft.network.state.PlayStateFactories;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.Connection;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.network.protocol.game.ClientboundBundlePacket;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.GameProtocols;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ConnectedClientData;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerLightingProvider;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.Arm;
-import net.minecraft.util.math.ChunkPos;
+import net.minecraft.server.level.ClientInformation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ThreadedLevelLightEngine;
+import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.world.entity.HumanoidArm;
+import net.minecraft.world.entity.player.ChatVisiblity;
+import net.minecraft.world.level.ChunkPos;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,10 +59,10 @@ final class BenchSupport {
     }
 
     /** Completes the test at once (and returns true) unless benchmarks are enabled. */
-    static boolean skipped(TestContext context, String name) {
+    static boolean skipped(GameTestHelper context, String name) {
         if (enabled()) return false;
         LOG.info("{} skipped (set SCULPTORY_BENCH=1 to run it)", name);
-        context.complete();
+        context.succeed();
         return true;
     }
 
@@ -209,8 +209,8 @@ final class BenchSupport {
      * batches are acknowledged by the test ({@link #ready}), since nothing ticks the embedded connection.
      */
     static final class Watcher implements AutoCloseable {
-        final ServerPlayerEntity player;
-        private final ServerWorld world;
+        final ServerPlayer player;
+        private final ServerLevel world;
         private final EmbeddedChannel channel;
         private final int serverViewDistance;
         private final Consumer<MinecraftServer> hook = server -> drain();
@@ -218,7 +218,7 @@ final class BenchSupport {
         private Consumer<Packet<?>> observer = packet -> {};
         private boolean recording;
 
-        private Watcher(ServerWorld world, ServerPlayerEntity player, EmbeddedChannel channel, int serverViewDistance) {
+        private Watcher(ServerLevel world, ServerPlayer player, EmbeddedChannel channel, int serverViewDistance) {
             this.world = world;
             this.player = player;
             this.channel = channel;
@@ -248,16 +248,16 @@ final class BenchSupport {
          * Joins a watcher at block (x, y, z) with the given view distance. The GameTest server's own view distance is
          * tiny; it is raised to at least that much until {@link #close()}.
          */
-        static Watcher join(ServerWorld world, int x, int y, int z, int viewDistance) {
+        static Watcher join(ServerLevel world, int x, int y, int z, int viewDistance) {
             installHooks();
             closeLeaked();
             MinecraftServer server = world.getServer();
-            int serverViewDistance = server.getPlayerManager().getViewDistance();
-            if (serverViewDistance < viewDistance) server.getPlayerManager().setViewDistance(viewDistance);
+            int serverViewDistance = server.getPlayerList().getViewDistance();
+            if (serverViewDistance < viewDistance) server.getPlayerList().setViewDistance(viewDistance);
             GameProfile profile = new GameProfile(UUID.randomUUID(), "bench-watcher");
-            SyncedClientOptions options = new SyncedClientOptions("en_us", viewDistance, ChatVisibility.FULL, true, 0,
-                    Arm.RIGHT, false, false);
-            ServerPlayerEntity player = new ServerPlayerEntity(server, world, profile, options) {
+            ClientInformation options = new ClientInformation("en_us", viewDistance, ChatVisiblity.FULL, true, 0,
+                    HumanoidArm.RIGHT, false, false);
+            ServerPlayer player = new ServerPlayer(server, world, profile, options) {
                 @Override
                 public boolean isSpectator() {
                     return false;
@@ -268,11 +268,11 @@ final class BenchSupport {
                     return true;
                 }
             };
-            ClientConnection connection = new ClientConnection(NetworkSide.SERVERBOUND);
+            Connection connection = new Connection(PacketFlow.SERVERBOUND);
             EmbeddedChannel channel = new EmbeddedChannel(connection);
-            server.getPlayerManager().onPlayerConnect(connection, player, new ConnectedClientData(profile, 0, options, false));
-            player.teleport(world, x + 0.5, y, z + 0.5, 0f, 0f);
-            world.getChunkManager().updatePosition(player);
+            server.getPlayerList().placeNewPlayer(connection, player, new CommonListenerCookie(profile, 0, options, false));
+            player.teleportTo(world, x + 0.5, y, z + 0.5, 0f, 0f);
+            world.getChunkSource().move(player);
             Watcher watcher = new Watcher(world, player, channel, serverViewDistance);
             END_HOOKS.add(watcher.hook);
             return watcher;
@@ -283,12 +283,12 @@ final class BenchSupport {
          * (so block and light updates there reach it). Call once per tick until true.
          */
         boolean ready(Box box) {
-            player.networkHandler.chunkDataSender.sendChunkBatches(player);
-            player.networkHandler.chunkDataSender.onAcknowledgeChunks(64f);
-            var loading = world.getChunkManager().chunkLoadingManager;
+            player.connection.chunkSender.sendNextChunks(player);
+            player.connection.chunkSender.onChunkBatchReceivedByClient(64f);
+            var loading = world.getChunkSource().chunkMap;
             for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
                 for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
-                    if (!loading.getPlayersWatchingChunk(new ChunkPos(cx, cz), false).contains(player)) {
+                    if (!loading.getPlayers(new ChunkPos(cx, cz), false).contains(player)) {
                         lastChunkPacketNanos = System.nanoTime();
                         return false;
                     }
@@ -297,10 +297,10 @@ final class BenchSupport {
             // The rest of the view too, so later chunk packets are the edits' own: every chunk in view loaded (they may
             // still be generating; vanilla counts those as tracked) and sent, then 250 ms without a chunk packet.
             boolean[] all = {true};
-            player.getChunkFilter().forEach(pos -> {
+            player.getChunkTrackingView().forEach(pos -> {
                 if (!all[0]) return;
-                if (world.getChunkManager().getWorldChunk(pos.x, pos.z) == null
-                        || player.networkHandler.chunkDataSender.isInNextBatch(pos.toLong())) {
+                if (world.getChunkSource().getChunkNow(pos.x, pos.z) == null
+                        || player.connection.chunkSender.isPending(pos.toLong())) {
                     all[0] = false;
                 }
             });
@@ -334,9 +334,9 @@ final class BenchSupport {
             Object message;
             while ((message = channel.readOutbound()) != null) {
                 if (!(message instanceof Packet<?> packet)) continue;
-                if (packet instanceof ChunkDataS2CPacket) lastChunkPacketNanos = System.nanoTime();
-                if (packet instanceof BundleS2CPacket bundle) {
-                    for (Packet<?> inner : bundle.getPackets()) observer.accept(inner);
+                if (packet instanceof ClientboundLevelChunkWithLightPacket) lastChunkPacketNanos = System.nanoTime();
+                if (packet instanceof ClientboundBundlePacket bundle) {
+                    for (Packet<?> inner : bundle.subPackets()) observer.accept(inner);
                 } else {
                     observer.accept(packet);
                 }
@@ -347,8 +347,8 @@ final class BenchSupport {
         /** Per packet type: count, raw bytes, wire bytes; plus a total line. Clears the kept packets. */
         String report(String what) {
             drain();
-            PacketCodec<ByteBuf, Packet<? super ClientPlayPacketListener>> codec = PlayStateFactories.S2C
-                    .bind(RegistryByteBuf.makeFactory(world.getServer().getRegistryManager())).codec();
+            StreamCodec<ByteBuf, Packet<? super ClientGamePacketListener>> codec = GameProtocols.CLIENTBOUND_TEMPLATE
+                    .bind(RegistryFriendlyByteBuf.decorator(world.getServer().registryAccess())).codec();
             Map<String, long[]> byType = new TreeMap<>();
             Deflater deflater = new Deflater();
             try {
@@ -373,17 +373,17 @@ final class BenchSupport {
         }
 
         @SuppressWarnings("unchecked")
-        private static void measure(PacketCodec<ByteBuf, Packet<? super ClientPlayPacketListener>> codec, Deflater deflater,
+        private static void measure(StreamCodec<ByteBuf, Packet<? super ClientGamePacketListener>> codec, Deflater deflater,
                                     Packet<?> packet, Map<String, long[]> byType) {
-            if (packet instanceof BundleS2CPacket bundle) {
-                for (Packet<?> inner : bundle.getPackets()) measure(codec, deflater, inner, byType);
+            if (packet instanceof ClientboundBundlePacket bundle) {
+                for (Packet<?> inner : bundle.subPackets()) measure(codec, deflater, inner, byType);
                 return;
             }
             String name = packet.getClass().getSimpleName();
             long[] v = byType.computeIfAbsent(name, k -> new long[3]);
             ByteBuf buf = Unpooled.buffer();
             try {
-                codec.encode(buf, (Packet<? super ClientPlayPacketListener>) packet);
+                codec.encode(buf, (Packet<? super ClientGamePacketListener>) packet);
                 int raw = buf.readableBytes();
                 byte[] bytes = new byte[raw];
                 buf.readBytes(bytes);
@@ -430,13 +430,13 @@ final class BenchSupport {
             recording = false;
             packets.clear();
             try {
-                world.getServer().getPlayerManager().remove(player);
+                world.getServer().getPlayerList().remove(player);
             } catch (RuntimeException e) {
                 LOG.warn("Could not remove the bench watcher", e);
             }
             channel.finishAndReleaseAll();
-            if (world.getServer().getPlayerManager().getViewDistance() != serverViewDistance) {
-                world.getServer().getPlayerManager().setViewDistance(serverViewDistance);
+            if (world.getServer().getPlayerList().getViewDistance() != serverViewDistance) {
+                world.getServer().getPlayerList().setViewDistance(serverViewDistance);
             }
         }
     }
@@ -448,15 +448,15 @@ final class BenchSupport {
      * queued behind them on every chunk column of the box has run, and no light propagation is pending.
      */
     static final class LightWait {
-        private final ServerLightingProvider light;
+        private final ThreadedLevelLightEngine light;
         private final List<CompletableFuture<?>> markers = new ArrayList<>();
         private final long startNanos = System.nanoTime();
         private long settledNanos = -1;
 
-        LightWait(ServerWorld world, Box box) {
-            this.light = world.getChunkManager().getLightingProvider();
+        LightWait(ServerLevel world, Box box) {
+            this.light = world.getChunkSource().getLightEngine();
             for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
-                for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) markers.add(light.enqueue(cx, cz));
+                for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) markers.add(light.waitForPendingTasks(cx, cz));
             }
         }
 
@@ -465,7 +465,7 @@ final class BenchSupport {
             for (CompletableFuture<?> marker : markers) {
                 if (!marker.isDone()) return false;
             }
-            if (light.hasUpdates()) return false;
+            if (light.hasLightWork()) return false;
             settledNanos = System.nanoTime();
             return true;
         }

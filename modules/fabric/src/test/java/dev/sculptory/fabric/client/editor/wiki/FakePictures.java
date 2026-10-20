@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.ResourceLocation;
 
 /** Pictures of given sizes; records what was loaded and freed. */
 public final class FakePictures implements WikiPictures {
@@ -23,8 +23,8 @@ public final class FakePictures implements WikiPictures {
         return this;
     }
 
-    public static Identifier texture(String path) {
-        return Identifier.of("sculptory", "wiki_picture/" + path);
+    public static ResourceLocation texture(String path) {
+        return ResourceLocation.fromNamespaceAndPath("sculptory", "wiki_picture/" + path);
     }
 
     @Override

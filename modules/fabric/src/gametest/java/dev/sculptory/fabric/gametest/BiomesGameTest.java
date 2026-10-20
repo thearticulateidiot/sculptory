@@ -47,11 +47,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Biomes (protocol 6) on a real world: the Biome fill sets every quart its region touches (whole columns or 3D) and the
@@ -71,7 +71,7 @@ public final class BiomesGameTest implements FabricGameTest {
     private static Map<Long, String> biomes(Harness h, Box box) {
         WorldBiomes world = h.runtime.biomes(h.world);
         Map<Long, String> out = new HashMap<>();
-        int bottom = h.world.getBottomY() >> 2, top = (h.world.getTopY() >> 2) - 1;
+        int bottom = h.world.getMinBuildHeight() >> 2, top = (h.world.getMaxBuildHeight() >> 2) - 1;
         for (int qx = box.min().x() >> 2; qx <= box.max().x() >> 2; qx++) {
             for (int qz = box.min().z() >> 2; qz <= box.max().z() >> 2; qz++) {
                 for (int qy = bottom; qy <= top; qy++) {
@@ -91,7 +91,7 @@ public final class BiomesGameTest implements FabricGameTest {
     private static void paintAll(Harness h, Box box, String id) {
         WorldBiomes world = h.runtime.biomes(h.world);
         int handle = world.handle(id);
-        int bottom = h.world.getBottomY() >> 2, top = (h.world.getTopY() >> 2) - 1;
+        int bottom = h.world.getMinBuildHeight() >> 2, top = (h.world.getMaxBuildHeight() >> 2) - 1;
         for (int qx = box.min().x() >> 2; qx <= box.max().x() >> 2; qx++) {
             for (int qz = box.min().z() >> 2; qz <= box.max().z() >> 2; qz++) {
                 for (int qy = bottom; qy <= top; qy++) world.set(qx, qy, qz, handle);
@@ -117,12 +117,12 @@ public final class BiomesGameTest implements FabricGameTest {
         check(wrong == 0, what + ": " + wrong + " quarts differ; first " + first);
     }
 
-    private static JobResult run(Run run, ServerPlayerEntity player, OpSpec op) {
+    private static JobResult run(Run run, ServerPlayer player, OpSpec op) {
         RecordingListener listener = new RecordingListener();
         try {
             run.service.run(player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " was refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " was refused: " + e.getMessage());
         }
         tickUntil(run.executor, () -> listener.result != null, TICKS, op.getClass().getSimpleName());
         run.service.tick();
@@ -130,8 +130,8 @@ public final class BiomesGameTest implements FabricGameTest {
         return listener.result;
     }
 
-    private static List<String> undoLabels(Run run, ServerPlayerEntity player) {
-        return run.service.historyService().undoEntries(player.getUuid()).stream().map(HistoryEntry::label).toList();
+    private static List<String> undoLabels(Run run, ServerPlayer player) {
+        return run.service.historyService().undoEntries(player.getUUID()).stream().map(HistoryEntry::label).toList();
     }
 
     private static BrushSpec brush(int radius, boolean columns) {
@@ -140,15 +140,15 @@ public final class BiomesGameTest implements FabricGameTest {
     }
 
     /** A stroke of {@code dabs} with {@code spec}, ended and committed. */
-    private static void stroke(Run run, ServerPlayerEntity player, int id, BrushSpec spec, List<Dab> dabs) {
+    private static void stroke(Run run, ServerPlayer player, int id, BrushSpec spec, List<Dab> dabs) {
         try {
             run.service.beginStroke(player, id, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("the stroke was refused: " + e.getMessage());
+            throw new GameTestAssertException("the stroke was refused: " + e.getMessage());
         }
         DabOutcome outcome = run.service.dabs(player, id, 1, dabs);
         check(outcome.accepted(), "the dabs " + outcome);
-        tickUntil(run.executor, () -> run.service.queuedDabs(player.getUuid()) == 0, TICKS, "the dabs");
+        tickUntil(run.executor, () -> run.service.queuedDabs(player.getUUID()) == 0, TICKS, "the dabs");
         int before = undoLabels(run, player).size();
         run.service.endStroke(player, id);
         tickUntil(run.executor, () -> undoLabels(run, player).size() > before, TICKS, "the stroke's commit");
@@ -161,8 +161,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * A columns fill sets two whole quart columns, a 3D fill two quarts; each is one undo step labelled with its biome
      * cells; undoing both, redoing both and undoing again leave exactly the biomes before each.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_fill", tickLimit = LIMIT)
-    public void aFillSetsTheQuartsItTouchesAndUndoesAndRedoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_fill", timeoutTicks = LIMIT)
+    public void aFillSetsTheQuartsItTouchesAndUndoesAndRedoesExactly(GameTestHelper context) {
         try (Scene s = new Scene(context, 1500)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -200,15 +200,15 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(original, biomes(h, s.region), "after undoing both again");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * The Biome brush paints whole columns by default and only the quarts in its ball in 3D; each stroke is one step
      * "Biome stroke · N biome cells" and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_brush", tickLimit = LIMIT)
-    public void theBrushPaintsColumnsOr3DAndEachStrokeUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_brush", timeoutTicks = LIMIT)
+    public void theBrushPaintsColumnsOr3DAndEachStrokeUndoesExactly(GameTestHelper context) {
         try (Scene s = new Scene(context, 1501)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -240,15 +240,15 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(original, biomes(h, s.region), "after undoing both strokes");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A quart painted by hand after a fill is kept by its undo and counted; Undo anyway takes it back too. Then a fill's
      * history survives a restart: undone exactly after it, and redone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_conflict_restart", tickLimit = LIMIT)
-    public void aQuartPaintedSinceIsKeptUntilUndoAnywayAndHistorySurvivesARestart(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_conflict_restart", timeoutTicks = LIMIT)
+    public void aQuartPaintedSinceIsKeptUntilUndoAnywayAndHistorySurvivesARestart(GameTestHelper context) {
         try (Scene s = new Scene(context, 1502)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -260,7 +260,7 @@ public final class BiomesGameTest implements FabricGameTest {
             run(first, h.player, new OpSpec.BiomeFill(new Region.Cuboid(box(x, 100, z, x + 7, 103, z + 3)), CHERRY, false));
             int qx = x >> 2, qz = z >> 2;
             // Painted since by someone else's fill.
-            ServerPlayerEntity other = h.addPlayer(false);
+            ServerPlayer other = h.addPlayer(false);
             EditTestSupport.grant(other, Perm.USE, Perm.BIOME);
             first.load(other);
             run(first, other, new OpSpec.BiomeFill(new Region.Cuboid(box(x, 100, z, x + 3, 103, z + 3)), "minecraft:plains",
@@ -286,15 +286,15 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(filled, biomes(h, s.region), "redo after the restart");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * Without the biome node a fill, a stroke and a paste with Biomes are refused NO_PERMISSION (the paste even with
      * the clipboard node); an unknown biome is refused INVALID; nothing is written, held or pushed.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_refusals", tickLimit = LIMIT)
-    public void refusalsWriteNothing(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_refusals", timeoutTicks = LIMIT)
+    public void refusalsWriteNothing(GameTestHelper context) {
         try (Scene s = new Scene(context, 1503)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -302,7 +302,7 @@ public final class BiomesGameTest implements FabricGameTest {
             paintAll(h, s.region, DESERT);
             Map<Long, String> original = biomes(h, s.region);
             Run run = s.run();
-            ServerPlayerEntity builder = h.addPlayer(false);
+            ServerPlayer builder = h.addPlayer(false);
             EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.BRUSH, Perm.CLIPBOARD);
             run.load(builder);
             run.load(h.player);
@@ -310,7 +310,7 @@ public final class BiomesGameTest implements FabricGameTest {
             Clipboard clipboard = Clipboard.copyOf(h.runtime.reader(h.world), box(x, 100, z, x + 3, 101, z + 3),
                     new BlockPos(x, 100, z), null, "test").withBiomesFrom(new BlockPos(x, 100, z),
                             (qx, qy, qz) -> CHERRY);
-            UUID mine = run.service.clipboards().install(builder.getUuid(), clipboard).id();
+            UUID mine = run.service.clipboards().install(builder.getUUID(), clipboard).id();
             OpSpec.Paste withBiomes = new OpSpec.Paste(new SourceRef.Clipboard(mine), new BlockPos(x + 8, 100, z + 8),
                     Transform.IDENTITY, PasteOptions.DEFAULT.withBiomes(true));
             List<String> refusals = new ArrayList<>();
@@ -336,7 +336,7 @@ public final class BiomesGameTest implements FabricGameTest {
                     new BiomeSpec("sculptory:nowhere", true));
             EditRejected unknownStroke = ClipboardGameTest.refusal(() -> run.service.beginStroke(h.player, 4, nowhere));
             check(unknownStroke.reason() == RejectReason.INVALID, "an unknown biome painted: " + unknownStroke);
-            UUID foreign = run.service.clipboards().install(h.player.getUuid(), clipboard.withBiomesFrom(
+            UUID foreign = run.service.clipboards().install(h.player.getUUID(), clipboard.withBiomesFrom(
                     new BlockPos(x, 100, z), (qx, qy, qz) -> "sculptory:nowhere")).id();
             EditRejected paste = ClipboardGameTest.refusal(() -> run.service.run(h.player, new OpSpec.Paste(
                     new SourceRef.Clipboard(foreign), new BlockPos(x + 8, 100, z + 8), Transform.IDENTITY,
@@ -345,13 +345,13 @@ public final class BiomesGameTest implements FabricGameTest {
 
             // Fills too large to list: a huge mirrored box and a long thin cylinder, for a painter without limit.bypass
             // and for an operator with it (the job's chunk columns still cap it), each refused at once.
-            ServerPlayerEntity painter = h.addPlayer(false);
+            ServerPlayer painter = h.addPlayer(false);
             EditTestSupport.grant(painter, Perm.USE, Perm.BIOME);
             run.load(painter);
             Region huge = new Region.Cuboid(box(-29_000_000, 60, -29_000_000, 29_000_000, 60, 29_000_000));
             Region cylinder = new Region.Shape(box(-29_000_000, 0, -90, 29_000_000, 179, 89),
                     dev.sculptory.core.region.ShapeKind.CYLINDER, dev.sculptory.core.region.Facing.EAST);
-            for (ServerPlayerEntity who : List.of(painter, h.player)) {
+            for (ServerPlayer who : List.of(painter, h.player)) {
                 for (OpSpec op : List.of(new OpSpec.BiomeFill(huge, CHERRY, true, new Symmetry(Symmetry.Mode.MIRROR_X, 0, 0)),
                         new OpSpec.BiomeFill(cylinder, CHERRY, false), new OpSpec.BiomeFill(cylinder, CHERRY, true))) {
                     long start = System.nanoTime();
@@ -361,15 +361,15 @@ public final class BiomesGameTest implements FabricGameTest {
                             + (System.nanoTime() - start) / 1_000_000 + " ms");
                 }
             }
-            check(run.service.jobs(painter.getUuid()).isEmpty(), "a refused fill left a job");
-            check(run.service.jobs(builder.getUuid()).isEmpty() && run.service.jobs(h.player.getUuid()).isEmpty(),
+            check(run.service.jobs(painter.getUUID()).isEmpty(), "a refused fill left a job");
+            check(run.service.jobs(builder.getUUID()).isEmpty() && run.service.jobs(h.player.getUUID()).isEmpty(),
                     "a refusal left a job");
             check(undoLabels(run, builder).isEmpty() && undoLabels(run, h.player).isEmpty(), "a refusal pushed history");
-            check(run.service.openStroke(builder.getUuid()).isEmpty(), "a refused stroke stayed open");
+            check(run.service.openStroke(builder.getUUID()).isEmpty(), "a refused stroke stayed open");
             checkBiomes(original, biomes(h, s.region), "after the refusals");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------------------------------------- clipboards
@@ -380,12 +380,12 @@ public final class BiomesGameTest implements FabricGameTest {
      * the area sees each change through the game's biome packets.
      */
     /** Starts {@code op} without waiting for it. */
-    private static RecordingListener start(Run run, ServerPlayerEntity player, OpSpec op) {
+    private static RecordingListener start(Run run, ServerPlayer player, OpSpec op) {
         RecordingListener listener = new RecordingListener();
         try {
             run.service.run(player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " was refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " was refused: " + e.getMessage());
         }
         return listener;
     }
@@ -401,8 +401,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * needs only the use node); a move and a stack by a player without the biome node leave biomes alone and are not
      * held to the node while they run. The executor writes one chunk column a tick.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_cancel", tickLimit = LIMIT)
-    public void stoppedFillsUndoExactlyAndMovesWithoutTheNodeLeaveBiomesAlone(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_cancel", timeoutTicks = LIMIT)
+    public void stoppedFillsUndoExactlyAndMovesWithoutTheNodeLeaveBiomesAlone(GameTestHelper context) {
         try (Scene s = new Scene(context, 1505)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -410,7 +410,7 @@ public final class BiomesGameTest implements FabricGameTest {
             paintAll(h, s.region, DESERT);
             Map<Long, String> original = biomes(h, s.region);
             Run run = s.run(s.dir, 1, StorageIo.SYSTEM);
-            ServerPlayerEntity painter = h.addPlayer(false);
+            ServerPlayer painter = h.addPlayer(false);
             EditTestSupport.grant(painter, Perm.USE, Perm.BIOME);
             run.load(painter);
             OpSpec fill = new OpSpec.BiomeFill(new Region.Cuboid(box(x, 100, z, x + 63, 103, z + 15)), CHERRY, true);
@@ -419,7 +419,7 @@ public final class BiomesGameTest implements FabricGameTest {
             RecordingListener cancelled = start(run, painter, fill);
             tickUntil(run.executor, () -> biome(h, qx, 0, qz).equals(CHERRY), 200, "the fill's first column");
             check(biome(h, lastQx, 0, qz).equals(DESERT), "the fill ran to its last column in one tick");
-            check(run.service.cancel(painter, run.service.jobs(painter.getUuid()).get(0).jobId()), "the cancel");
+            check(run.service.cancel(painter, run.service.jobs(painter.getUUID()).get(0).jobId()), "the cancel");
             awaitOutcome(run, cancelled, JobOutcome.CANCELLED, "the cancelled fill");
             check(biome(h, lastQx, 0, qz).equals(DESERT), "the cancelled fill went on");
             run.step(painter, true);
@@ -439,7 +439,7 @@ public final class BiomesGameTest implements FabricGameTest {
             world.set(qx, 25, qz + 4, world.handle(CHERRY));
             world.flush();
             Map<Long, String> before = biomes(h, s.region);
-            ServerPlayerEntity builder = h.addPlayer(false);
+            ServerPlayer builder = h.addPlayer(false);
             EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
             run.load(builder);
             Box source = box(x, 100, z + 16, x + 7, 103, z + 23);
@@ -454,7 +454,7 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(before, biomes(h, s.region), "a move and a stack without the biome node");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -462,8 +462,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * undoes exactly, while the job never holds more chunk tickets than its cap (64 here): the columns it reads and
      * those it writes each have a ticket window of their own. 64 cells a tick, so the stage spans many ticks.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_overlap", tickLimit = LIMIT)
-    public void anOverlappingMoveCarriesBiomesWithinItsTicketCap(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_overlap", timeoutTicks = LIMIT)
+    public void anOverlappingMoveCarriesBiomesWithinItsTicketCap(GameTestHelper context) {
         try (Scene s = new Scene(context, 1506)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -520,12 +520,12 @@ public final class BiomesGameTest implements FabricGameTest {
                 }
                 long millis = (System.nanoTime() - started) / 1_000_000;
                 run.service.cancelAll(h.player);
-                tickUntil(run.executor, () -> run.service.jobs(h.player.getUuid()).isEmpty(), 200, "the cancel");
+                tickUntil(run.executor, () -> run.service.jobs(h.player.getUUID()).isEmpty(), 200, "the cancel");
                 check(millis < 2_000, op.getClass().getSimpleName() + " of far-apart cells took " + millis + " ms");
             }
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -563,8 +563,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * A move cancelled while its biome stage reads its source, and one cancelled while it writes, are each undone
      * exactly. The executor writes 64 cells a tick, so both phases span many ticks.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_cancel_phases", tickLimit = LIMIT)
-    public void aMoveCancelledWhileReadingOrWritingBiomesUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_cancel_phases", timeoutTicks = LIMIT)
+    public void aMoveCancelledWhileReadingOrWritingBiomesUndoesExactly(GameTestHelper context) {
         try (Scene s = new Scene(context, 1507)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -579,8 +579,8 @@ public final class BiomesGameTest implements FabricGameTest {
             // Stone to move, so the test sees when the blocks are done.
             for (int bx = x; bx <= x + 79; bx++) {
                 for (int bz = z; bz <= z + 159; bz++) {
-                    h.world.setBlockState(new net.minecraft.util.math.BlockPos(bx, 100, bz),
-                            net.minecraft.block.Blocks.STONE.getDefaultState());
+                    h.world.setBlockAndUpdate(new net.minecraft.core.BlockPos(bx, 100, bz),
+                            net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
                 }
             }
             Map<Long, String> before = biomes(h, s.region);
@@ -606,8 +606,8 @@ public final class BiomesGameTest implements FabricGameTest {
                 if (reading.result != null) return true;
                 for (int bx = x + 128; bx <= x + 207; bx++) {
                     for (int bz = z; bz <= z + 159; bz++) {
-                        if (!h.world.getBlockState(new net.minecraft.util.math.BlockPos(bx, 100, bz)).isOf(
-                                net.minecraft.block.Blocks.STONE)) {
+                        if (!h.world.getBlockState(new net.minecraft.core.BlockPos(bx, 100, bz)).is(
+                                net.minecraft.world.level.block.Blocks.STONE)) {
                             return false;
                         }
                     }
@@ -632,15 +632,15 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(before, biomes(h, s.region), "the undo of the move cancelled while writing");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A move with mirror symmetry carries each copy's own source biomes, and a move turned 30° carries them through the
      * orientation's sampler over its landing cells (the blocks' own); both undo exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_symmetric_free", tickLimit = LIMIT)
-    public void symmetricAndFreeMovesCarryBiomesAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_symmetric_free", timeoutTicks = LIMIT)
+    public void symmetricAndFreeMovesCarryBiomesAndUndoExactly(GameTestHelper context) {
         try (Scene s = new Scene(context, 1508)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -683,23 +683,23 @@ public final class BiomesGameTest implements FabricGameTest {
             BlockPos offset = new BlockPos(64, 0, 0);
             run(run, h.player, new OpSpec.Move(new Region.Cuboid(free), offset, turned, air, EntityFilter.NONE,
                     Symmetry.NONE, PasteOptions.Into.EVERYTHING, true));
-            Map<Long, String> expected = carriedByFreeMove(beforeFree, free, offset, turned, h.world.getBottomY(),
-                    h.world.getTopY());
+            Map<Long, String> expected = carriedByFreeMove(beforeFree, free, offset, turned, h.world.getMinBuildHeight(),
+                    h.world.getMaxBuildHeight());
             check(!expected.equals(beforeFree), "the free move carries nothing");
             checkBiomes(expected, biomes(h, s.region), "the free move's biomes");
             run.step(h.player, true);
             checkBiomes(beforeFree, biomes(h, s.region), "the free move's undo");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A stamp (a multi-paste) with Biomes ticked carries the clipboard's biomes at a free angle, as a paste maps them,
      * and undoes exactly; without the biome node it is refused NO_PERMISSION, asked before anything else.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_stamp", tickLimit = LIMIT)
-    public void aStampWithBiomesCarriesThemAtAFreeAngle(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_stamp", timeoutTicks = LIMIT)
+    public void aStampWithBiomesCarriesThemAtAFreeAngle(GameTestHelper context) {
         try (Scene s = new Scene(context, 1509)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -723,14 +723,14 @@ public final class BiomesGameTest implements FabricGameTest {
             Clipboard clipboard = builder.biomes(grid.build()).build();
             Run run = s.run();
             run.load(h.player);
-            UUID id = run.service.clipboards().install(h.player.getUuid(), clipboard).id();
+            UUID id = run.service.clipboards().install(h.player.getUUID(), clipboard).id();
             dev.sculptory.core.transform.Orientation turned =
                     dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
             BlockPos origin = new BlockPos(x + 24, 100, z + 24);
             OpSpec stamp = new OpSpec.PasteMany(new SourceRef.Clipboard(id), List.of(new OpSpec.PasteMany.Placement(
                     origin, turned)), PasteOptions.DEFAULT.withBiomes(true));
 
-            ServerPlayerEntity noBiome = h.addPlayer(false);
+            ServerPlayer noBiome = h.addPlayer(false);
             EditTestSupport.grant(noBiome, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
             run.load(noBiome);
             EditRejected refused = ClipboardGameTest.refusal(() -> run.service.run(noBiome, stamp, RunOptions.DEFAULT,
@@ -742,7 +742,7 @@ public final class BiomesGameTest implements FabricGameTest {
             Map<Long, String> expected = new HashMap<>(before);
             Box target = dev.sculptory.core.edit.PasteGeometry.pasteTarget(size, clipboard.anchor(), turned, origin);
             dev.sculptory.core.biome.BiomeMapping.map(clipboard.biomes(), size, turned, target.min(),
-                    h.world.getBottomY(), h.world.getTopY(),
+                    h.world.getMinBuildHeight(), h.world.getMaxBuildHeight(),
                     (qx, qy, qz, biome) -> expected.put(dev.sculptory.core.history.BiomeHistory.key(qx, qy, qz), biome));
             check(expected.containsValue("minecraft:plains") && !expected.equals(before), "the stamp maps nothing");
             checkBiomes(expected, biomes(h, s.region), "the stamp's biomes at 30°");
@@ -750,7 +750,7 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(before, biomes(h, s.region), "the stamp's undo");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     private static long quartKey(int qx, int qy, int qz) {
@@ -866,8 +866,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * copy's own source biomes (cherry grove under the original, plains under its mirror image) as its blocks are
      * taken, and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_free_mirror", tickLimit = LIMIT)
-    public void aMirroredFreeMoveCarriesEachCopysOwnBiomes(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_free_mirror", timeoutTicks = LIMIT)
+    public void aMirroredFreeMoveCarriesEachCopysOwnBiomes(GameTestHelper context) {
         try (Scene s = new Scene(context, 1510)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -896,10 +896,10 @@ public final class BiomesGameTest implements FabricGameTest {
             run(run, h.player, new OpSpec.Move(new Region.Cuboid(source), offset, turned,
                     new Pattern.Single(h.state("minecraft:air")), EntityFilter.NONE, mirror, PasteOptions.Into.EVERYTHING,
                     true));
-            Map<Long, String> expected = carriedByFreeMove(before, source, offset, turned, h.world.getBottomY(),
-                    h.world.getTopY());
+            Map<Long, String> expected = carriedByFreeMove(before, source, offset, turned, h.world.getMinBuildHeight(),
+                    h.world.getMaxBuildHeight());
             carriedByFreeMoveCopy(before, expected, source, offset, turned, mirror, mirror.images().get(1),
-                    h.world.getBottomY(), h.world.getTopY());
+                    h.world.getMinBuildHeight(), h.world.getMaxBuildHeight());
             check(expected.containsValue("minecraft:plains") && expected.values().stream().filter(CHERRY::equals).count()
                     > before.values().stream().filter(CHERRY::equals).count(), "the expectation carries nothing");
             checkBiomes(expected, biomes(h, s.region), "the mirrored free move's biomes");
@@ -907,15 +907,15 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(before, biomes(h, s.region), "the mirrored free move's undo");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A free paste and a free stamp, each with Mirror X about a half-cell plane, write their copies' biomes over exactly
      * the copies' boxes, as the blocks; both undo exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_free_paste_mirror", tickLimit = LIMIT)
-    public void mirroredFreePastesAndStampsCarryBiomes(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_free_paste_mirror", timeoutTicks = LIMIT)
+    public void mirroredFreePastesAndStampsCarryBiomes(GameTestHelper context) {
         try (Scene s = new Scene(context, 1511)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -925,7 +925,7 @@ public final class BiomesGameTest implements FabricGameTest {
             Clipboard clipboard = splitClipboard(h);
             Run run = s.run();
             run.load(h.player);
-            UUID id = run.service.clipboards().install(h.player.getUuid(), clipboard).id();
+            UUID id = run.service.clipboards().install(h.player.getUUID(), clipboard).id();
             dev.sculptory.core.transform.Orientation turned =
                     dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
             Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * x + 61, 0);
@@ -939,7 +939,7 @@ public final class BiomesGameTest implements FabricGameTest {
                 Map<Long, String> expected = new HashMap<>(before);
                 List<dev.sculptory.core.edit.OpSymmetry.Copy> copies = dev.sculptory.core.edit.OpSymmetry.copies(op);
                 expected.putAll(pastedBiomes(clipboard, placementsOf().apply(op), copies, placementsOf(),
-                        mirror, h.world.getBottomY(), h.world.getTopY()));
+                        mirror, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight()));
                 check(expected.containsValue("minecraft:plains"), "the expectation maps nothing");
                 checkBiomes(expected, biomes(h, s.region), op.getClass().getSimpleName() + " mirrored at 30°");
                 run.step(h.player, true);
@@ -947,7 +947,7 @@ public final class BiomesGameTest implements FabricGameTest {
             }
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /** A paste's or stamp's placements, as the stamp's: a paste is one placement. */
@@ -960,8 +960,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * A stamp with Mirror X, one exact placement whose copy overlaps it and one free placement, carries biomes as the
      * blocks claim cells: where the original and its mirror image overlap, the original's biomes win. Undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_stamp_mixed", tickLimit = LIMIT)
-    public void aMirroredMixedStampKeepsTheOriginalWhereCopiesOverlap(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_stamp_mixed", timeoutTicks = LIMIT)
+    public void aMirroredMixedStampKeepsTheOriginalWhereCopiesOverlap(GameTestHelper context) {
         try (Scene s = new Scene(context, 1512)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -971,7 +971,7 @@ public final class BiomesGameTest implements FabricGameTest {
             Clipboard clipboard = splitClipboard(h);
             Run run = s.run();
             run.load(h.player);
-            UUID id = run.service.clipboards().install(h.player.getUuid(), clipboard).id();
+            UUID id = run.service.clipboards().install(h.player.getUUID(), clipboard).id();
             // The plane x = x + 15.5 cuts the exact placement x + 8..19: its mirror image x + 12..23 overlaps it.
             Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * x + 31, 0);
             dev.sculptory.core.transform.Orientation turned =
@@ -984,7 +984,7 @@ public final class BiomesGameTest implements FabricGameTest {
                     PasteOptions.DEFAULT.withBiomes(true), mirror);
             List<dev.sculptory.core.edit.OpSymmetry.Copy> copies = dev.sculptory.core.edit.OpSymmetry.copies(stamp);
             List<OpSpec.PasteMany.Placement> originals = stamp.placements();
-            int bottom = h.world.getBottomY(), top = h.world.getTopY();
+            int bottom = h.world.getMinBuildHeight(), top = h.world.getMaxBuildHeight();
             Map<Long, String> planned = pastedBiomes(clipboard, originals, copies, placementsOf(), mirror, bottom, top);
             // Pin the rule: some quart the original and its copy both write gets different biomes from each, and the
             // original's is kept.
@@ -1005,19 +1005,19 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(before, biomes(h, s.region), "the mixed mirrored stamp's undo");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_clipboard", tickLimit = LIMIT)
-    public void copiesCarryBiomesAndClientsSeeThem(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_clipboard", timeoutTicks = LIMIT)
+    public void copiesCarryBiomesAndClientsSeeThem(GameTestHelper context) {
         // The copy's answer comes back through the server's task queue: the steps run on ticks of their own.
         Scene s = new Scene(context, 1504);
         Captured<ClipboardService.ClipboardInfo>[] copied = new Captured[1];
         BenchSupport.Watcher[] watcher = new BenchSupport.Watcher[1];
         ClientView view = new ClientView(s.h.world);
-        ServerClipboards<ServerPlayerEntity, ServerWorld> clips = ClipTestSupport.clipboards(s.h,
+        ServerClipboards<ServerPlayer, ServerLevel> clips = ClipTestSupport.clipboards(s.h,
                 ClipTestSupport.libraryRoot(context));
-        context.createTimedTaskRunner().createAndAdd(() -> {
+        context.startSequence().thenWaitUntil(() -> {
             Harness h = s.h;
             int x = s.x, z = s.z;
             s.area(box(x, 96, z, x + 47, 107, z + 31), 99);
@@ -1034,19 +1034,19 @@ public final class BiomesGameTest implements FabricGameTest {
             copied[0] = ClipboardGameTest.copy(clips, h.player, source, new BlockPos(x, 100, z));
             // A client watching where the paste goes: its chunks reach it over the next ticks.
             watcher[0] = BenchSupport.Watcher.join(h.world, x + 20, 110, z + 10, 4).observe(view);
-        }).createAndAdd(() -> {
+        }).thenWaitUntil(() -> {
             copied[0].get("the copy");
             check(watcher[0].ready(box(s.x + 16, 100, s.z, s.x + 23, 103, s.z + 7)), "the watcher is still loading chunks");
             check(view.biome((s.x + 16) >> 2, 25, s.z >> 2) != null, "the watcher has not received the chunks yet");
             check(!watcher[0].player.isRemoved(), "the watcher was removed: " + watcher[0].player.getRemovalReason());
-        }).createAndAdd(() -> {
+        }).thenWaitUntil(() -> {
             Harness h = s.h;
             int x = s.x, z = s.z;
             Run run = s.runs.get(0);
             Box source = box(x, 100, z, x + 7, 103, z + 7);
-            Clipboard held = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+            Clipboard held = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
             check(held.biomes() != null && CHERRY.equals(held.biomes().biomeAt(0, 0, 0)), "the copy's biomes " + held);
-            UUID id = run.service.clipboards().install(h.player.getUuid(), held).id();
+            UUID id = run.service.clipboards().install(h.player.getUUID(), held).id();
             Map<Long, String> before = biomes(h, s.region);
             run(run, h.player, new OpSpec.Paste(new SourceRef.Clipboard(id), new BlockPos(x + 16, 100, z),
                     Transform.IDENTITY, PasteOptions.DEFAULT));
@@ -1058,20 +1058,20 @@ public final class BiomesGameTest implements FabricGameTest {
                     && biome(h, px, 26, pz).equals(DESERT), "the pasted biomes");
             check(undoLabels(run, h.player).get(0).endsWith(" · 4 biome cells"), "label " + undoLabels(run, h.player));
             run.executor.endTick(); // the tick's end sends the biomes
-        }).createAndAdd(() -> {
+        }).thenWaitUntil(() -> {
             // Retried until the biome packet has come (a step of its own: retrying repeats nothing).
             int px = (s.x + 16) >> 2, pz = s.z >> 2;
             watcher[0].drain();
             check(view.biomePackets > 0 && CHERRY.equals(view.biome(px, 25, pz)) && DESERT.equals(view.biome(px, 26, pz)),
                     "the client sees " + view.biome(px, 25, pz) + " after " + view.biomePackets + " biome packets");
-        }).createAndAdd(() -> {
+        }).thenWaitUntil(() -> {
             s.runs.get(0).step(s.h.player, true);
             check(biome(s.h, (s.x + 16) >> 2, 25, s.z >> 2).equals(DESERT), "the paste's undo");
             s.runs.get(0).executor.endTick();
-        }).createAndAdd(() -> {
+        }).thenWaitUntil(() -> {
             watcher[0].drain();
             check(DESERT.equals(view.biome((s.x + 16) >> 2, 25, s.z >> 2)), "the client sees the undo");
-        }).createAndAdd(() -> {
+        }).thenWaitUntil(() -> {
             watcher[0].close();
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -1094,7 +1094,7 @@ public final class BiomesGameTest implements FabricGameTest {
             run.stop();
             clips.shutdown();
             s.close();
-        }).completeIfSuccessful();
+        }).thenSucceed();
     }
 
     // ---- The Biomes box on Move and Stack (slots 1800-1802) ----
@@ -1128,8 +1128,8 @@ public final class BiomesGameTest implements FabricGameTest {
         for (Box b : List.of(cherry.get(0), cherry.get(1), plains.get(0), plains.get(1))) {
             for (int bx = b.min().x(); bx <= b.max().x(); bx++) {
                 for (int bz = b.min().z(); bz <= b.max().z(); bz++) {
-                    h.world.setBlockState(new net.minecraft.util.math.BlockPos(bx, 100, bz),
-                            net.minecraft.block.Blocks.STONE.getDefaultState());
+                    h.world.setBlockAndUpdate(new net.minecraft.core.BlockPos(bx, 100, bz),
+                            net.minecraft.world.level.block.Blocks.STONE.defaultBlockState());
                 }
             }
         }
@@ -1149,8 +1149,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * mirrored upside-down stack. Each is one undo step without biome cells that undoes and redoes its blocks exactly,
      * biomes untouched throughout.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_box_unticked", tickLimit = LIMIT)
-    public void untickedMovesAndStacksLeaveBiomesWhereTheyAre(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_box_unticked", timeoutTicks = LIMIT)
+    public void untickedMovesAndStacksLeaveBiomesWhereTheyAre(GameTestHelper context) {
         try (Scene s = new Scene(context, 1800)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -1199,7 +1199,7 @@ public final class BiomesGameTest implements FabricGameTest {
             }
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -1207,8 +1207,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * into every copy, each copy its own source's; a mirrored free move through the sampler), and each undoes and redoes
      * its biomes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_box_ticked", tickLimit = LIMIT)
-    public void tickedMovesAndStacksCarryBiomesAndUndoAndRedoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_box_ticked", timeoutTicks = LIMIT)
+    public void tickedMovesAndStacksCarryBiomesAndUndoAndRedoExactly(GameTestHelper context) {
         try (Scene s = new Scene(context, 1801)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -1244,16 +1244,16 @@ public final class BiomesGameTest implements FabricGameTest {
                     dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
             Box source = box(x + 1, 100, z + 1, x + 14, 103, z + 10);
             BlockPos offset = new BlockPos(32, 0, 0);
-            Map<Long, String> free = carriedByFreeMove(before, source, offset, turned, h.world.getBottomY(),
-                    h.world.getTopY());
+            Map<Long, String> free = carriedByFreeMove(before, source, offset, turned, h.world.getMinBuildHeight(),
+                    h.world.getMaxBuildHeight());
             carriedByFreeMoveCopy(before, free, source, offset, turned, mirrorAt60(x), mirrorAt60(x).images().get(1),
-                    h.world.getBottomY(), h.world.getTopY());
+                    h.world.getMinBuildHeight(), h.world.getMaxBuildHeight());
             check(!free.equals(before), "the free expectation carries nothing");
             checkCarried(run, h, s, new OpSpec.Move(new Region.Cuboid(source), offset, turned, air, EntityFilter.NONE,
                     mirrorAt60(x), PasteOptions.Into.EVERYTHING, true), before, free, "the mirrored free move");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /** Runs {@code op}, expecting {@code expected} biomes after it, {@code before} after its undo and again after redo. */
@@ -1278,8 +1278,8 @@ public final class BiomesGameTest implements FabricGameTest {
      * move is held to the node while it runs (losing it cancels the move, which then undoes exactly); an unticked one
      * is not.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_biome_box_refused", tickLimit = LIMIT)
-    public void theBiomesFlagNeedsTheBiomeNodeAndHoldsTheMoveToIt(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_box_refused", timeoutTicks = LIMIT)
+    public void theBiomesFlagNeedsTheBiomeNodeAndHoldsTheMoveToIt(GameTestHelper context) {
         try (Scene s = new Scene(context, 1802)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
@@ -1293,7 +1293,7 @@ public final class BiomesGameTest implements FabricGameTest {
             dev.sculptory.core.transform.Orientation turned =
                     dev.sculptory.core.transform.Orientation.free(Transform.IDENTITY, 3000, 0, 0);
 
-            ServerPlayerEntity builder = h.addPlayer(false);
+            ServerPlayer builder = h.addPlayer(false);
             EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
             run.load(builder);
             for (OpSpec op : List.of(
@@ -1307,7 +1307,7 @@ public final class BiomesGameTest implements FabricGameTest {
                 check(refused.reason() == RejectReason.NO_PERMISSION && Perm.BIOME.node().equals(refused.detail()),
                         op.getClass().getSimpleName() + " with biomes without the node: " + refused.reason() + " "
                                 + refused.detail());
-                check(run.service.jobs(builder.getUuid()).isEmpty(), "a refused op left a job");
+                check(run.service.jobs(builder.getUUID()).isEmpty(), "a refused op left a job");
             }
             check(undoLabels(run, builder).isEmpty(), "refused ops left history: " + undoLabels(run, builder));
             check(EditTestSupport.difference(initial, EditTestSupport.capture(h.world, blocks)) == null,
@@ -1315,7 +1315,7 @@ public final class BiomesGameTest implements FabricGameTest {
             checkBiomes(before, biomes(h, s.region), "the refused ops");
 
             // A ticked move whose player loses the biome node part way: cancelled, and undone exactly.
-            ServerPlayerEntity painter = h.addPlayer(false);
+            ServerPlayer painter = h.addPlayer(false);
             EditTestSupport.grant(painter, Perm.USE, Perm.REGION, Perm.BIOME);
             run.load(painter);
             // 32 × 8 × 48 cells at 64 a tick: the blocks alone take hundreds of ticks, so the revoke lands mid-job.
@@ -1327,8 +1327,8 @@ public final class BiomesGameTest implements FabricGameTest {
                 if (revoked.result != null) return true;
                 for (int bx = x + 64; bx <= x + 79; bx++) {
                     for (int bz = z; bz <= z + 47; bz++) {
-                        if (h.world.getBlockState(new net.minecraft.util.math.BlockPos(bx, 100, bz))
-                                .isOf(net.minecraft.block.Blocks.STONE)) {
+                        if (h.world.getBlockState(new net.minecraft.core.BlockPos(bx, 100, bz))
+                                .is(net.minecraft.world.level.block.Blocks.STONE)) {
                             return true;
                         }
                     }
@@ -1357,6 +1357,6 @@ public final class BiomesGameTest implements FabricGameTest {
                     "the unticked move's undo");
             run.stop();
         }
-        context.complete();
+        context.succeed();
     }
 }

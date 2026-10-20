@@ -6,14 +6,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.command.argument.BlockArgumentParser;
-import net.minecraft.entity.Entity;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.commands.arguments.blocks.BlockStateParser;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Builds the scenarios' fixture areas on the integrated server at the start of a singleplayer check: a grid of
@@ -28,7 +28,7 @@ public final class Fixtures {
     public static final int SPACING = 48;
     private static final int COLUMNS = 4;
     /** Writes without neighbour updates or shape changes, like a structure: the fixture stays exactly as built. */
-    private static final int FLAGS = Block.NOTIFY_LISTENERS | Block.FORCE_STATE;
+    private static final int FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
 
     /** How one area is built, in area-relative coordinates. */
     public record Fixture(String area, Consumer<Build> build) {
@@ -52,7 +52,7 @@ public final class Fixtures {
     }
 
     /** Loads and forces the area's chunks, clears it, lays its floor and builds it. */
-    public static void build(ServerWorld world, Area area, Consumer<Build> fixture) {
+    public static void build(ServerLevel world, Area area, Consumer<Build> fixture) {
         Box box = area.box();
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
@@ -62,28 +62,28 @@ public final class Fixtures {
         }
         Build build = new Build(world, area);
         // Entities left from an earlier build of this world (a rerun on the same copy).
-        for (Entity entity : world.getOtherEntities(null, build.worldBox(box))) {
-            if (!entity.isPlayer()) {
+        for (Entity entity : world.getEntities(null, build.worldBox(box))) {
+            if (!entity.isAlwaysTicking()) {
                 entity.discard();
             }
         }
-        build.fill(0, -Area.FLOOR, 0, Area.SIZE - 1, Area.HEIGHT - 1, Area.SIZE - 1, Blocks.AIR.getDefaultState());
-        build.fill(0, -Area.FLOOR, 0, Area.SIZE - 1, -1, Area.SIZE - 1, Blocks.STONE.getDefaultState());
+        build.fill(0, -Area.FLOOR, 0, Area.SIZE - 1, Area.HEIGHT - 1, Area.SIZE - 1, Blocks.AIR.defaultBlockState());
+        build.fill(0, -Area.FLOOR, 0, Area.SIZE - 1, -1, Area.SIZE - 1, Blocks.STONE.defaultBlockState());
         fixture.accept(build);
     }
 
     /** Area-relative writes into the server world. */
     public static final class Build {
-        private final ServerWorld world;
+        private final ServerLevel world;
         private final Area area;
-        private final BlockPos.Mutable at = new BlockPos.Mutable();
+        private final BlockPos.MutableBlockPos at = new BlockPos.MutableBlockPos();
 
-        Build(ServerWorld world, Area area) {
+        Build(ServerLevel world, Area area) {
             this.world = world;
             this.area = area;
         }
 
-        public ServerWorld world() {
+        public ServerLevel world() {
             return world;
         }
 
@@ -94,7 +94,7 @@ public final class Fixtures {
         /** A block state from its text: {@code minecraft:stone}, {@code minecraft:wall_torch[facing=east]}. */
         public static BlockState state(String text) {
             try {
-                return BlockArgumentParser.block(Registries.BLOCK.getReadOnlyWrapper(), text, false).blockState();
+                return BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(), text, false).blockState();
             } catch (CommandSyntaxException e) {
                 throw new IllegalArgumentException("Not a block state: " + text, e);
             }
@@ -105,7 +105,7 @@ public final class Fixtures {
         }
 
         public void set(int x, int y, int z, BlockState state) {
-            world.setBlockState(at.set(area.x(x), area.y(y), area.z(z)), state, FLAGS);
+            world.setBlock(at.set(area.x(x), area.y(y), area.z(z)), state, FLAGS);
         }
 
         public void fill(int ax, int ay, int az, int bx, int by, int bz, String state) {
@@ -127,8 +127,8 @@ public final class Fixtures {
             return new BlockPos(area.x(x), area.y(y), area.z(z));
         }
 
-        net.minecraft.util.math.Box worldBox(Box box) {
-            return new net.minecraft.util.math.Box(box.min().x(), box.min().y(), box.min().z(), box.max().x() + 1,
+        net.minecraft.world.phys.AABB worldBox(Box box) {
+            return new net.minecraft.world.phys.AABB(box.min().x(), box.min().y(), box.min().z(), box.max().x() + 1,
                     box.max().y() + 1, box.max().z() + 1);
         }
     }

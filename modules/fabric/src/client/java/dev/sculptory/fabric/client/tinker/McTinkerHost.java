@@ -17,11 +17,11 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Tinker outside the editor (builder mode, with Alt held): a
@@ -34,7 +34,7 @@ import net.minecraft.util.math.Vec3d;
  * {@code takesScroll}/{@code scroll} and {@code click} (see {@link TinkerController}). Render thread only.
  */
 public final class McTinkerHost implements TinkerController.Host {
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final Supplier<EditorBackend> backend;
     private final McBlockCatalog blocks = new McBlockCatalog();
     private final Translator translator = new McTranslator();
@@ -43,11 +43,11 @@ public final class McTinkerHost implements TinkerController.Host {
     private float tickDelta = 1f;
 
     /** @param notices where the controller's toasts go (a missing right, a server without Tinker) */
-    public McTinkerHost(MinecraftClient client, Consumer<Notice> notices) {
+    public McTinkerHost(Minecraft client, Consumer<Notice> notices) {
         this(client, SessionProvider::get, notices);
     }
 
-    McTinkerHost(MinecraftClient client, Supplier<EditorBackend> backend, Consumer<Notice> notices) {
+    McTinkerHost(Minecraft client, Supplier<EditorBackend> backend, Consumer<Notice> notices) {
         this.client = Objects.requireNonNull(client);
         this.backend = Objects.requireNonNull(backend);
         this.notices = Objects.requireNonNull(notices);
@@ -58,25 +58,25 @@ public final class McTinkerHost implements TinkerController.Host {
      * miss at {@code reach}; {@code null} without a player (the controller then aims at nothing).
      */
     public WorldCursor crosshair(double reach, float tickDelta) {
-        ClientPlayerEntity player = client.player;
+        LocalPlayer player = client.player;
         this.tickDelta = tickDelta;
         if (player == null || !(reach > 0)) return null;
-        HitResult hit = player.raycast(reach, tickDelta, false);
-        Vec3d at = hit.getPos();
+        HitResult hit = player.pick(reach, tickDelta, false);
+        Vec3 at = hit.getLocation();
         if (hit instanceof BlockHitResult block && hit.getType() == HitResult.Type.BLOCK) {
-            net.minecraft.util.math.BlockPos pos = block.getBlockPos();
+            net.minecraft.core.BlockPos pos = block.getBlockPos();
             return new WorldCursor(new BlockPos(pos.getX(), pos.getY(), pos.getZ()),
-                    WorldCursor.Face.valueOf(block.getSide().name()), at.x, at.y, at.z, false);
+                    WorldCursor.Face.valueOf(block.getDirection().name()), at.x, at.y, at.z, false);
         }
         return WorldCursor.miss(at.x, at.y, at.z);
     }
 
     /** The ray from the player's eyes along the crosshair, if there is a player. */
     public Optional<Ray> crosshairRay(float tickDelta) {
-        ClientPlayerEntity player = client.player;
+        LocalPlayer player = client.player;
         if (player == null) return Optional.empty();
-        Vec3d eyes = player.getCameraPosVec(tickDelta);
-        Vec3d look = player.getRotationVec(tickDelta);
+        Vec3 eyes = player.getEyePosition(tickDelta);
+        Vec3 look = player.getViewVector(tickDelta);
         return Optional.of(new Ray(eyes.x, eyes.y, eyes.z, look.x, look.y, look.z));
     }
 
@@ -90,7 +90,7 @@ public final class McTinkerHost implements TinkerController.Host {
             double dx = cursor.hitX() - r.originX(), dy = cursor.hitY() - r.originY(), dz = cursor.hitZ() - r.originZ();
             reach = Math.sqrt(dx * dx + dy * dy + dz * dz);
         }
-        return McTinker.entityAt(client.world, ray.get(), reach);
+        return McTinker.entityAt(client.level, ray.get(), reach);
     }
 
     @Override
@@ -115,7 +115,7 @@ public final class McTinkerHost implements TinkerController.Host {
 
     @Override
     public Optional<SignText> signText(BlockPos pos) {
-        return McTinker.signText(client.world, pos);
+        return McTinker.signText(client.level, pos);
     }
 
     @Override

@@ -36,15 +36,14 @@ import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 
 /**
  * Scatter through a private executor ticked by hand (M3 review): planning in the executor's lane, a cell built on
@@ -54,14 +53,14 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
     /** A private executor: a 200 ms budget, the LOAD policy, a cell cap per tick and a ticket window. */
-    private static EditExecutor<ServerWorld> executor(TestContext context, long maxBlocksPerTick, int maxTickets) {
+    private static EditExecutor<ServerLevel> executor(GameTestHelper context, long maxBlocksPerTick, int maxTickets) {
         return new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, maxBlocksPerTick, 0.4, 2, 8, 32, maxTickets, UnloadedPolicy.LOAD,
                         1024, 16_384));
     }
 
     /** Ticks the executor until the listener has a result (bounded). */
-    private static void runUntilFinished(EditExecutor<ServerWorld> executor, RecordingListener listener, String what) {
+    private static void runUntilFinished(EditExecutor<ServerLevel> executor, RecordingListener listener, String what) {
         for (int i = 0; i < 10_000 && listener.result == null; i++) executor.tick();
         check(listener.result != null, what + " did not finish");
     }
@@ -84,9 +83,9 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      * over the held area stays queued until the plan is done and then runs, and a planner failure in the lane is
      * answered without stopping the executor.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_lane", tickLimit = LIMIT)
-    public void scatterPlansInTheExecutorLane(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0, 64);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_lane", timeoutTicks = LIMIT)
+    public void scatterPlansInTheExecutorLane(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         var scatter = new ServerScatter<>(h.service);
         EditExecutor.Lane lane = scatter.lane();
@@ -131,7 +130,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
         scatter.shutdown();
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -141,15 +140,15 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      * and cuts it short: nothing of it after that cell is written. Either way it is reported once, the other trees are
      * whole, and undo restores everything the commit wrote while leaving the chest alone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_race", tickLimit = LIMIT)
-    public void scatterCommitLeavesACellBuiltWhileItWrites(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 8, 64);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_race", timeoutTicks = LIMIT)
+    public void scatterCommitLeavesACellBuiltWhileItWrites(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 8, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 89);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), tree(h)).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), tree(h)).id());
         // Anchors keep the 3 × 3 crowns inside one chunk column, all in section y 6: one section to write.
         Reply reply = preview(scatter, h.player, request(region(x0 + 1, z0 + 1, x0 + 14, z0 + 14), 4, 21L, source));
         planNow(scatter, reply);
@@ -163,16 +162,16 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
 
         // Some trunks are written, no crown yet: build a chest where the last tree's crown goes.
         BlockPos anchor = plan.placements().get(plan.placements().size() - 1).anchor();
-        net.minecraft.util.math.BlockPos chest = pos(anchor.x() + 1, anchor.y() + 3, anchor.z());
+        net.minecraft.core.BlockPos chest = pos(anchor.x() + 1, anchor.y() + 3, anchor.z());
         check(h.world.getBlockState(chest).isAir(), "the crown cell is already written");
-        boolean started = h.world.getBlockState(pos(anchor.x(), anchor.y(), anchor.z())).isOf(Blocks.OAK_LOG);
+        boolean started = h.world.getBlockState(pos(anchor.x(), anchor.y(), anchor.z())).is(Blocks.OAK_LOG);
         check(!find(h.world, area, FLOOR_Y + 1, Blocks.OAK_LOG).isEmpty(), "no trunk written in the first tick");
         h.runtime.writer(h.world, WriteOptions.DEFAULT).write(chest.getX(), chest.getY(), chest.getZ(),
                 h.state("minecraft:chest[facing=north,type=single,waterlogged=false]"), null);
-        ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 3));
-        before.states[before.index(chest.getX(), chest.getY(), chest.getZ())] = Block.getRawIdFromState(
+        ((ChestBlockEntity) h.world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 3));
+        before.states[before.index(chest.getX(), chest.getY(), chest.getZ())] = Block.getId(
                 h.world.getBlockState(chest));
-        before.tiles.put(chest.asLong(), h.world.getBlockEntity(chest).createNbtWithId(h.world.getRegistryManager()));
+        before.tiles.put(chest.asLong(), h.world.getBlockEntity(chest).saveWithId(h.world.registryAccess()));
 
         runUntilFinished(executor, job, "the commit");
         check(job.result.outcome() == JobOutcome.COMPLETED, "commit " + job.result);
@@ -183,9 +182,9 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
                 + (started ? " (the tree had started)" : " (the tree had not started)"));
         check(job.result.skippedConflicts() == 1, "skipped " + job.result.skippedConflicts());
         check(h.events.scatterSkips.equals(List.of(1L)), "reported " + h.events.scatterSkips);
-        check(h.world.getBlockState(chest).isOf(Blocks.CHEST), "the chest was replaced");
+        check(h.world.getBlockState(chest).is(Blocks.CHEST), "the chest was replaced");
         ChestBlockEntity kept = (ChestBlockEntity) h.world.getBlockEntity(chest);
-        check(kept != null && kept.getStack(0).isOf(Items.DIAMOND) && kept.getStack(0).getCount() == 3,
+        check(kept != null && kept.getItem(0).is(Items.DIAMOND) && kept.getItem(0).getCount() == 3,
                 "the chest lost its contents");
         int trees = plan.placements().size();
         check(find(h.world, area, FLOOR_Y + 1, Blocks.OAK_LOG).size() == (started ? trees : trees - 1), "trunks");
@@ -205,7 +204,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
         scatter.shutdown();
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -213,9 +212,9 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      * loads ahead). Before deciding a placement the job loads its other chunk, so no placement is skipped for a chunk
      * that simply had not loaded yet; every slab is whole and every ticket is given back.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_remote", tickLimit = LIMIT)
-    public void scatterCommitWaitsForNeighbouringChunks(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0, 1);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_remote", timeoutTicks = LIMIT)
+    public void scatterCommitWaitsForNeighbouringChunks(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0, 1);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 90);
@@ -223,7 +222,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
         int cx0 = x0 >> 4, cz0 = z0 >> 4;
         Box all = floor(h, x0, z0, 32, 16);
         Clipboard slab = ScatterGameTest.slab(h, "minecraft:gold_block");
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), slab).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), slab).id());
         // Anchors only on the two columns either side of the chunk boundary: every 3 × 3 slab straddles it.
         Reply reply = preview(scatter, h.player, request(region(x0 + 15, z0 + 1, x0 + 16, z0 + 14), 3, 8L, source));
         planNow(scatter, reply);
@@ -235,8 +234,8 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
         forceChunks(h.world, all, false);
         RecordingListener[] job = new RecordingListener[1];
         int[] mostTickets = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     for (int cx = cx0 - 1; cx <= cx0 + 2; cx++) {
                         for (int cz = cz0 - 1; cz <= cz0 + 1; cz++) {
                             check(!WorldChecks.isChunkLoaded(h.world, cx, cz), "waiting for chunk " + cx + "," + cz
@@ -245,12 +244,12 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
                     }
                     job[0] = ScatterGameTest.commit(h, h.player, reply.get("preview").planId());
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     executor.tick();
                     mostTickets[0] = Math.max(mostTickets[0], executor.ticketsInFlight());
                     check(job[0].result != null, "commit running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(job[0].result.outcome() == JobOutcome.COMPLETED, "commit " + job[0].result);
                     check(job[0].result.skippedConflicts() == 0, "skipped " + job[0].result.skippedConflicts()
                             + " placements (" + straddling + " straddle the chunks)");
@@ -263,7 +262,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
                     scatter.shutdown();
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -271,9 +270,9 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
      * more than the one extra ticket the job may hold. Only one of them is loaded for it: the placement is decided
      * without the others, skipped and reported, and the job never holds more than two tickets.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_readcap", tickLimit = LIMIT)
-    public void scatterReadColumnTicketsAreCapped(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0, 1);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_readcap", timeoutTicks = LIMIT)
+    public void scatterReadColumnTicketsAreCapped(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0, 1);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 93);
@@ -281,15 +280,15 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
         int cx0 = x0 >> 4, cz0 = z0 >> 4;
         Box all = floor(h, x0, z0, 32, 32);
         Clipboard slab = ScatterGameTest.slab(h, "minecraft:gold_block");
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), slab).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), slab).id());
         Reply reply = preview(scatter, h.player, request(region(x0 + 16, z0 + 16, x0 + 16, z0 + 16), 3, 8L, source));
         planNow(scatter, reply);
         check(heldPlan(h, h.player).placements().size() == 1, "one slab on the corner");
         forceChunks(h.world, all, false);
         RecordingListener[] job = new RecordingListener[1];
         int[] mostTickets = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     for (int cx = cx0 - 1; cx <= cx0 + 2; cx++) {
                         for (int cz = cz0 - 1; cz <= cz0 + 2; cz++) {
                             check(!WorldChecks.isChunkLoaded(h.world, cx, cz), "waiting for chunk " + cx + "," + cz
@@ -298,12 +297,12 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
                     }
                     job[0] = ScatterGameTest.commit(h, h.player, reply.get("preview").planId());
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     executor.tick();
                     mostTickets[0] = Math.max(mostTickets[0], executor.ticketsInFlight());
                     check(job[0].result != null, "commit running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(job[0].result.outcome() == JobOutcome.COMPLETED, "commit " + job[0].result);
                     check(job[0].result.skippedConflicts() == 1 && job[0].result.changed() == 0, "commit " + job[0].result);
                     check(mostTickets[0] <= 2, "the job held " + mostTickets[0] + " tickets; the cap is 1 + 1");
@@ -312,7 +311,7 @@ public final class ScatterExecutorGameTest implements FabricGameTest {
                     scatter.shutdown();
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Loads the floor again and checks every slab is whole. */

@@ -17,8 +17,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.UnaryOperator;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.item.ItemStack;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.world.item.ItemStack;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -295,7 +295,7 @@ class PanelOpacityTest {
         }
 
         @Override
-        public void widget(ClickableWidget widget, int mouseX, int mouseY, float delta) {
+        public void widget(AbstractWidget widget, int mouseX, int mouseY, float delta) {
         }
     }
 
@@ -339,7 +339,7 @@ class PanelOpacityTest {
         }
 
         @Override
-        public void widget(ClickableWidget widget, int mouseX, int mouseY, float delta) {
+        public void widget(AbstractWidget widget, int mouseX, int mouseY, float delta) {
         }
     }
 }

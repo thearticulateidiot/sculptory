@@ -5,13 +5,13 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.resource.language.I18n;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Util;
-import net.minecraft.world.biome.Biome;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.language.I18n;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.biome.Biome;
 
 /**
  * The biomes of the world the client is in (protocol 6): the registry the server sent, so data-pack and modded biomes
@@ -45,9 +45,9 @@ public final class ClientBiomeCatalog implements BiomeCatalog {
     }
 
     private void refresh() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        Registry<Biome> current = client == null || client.world == null ? null
-                : client.world.getRegistryManager().getOptional(RegistryKeys.BIOME).orElse(null);
+        Minecraft client = Minecraft.getInstance();
+        Registry<Biome> current = client == null || client.level == null ? null
+                : client.level.registryAccess().registry(Registries.BIOME).orElse(null);
         if (current == registry) return;
         registry = current;
         if (current == null) {
@@ -57,11 +57,11 @@ public final class ClientBiomeCatalog implements BiomeCatalog {
         }
         List<Entry> list = new ArrayList<>();
         Map<String, Entry> map = new HashMap<>();
-        for (Map.Entry<net.minecraft.registry.RegistryKey<Biome>, Biome> biome : current.getEntrySet()) {
-            Identifier id = biome.getKey().getValue();
-            String key = Util.createTranslationKey("biome", id);
-            String name = I18n.hasTranslation(key) ? I18n.translate(key) : BiomeCatalog.pretty(id.toString());
-            Entry entry = new Entry(id.toString(), name, 0xFF000000 | biome.getValue().getGrassColorAt(0, 0));
+        for (Map.Entry<net.minecraft.resources.ResourceKey<Biome>, Biome> biome : current.entrySet()) {
+            ResourceLocation id = biome.getKey().location();
+            String key = Util.makeDescriptionId("biome", id);
+            String name = I18n.exists(key) ? I18n.get(key) : BiomeCatalog.pretty(id.toString());
+            Entry entry = new Entry(id.toString(), name, 0xFF000000 | biome.getValue().getGrassColor(0, 0));
             list.add(entry);
             map.put(entry.id(), entry);
         }

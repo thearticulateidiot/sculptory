@@ -5,21 +5,21 @@ import io.netty.handler.codec.DecoderException;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
-import net.minecraft.network.PacketByteBuf;
-import net.minecraft.network.codec.PacketCodec;
-import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.util.Identifier;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * One protocol v2 frame on {@code sculptory:c2s} or {@code sculptory:s2c}. The frame is the whole
  * payload (no second length prefix); the codecs refuse empty or over-cap payloads before allocating.
  * The array is not copied: frames are built once and never modified.
  */
-public record Frame(CustomPayload.Id<Frame> id, byte[] bytes) implements CustomPayload {
-    public static final CustomPayload.Id<Frame> C2S_ID = new CustomPayload.Id<>(Identifier.of("sculptory", "c2s"));
-    public static final CustomPayload.Id<Frame> S2C_ID = new CustomPayload.Id<>(Identifier.of("sculptory", "s2c"));
-    public static final PacketCodec<PacketByteBuf, Frame> C2S_CODEC = codec(C2S_ID, ProtocolV2.MAX_C2S_FRAME);
-    public static final PacketCodec<PacketByteBuf, Frame> S2C_CODEC = codec(S2C_ID, ProtocolV2.MAX_S2C_FRAME);
+public record Frame(CustomPacketPayload.Type<Frame> id, byte[] bytes) implements CustomPacketPayload {
+    public static final CustomPacketPayload.Type<Frame> C2S_ID = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath("sculptory", "c2s"));
+    public static final CustomPacketPayload.Type<Frame> S2C_ID = new CustomPacketPayload.Type<>(ResourceLocation.fromNamespaceAndPath("sculptory", "s2c"));
+    public static final StreamCodec<FriendlyByteBuf, Frame> C2S_CODEC = codec(C2S_ID, ProtocolV2.MAX_C2S_FRAME);
+    public static final StreamCodec<FriendlyByteBuf, Frame> S2C_CODEC = codec(S2C_ID, ProtocolV2.MAX_S2C_FRAME);
 
     private static final AtomicBoolean REGISTERED = new AtomicBoolean();
 
@@ -41,7 +41,7 @@ public record Frame(CustomPayload.Id<Frame> id, byte[] bytes) implements CustomP
     }
 
     @Override
-    public CustomPayload.Id<Frame> getId() {
+    public CustomPacketPayload.Type<Frame> type() {
         return id;
     }
 
@@ -53,14 +53,14 @@ public record Frame(CustomPayload.Id<Frame> id, byte[] bytes) implements CustomP
         }
     }
 
-    private static int maxBytes(CustomPayload.Id<Frame> id) {
+    private static int maxBytes(CustomPacketPayload.Type<Frame> id) {
         if (id.equals(C2S_ID)) return ProtocolV2.MAX_C2S_FRAME;
         if (id.equals(S2C_ID)) return ProtocolV2.MAX_S2C_FRAME;
         throw new IllegalArgumentException("Not a Sculptory channel: " + id.id());
     }
 
-    private static PacketCodec<PacketByteBuf, Frame> codec(CustomPayload.Id<Frame> id, int max) {
-        return PacketCodec.of((frame, buf) -> buf.writeBytes(frame.bytes), buf -> {
+    private static StreamCodec<FriendlyByteBuf, Frame> codec(CustomPacketPayload.Type<Frame> id, int max) {
+        return StreamCodec.ofMember((frame, buf) -> buf.writeBytes(frame.bytes), buf -> {
             int length = buf.readableBytes();
             if (length < 1 || length > max) {
                 throw new DecoderException("Sculptory frame of " + length + " bytes (cap " + max + ")");

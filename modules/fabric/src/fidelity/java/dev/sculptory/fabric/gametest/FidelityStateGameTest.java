@@ -50,14 +50,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Chipped and Farmer's Delight states in the block-state space and on the wire: every
@@ -76,8 +75,8 @@ public final class FidelityStateGameTest implements FabricGameTest {
      * out with vanilla's helpers). The client's space, following the server's handshake, turns every state the same way;
      * with the fallback off (config {@code transform.moddedFacingFallback}) every state turns as vanilla's alone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_states", tickLimit = LIMIT)
-    public void everyModdedStateRoundTripsAndTransformsLikeVanilla(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_states", timeoutTicks = LIMIT)
+    public void everyModdedStateRoundTripsAndTransformsLikeVanilla(GameTestHelper context) {
         FabricStateSpace server = EngineTestSupport.runtime(context).states();
         check(server.moddedFacingFallback(), "the fidelity server runs with the default config (fallback on)");
         // What the client builds on every join (SculptoryClientMod), after registry sync, following the handshake.
@@ -88,40 +87,40 @@ public final class FidelityStateGameTest implements FabricGameTest {
         SculptoryConfig offConfig = SculptoryConfig.defaults();
         offConfig.transform.moddedFacingFallback = false;
         FabricStateSpace off = EngineRuntime.buildStates(offConfig);
-        check(server.size() == Block.STATE_IDS.size() && client.size() == server.size() && off.size() == server.size(),
-                "sizes: server " + server.size() + ", client " + client.size() + ", registry " + Block.STATE_IDS.size());
+        check(server.size() == Block.BLOCK_STATE_REGISTRY.size() && client.size() == server.size() && off.size() == server.size(),
+                "sizes: server " + server.size() + ", client " + client.size() + ", registry " + Block.BLOCK_STATE_REGISTRY.size());
         check(client.moddedFacingFallback() && !off.moddedFacingFallback(), "the client does not follow the server");
         List<Transform> transforms = FidelityEditGameTest.everyTransform();
         Map<String, Integer> turnedByFallback = new TreeMap<>();
         for (int h = 0; h < server.size(); h++) {
             BlockState state = server.state(h);
-            boolean vanillaBlock = Registries.BLOCK.getId(state.getBlock()).getNamespace().equals("minecraft");
+            boolean vanillaBlock = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getNamespace().equals("minecraft");
             boolean fellBack = false;
             for (Transform t : transforms) {
-                int expected = Block.getRawIdFromState(FidelitySupport.expectedTurn(state, t));
-                int vanilla = Block.getRawIdFromState(state.mirror(ClipboardGameTest.vanilla(t.mirror()))
+                int expected = Block.getId(FidelitySupport.expectedTurn(state, t));
+                int vanilla = Block.getId(state.mirror(ClipboardGameTest.vanilla(t.mirror()))
                         .rotate(ClipboardGameTest.vanilla(t.quarterTurnsCw())));
                 int got = t.applyToState(server, h);
                 int onClient = t.applyToState(client, h);
                 int withoutFallback = t.applyToState(off, h);
                 if (got != expected || onClient != expected || withoutFallback != vanilla
                         || (vanillaBlock && expected != vanilla)) {
-                    throw new GameTestException(server.format(h) + " " + t + ": server " + server.format(got)
+                    throw new GameTestAssertException(server.format(h) + " " + t + ": server " + server.format(got)
                             + ", client " + server.format(onClient) + ", fallback off " + server.format(withoutFallback)
                             + "; expected " + server.format(expected) + ", vanilla " + server.format(vanilla));
                 }
                 fellBack |= expected != vanilla;
             }
             for (int turns = -4; turns < 8; turns++) {
-                int expected = Block.getRawIdFromState(
+                int expected = Block.getId(
                         FidelitySupport.expectedTurn(state, Transform.rotation(turns)));
                 if (server.rotate(h, turns) != expected) {
-                    throw new GameTestException(server.format(h) + " turned " + turns + " is "
+                    throw new GameTestAssertException(server.format(h) + " turned " + turns + " is "
                             + server.format(server.rotate(h, turns)) + ", expected " + server.format(expected));
                 }
             }
-            if (server.mirror(h, Mirror.NONE) != h) throw new GameTestException("mirror NONE of " + server.format(h));
-            if (fellBack) turnedByFallback.merge(Registries.BLOCK.getId(state.getBlock()).toString(), 1, Integer::sum);
+            if (server.mirror(h, Mirror.NONE) != h) throw new GameTestAssertException("mirror NONE of " + server.format(h));
+            if (fellBack) turnedByFallback.merge(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString(), 1, Integer::sum);
         }
         // The blocks the earlier fidelity run found not turning: each of their horizontal states turns now.
         for (String block : FidelitySupport.NON_ROTATING) {
@@ -138,7 +137,7 @@ public final class FidelityStateGameTest implements FabricGameTest {
         Map<String, Integer> perMod = new TreeMap<>();
         for (int h = 0; h < server.size(); h++) {
             BlockState state = server.state(h);
-            String namespace = Registries.BLOCK.getId(state.getBlock()).getNamespace();
+            String namespace = BuiltInRegistries.BLOCK.getKey(state.getBlock()).getNamespace();
             if (!namespace.equals("chipped") && !namespace.equals("farmersdelight")) continue;
             perMod.merge(namespace, 1, Integer::sum);
             String text = server.format(h);
@@ -149,11 +148,11 @@ public final class FidelityStateGameTest implements FabricGameTest {
                     "does not parse back: " + text);
             check(client.parse(text) == h && client.format(h).equals(text) && client.flags(h) == server.flags(h),
                     "the client space differs for " + text);
-            check(server.blockId(h).value().equals(Registries.BLOCK.getId(state.getBlock()).toString()), "block id " + text);
+            check(server.blockId(h).value().equals(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString()), "block id " + text);
         }
         check(perMod.getOrDefault("chipped", 0) > 40_000 && perMod.getOrDefault("farmersdelight", 0) > 2_000,
                 "modded states " + perMod);
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -161,10 +160,10 @@ public final class FidelityStateGameTest implements FabricGameTest {
      * decoded with a space built like the client's); the preview of a modded clipboard names each state as the
      * client parses it. A state the decoding side does not know (another version of the mod) is refused.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_wire", tickLimit = LIMIT)
-    public void moddedStatesCrossTheWire(TestContext context) throws ProtocolException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_wire", timeoutTicks = LIMIT)
+    public void moddedStatesCrossTheWire(GameTestHelper context) throws ProtocolException {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FabricStateSpace server = h.runtime.states();
         FabricStateSpace client = FabricStateSpace.build();
         int pot = h.state("farmersdelight:cooking_pot[facing=south,support=none,waterlogged=true]");
@@ -196,7 +195,7 @@ public final class FidelityStateGameTest implements FabricGameTest {
         byte[] frame = Codec.encodeC2S(messages.get(0), newerChipped);
         try {
             Codec.decodeC2S(frame, client);
-            throw new GameTestException("an unknown modded state was accepted");
+            throw new GameTestAssertException("an unknown modded state was accepted");
         } catch (ProtocolException e) {
             check(e.reason() == ProtocolException.Reason.UNKNOWN_STATE, "refused with " + e.reason());
         }
@@ -209,23 +208,23 @@ public final class FidelityStateGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, source, source.min());
         Captured<ClipboardService.Outbound> preview = new Captured<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     try {
                         clips.preview(h.player, new SourceRef.Clipboard(info.clipboardId()), preview);
                     } catch (EditRejected e) {
-                        throw new GameTestException("preview refused: " + e.getMessage());
+                        throw new GameTestAssertException("preview refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Outbound out = preview.get("preview");
-                    Clipboard held = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                    Clipboard held = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     PreviewPayload.Decoded decoded;
                     try {
                         decoded = PreviewPayload.decode(out.payload(), 64L << 20);
                     } catch (IOException e) {
-                        throw new GameTestException("undecodable preview: " + e);
+                        throw new GameTestAssertException("undecodable preview: " + e);
                     }
                     List<String> modded = new ArrayList<>();
                     for (int y = 0; y < FidelitySupport.HEIGHT; y++) {
@@ -243,7 +242,7 @@ public final class FidelityStateGameTest implements FabricGameTest {
                     forceChunks(world, source, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A state space that formats one handle as another text (a peer with a different mod version). */

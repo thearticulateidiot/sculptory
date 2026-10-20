@@ -1,17 +1,17 @@
 package dev.sculptory.fabric.client.editor.render.ghost;
 
 import java.util.Objects;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.BlockRenderView;
-import net.minecraft.world.LightType;
-import net.minecraft.world.biome.ColorResolver;
-import net.minecraft.world.chunk.light.LightingProvider;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.BlockAndTintGetter;
+import net.minecraft.world.level.ColorResolver;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.lighting.LevelLightEngine;
+import net.minecraft.world.level.material.FluidState;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -28,32 +28,32 @@ import org.jetbrains.annotations.Nullable;
  * Biome colours (grass, foliage, water) always come from the client world at the placed position. Positions are
  * mapped with the placement captured when the mesh job was made.
  *
- * <p>Checked with javap against yarn 1.21.1+build.3: the abstract methods of {@code BlockRenderView},
- * {@code BlockView} and {@code HeightLimitView} are {@code getBrightness}, {@code getLightingProvider},
- * {@code getColor}, {@code getBlockEntity}, {@code getBlockState}, {@code getFluidState}, {@code getHeight} and
- * {@code getBottomY}. The light defaults ({@code getLightLevel}, {@code getBaseLightLevel}, {@code isSkyVisible}) go
- * through the lighting provider with <em>local</em> positions, so they are overridden; {@code getLightingProvider}
+ * <p>Checked with javap against Minecraft 1.21.1 (Mojang names): the abstract methods of {@code BlockAndTintGetter},
+ * {@code BlockGetter} and {@code LevelHeightAccessor} are {@code getShade}, {@code getLightEngine},
+ * {@code getBlockTint}, {@code getBlockEntity}, {@code getBlockState}, {@code getFluidState}, {@code getHeight} and
+ * {@code getMinBuildHeight}. The light defaults ({@code getBrightness}, {@code getRawBrightness}, {@code canSeeSky}) go
+ * through the light engine with <em>local</em> positions, so they are overridden; {@code getLightEngine}
  * itself returns the world's provider for code that asks for it directly (such a caller sees world light at local
  * positions). Fabric's {@code FabricBlockView} methods keep their defaults (no block entities, no biomes).
  *
  * <p>One instance per mesh job: it holds a mutable position and is not thread-safe. The sections and the world it
  * reads are safe to read from mesher threads (vanilla's own section builders read world light and colours there).
  */
-final class GhostBlockView implements BlockRenderView {
+final class GhostBlockView implements BlockAndTintGetter {
     /** Ghost volumes can sit at any local height; keep every position "inside the world". */
     private static final int BOTTOM_Y = -(1 << 24);
     private static final int HEIGHT = 1 << 25;
     private static final int FULL_LIGHT = 15;
-    private static final BlockState AIR = Blocks.AIR.getDefaultState();
+    private static final BlockState AIR = Blocks.AIR.defaultBlockState();
 
     private final GhostSection[] neighbourhood;
     private final int centreX;
     private final int centreY;
     private final int centreZ;
-    private final ClientWorld world;
+    private final ClientLevel world;
     private final GhostPlacement.LightMode lightMode;
     private final GhostMapping mapping;
-    private final BlockPos.Mutable placed = new BlockPos.Mutable();
+    private final BlockPos.MutableBlockPos placed = new BlockPos.MutableBlockPos();
 
     /**
      * @param neighbourhood the 3×3×3 sections around the meshed one, index {@link #neighbourIndex}; nulls for absent
@@ -65,7 +65,7 @@ final class GhostBlockView implements BlockRenderView {
             int centreX,
             int centreY,
             int centreZ,
-            ClientWorld world,
+            ClientLevel world,
             GhostPlacement.LightMode lightMode,
             GhostMapping mapping) {
         if (neighbourhood.length != 27) {
@@ -120,49 +120,49 @@ final class GhostBlockView implements BlockRenderView {
     }
 
     @Override
-    public int getBottomY() {
+    public int getMinBuildHeight() {
         return BOTTOM_Y;
     }
 
     // ---- Light and colour ----
 
     @Override
-    public float getBrightness(Direction direction, boolean shaded) {
-        return world.getBrightness(direction, shaded);
+    public float getShade(Direction direction, boolean shaded) {
+        return world.getShade(direction, shaded);
     }
 
     @Override
-    public LightingProvider getLightingProvider() {
-        return world.getLightingProvider();
+    public LevelLightEngine getLightEngine() {
+        return world.getLightEngine();
     }
 
     @Override
-    public int getColor(BlockPos pos, ColorResolver colorResolver) {
-        return world.getColor(place(pos), colorResolver);
+    public int getBlockTint(BlockPos pos, ColorResolver colorResolver) {
+        return world.getBlockTint(place(pos), colorResolver);
     }
 
     @Override
-    public int getLightLevel(LightType type, BlockPos pos) {
+    public int getBrightness(LightLayer type, BlockPos pos) {
         if (lightMode == GhostPlacement.LightMode.FLAT) {
             return FULL_LIGHT;
         }
-        return world.getLightLevel(type, place(pos));
+        return world.getBrightness(type, place(pos));
     }
 
     @Override
-    public int getBaseLightLevel(BlockPos pos, int ambientDarkness) {
+    public int getRawBrightness(BlockPos pos, int ambientDarkness) {
         if (lightMode == GhostPlacement.LightMode.FLAT) {
             return FULL_LIGHT;
         }
-        return world.getBaseLightLevel(place(pos), ambientDarkness);
+        return world.getRawBrightness(place(pos), ambientDarkness);
     }
 
     @Override
-    public boolean isSkyVisible(BlockPos pos) {
+    public boolean canSeeSky(BlockPos pos) {
         if (lightMode == GhostPlacement.LightMode.FLAT) {
             return true;
         }
-        return world.isSkyVisible(place(pos));
+        return world.canSeeSky(place(pos));
     }
 
     /** The placed world position of a local position (reuses one mutable position). */

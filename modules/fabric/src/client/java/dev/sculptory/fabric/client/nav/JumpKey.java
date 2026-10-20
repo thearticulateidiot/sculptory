@@ -1,5 +1,6 @@
 package dev.sculptory.fabric.client.nav;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.fabric.client.editor.CursorPick;
@@ -12,14 +13,13 @@ import java.util.Optional;
 import java.util.function.BiConsumer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.entity.Entity;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -32,11 +32,11 @@ public final class JumpKey {
     public static final String KEY = "key.sculptory.jump";
     private static JumpKey instance;
 
-    private final MinecraftClient client;
-    private final KeyBinding key;
+    private final Minecraft client;
+    private final KeyMapping key;
     private final EditorClient editor;
 
-    private JumpKey(MinecraftClient client, KeyBinding key, EditorClient editor) {
+    private JumpKey(Minecraft client, KeyMapping key, EditorClient editor) {
         this.client = client;
         this.key = key;
         this.editor = editor;
@@ -45,9 +45,9 @@ public final class JumpKey {
     /** Registers the key binding and its tick. Called once, from {@link EditorClient#init}. */
     public static void init(EditorClient editor) {
         if (instance != null) return;
-        KeyBinding key = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_J, EditorClient.CATEGORY));
-        instance = new JumpKey(MinecraftClient.getInstance(), key, editor);
+        KeyMapping key = KeyBindingHelper.registerKeyBinding(
+                new KeyMapping(KEY, InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_J, EditorClient.CATEGORY));
+        instance = new JumpKey(Minecraft.getInstance(), key, editor);
         ClientTickEvents.END_CLIENT_TICK.register(ignored -> instance.tick());
     }
 
@@ -60,8 +60,8 @@ public final class JumpKey {
     }
 
     private void tick() {
-        while (key.wasPressed()) {
-            if (editor.mode().isEditing() || client.currentScreen != null || client.player == null || client.world == null) {
+        while (key.consumeClick()) {
+            if (editor.mode().isEditing() || client.screen != null || client.player == null || client.level == null) {
                 continue;
             }
             jump(Screen.hasShiftDown());
@@ -70,17 +70,17 @@ public final class JumpKey {
 
     private void jump(boolean through) {
         Entity camera = client.getCameraEntity() != null ? client.getCameraEntity() : client.player;
-        double range = WorldRaycaster.maxDistance(client.options.getClampedViewDistance());
-        HitResult hit = camera.raycast(range, 1f, false);
+        double range = WorldRaycaster.maxDistance(client.options.getEffectiveRenderDistance());
+        HitResult hit = camera.pick(range, 1f, false);
         Optional<Notice> problem;
         if (!(hit instanceof BlockHitResult block) || hit.getType() != HitResult.Type.BLOCK) {
             problem = Optional.of(Notice.of(Notice.Level.INFO, Navigation.NOTHING_LOOKED_AT));
         } else {
-            Vec3d look = camera.getRotationVec(1f);
+            Vec3 look = camera.getViewVector(1f);
             FabricEditorSession session = ClientNet.session();
-            net.minecraft.util.math.BlockPos pos = block.getBlockPos();
+            net.minecraft.core.BlockPos pos = block.getBlockPos();
             problem = Navigation.request(session == null ? null : session::navigate, through,
-                    new BlockPos(pos.getX(), pos.getY(), pos.getZ()), Facing.valueOf(block.getSide().name()),
+                    new BlockPos(pos.getX(), pos.getY(), pos.getZ()), Facing.valueOf(block.getDirection().name()),
                     look.x, look.y, look.z);
         }
         problem.ifPresent(editor::toast);

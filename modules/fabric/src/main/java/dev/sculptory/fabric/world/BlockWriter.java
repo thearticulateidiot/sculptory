@@ -17,25 +17,25 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.fluid.Fluid;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Clearable;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockBox;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-import net.minecraft.world.chunk.WorldChunk;
-import net.minecraft.world.tick.BasicTickScheduler;
-import net.minecraft.world.tick.ChunkTickScheduler;
-import net.minecraft.world.tick.OrderedTick;
-import net.minecraft.world.tick.WorldTickScheduler;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Clearable;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.ticks.LevelChunkTicks;
+import net.minecraft.world.ticks.LevelTicks;
+import net.minecraft.world.ticks.ScheduledTick;
+import net.minecraft.world.ticks.TickContainerAccess;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,11 +44,11 @@ import org.slf4j.LoggerFactory;
  * <ol>
  *   <li>Physics off: inside {@link EditScope#suppressPhysics()}, remove the old block entity and
  *       {@code setBlockState(pos, state, FORCE_STATE, 0)} ({@code onBlockAdded}/{@code onStateReplaced} cancelled).
- *       The old block entity is <em>not</em> {@link Clearable#clear cleared}: nothing can drop with
+ *       The old block entity is <em>not</em> {@link Clearable#clearContent cleared}: nothing can drop with
  *       {@code onStateReplaced} cancelled, and clearing has side effects the scope cannot suppress (lectern and
  *       jukebox clearing update comparators and neighbours). The light checks the cell asks are collected
  *       ({@link LightBatch}) and go to the light engine about a thousand at a time, not as a task per cell.</li>
- *   <li>Physics on: {@link Clearable#clear} the old block entity inside an {@link EditScope} (so nothing drops),
+ *   <li>Physics on: {@link Clearable#clearContent} the old block entity inside an {@link EditScope} (so nothing drops),
  *       remove it, then {@code NOTIFY_ALL} with update depth 512.</li>
  *   <li>Load the tile with {@code BlockEntity.createFromNbt}, replacing the default block entity through
  *       {@code removeBlockEntity} so its game-event listener is unregistered. A failing load is counted and
@@ -75,10 +75,10 @@ public final class BlockWriter implements WorldWriter {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static final int MAX_LOGGED_FAILURES = 5;
 
-    private final ServerWorld world;
+    private final ServerLevel world;
     private final FabricStateSpace states;
     private final WriteOptions options;
-    private final RegistryWrapper.WrapperLookup registries;
+    private final HolderLookup.Provider registries;
     /** The light checks of physics-off writes, handed to the light engine per chunk column ({@code null}: per cell). */
     private final LightBatch light;
     /** Physics-off writes not yet passed to {@link #clearTicksAtWrittenCells()}: section key → 4096-bit set. */
@@ -95,15 +95,15 @@ public final class BlockWriter implements WorldWriter {
     private long tileFailures;
     private String firstTileFailure;
 
-    public BlockWriter(ServerWorld world, FabricStateSpace states, WriteOptions options) {
+    public BlockWriter(ServerLevel world, FabricStateSpace states, WriteOptions options) {
         this.world = Objects.requireNonNull(world);
         this.states = Objects.requireNonNull(states);
         this.options = Objects.requireNonNull(options);
-        this.registries = world.getRegistryManager();
+        this.registries = world.registryAccess();
         this.light = LightBatch.of(world);
     }
 
-    public ServerWorld world() {
+    public ServerLevel world() {
         return world;
     }
 
@@ -151,7 +151,7 @@ public final class BlockWriter implements WorldWriter {
      * @return the tile actually applied ({@code null} when none was given, it was stripped, or it failed to load)
      */
     public BlockEntityData write(int x, int y, int z, int handle, BlockEntityData tile) {
-        if (y < world.getBottomY() || y >= world.getTopY()) return null;
+        if (y < world.getMinBuildHeight() || y >= world.getMaxBuildHeight()) return null;
         if (shouldStrip(handle, tile)) {
             tile = null;
             strippedNbt++;
@@ -182,10 +182,10 @@ public final class BlockWriter implements WorldWriter {
     @Override
     public boolean write(int x, int y, int z, int handle, BlockEntityData tile, RecordSink sink, Guard guard) {
         Objects.requireNonNull(sink);
-        if (y < world.getBottomY() || y >= world.getTopY()) return false;
+        if (y < world.getMinBuildHeight() || y >= world.getMaxBuildHeight()) return false;
         BlockPos pos = new BlockPos(x, y, z);
         BlockState old = world.getBlockState(pos);
-        int before = Block.getRawIdFromState(old);
+        int before = Block.getId(old);
         // Captured before the guard, which may compare it (undo keeps a chest filled since), and recorded as before.
         BlockEntityData beforeTile = captureLive(pos, old);
         if (guard != null && !guard.mayReplace(before, beforeTile)) {
@@ -228,15 +228,15 @@ public final class BlockWriter implements WorldWriter {
         List<BlockPos> fluidTicks = new ArrayList<>();
         for (long column : columns) {
             int cx = (int) (column >> 32), cz = (int) column;
-            WorldChunk chunk = world.getChunkManager().getWorldChunk(cx, cz);
+            LevelChunk chunk = world.getChunkSource().getChunkNow(cx, cz);
             if (chunk == null) continue;
-            collectTicks(chunk.getBlockTickScheduler(), blockTicks);
-            collectTicks(chunk.getFluidTickScheduler(), fluidTicks);
+            collectTicks(chunk.getBlockTicks(), blockTicks);
+            collectTicks(chunk.getFluidTicks(), fluidTicks);
         }
-        WorldTickScheduler<Block> blockScheduler = world.getBlockTickScheduler();
-        for (BlockPos pos : blockTicks) blockScheduler.clearNextTicks(new BlockBox(pos));
-        WorldTickScheduler<Fluid> fluidScheduler = world.getFluidTickScheduler();
-        for (BlockPos pos : fluidTicks) fluidScheduler.clearNextTicks(new BlockBox(pos));
+        LevelTicks<Block> blockScheduler = world.getBlockTicks();
+        for (BlockPos pos : blockTicks) blockScheduler.clearArea(new BoundingBox(pos));
+        LevelTicks<Fluid> fluidScheduler = world.getFluidTicks();
+        for (BlockPos pos : fluidTicks) fluidScheduler.clearArea(new BoundingBox(pos));
         writtenCells.clear();
     }
 
@@ -248,9 +248,9 @@ public final class BlockWriter implements WorldWriter {
      */
     @Deprecated
     public void clearScheduledTicks(int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
-        BlockBox box = new BlockBox(minX, minY, minZ, maxX, maxY, maxZ);
-        world.getBlockTickScheduler().clearNextTicks(box);
-        world.getFluidTickScheduler().clearNextTicks(box);
+        BoundingBox box = new BoundingBox(minX, minY, minZ, maxX, maxY, maxZ);
+        world.getBlockTicks().clearArea(box);
+        world.getFluidTicks().clearArea(box);
     }
 
     /**
@@ -304,17 +304,17 @@ public final class BlockWriter implements WorldWriter {
                     BlockEntity entity = existingEntity(pos);
                     if (entity != null) {
                         try (EditScope scope = EditScope.suppressPhysics()) {
-                            Clearable.clear(entity);
+                            Clearable.tryClear(entity);
                         }
                     }
                     world.removeBlockEntity(pos);
                 }
-                world.setBlockState(pos, state, Block.NOTIFY_ALL, World.MAX_UPDATE_DEPTH);
+                world.setBlock(pos, state, Block.UPDATE_ALL, Level.LONG_PARTICLE_CLIP_RANGE);
             } else {
                 try (EditScope scope = EditScope.suppressPhysics()) {
                     if (old.hasBlockEntity()) world.removeBlockEntity(pos);
                     try (LightBatch.Scope batch = light == null ? null : light.collect()) {
-                        world.setBlockState(pos, state, Block.FORCE_STATE, 0);
+                        world.setBlock(pos, state, Block.UPDATE_KNOWN_SHAPE, 0);
                     }
                 }
                 rememberWritten(pos);
@@ -334,7 +334,7 @@ public final class BlockWriter implements WorldWriter {
             if (clientSync != null && !options.physics()) {
                 clientSync.changed(pos);
             } else {
-                world.getChunkManager().markForUpdate(pos);
+                world.getChunkSource().blockChanged(pos);
                 if (vanillaWatch != null) vanillaWatch.vanillaWrite(pos.getX() >> 4, pos.getZ() >> 4);
             }
         }
@@ -365,7 +365,7 @@ public final class BlockWriter implements WorldWriter {
     }
 
     private BlockEntity existingEntity(BlockPos pos) {
-        return world.getWorldChunk(pos).getBlockEntity(pos, WorldChunk.CreationType.CHECK);
+        return world.getChunkAt(pos).getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK);
     }
 
     private void recordAfterFailure(BlockPos pos, int before, BlockEntityData beforeTile, RecordSink sink) {
@@ -373,7 +373,7 @@ public final class BlockWriter implements WorldWriter {
         BlockEntityData afterTile = beforeTile;
         try {
             BlockState now = world.getBlockState(pos);
-            after = Block.getRawIdFromState(now);
+            after = Block.getId(now);
             afterTile = captureLive(pos, now);
         } catch (RuntimeException e) {
             LOG.error("Could not read cell {} after a failed write", pos.toShortString(), e);
@@ -400,10 +400,10 @@ public final class BlockWriter implements WorldWriter {
     }
 
     /** Positions of the chunk's scheduled ticks that sit on written cells. */
-    private <T> void collectTicks(BasicTickScheduler<T> scheduler, List<BlockPos> out) {
-        if (scheduler instanceof ChunkTickScheduler<T> chunkTicks) {
-            if (chunkTicks.getTickCount() == 0) return;
-            chunkTicks.getQueueAsStream().map(OrderedTick::pos).filter(this::wasWritten).forEach(out::add);
+    private <T> void collectTicks(TickContainerAccess<T> scheduler, List<BlockPos> out) {
+        if (scheduler instanceof LevelChunkTicks<T> chunkTicks) {
+            if (chunkTicks.count() == 0) return;
+            chunkTicks.getAll().map(ScheduledTick::pos).filter(this::wasWritten).forEach(out::add);
             return;
         }
         // Not a vanilla chunk scheduler: clear every written cell of this chunk individually.
@@ -428,7 +428,7 @@ public final class BlockWriter implements WorldWriter {
     }
 
     private boolean loadTile(BlockPos pos, BlockState state, BlockEntityData tile) {
-        NbtCompound nbt;
+        CompoundTag nbt;
         try {
             nbt = FabricTile.from(tile).copyNbt();
         } catch (IOException | RuntimeException e) {
@@ -436,19 +436,19 @@ public final class BlockWriter implements WorldWriter {
             return false;
         }
         String typeId = nbt.getString("id");
-        Identifier id = Identifier.tryParse(typeId);
-        BlockEntityType<?> type = id == null ? null : Registries.BLOCK_ENTITY_TYPE.getOrEmpty(id).orElse(null);
+        ResourceLocation id = ResourceLocation.tryParse(typeId);
+        BlockEntityType<?> type = id == null ? null : BuiltInRegistries.BLOCK_ENTITY_TYPE.getOptional(id).orElse(null);
         if (type == null) {
             fail(pos, typeId, "unknown block-entity type");
             return false;
         }
-        if (!type.supports(state)) {
+        if (!type.isValid(state)) {
             fail(pos, typeId, "type does not fit " + state);
             return false;
         }
         BlockEntity entity;
         try {
-            entity = BlockEntity.createFromNbt(pos, state, nbt, registries);
+            entity = BlockEntity.loadStatic(pos, state, nbt, registries);
         } catch (RuntimeException e) {
             fail(pos, typeId, e.toString());
             return false;
@@ -459,9 +459,9 @@ public final class BlockWriter implements WorldWriter {
         }
         // Unregisters the default block entity's game-event listener and ticker before the replacement is added.
         world.removeBlockEntity(pos);
-        world.addBlockEntity(entity);
+        world.setBlockEntity(entity);
         // No markDirty(): it would update comparators. The state may be unchanged, so flag the chunk directly.
-        world.getWorldChunk(pos).setNeedsSaving(true);
+        world.getChunkAt(pos).setUnsaved(true);
         return true;
     }
 

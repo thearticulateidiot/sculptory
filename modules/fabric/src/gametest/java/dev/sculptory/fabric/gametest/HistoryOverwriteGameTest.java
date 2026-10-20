@@ -48,19 +48,19 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.entity.LootableContainerBlockEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.RandomizableContainerBlockEntity;
+import net.minecraft.world.level.border.WorldBorder;
 
 /**
  * Undo anyway and Redo anyway ({@code EngineEditService.historyOverwrite}): after a run of
@@ -84,14 +84,14 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * equals the three undone with OVERWRITE in a twin region (the last entry of the run decides a shared cell: the cell
      * Bob built before B holds his block again). Redoing and undoing the three afterwards meets no conflict in either.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_undo_anyway", tickLimit = LIMIT)
-    public void undoAnywayOfARunEqualsTheRunUndoneWithOverwrite(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_undo_anyway", timeoutTicks = LIMIT)
+    public void undoAnywayOfARunEqualsTheRunUndoneWithOverwrite(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerPlayerEntity twin = h.addPlayer();
-        ServerPlayerEntity twinBob = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerPlayer twin = h.addPlayer();
+        ServerPlayer twinBob = h.addPlayer();
         int[] a = regionCorner(context, 520);
         int[] b = regionCorner(context, 521);
         Scenario anyway = new Scenario(h, executor, alice, bob, a[0], a[1]);
@@ -101,7 +101,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         long kept = 0;
         for (int i = 0; i < 3; i++) kept += step(h, executor, alice, true).skippedConflicts();
         check(kept == 8, "the undos kept " + kept + " cells, expected 8");
-        HistoryService.Run run = h.service.historyService().session(alice.getUuid()).run().orElseThrow();
+        HistoryService.Run run = h.service.historyService().session(alice.getUUID()).run().orElseThrow();
         check(run.entries().size() == 3 && run.conflicts() == 8 && run.op() == HistoryService.Op.UNDO, "run " + run);
         WorldSnapshot beforeOverwrite = capture(h.world, anyway.region);
         JobResult result = overwrite(h, executor, alice, false, 3);
@@ -116,13 +116,13 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
             try {
                 h.service.undo(twin, ConflictPolicy.OVERWRITE, undo);
             } catch (EditRejected e) {
-                throw new GameTestException("the twin's undo refused: " + e.getMessage());
+                throw new GameTestAssertException("the twin's undo refused: " + e.getMessage());
             }
             tickUntil(executor, () -> undo.result != null, TICKS, "the twin's undo " + i);
         }
         WorldSnapshot reapplied = capture(h.world, anyway.region);
         sameRelative(capture(h.world, direct.region), reapplied, "Undo anyway against the run undone with OVERWRITE");
-        check(h.world.getBlockState(anyway.at(28, 110, 5)).isOf(Blocks.DIAMOND_BLOCK),
+        check(h.world.getBlockState(anyway.at(28, 110, 5)).is(Blocks.DIAMOND_BLOCK),
                 "the cell Bob built before B holds his diamond block again");
         checkChest(h.world, anyway.at(2, 101, 2), Items.DIAMOND, 5);
 
@@ -139,7 +139,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         direct.close();
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -147,14 +147,14 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * the chest with a barrel. Alice's redos keep five cells; Redo anyway equals the two redone with OVERWRITE in a twin
      * region, and undoing both afterwards is conflict-free and gives the original world back in both.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_redo_anyway", tickLimit = LIMIT)
-    public void redoAnywayOfARunEqualsTheRunRedoneWithOverwrite(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_redo_anyway", timeoutTicks = LIMIT)
+    public void redoAnywayOfARunEqualsTheRunRedoneWithOverwrite(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerPlayerEntity twin = h.addPlayer();
-        ServerPlayerEntity twinBob = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerPlayer twin = h.addPlayer();
+        ServerPlayer twinBob = h.addPlayer();
         int[] a = regionCorner(context, 522);
         int[] b = regionCorner(context, 523);
         Scenario anyway = new Scenario(h, executor, alice, bob, a[0], a[1]);
@@ -173,13 +173,13 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
             try {
                 h.service.redo(twin, ConflictPolicy.OVERWRITE, redo);
             } catch (EditRejected e) {
-                throw new GameTestException("the twin's redo refused: " + e.getMessage());
+                throw new GameTestAssertException("the twin's redo refused: " + e.getMessage());
             }
             tickUntil(executor, () -> redo.result != null, TICKS, "the twin's redo " + i);
         }
         sameRelative(capture(h.world, direct.region), capture(h.world, anyway.region),
                 "Redo anyway against the run redone with OVERWRITE");
-        check(h.world.getBlockState(anyway.at(20, 110, 5)).isOf(Blocks.GOLD_BLOCK), "B, the last entry, decides A and B's cell");
+        check(h.world.getBlockState(anyway.at(20, 110, 5)).is(Blocks.GOLD_BLOCK), "B, the last entry, decides A and B's cell");
         check(h.world.getBlockEntity(anyway.at(2, 101, 2)) == null, "the barrel went with A's stone");
 
         for (int i = 0; i < 2; i++) {
@@ -193,7 +193,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         direct.close();
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- refusals
@@ -203,13 +203,13 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * since the steps (the run ended), steps that kept nothing, a job of the player's still running, and a player without
      * {@code use}. While an overwrite runs, undo is refused and the player's new edit waits to be pushed after it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_refusals", tickLimit = LIMIT)
-    public void undoAnywayIsRefusedWhenItsRunDoesNotMatch(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_anyway_refusals", timeoutTicks = LIMIT)
+    public void undoAnywayIsRefusedWhenItsRunDoesNotMatch(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerPlayerEntity carol = h.addPlayer(false);
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerPlayer carol = h.addPlayer(false);
         int[] at = regionCorner(context, 524);
         int x = at[0], z = at[1];
         Box region = box(x, 100, z, x + 31, 111, z + 15);
@@ -267,7 +267,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, region, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- partial failure
@@ -277,12 +277,12 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * reports the one block it wrote, the history does not move, and the run is still offered. Running it again writes
      * the other 31 and leaves every cell as the fill found it; a redo then meets no conflict.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_cancel", tickLimit = LIMIT)
-    public void aCancelledUndoAnywayReportsWhatItWroteAndFinishesWhenRunAgain(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_anyway_cancel", timeoutTicks = LIMIT)
+    public void aCancelledUndoAnywayReportsWhatItWroteAndFinishesWhenRunAgain(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
         int[] at = regionCorner(context, 526);
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 63, 143, z + 63); // 32 sections
@@ -322,7 +322,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         check(cancelled[0] && first.result.outcome() == JobOutcome.CANCELLED, "Undo anyway " + first.result);
         check(first.result.changed() >= 1 && first.result.changed() <= 2, "one section's blocks: " + first.result);
         check(h.history().redoLabels().size() == 1 && h.history().undoLabels().isEmpty(), "the history did not move");
-        check(h.service.historyService().session(alice.getUuid()).run().isPresent(), "the run is still offered");
+        check(h.service.historyService().session(alice.getUUID()).run().isPresent(), "the run is still offered");
 
         JobResult again = overwrite(h, executor, alice, false, 1);
         check(again.outcome() == JobOutcome.COMPLETED && again.changed() == 33 - first.result.changed(),
@@ -333,7 +333,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, region, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -341,13 +341,13 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * Then the world border moves into chunk B: Undo anyway writes the cells it may and leaves the one beyond the
      * border, counting it as protected; the run is resolved (a second one is refused).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_protected", tickLimit = LIMIT)
-    public void undoAnywayLeavesAProtectedColumnAndCountsIt(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_anyway_protected", timeoutTicks = LIMIT)
+    public void undoAnywayLeavesAProtectedColumnAndCountsIt(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
-        ServerPlayerEntity bob = h.addPlayer();
+        ServerPlayer bob = h.addPlayer();
         int[] at = regionCorner(context, 527);
         int x = at[0], z = at[1];
         Box region = box(x, 100, z, x + 31, 110, z + 15);
@@ -365,12 +365,12 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         try {
             border.setCenter(x + 24 - 100_000, z);
             border.setSize(200_000);
-            check(!h.world.canPlayerModifyAt(builder, pos(x + 28, 105, z + 5)), "x+28 is not protected");
-            check(h.world.canPlayerModifyAt(builder, pos(x + 20, 105, z + 5)), "x+20 is protected");
+            check(!h.world.mayInteract(builder, pos(x + 28, 105, z + 5)), "x+28 is not protected");
+            check(h.world.mayInteract(builder, pos(x + 20, 105, z + 5)), "x+20 is protected");
             JobResult result = overwrite(h, executor, builder, false, 1);
             check(result.outcome() == JobOutcome.COMPLETED && result.changed() == 2 && result.skippedProtected() == 1,
                     "Undo anyway " + result);
-            check(h.world.getBlockState(pos(x + 28, 105, z + 5)).isOf(Blocks.EMERALD_BLOCK), "the protected cell changed");
+            check(h.world.getBlockState(pos(x + 28, 105, z + 5)).is(Blocks.EMERALD_BLOCK), "the protected cell changed");
             BlockPos kept = pos(x + 28, 105, z + 5);
             WorldSnapshot expected = MultiplayerGameTest.with(original, box(kept.getX(), 105, kept.getZ(), kept.getX(), 105,
                     kept.getZ()), h.state("minecraft:emerald_block"));
@@ -383,7 +383,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, loaded, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- review follow-ups (regions 528-534)
@@ -393,12 +393,12 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * pushed, which is a change to the history, so the Undo anyway of the undo made before the stroke is refused. The
      * dabs are kept (written and in the history), and nothing else is written.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_stroke", tickLimit = LIMIT)
-    public void anOpenStrokeIsCommittedFirstSoUndoAnywayIsRefusedAndTheDabsKept(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_anyway_stroke", timeoutTicks = LIMIT)
+    public void anOpenStrokeIsCommittedFirstSoUndoAnywayIsRefusedAndTheDabsKept(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
         int[] at = regionCorner(context, 528);
         int x = at[0], z = at[1];
         Box region = box(x, 99, z, x + 31, 111, z + 15);
@@ -425,7 +425,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, region, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -433,13 +433,13 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * is writing (it needs only {@code use}, like undo). The history does not move and the run is still there; with
      * {@code use} back, Undo anyway again finishes it exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_revoke", tickLimit = LIMIT)
-    public void losingUseCancelsUndoAnywayAndTheRunIsKeptForARetry(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_anyway_revoke", timeoutTicks = LIMIT)
+    public void losingUseCancelsUndoAnywayAndTheRunIsKeptForARetry(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
-        ServerPlayerEntity bob = h.addPlayer();
+        ServerPlayer bob = h.addPlayer();
         int[] at = regionCorner(context, 529);
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 15, 159, z + 15); // three sections
@@ -458,7 +458,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         tickUntil(executor, () -> anyway.result != null, TICKS, "the cancelled Undo anyway");
         check(anyway.result.outcome() == JobOutcome.CANCELLED && anyway.result.changed() == 4096,
                 "Undo anyway " + anyway.result);
-        HistoryService.Session session = h.service.historyService().session(builder.getUuid());
+        HistoryService.Session session = h.service.historyService().session(builder.getUUID());
         check(!session.busy() && session.run().map(run -> run.entries().size()).orElse(0) == 1, "the run is gone");
         check(h.service.history(builder).redoLabels().size() == 1 && h.service.history(builder).undoLabels().isEmpty(),
                 "the history moved");
@@ -472,7 +472,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, region, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -481,24 +481,24 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * flight, and the run is kept for another try. The runs are made directly in the history service (entries recorded
      * over cells, one undo step each), so no world has to change for them.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_executor", tickLimit = LIMIT)
-    public void theExecutorsRefusalsKeepTheRun(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_anyway_executor", timeoutTicks = LIMIT)
+    public void theExecutorsRefusalsKeepTheRun(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, 0, 0.4, 2, 8, 1, 64, UnloadedPolicy.REFUSE, 1024, 1));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerPlayerEntity carol = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerPlayer carol = h.addPlayer();
         int[] at = regionCorner(context, 530);
         int x = at[0], z = at[1];
         Box loaded = box(x, 100, z, x + 47, 101, z + 15);
         loadAndForce(h.world, loaded);
         HistoryService history = h.service.historyService();
         // Alice: two steps in two chunk columns; Bob: one step in a chunk nobody loaded.
-        HistoryService.Session a = history.session(alice.getUuid());
+        HistoryService.Session a = history.session(alice.getUUID());
         manufacturedRun(h, a, new int[][] {{x + 1, z + 1}, {x + 33, z + 1}});
         int[] far = regionCorner(context, 531);
-        HistoryService.Session b = history.session(bob.getUuid());
+        HistoryService.Session b = history.session(bob.getUUID());
         manufacturedRun(h, b, new int[][] {{far[0] + 5, far[1] + 5}});
         check(!WorldChecks.isChunkLoaded(h.world, far[0] >> 4, far[1] >> 4), "the far chunk is loaded");
 
@@ -521,7 +521,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, loaded, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -530,12 +530,12 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * Redo anyway puts the chest with its diamonds there. Undoing the move afterwards meets no conflict and brings the
      * chest back to where it started.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_redo_anyway_tile", tickLimit = LIMIT)
-    public void redoAnywayRestoresABlockEntityOfTheAfterStates(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_redo_anyway_tile", timeoutTicks = LIMIT)
+    public void redoAnywayRestoresABlockEntityOfTheAfterStates(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
         int[] at = regionCorner(context, 533);
         int x = at[0], z = at[1];
         Box region = box(x, 100, z, x + 15, 103, z + 15);
@@ -544,7 +544,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         BlockPos target = pos(x + 12, 101, z + 2);
         BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
         writer.write(source.getX(), source.getY(), source.getZ(), h.state("minecraft:chest[facing=east]"), null);
-        ((ChestBlockEntity) h.world.getBlockEntity(source)).setStack(0, new ItemStack(Items.DIAMOND, 5));
+        ((ChestBlockEntity) h.world.getBlockEntity(source)).setItem(0, new ItemStack(Items.DIAMOND, 5));
         RecordingListener move = new RecordingListener();
         run(h, alice, new OpSpec.Move(box(source.getX(), 101, source.getZ(), source.getX(), 101, source.getZ()),
                 new dev.sculptory.core.BlockPos(10, 0, 0), Transform.IDENTITY, new Pattern.Single(h.state("minecraft:air"))),
@@ -556,7 +556,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         fillBy(h, executor, bob, box(target.getX(), 101, target.getZ(), target.getX(), 101, target.getZ()), "minecraft:stone");
 
         check(step(h, executor, alice, false).skippedConflicts() == 1, "the redo kept Bob's stone");
-        check(h.world.getBlockState(target).isOf(Blocks.STONE) && h.world.getBlockState(source).isAir(), "after the redo");
+        check(h.world.getBlockState(target).is(Blocks.STONE) && h.world.getBlockState(source).isAir(), "after the redo");
         JobResult anyway = overwrite(h, executor, alice, true, 1);
         check(anyway.outcome() == JobOutcome.COMPLETED && anyway.changed() == 1, "Redo anyway " + anyway);
         checkChest(h.world, target, Items.DIAMOND, 5);
@@ -568,7 +568,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, region, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -577,12 +577,12 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
      * executor directly, as ExecutorGameTest does) applies to the Undo anyway program as to any job: of Bob's three
      * blocks the undo kept, the one in a denied column stays and is counted as protected, the other two are restored.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_history_anyway_columns", tickLimit = LIMIT)
-    public void aClaimStyleColumnPermitLeavesItsColumnDuringUndoAnyway(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_history_anyway_columns", timeoutTicks = LIMIT)
+    public void aClaimStyleColumnPermitLeavesItsColumnDuringUndoAnyway(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
         int[] at = regionCorner(context, 534);
         int x = at[0], z = at[1];
         Box region = box(x, 104, z, x + 31, 106, z + 15);
@@ -594,7 +594,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         }
         check(step(h, executor, alice, true).skippedConflicts() == 3, "the undo kept Bob's three blocks");
         List<HistoryEntry> run =
-                h.service.historyService().session(alice.getUuid()).run().orElseThrow().entries();
+                h.service.historyService().session(alice.getUUID()).run().orElseThrow().entries();
         long[] westHalf = new long[4];
         for (int bit = 0; bit < 256; bit++) {
             if ((bit & 15) < 8) westHalf[bit >>> 6] |= 1L << bit;
@@ -605,7 +605,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
             executor.submit(JobRequest.system(h.world, HistoryPrograms.reapply(run, false), listener).withPermits(
                     (px, pz) -> px == cx && pz == cz ? new ChunkPermit.Columns(westHalf) : ChunkPermit.ALLOW));
         } catch (EditRejected e) {
-            throw new GameTestException("Undo anyway refused: " + e.getMessage());
+            throw new GameTestAssertException("Undo anyway refused: " + e.getMessage());
         }
         tickUntil(executor, () -> listener.result != null, TICKS, "Undo anyway under the permit");
         check(listener.result.outcome() == JobOutcome.COMPLETED && listener.result.changed() == 2
@@ -616,7 +616,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         forceChunks(h.world, region, false);
         executor.shutdown();
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -629,7 +629,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
             RecordBuilder record = new RecordBuilder();
             record.record(cell[0], 100, cell[1], h.state("minecraft:air"), null, h.state("minecraft:stone"), null);
             history.push(session, new HistoryEntry(UUID.randomUUID(), session.player(),
-                    h.world.getRegistryKey().getValue().toString(), "Made", record.build(), System.currentTimeMillis()));
+                    h.world.dimension().location().toString(), "Made", record.build(), System.currentTimeMillis()));
         }
         for (int i = 0; i < cells.length; i++) {
             history.begin(session, HistoryService.Op.UNDO, history.candidate(session, HistoryService.Op.UNDO).orElseThrow());
@@ -647,15 +647,15 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
     /** One region's script, run the same way for the player under test and for a twin. */
     private static final class Scenario {
         final Harness h;
-        final EditExecutor<ServerWorld> executor;
-        final ServerPlayerEntity alice;
-        final ServerPlayerEntity bob;
+        final EditExecutor<ServerLevel> executor;
+        final ServerPlayer alice;
+        final ServerPlayer bob;
         final int x;
         final int z;
         final Box region;
         WorldSnapshot original;
 
-        Scenario(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity alice, ServerPlayerEntity bob, int x,
+        Scenario(Harness h, EditExecutor<ServerLevel> executor, ServerPlayer alice, ServerPlayer bob, int x,
                  int z) {
             this.h = h;
             this.executor = executor;
@@ -684,7 +684,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
             }
             BlockPos chest = at(2, 101, 2);
             writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
-            ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 5));
+            ((ChestBlockEntity) h.world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 5));
             original = capture(h.world, region);
         }
 
@@ -714,15 +714,15 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
             BlockPos chest = at(2, 101, 2);
             BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
             writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:barrel[facing=up]"), null);
-            ((LootableContainerBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.APPLE, 9));
+            ((RandomizableContainerBlockEntity) h.world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.APPLE, 9));
         }
 
         /** Bob replaces what stands at the chest's cell with a chest of his own (same state, other contents). */
-        private void ownChest(net.minecraft.item.Item item) {
+        private void ownChest(net.minecraft.world.item.Item item) {
             BlockPos chest = at(2, 101, 2);
             BlockWriter writer = h.runtime.writer(h.world, WriteOptions.DEFAULT);
             writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
-            ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(3, new ItemStack(item, 7));
+            ((ChestBlockEntity) h.world.getBlockEntity(chest)).setItem(3, new ItemStack(item, 7));
         }
 
         void close() {
@@ -731,7 +731,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
     }
 
     /** A fill by {@code player}, run to its end. */
-    private static void fillBy(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player, Box box,
+    private static void fillBy(Harness h, EditExecutor<ServerLevel> executor, ServerPlayer player, Box box,
                                String state) {
         RecordingListener listener = new RecordingListener();
         run(h, player, fill(h, box, state), listener);
@@ -740,7 +740,7 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
     }
 
     /** One undo (or redo) step of {@code player} skipping conflicts, run to its end. */
-    private static JobResult step(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player,
+    private static JobResult step(Harness h, EditExecutor<ServerLevel> executor, ServerPlayer player,
                                   boolean undo) {
         RecordingListener listener = historyStep(h, player, undo);
         tickUntil(executor, () -> listener.result != null, TICKS, undo ? "an undo" : "a redo");
@@ -748,17 +748,17 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         return listener.result;
     }
 
-    private static JobTicket overwriteAdmitted(Harness h, ServerPlayerEntity player, boolean redo, int steps,
+    private static JobTicket overwriteAdmitted(Harness h, ServerPlayer player, boolean redo, int steps,
                                                JobListener listener) {
         try {
             return h.service.historyOverwrite(player, redo, steps, listener);
         } catch (EditRejected e) {
-            throw new GameTestException((redo ? "Redo" : "Undo") + " anyway refused: " + e.getMessage());
+            throw new GameTestAssertException((redo ? "Redo" : "Undo") + " anyway refused: " + e.getMessage());
         }
     }
 
     /** Undo anyway (or Redo anyway) of {@code steps} steps, run to its end. */
-    private static JobResult overwrite(Harness h, EditExecutor<ServerWorld> executor, ServerPlayerEntity player,
+    private static JobResult overwrite(Harness h, EditExecutor<ServerLevel> executor, ServerPlayer player,
                                        boolean redo, int steps) {
         RecordingListener listener = new RecordingListener();
         overwriteAdmitted(h, player, redo, steps, listener);
@@ -766,17 +766,17 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
         return listener.result;
     }
 
-    private static void expectInvalid(Harness h, ServerPlayerEntity player, boolean redo, int steps, String detail) {
+    private static void expectInvalid(Harness h, ServerPlayer player, boolean redo, int steps, String detail) {
         EditRejected e = refusal(() -> h.service.historyOverwrite(player, redo, steps, null));
         check(e.reason() == RejectReason.INVALID && Objects.equals(e.detail(), detail)
                 && e.kind().equals(EditRejected.HISTORY_RUN),
                 (redo ? "Redo" : "Undo") + " anyway of " + steps + ": expected \"" + detail + "\", got " + e.getMessage());
     }
 
-    private static void checkChest(ServerWorld world, BlockPos pos, net.minecraft.item.Item item, int count) {
+    private static void checkChest(ServerLevel world, BlockPos pos, net.minecraft.world.item.Item item, int count) {
         check(world.getBlockEntity(pos) instanceof ChestBlockEntity, "no chest at " + pos.toShortString());
-        ItemStack stack = ((ChestBlockEntity) world.getBlockEntity(pos)).getStack(0);
-        check(stack.isOf(item) && stack.getCount() == count, "the chest holds " + stack);
+        ItemStack stack = ((ChestBlockEntity) world.getBlockEntity(pos)).getItem(0);
+        check(stack.is(item) && stack.getCount() == count, "the chest holds " + stack);
     }
 
     /** The two regions (same size) hold the same states and block entities, cell for cell. */
@@ -792,16 +792,16 @@ public final class HistoryOverwriteGameTest implements FabricGameTest {
                     if (first < 0) first = i;
                 }
             }
-            throw new GameTestException(what + ": " + diffs + " cells differ, first at index " + first);
+            throw new GameTestAssertException(what + ": " + diffs + " cells differ, first at index " + first);
         }
         check(relativeTiles(expected).equals(relativeTiles(actual)), what + ": block entities differ: "
                 + relativeTiles(expected) + " / " + relativeTiles(actual));
     }
 
-    private static Map<BlockPos, NbtCompound> relativeTiles(WorldSnapshot snapshot) {
-        Map<BlockPos, NbtCompound> tiles = new java.util.TreeMap<>();
-        for (Map.Entry<Long, NbtCompound> entry : snapshot.tiles.entrySet()) {
-            BlockPos p = BlockPos.fromLong(entry.getKey());
+    private static Map<BlockPos, CompoundTag> relativeTiles(WorldSnapshot snapshot) {
+        Map<BlockPos, CompoundTag> tiles = new java.util.TreeMap<>();
+        for (Map.Entry<Long, CompoundTag> entry : snapshot.tiles.entrySet()) {
+            BlockPos p = BlockPos.of(entry.getKey());
             tiles.put(new BlockPos(p.getX() - snapshot.box.min().x(), p.getY() - snapshot.box.min().y(),
                     p.getZ() - snapshot.box.min().z()), entry.getValue());
         }

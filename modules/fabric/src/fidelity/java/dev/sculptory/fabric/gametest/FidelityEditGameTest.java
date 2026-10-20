@@ -36,16 +36,15 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.inventory.Inventory;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Container;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
 import vectorwing.farmersdelight.common.block.entity.CookingPotBlockEntity;
 
 /**
@@ -65,10 +64,10 @@ public final class FidelityEditGameTest implements FabricGameTest {
      * weighted Fill of modded states over the top of the build, each checked; then four undos give back the build
      * exactly (states and block-entity contents), four redos the edited state, and four more undos the build again.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_region", tickLimit = LIMIT)
-    public void regionOpsOnModdedBlocksUndoAndRedoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_region", timeoutTicks = LIMIT)
+    public void regionOpsOnModdedBlocksUndoAndRedoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 200);
         int x0 = at[0] + 4, y0 = 100, z0 = at[1] + 4;
         Box all = box(x0 - 4, y0, z0 - 4, x0 + 11, y0 + 7, z0 + 11);
@@ -92,37 +91,37 @@ public final class FidelityEditGameTest implements FabricGameTest {
                 new OpSpec.Fill(box(x0, y0 + 3, z0, x0 + 7, y0 + 4, z0 + 7), chippedMix, CellMask.ANY));
         List<RecordingListener> jobs = new ArrayList<>();
         WorldSnapshot[] edited = new WorldSnapshot[1];
-        TimedTaskRunner runner = context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> original[0] = capture(world, all));
+        GameTestSequence runner = context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> original[0] = capture(world, all));
         for (int i = 0; i < edits.size(); i++) {
             int step = i;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 if (step > 0) checkEdit(h, world, all, original[0], step - 1, jobs.get(step - 1));
                 jobs.add(run(h, edits.get(step)));
             });
-            runner.createAndAdd(() -> check(jobs.get(step).result != null, "edit " + step + " running"));
+            runner.thenWaitUntil(() -> check(jobs.get(step).result != null, "edit " + step + " running"));
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkEdit(h, world, all, original[0], edits.size() - 1, jobs.get(edits.size() - 1));
             edited[0] = capture(world, all);
         });
         undoRedo(runner, h, edits.size(), true);
-        runner.createAndAdd(() -> checkSame(original[0], capture(world, all), "after undoing every edit"));
+        runner.thenWaitUntil(() -> checkSame(original[0], capture(world, all), "after undoing every edit"));
         undoRedo(runner, h, edits.size(), false);
-        runner.createAndAdd(() -> checkSame(edited[0], capture(world, all), "after redoing every edit"));
+        runner.thenWaitUntil(() -> checkSame(edited[0], capture(world, all), "after redoing every edit"));
         undoRedo(runner, h, edits.size(), true);
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(original[0], capture(world, all), "after undoing again");
             check(FidelitySupport.itemEntities(world, all) == 0, "an edit dropped items");
             forceChunks(world, all, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /** What edit {@code step} of the region test must have done. */
-    private static void checkEdit(Harness h, ServerWorld world, Box all, WorldSnapshot original, int step,
+    private static void checkEdit(Harness h, ServerLevel world, Box all, WorldSnapshot original, int step,
                                   RecordingListener job) {
         check(job.result.outcome() == JobOutcome.COMPLETED && job.result.skippedProtected() == 0
                 && job.result.strippedNbt() == 0, "edit " + step + ": " + job.result);
@@ -163,7 +162,7 @@ public final class FidelityEditGameTest implements FabricGameTest {
         boolean exact = spec.contains("[");
         int n = 0;
         for (int state : snapshot.states) {
-            String id = Registries.BLOCK.getId(Block.getStateFromRawId(state).getBlock()).toString();
+            String id = BuiltInRegistries.BLOCK.getKey(Block.stateById(state).getBlock()).toString();
             if (exact ? h.runtime.states().format(state).equals(spec) : id.equals(spec)) n++;
         }
         return n;
@@ -183,11 +182,11 @@ public final class FidelityEditGameTest implements FabricGameTest {
     }
 
     /** Adds {@code count} undos (or redos) in a row, each waiting for the previous and checking it was exact. */
-    static void undoRedo(TimedTaskRunner runner, Harness h, int count, boolean undo) {
+    static void undoRedo(GameTestSequence runner, Harness h, int count, boolean undo) {
         RecordingListener[] last = {null};
         for (int i = 0; i < count; i++) {
             int step = i;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 if (last[0] != null) {
                     check(last[0].result != null, (undo ? "undo " : "redo ") + (step - 1) + " running");
                     checkHistoryJob(last[0], undo, step - 1);
@@ -200,7 +199,7 @@ public final class FidelityEditGameTest implements FabricGameTest {
                 }
             });
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(last[0].result != null, (undo ? "undo " : "redo ") + (count - 1) + " running");
             checkHistoryJob(last[0], undo, count - 1);
         });
@@ -216,7 +215,7 @@ public final class FidelityEditGameTest implements FabricGameTest {
         try {
             h.service.run(h.player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op + " refused: " + e.getMessage());
+            throw new GameTestAssertException(op + " refused: " + e.getMessage());
         }
         return listener;
     }
@@ -234,10 +233,10 @@ public final class FidelityEditGameTest implements FabricGameTest {
      * the pot, skillet, pie, feasts and lanterns, which do not turn themselves), every block entity keeps its contents,
      * and undoing all twelve pastes leaves exactly the world from before.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_paste", tickLimit = LIMIT)
-    public void moddedPasteWithEveryTransformKeepsContents(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_paste", timeoutTicks = LIMIT)
+    public void moddedPasteWithEveryTransformKeepsContents(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 201);
         int x0 = at[0] + 4, y0 = 100, z0 = at[1] + 4;
         Box source = FidelitySupport.buildBox(x0, y0, z0);
@@ -252,29 +251,29 @@ public final class FidelityEditGameTest implements FabricGameTest {
         List<Captured<ClipboardService.ClipboardInfo>> copied = new ArrayList<>();
         List<RecordingListener> pastes = new ArrayList<>();
         List<BlockPos> origins = new ArrayList<>();
-        TimedTaskRunner runner = context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> {
+        GameTestSequence runner = context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, source);
                     before[1] = capture(world, all);
                     copied.add(copy(clips, h.player, source, source.min()));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get(0).get("copy");
-                    check(h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard().tileCount()
+                    check(h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard().tileCount()
                             == FidelitySupport.TILES.size(), "the clipboard lost block entities");
                     // Two rounds: at most 8 of a player's jobs may wait to start (executor.maxQueuedJobsPerPlayer).
                     pasteRange(h, info, transforms, 0, transforms.size() / 2, x0, y0, z0, spacing, pastes, origins);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "first round running");
                     pasteRange(h, copied.get(0).get("copy"), transforms, transforms.size() / 2, transforms.size(),
                             x0, y0, z0, spacing, pastes, origins);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (int k = 0; k < transforms.size(); k++) {
                         check(pastes.get(k).result.outcome() == JobOutcome.COMPLETED
                                 && pastes.get(k).result.strippedNbt() == 0, "paste " + k + " " + pastes.get(k).result);
@@ -282,21 +281,21 @@ public final class FidelityEditGameTest implements FabricGameTest {
                     }
                     CookingPotBlockEntity pot = FidelitySupport.entity(world, origins.get(0).x() + 1, y0 + 1,
                             origins.get(0).z(), CookingPotBlockEntity.class);
-                    check(pot.getInventory().getStackInSlot(7).isOf(Items.BOWL)
+                    check(pot.getInventory().getStackInSlot(7).is(Items.BOWL)
                             && pot.getInventory().getStackInSlot(7).getCount() == 4, "the pasted pot lost its bowls");
-                    Inventory cabinet = FidelitySupport.entity(world, origins.get(0).x() + 4, y0 + 1, origins.get(0).z(),
-                            Inventory.class);
-                    check(cabinet.getStack(0).isOf(Items.BREAD) && cabinet.getStack(0).getCount() == 5,
+                    Container cabinet = FidelitySupport.entity(world, origins.get(0).x() + 4, y0 + 1, origins.get(0).z(),
+                            Container.class);
+                    check(cabinet.getItem(0).is(Items.BREAD) && cabinet.getItem(0).getCount() == 5,
                             "the pasted cabinet lost its bread");
                 });
         undoRedo(runner, h, transforms.size(), true);
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(before[1], capture(world, all), "after undoing every paste");
             check(FidelitySupport.itemEntities(world, all) == 0, "a paste or undo dropped items");
             forceChunks(world, all, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
@@ -304,10 +303,10 @@ public final class FidelityEditGameTest implements FabricGameTest {
      * a turn and a mirror, undone exactly, then loaded as a clipboard and placed again. File tiles are sanitized
      * for everyone: the kitchen's block entities keep their contents, and the canvas signs their text.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_asset", tickLimit = LIMIT)
-    public void moddedAssetSaveAndPlace(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_asset", timeoutTicks = LIMIT)
+    public void moddedAssetSaveAndPlace(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 202);
         int x0 = at[0] + 4, y0 = 100, z0 = at[1] + 4;
         Box source = FidelitySupport.buildBox(x0, y0, z0);
@@ -330,23 +329,23 @@ public final class FidelityEditGameTest implements FabricGameTest {
         BlockPos clipboardAt = new BlockPos(x0 + 36, y0, z0);
         WorldSnapshot[] allBefore = new WorldSnapshot[1];
         String[] hash = new String[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, source);
                     copied.add(copy(clips, h.player, source, source.min()));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get(0).get("copy");
                     run(() -> clips.save(h.player, info.clipboardId(), "fidelity/kitchen.schem", saved));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Saved result = saved.get("save");
                     check(result.notices().isEmpty(), "save notices " + result.notices());
                     hash[0] = result.contentHash();
                     run(() -> clips.preview(h.player, new SourceRef.Asset(hash[0]), preview));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Outbound out = preview.get("asset preview");
                     try {
                         PreviewPayload.Decoded decoded = PreviewPayload.decode(out.payload(), 64L << 20);
@@ -355,53 +354,53 @@ public final class FidelityEditGameTest implements FabricGameTest {
                         check("chipped:big_lantern[facing=east,waterlogged=true]".equals(decoded.get(4, 1, 2)),
                                 "preview cell " + decoded.get(4, 1, 2));
                     } catch (IOException e) {
-                        throw new GameTestException("undecodable preview: " + e);
+                        throw new GameTestAssertException("undecodable preview: " + e);
                     }
                     allBefore[0] = capture(world, all);
                     run(() -> h.service.run(h.player, new OpSpec.Paste(new SourceRef.Asset(hash[0]), assetAt, turned,
                             PasteOptions.DEFAULT), RunOptions.DEFAULT, assetPaste));
                 })
-                .createAndAdd(() -> check(assetPaste.result != null, "asset paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(assetPaste.result != null, "asset paste running"))
+                .thenWaitUntil(() -> {
                     check(assetPaste.result.outcome() == JobOutcome.COMPLETED && assetPaste.result.strippedNbt() == 0,
                             "asset paste " + assetPaste.result);
                     FidelitySupport.checkTransformed(world, before[0], assetAt, turned, "asset");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     checkHistoryJob(undo, true, 0);
                     checkSame(allBefore[0], capture(world, all), "after undoing the asset");
                     run(() -> clips.load(h.player, "fidelity/kitchen.schem", loaded));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = loaded.get("load");
                     check(info.notices().isEmpty(), "load notices " + info.notices());
                     paste(h, h.player, info.clipboardId(), clipboardAt, Transform.IDENTITY, clipboardPaste);
                 })
-                .createAndAdd(() -> check(clipboardPaste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(clipboardPaste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(clipboardPaste.result.outcome() == JobOutcome.COMPLETED, "paste " + clipboardPaste.result);
                     ClipTestSupport.checkShifted(world, before[0], pos(clipboardAt.x(), clipboardAt.y(), clipboardAt.z()),
                             "the loaded asset");
                     h.undo(undoAgain);
                 })
-                .createAndAdd(() -> check(undoAgain.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoAgain.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     checkHistoryJob(undoAgain, true, 1);
                     checkSame(allBefore[0], capture(world, all), "after undoing the loaded asset");
                     forceChunks(world, all, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     private static void run(ClipboardGameTest.ThrowingRun request) {
         try {
             request.run();
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.getMessage());
         }
     }
 }

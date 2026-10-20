@@ -6,7 +6,7 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor.Face;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import java.util.List;
 import java.util.Optional;
-import net.minecraft.block.BlockState;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**

@@ -8,8 +8,8 @@ import java.util.List;
 import java.util.OptionalInt;
 import java.util.function.IntFunction;
 import java.util.function.Predicate;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -123,7 +123,7 @@ final class ToolChecks {
         Box face = a.box(14, 0, 20, 20, 4, 20);
         Cells before = run.server(area);
         BlockState planks = Fixtures.Build.state(PLANKS);
-        BlockState air = Blocks.AIR.getDefaultState();
+        BlockState air = Blocks.AIR.defaultBlockState();
         d.selectTool(ToolId.EXTRUDE);
         straightView(d, a);
 
@@ -197,8 +197,8 @@ final class ToolChecks {
         run.edit("flood", () -> d.click(0));
         Cells flooded = run.server(area);
         List<Cells.Change> changes = before.diff(flooded);
-        Predicate<Cells.Change> inBasin = c -> basin.contains(c.x(), c.y(), c.z()) && c.after().isOf(Blocks.WATER)
-                && c.after().getFluidState().isStill() && c.y() <= a.y(1);
+        Predicate<Cells.Change> inBasin = c -> basin.contains(c.x(), c.y(), c.z()) && c.after().is(Blocks.WATER)
+                && c.after().getFluidState().isSource() && c.y() <= a.y(1);
         run.check("Flood fills the basin with still water, never above the aimed level",
                 !changes.isEmpty() && Changes.offenders(changes, inBasin).isEmpty(),
                 changes.size() + " cells; " + Changes.offenders(changes, inBasin));
@@ -220,8 +220,8 @@ final class ToolChecks {
             for (int z = 21; z <= 26; z++) {
                 for (int y = 0; y <= 1; y++) {
                     BlockState state = before.at(a.x(x), a.y(y), a.z(z));
-                    if (state.isOf(Blocks.WATER) || state.isOf(Blocks.SEAGRASS)) {
-                        dry.set(a.x(x), a.y(y), a.z(z), Blocks.AIR.getDefaultState());
+                    if (state.is(Blocks.WATER) || state.is(Blocks.SEAGRASS)) {
+                        dry.set(a.x(x), a.y(y), a.z(z), Blocks.AIR.defaultBlockState());
                     }
                 }
             }
@@ -237,7 +237,7 @@ final class ToolChecks {
         d.overlook(a.x(30), a.y(-1), a.z(8));
         Cells ball = BrushChecks.stroke(run, area, a.x(30), a.y(-1), a.z(8), Face.UP, 100, "water ball");
         List<Cells.Change> ballChanges = before.diff(ball);
-        Predicate<Cells.Change> water = c -> c.after().isOf(Blocks.WATER) && c.x() >= a.x(26) && c.x() <= a.x(34)
+        Predicate<Cells.Change> water = c -> c.after().is(Blocks.WATER) && c.x() >= a.x(26) && c.x() <= a.x(34)
                 && c.z() >= a.z(4) && c.z() <= a.z(12);
         run.check("a click with the fluid ball places one ball of water", !ballChanges.isEmpty()
                 && Changes.offenders(ballChanges, water).isEmpty(), ballChanges.size() + " cells; "

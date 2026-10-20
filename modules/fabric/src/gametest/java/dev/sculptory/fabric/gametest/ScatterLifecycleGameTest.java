@@ -53,16 +53,16 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.world.World;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 
 /**
  * Scatter failure paths and fairness (M3-B review): every way a preview ends releases its area hold; holds wait for
@@ -77,14 +77,14 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
     }
 
     /** No hold left behind, nothing in flight, and (no job being there) the area unlocked. */
-    private static void checkReleased(Harness h, ServerScatter<ServerPlayerEntity, ServerWorld> scatter, int holds,
+    private static void checkReleased(Harness h, ServerScatter<ServerPlayer, ServerLevel> scatter, int holds,
                                       Box area, String what) {
         checkReleased(h, scatter, holds, what);
         check(!h.service.executor().isLocked(h.world, area), what + ": the area is still locked");
     }
 
     /** No hold left behind and nothing in flight (jobs may lock the area). */
-    private static void checkReleased(Harness h, ServerScatter<ServerPlayerEntity, ServerWorld> scatter, int holds,
+    private static void checkReleased(Harness h, ServerScatter<ServerPlayer, ServerLevel> scatter, int holds,
                                       String what) {
         check(h.service.executor().holdCount() == holds, what + ": " + h.service.executor().holdCount() + " holds, expected "
                 + holds);
@@ -95,8 +95,8 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
      * Completion, a planner failure, the player leaving, the player gone without notice, a world change, server
      * shutdown and a superseded preview each release the area; only completion and failures answer.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_endings", tickLimit = LIMIT)
-    public void scatterEndingsReleaseTheArea(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_endings", timeoutTicks = LIMIT)
+    public void scatterEndingsReleaseTheArea(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 80);
@@ -122,14 +122,14 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         checkReleased(h, scatter, holds, area, "planner failure");
 
         Reply left = preview(scatter, h.player, small(x0, z0, gold));
-        scatter.playerLeft(h.player.getUuid());
+        scatter.playerLeft(h.player.getUUID());
         check(!left.finished(), "a player who left was answered");
         checkReleased(h, scatter, holds, area, "player left");
 
-        ServerPlayerEntity ghost = h.addPlayer();
+        ServerPlayer ghost = h.addPlayer();
         SourceRef ghostGold = block(h, ghost, "minecraft:gold_block");
         Reply gone = preview(scatter, ghost, small(x0, z0, ghostGold));
-        h.world.getServer().getPlayerManager().remove(ghost);
+        h.world.getServer().getPlayerList().remove(ghost);
         scatter.tick();
         check(!gone.finished(), "a player no longer on the server was answered");
         checkReleased(h, scatter, holds, area, "player gone");
@@ -139,23 +139,23 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         check(!stopped.finished(), "a stopped preview was answered");
         checkReleased(h, scatter, holds, area, "shutdown");
 
-        ServerPlayerEntity traveller = h.addPlayer();
+        ServerPlayer traveller = h.addPlayer();
         SourceRef travellerGold = block(h, traveller, "minecraft:gold_block");
         Reply moved = preview(scatter, traveller, small(x0, z0, travellerGold));
-        ServerWorld nether = h.world.getServer().getWorld(World.NETHER);
-        check(nether != null && traveller.teleport(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport failed");
+        ServerLevel nether = h.world.getServer().getLevel(Level.NETHER);
+        check(nether != null && traveller.teleportTo(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport failed");
         scatter.tick();
         check(moved.reason == RejectReason.INVALID, "world change answered " + moved.reason + " " + moved.detail);
         checkReleased(h, scatter, holds, area, "world change");
 
         Reply first = preview(scatter, h.player, small(x0, z0, gold));
-        int tick = h.world.getServer().getTicks();
+        int tick = h.world.getServer().getTickCount();
         check(refusal(() -> scatter.preview(h.player, small(x0, z0, gold), new Reply())).reason()
                 == RejectReason.RATE_LIMITED, "two previews in one tick");
         Reply[] second = new Reply[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
-                    check(h.world.getServer().getTicks() > tick, "waiting for the next tick");
+        context.startSequence()
+                .thenWaitUntil(() -> {
+                    check(h.world.getServer().getTickCount() > tick, "waiting for the next tick");
                     second[0] = preview(scatter, h.player, small(x0, z0, gold));
                     check(first.superseded && first.calls == 1, "not superseded");
                     check(h.service.executor().holdCount() == holds + 1, "the superseded hold was kept");
@@ -165,7 +165,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -176,8 +176,8 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
      * refused RATE_LIMITED without a cooldown. A3: holding uses the player's hold budget, and an overdrawn budget
      * refuses the next preview (RATE_LIMITED) until it has refilled.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_deadline", tickLimit = LIMIT)
-    public void scatterDeadlineAndCooldown(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_deadline", timeoutTicks = LIMIT)
+    public void scatterDeadlineAndCooldown(GameTestHelper context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
         var scatter = new ServerScatter<>(h.service);
@@ -187,7 +187,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         Box area = box(x0, FLOOR_Y, z0, x0 + 31, FLOOR_Y + 5, z0 + 31);
         int holds = h.service.executor().holdCount();
         SourceRef gold = block(h, h.player, "minecraft:gold_block");
-        java.util.UUID id = h.player.getUuid();
+        java.util.UUID id = h.player.getUUID();
         long maxPlanning = h.runtime.config().scatter.maxPlanningMillis * 1_000_000L;
         double refill = h.runtime.config().scatter.holdRefillShare;
 
@@ -249,19 +249,19 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         checkReleased(h, scatter, holds, area, "wall-clock limit");
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A hold waits for the jobs admitted before it (and gives up with AREA_BUSY after a while); jobs admitted after it
      * stay queued and dabs in the area are refused AREA_BUSY until it is released.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_holds", tickLimit = LIMIT)
-    public void scatterHoldsWaitAndHoldOff(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_holds", timeoutTicks = LIMIT)
+    public void scatterHoldsWaitAndHoldOff(GameTestHelper context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
         var scatter = new ServerScatter<>(h.service);
-        EditExecutor<ServerWorld> executor = h.service.executor();
+        EditExecutor<ServerLevel> executor = h.service.executor();
         int[] at = regionCorner(context, 82);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
@@ -275,14 +275,14 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         h.fill(air, "minecraft:air", earlier);
         Reply waiting = preview(scatter, h.player, small(x0, z0, gold));
         scatter.tick();
-        check(!waiting.finished() && scatter.planning(h.player.getUuid()), "planned while an earlier job holds the area");
+        check(!waiting.finished() && scatter.planning(h.player.getUUID()), "planned while an earlier job holds the area");
 
         Reply[] timedOut = new Reply[1];
         RecordingListener[] blocked = new RecordingListener[2];
         long[] queuedAt = new long[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(earlier.result != null, "earlier job running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(earlier.result != null, "earlier job running"))
+                .thenWaitUntil(() -> {
                     planNow(scatter, waiting);
                     waiting.get("preview after the earlier job");
                     checkReleased(h, scatter, holds, area, "after waiting");
@@ -295,31 +295,31 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                         h.service.beginStroke(h.player, 7, new BrushSpec(BrushTool.RAISE, 3, 1f, Falloff.SMOOTH,
                                 Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0, 1L));
                     } catch (EditRejected e) {
-                        throw new GameTestException("stroke refused: " + e.getMessage());
+                        throw new GameTestAssertException("stroke refused: " + e.getMessage());
                     }
                     DabOutcome dab = h.service.dabs(h.player, 7, 0, List.of(EditTestSupport.dab(0, x0 + 10, FLOOR_Y, z0 + 10)));
                     check(!dab.accepted() && dab.reason() == RejectReason.AREA_BUSY, "dab during planning: " + dab);
                     h.service.endStroke(h.player, 7);
                     check(executor.holdCount() == holds + 1 && scatter.active() == 1 && !holding.finished(),
                             "after the fill: holds " + executor.holdCount() + ", planning " + scatter.active());
-                    queuedAt[0] = h.world.getServer().getTicks();
+                    queuedAt[0] = h.world.getServer().getTickCount();
                     timedOut[0] = holding;
                 })
-                .createAndAdd(() -> {
-                    check(h.world.getServer().getTicks() >= queuedAt[0] + 5, "letting the executor tick");
+                .thenWaitUntil(() -> {
+                    check(h.world.getServer().getTickCount() >= queuedAt[0] + 5, "letting the executor tick");
                     check(blocked[0].result == null && blocked[0].phases.contains(Phase.QUEUED)
                             && !blocked[0].phases.contains(Phase.APPLY), "a job ran inside a held area: " + blocked[0].phases
                             + "; holds " + executor.holdCount() + ", planning " + scatter.active() + ", reply "
                             + timedOut[0].calls + " " + timedOut[0].reason + " " + timedOut[0].detail + " superseded "
                             + timedOut[0].superseded + " planned " + (timedOut[0].plan != null) + ", locked "
-                            + executor.isLocked(h.world, air) + ", ticks " + h.world.getServer().getTicks() + " vs "
+                            + executor.isLocked(h.world, air) + ", ticks " + h.world.getServer().getTickCount() + " vs "
                             + queuedAt[0]);
                     planNow(scatter, timedOut[0]);
                     timedOut[0].get("holding preview");
                     checkReleased(h, scatter, holds, "after holding");
                 })
-                .createAndAdd(() -> check(blocked[0].result != null, "the held-off job runs once released"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(blocked[0].result != null, "the held-off job runs once released"))
+                .thenWaitUntil(() -> {
                     check(blocked[0].result.outcome() == JobOutcome.COMPLETED, "held-off job " + blocked[0].result);
                     // A preview still waiting for an earlier job after a while gives up.
                     blocked[1] = new RecordingListener();
@@ -330,17 +330,17 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                     check(busy.reason == RejectReason.AREA_BUSY, "long wait answered " + busy.reason);
                     checkReleased(h, scatter, holds, "given up");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(blocked[1].result != null, "the earlier job still runs");
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** The queue cap, the per-tick limit and the TOO_LARGE caps refuse up front and hold nothing. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_caps", tickLimit = LIMIT)
-    public void scatterCapsAndQueue(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_caps", timeoutTicks = LIMIT)
+    public void scatterCapsAndQueue(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 83);
@@ -350,10 +350,10 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
 
         List<Reply> replies = new ArrayList<>();
         for (int i = 0; i < ServerScatter.MAX_ACTIVE; i++) {
-            ServerPlayerEntity p = h.addPlayer();
+            ServerPlayer p = h.addPlayer();
             replies.add(preview(scatter, p, small(x0, z0, block(h, p, "minecraft:gold_block"))));
         }
-        ServerPlayerEntity ninth = h.addPlayer();
+        ServerPlayer ninth = h.addPlayer();
         SourceRef ninthGold = block(h, ninth, "minecraft:gold_block");
         check(refusal(() -> scatter.preview(ninth, small(x0, z0, ninthGold), new Reply())).reason()
                 == RejectReason.QUEUE_FULL, "a ninth preview");
@@ -368,7 +368,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
 
         Clipboard hollow = Clipboard.builder(h.runtime.states(), new BlockPos(65, 65, 65))
                 .set(0, 0, 0, h.state("minecraft:stone")).build();
-        SourceRef big = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), hollow).id());
+        SourceRef big = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), hollow).id());
         tooLarge(scatter, h.player, small(x0, z0, big), "a variant over the source volume");
 
         List<SourceRef> assets = new ArrayList<>();
@@ -384,7 +384,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
 
         Clipboard.Builder dense = Clipboard.builder(h.runtime.states(), new BlockPos(10, 10, 10));
         for (int i = 0; i < 1000; i++) dense.set(i % 10, (i / 10) % 10, i / 100, h.state("minecraft:stone"));
-        SourceRef thousand = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), dense.build()).id());
+        SourceRef thousand = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), dense.build()).id());
         tooLarge(scatter, h.player, request(region(x0, z0, x0 + 999, z0 + 999), 4, 1L, thousand), "the work estimate");
         tooLarge(scatter, h.player, request(1, region(x0, z0, x0 + 999, z0 + 999), 4,
                 new ScatterSettings.Density.Count(1), ScatterSettings.Fit.DEFAULT, 1L, ScatterSettings.Transforms.ALL,
@@ -396,7 +396,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         check(h.service.executor().holdCount() == holds && scatter.active() == 0, "a refusal held something");
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -406,8 +406,8 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
      * does not. A dab refused by a job the hold keeps waiting charges the hold; one refused by a job that runs whatever
      * the holds does not.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_budget", tickLimit = LIMIT)
-    public void scatterHoldBudgetChargesOnlyBlockingTime(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_budget", timeoutTicks = LIMIT)
+    public void scatterHoldBudgetChargesOnlyBlockingTime(GameTestHelper context) {
         AtomicLong clock = new AtomicLong(System.nanoTime());
         Harness h = new Harness(context, null, clock::get);
         var scatter = new ServerScatter<>(h.service);
@@ -415,9 +415,9 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 64, 32);
         int holds = h.service.executor().holdCount();
-        ServerPlayerEntity other = h.addPlayer();
+        ServerPlayer other = h.addPlayer();
         SourceRef gold = block(h, h.player, "minecraft:gold_block");
-        java.util.UUID id = h.player.getUuid();
+        java.util.UUID id = h.player.getUUID();
         long second = 1_000_000_000L;
         long burst = (long) (h.runtime.config().scatter.holdBudgetSeconds * 1e9);
         double refill = h.runtime.config().scatter.holdRefillShare;
@@ -439,9 +439,9 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         RecordingListener ownFill = new RecordingListener();
         RecordingListener earlierFill = new RecordingListener();
         Box glassBox = box(x0 + 8, FLOOR_Y + 5, z0 + 8, x0 + 12, FLOOR_Y + 5, z0 + 12);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(theirs.result != null, "the other player's fill runs once released"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(theirs.result != null, "the other player's fill runs once released"))
+                .thenWaitUntil(() -> {
                     check(theirs.result.outcome() == JobOutcome.COMPLETED, "their fill " + theirs.result);
                     clock.addAndGet((long) Math.ceil((burst - left) / refill) + second);
                     check(scatter.holdLeftNanos(id) == burst, "not refilled: " + scatter.holdLeftNanos(id));
@@ -482,8 +482,8 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                             + scatter.holdLeftNanos(id) + ", expected " + charged);
                     checkReleased(h, scatter, holds, "after the held-back job");
                 })
-                .createAndAdd(() -> check(ownFill.result != null, "the owner's fill runs once released"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(ownFill.result != null, "the owner's fill runs once released"))
+                .thenWaitUntil(() -> {
                     check(ownFill.result.outcome() == JobOutcome.COMPLETED, "own fill " + ownFill.result);
                     // A job that runs whatever the holds (admitted before the preview, which waits for it) refuses the
                     // dab anyway: no hold is charged. The preview then gives up waiting (AREA_BUSY).
@@ -500,22 +500,22 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                             + scatter.holdLeftNanos(id) + ", expected " + unchanged);
                     checkReleased(h, scatter, holds, "at the end");
                 })
-                .createAndAdd(() -> check(earlierFill.result != null, "the earlier fill runs"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(earlierFill.result != null, "the earlier fill runs"))
+                .thenWaitUntil(() -> {
                     check(earlierFill.result.outcome() == JobOutcome.COMPLETED, "earlier fill " + earlierFill.result);
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** One dab of a fresh raise stroke by {@code p} at column (x, z), then the stroke ends. */
-    private static DabOutcome dab(Harness h, ServerPlayerEntity p, int strokeId, int x, int z) {
+    private static DabOutcome dab(Harness h, ServerPlayer p, int strokeId, int x, int z) {
         try {
             h.service.beginStroke(p, strokeId, new BrushSpec(BrushTool.RAISE, 3, 1f, Falloff.SMOOTH, Shape.CIRCLE, null,
                     SurfaceMask.ANY, 0, 0, 1L));
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
         DabOutcome outcome = h.service.dabs(p, strokeId, 0, List.of(EditTestSupport.dab(0, x, FLOOR_Y, z)));
         h.service.endStroke(p, strokeId);
@@ -527,11 +527,11 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
      * apart hold two chunk columns, not the rectangle between them, so edits between the dots are not held off; and
      * chunks wholly outside the world border are not held at all.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_heldchunks", tickLimit = LIMIT)
-    public void scatterHoldsOnlyThePaintedChunks(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_heldchunks", timeoutTicks = LIMIT)
+    public void scatterHoldsOnlyThePaintedChunks(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        EditExecutor<ServerWorld> executor = h.service.executor();
+        EditExecutor<ServerLevel> executor = h.service.executor();
         int[] at = regionCorner(context, 87);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 16, 16);
@@ -542,7 +542,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         java.util.function.IntPredicate held = x -> executor.isLocked(h.world, box(x, FLOOR_Y, z0 + 8, x, FLOOR_Y, z0 + 8));
 
         Reply reply = preview(scatter, h.player, request(dots, 2, 1L, gold));
-        long columns = scatter.heldColumnCount(h.player.getUuid());
+        long columns = scatter.heldColumnCount(h.player.getUUID());
         check(columns == 2, "two dots hold " + columns + " chunk columns");
         check(held.test(x0 + 8) && held.test(x0 + 904), "a dot is not held");
         check(!held.test(x0 + 450) && !held.test(x0 + 40) && !held.test(x0 + 870), "the chunks between the dots are held");
@@ -550,13 +550,13 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         check(reply.get("two dots").placements() > 0, "nothing placed at the loaded dot");
         checkReleased(h, scatter, holds, "after planning");
 
-        net.minecraft.world.border.WorldBorder border = h.world.getWorldBorder();
+        net.minecraft.world.level.border.WorldBorder border = h.world.getWorldBorder();
         double centerX = border.getCenterX(), centerZ = border.getCenterZ(), size = border.getSize();
         try {
             border.setCenter(x0 + 450 - 100_000, z0);
             border.setSize(200_000);
             Reply cut = preview(scatter, h.player, request(dots, 2, 1L, gold));
-            check(scatter.heldColumnCount(h.player.getUuid()) == 1, "held " + scatter.heldColumnCount(h.player.getUuid())
+            check(scatter.heldColumnCount(h.player.getUUID()) == 1, "held " + scatter.heldColumnCount(h.player.getUUID())
                     + " columns with the second dot outside the border");
             check(held.test(x0 + 8) && !held.test(x0 + 904), "a chunk outside the border is held");
             scatter.shutdown();
@@ -568,10 +568,10 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         checkReleased(h, scatter, holds, "after shutdown");
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
-    private static void tooLarge(ServerScatter<ServerPlayerEntity, ServerWorld> scatter, ServerPlayerEntity p,
+    private static void tooLarge(ServerScatter<ServerPlayer, ServerLevel> scatter, ServerPlayer p,
                                  C2S.ScatterPreview request, String what) {
         EditRejected e = refusal(() -> scatter.preview(p, request, new Reply()));
         check(e.reason() == RejectReason.TOO_LARGE, what + ": " + e.reason() + " " + e.getMessage());
@@ -581,8 +581,8 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
      * Planned one step at a time over many lane runs, the held plan hashes the same as a synchronous
      * {@code finish()} with the same settings, sources, guard and budgets over the same world.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_stepped", tickLimit = LIMIT)
-    public void scatterSteppedPlanMatchesSynchronousFinish(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_stepped", timeoutTicks = LIMIT)
+    public void scatterSteppedPlanMatchesSynchronousFinish(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 84);
@@ -595,7 +595,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
             for (int z = 0; z < 3; z++) bush.set(x, 0, z, h.state("minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]"));
         }
         bush.set(1, 1, 1, h.state("minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]"));
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), bush.build()).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), bush.build()).id());
         Reply reply = preview(scatter, h.player, request(1, region(x0, z0, x0 + 95, z0 + 95), 3,
                 new ScatterSettings.Density.Fraction(0.6), ScatterSettings.Fit.DEFAULT, 77L, ScatterSettings.Transforms.ALL,
                 source));
@@ -616,21 +616,21 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         check(synchronous.hash().equals(stepped.hash()), "the stepped plan differs from a synchronous one");
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * An admin previews an asset from another player's library folder; after losing {@code admin} they may not
      * commit it ({@code NO_PERMISSION}), and nothing is written.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_library", tickLimit = LIMIT)
-    public void scatterCommitRechecksLibraryAccess(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_library", timeoutTicks = LIMIT)
+    public void scatterCommitRechecksLibraryAccess(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 86);
         int x0 = at[0], z0 = at[1];
         Box all = floor(h, x0, z0, 32, 32);
-        ServerPlayerEntity curator = h.addPlayer(false);
+        ServerPlayer curator = h.addPlayer(false);
         EditTestSupport.grant(curator, Perm.USE, Perm.SCATTER, Perm.CLIPBOARD, Perm.ADMIN);
         Clipboard stone = Clipboard.builder(h.runtime.states(), new BlockPos(1, 1, 1))
                 .set(0, 0, 0, h.state("minecraft:emerald_block")).build();
@@ -648,15 +648,15 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         check(ScatterGameTest.find(h.world, all, FLOOR_Y + 1, Blocks.EMERALD_BLOCK).isEmpty(), "blocks were written");
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A chest placed where a tree was previewed survives the commit with its contents; that placement is skipped
      * whole (no half tree), counted in skippedConflicts and reported; the other trees are written.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_builton", tickLimit = LIMIT)
-    public void scatterCommitSkipsAPlacementBuiltOn(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_builton", timeoutTicks = LIMIT)
+    public void scatterCommitSkipsAPlacementBuiltOn(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 85);
@@ -667,29 +667,29 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         for (int x = 0; x < 3; x++) {
             for (int z = 0; z < 3; z++) tree.set(x, 3, z, h.state("minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]"));
         }
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), tree.build()).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), tree.build()).id());
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 31), 6, 5L, source));
         planNow(scatter, reply);
         ScatterPlan plan = heldPlan(h, h.player);
         check(plan.placements().size() > 5, "only " + plan.placements().size() + " placements");
         BlockPos anchor = plan.placements().get(0).anchor();
-        net.minecraft.util.math.BlockPos chest = pos(anchor.x(), anchor.y(), anchor.z());
+        net.minecraft.core.BlockPos chest = pos(anchor.x(), anchor.y(), anchor.z());
         h.runtime.writer(h.world, WriteOptions.DEFAULT).write(chest.getX(), chest.getY(), chest.getZ(),
                 h.state("minecraft:chest[facing=north,type=single,waterlogged=false]"), null);
-        ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 3));
+        ((ChestBlockEntity) h.world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 3));
         RecordingListener job = ScatterGameTest.commit(h, h.player, reply.get("preview").planId());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(job.result != null, "commit running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(job.result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(job.result.outcome() == JobOutcome.COMPLETED, "commit " + job.result);
                     check(job.result.skippedConflicts() == 1, "skipped " + job.result.skippedConflicts());
                     check(h.events.scatterSkips.equals(List.of(1L)), "reported " + h.events.scatterSkips);
-                    check(h.world.getBlockState(chest).isOf(Blocks.CHEST), "the chest was replaced");
+                    check(h.world.getBlockState(chest).is(Blocks.CHEST), "the chest was replaced");
                     ChestBlockEntity kept = (ChestBlockEntity) h.world.getBlockEntity(chest);
-                    check(kept != null && kept.getStack(0).isOf(Items.DIAMOND) && kept.getStack(0).getCount() == 3,
+                    check(kept != null && kept.getItem(0).is(Items.DIAMOND) && kept.getItem(0).getCount() == 3,
                             "the chest lost its contents");
-                    check(!h.world.getBlockState(chest.up()).isOf(Blocks.OAK_LOG)
-                            && !h.world.getBlockState(chest.up(3)).isOf(Blocks.OAK_LEAVES), "half a tree above the chest");
+                    check(!h.world.getBlockState(chest.above()).is(Blocks.OAK_LOG)
+                            && !h.world.getBlockState(chest.above(3)).is(Blocks.OAK_LEAVES), "half a tree above the chest");
                     int trunks = ScatterGameTest.find(h.world, all, FLOOR_Y + 1, Blocks.OAK_LOG).size();
                     check(trunks == plan.placements().size() - 1, trunks + " trunks for " + plan.placements().size()
                             + " placements, one skipped");
@@ -697,7 +697,7 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -705,9 +705,9 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
      * ({@code EditRejected.STROKE_PENDING}, which the client retries) before anything is replaced: the running preview
      * goes on, keeps its hold, and still answers.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_stroke_pending", tickLimit = LIMIT)
-    public void aPreviewWaitingForAStrokeKeepsTheRunningOne(TestContext context) {
-        EditExecutor<ServerWorld> executor = ShapeBrushGameTest.onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_stroke_pending", timeoutTicks = LIMIT)
+    public void aPreviewWaitingForAStrokeKeepsTheRunningOne(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = ShapeBrushGameTest.onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 760);
@@ -725,13 +725,13 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(h.player, 7, cube);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
         check(h.service.dabs(h.player, 7, 1, List.of(ShapeBrushGameTest.at(0, x0 + 200, 120, z0 + 40))).accepted(), "the step");
-        int tick = h.world.getServer().getTicks();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
-                    check(h.world.getServer().getTicks() > tick, "waiting for the next tick");
+        int tick = h.world.getServer().getTickCount();
+        context.startSequence()
+                .thenWaitUntil(() -> {
+                    check(h.world.getServer().getTickCount() > tick, "waiting for the next tick");
                     EditRejected e = refusal(() -> scatter.preview(h.player, small(x0, z0, gold), new Reply()));
                     check(e.reason() == RejectReason.QUEUE_FULL && e.kind().equals(EditRejected.STROKE_PENDING),
                             "refused " + e.reason() + " " + e.kind());
@@ -748,6 +748,6 @@ public final class ScatterLifecycleGameTest implements FabricGameTest {
                     executor.shutdown();
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

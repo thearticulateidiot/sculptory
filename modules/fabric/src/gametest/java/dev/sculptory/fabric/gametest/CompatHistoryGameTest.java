@@ -32,27 +32,27 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.network.ClientConnection;
-import net.minecraft.network.NetworkSide;
-import net.minecraft.server.OperatorEntry;
-import net.minecraft.server.network.ConnectedClientData;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.Connection;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.server.players.ServerOpListEntry;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
 
 /**
  * Undo history journals real older builds wrote ({@code src/gametest/resources/compat/<version>/history/}, frozen: see
@@ -85,13 +85,13 @@ public final class CompatHistoryGameTest implements FabricGameTest {
     private static final Box DESERT = box(X0 + 1, 100, Z0 + 9, X0 + 6, 103, Z0 + 14);
     private static final String CHERRY = "minecraft:cherry_grove";
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_compat_history", tickLimit = LIMIT)
-    public void journalsOfOlderBuildsUndoAndRedoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_compat_history", timeoutTicks = LIMIT)
+    public void journalsOfOlderBuildsUndoAndRedoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         loadAndForce(h.world, AREA);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(h.world, AREA))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(h.world, AREA))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     try {
                         sample(h, "0.3.0", false);
                         sample(h, "0.4.0", true);
@@ -101,7 +101,7 @@ public final class CompatHistoryGameTest implements FabricGameTest {
                         h.close();
                     }
                 }))
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** One sample set's journal: the world as its build left it, then redo, undo everything, redo everything. */
@@ -117,11 +117,11 @@ public final class CompatHistoryGameTest implements FabricGameTest {
         if (biomes) paint(h, DESERT, "minecraft:desert");
         WorldSnapshot glass = capture(h.world, AREA);
         List<String> glassBiomes = biomes(h);
-        WorldSnapshot gold = with(glass, GOLD, Block.getRawIdFromState(Blocks.GOLD_BLOCK.getDefaultState()));
+        WorldSnapshot gold = with(glass, GOLD, Block.getId(Blocks.GOLD_BLOCK.defaultBlockState()));
         WorldSnapshot moved = movedNorth(gold);
 
         Path folder = folder(version);
-        ServerPlayerEntity player = player(h.context);
+        ServerPlayer player = player(h.context);
         Run run = new Run(h, folder, 0, StorageIo.SYSTEM);
         try {
             run.load(player);
@@ -159,8 +159,8 @@ public final class CompatHistoryGameTest implements FabricGameTest {
             checkStand(h.world, version, false);
         } finally {
             run.stop();
-            h.world.getServer().getPlayerManager().getOpList().remove(player.getGameProfile());
-            h.world.getServer().getPlayerManager().remove(player);
+            h.world.getServer().getPlayerList().getOps().remove(player.getGameProfile());
+            h.world.getServer().getPlayerList().remove(player);
             EngineTestBootstrap.deleteTree(folder);
         }
     }
@@ -169,8 +169,8 @@ public final class CompatHistoryGameTest implements FabricGameTest {
      * Steps saved by another Minecraft version can't be undone with this one's block states: they are left out (by
      * design; the history of a Minecraft update starts empty) and the reason is reported.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_compat_history_dataversion", tickLimit = LIMIT)
-    public void stepsOfAnotherMinecraftDataVersionAreDropped(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_compat_history_dataversion", timeoutTicks = LIMIT)
+    public void stepsOfAnotherMinecraftDataVersionAreDropped(GameTestHelper context) {
         Harness h = new Harness(context);
         Path folder = folder("0.4.0");
         try {
@@ -188,12 +188,12 @@ public final class CompatHistoryGameTest implements FabricGameTest {
                 check(store.close(10_000), "the store closed");
             }
         } catch (IOException e) {
-            throw new GameTestException("the history store did not open: " + e);
+            throw new GameTestAssertException("the history store did not open: " + e);
         } finally {
             EngineTestBootstrap.deleteTree(folder);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     private static HistoryStore.Loaded awaitLoaded(HistoryStore store) {
@@ -209,10 +209,10 @@ public final class CompatHistoryGameTest implements FabricGameTest {
                 break;
             }
         }
-        throw new GameTestException("the history did not load");
+        throw new GameTestAssertException("the history did not load");
     }
 
-    private static void step(Run run, ServerPlayerEntity player, boolean undo, String what) {
+    private static void step(Run run, ServerPlayer player, boolean undo, String what) {
         JobResult result = run.step(player, undo);
         check(result.skippedConflicts() == 0, what + " met conflicts: " + result);
     }
@@ -230,7 +230,7 @@ public final class CompatHistoryGameTest implements FabricGameTest {
             Files.createDirectories(folder);
             Files.write(folder.resolve(name), in.readAllBytes());
         } catch (IOException e) {
-            throw new GameTestException("copying the sample journal failed: " + e);
+            throw new GameTestAssertException("copying the sample journal failed: " + e);
         }
         return folder;
     }
@@ -247,19 +247,19 @@ public final class CompatHistoryGameTest implements FabricGameTest {
         BlockPos sign = pos(X0 + 2, 101, Z0 + 2);
         writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign[rotation=4]"), null);
         ((SignBlockEntity) h.world.getBlockEntity(sign))
-                .setText(new SignText().withMessage(0, Text.literal("Sculptory " + version)), true);
+                .setText(new SignText().setMessage(0, Component.literal("Sculptory " + version)), true);
         BlockPos chest = pos(X0 + 5, 101, Z0 + 5);
         writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
         ChestBlockEntity chestEntity = (ChestBlockEntity) h.world.getBlockEntity(chest);
-        chestEntity.setStack(0, new ItemStack(Items.DIAMOND, 5));
-        chestEntity.setStack(13, new ItemStack(Items.OAK_LOG, 3));
+        chestEntity.setItem(0, new ItemStack(Items.DIAMOND, 5));
+        chestEntity.setItem(13, new ItemStack(Items.OAK_LOG, 3));
         writer.write(X0 + 11, 101, Z0 + 11, stone, null);
-        ArmorStandEntity stand = new ArmorStandEntity(h.world, X0 + 11.5, 102, Z0 + 11.5);
-        stand.setUuid(STAND);
-        stand.setYaw(30f);
-        stand.equipStack(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
-        stand.setCustomName(Text.literal("Frozen sample"));
-        check(h.world.spawnEntity(stand), "the stand spawned");
+        ArmorStand stand = new ArmorStand(h.world, X0 + 11.5, 102, Z0 + 11.5);
+        stand.setUUID(STAND);
+        stand.setYRot(30f);
+        stand.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
+        stand.setCustomName(Component.literal("Frozen sample"));
+        check(h.world.addFreshEntity(stand), "the stand spawned");
         paint(h, AREA, CHERRY);
     }
 
@@ -275,7 +275,7 @@ public final class CompatHistoryGameTest implements FabricGameTest {
     private static WorldSnapshot with(WorldSnapshot base, Box box, int state) {
         WorldSnapshot out = new WorldSnapshot(base.box, base.states.clone());
         base.tiles.forEach((key, nbt) -> {
-            BlockPos at = BlockPos.fromLong(key);
+            BlockPos at = BlockPos.of(key);
             if (!box.contains(at.getX(), at.getY(), at.getZ())) out.tiles.put(key, nbt);
         });
         for (int y = box.min().y(); y <= box.max().y(); y++) {
@@ -288,7 +288,7 @@ public final class CompatHistoryGameTest implements FabricGameTest {
 
     /** {@code base} after the sample's move: {@link #MOVED}'s cells 8 north, air left behind. */
     private static WorldSnapshot movedNorth(WorldSnapshot base) {
-        WorldSnapshot out = with(base, MOVED, Block.getRawIdFromState(Blocks.AIR.getDefaultState()));
+        WorldSnapshot out = with(base, MOVED, Block.getId(Blocks.AIR.defaultBlockState()));
         for (int y = MOVED.min().y(); y <= MOVED.max().y(); y++) {
             for (int z = MOVED.min().z(); z <= MOVED.max().z(); z++) {
                 for (int x = MOVED.min().x(); x <= MOVED.max().x(); x++) {
@@ -300,35 +300,35 @@ public final class CompatHistoryGameTest implements FabricGameTest {
     }
 
     /** The sign's text and the chest's items, back from the journal. */
-    private static void checkSignAndChest(ServerWorld world, String version) {
+    private static void checkSignAndChest(ServerLevel world, String version) {
         String text = ((SignBlockEntity) world.getBlockEntity(pos(X0 + 2, 101, Z0 + 2))).getText(true)
                 .getMessage(0, false).getString();
         check(text.equals("Sculptory " + version), version + ": the sign reads \"" + text + "\"");
         ChestBlockEntity chest = (ChestBlockEntity) world.getBlockEntity(pos(X0 + 5, 101, Z0 + 5));
-        check(chest.getStack(0).isOf(Items.DIAMOND) && chest.getStack(0).getCount() == 5
-                && chest.getStack(13).isOf(Items.OAK_LOG) && chest.getStack(13).getCount() == 3,
-                version + ": the chest holds " + chest.getStack(0) + " and " + chest.getStack(13));
+        check(chest.getItem(0).is(Items.DIAMOND) && chest.getItem(0).getCount() == 5
+                && chest.getItem(13).is(Items.OAK_LOG) && chest.getItem(13).getCount() == 3,
+                version + ": the chest holds " + chest.getItem(0) + " and " + chest.getItem(13));
     }
 
     /** The one armor stand: on the pedestal with its own UUID ({@code home}), or 8 north of it after the move. */
-    private static void checkStand(ServerWorld world, String version, boolean home) {
+    private static void checkStand(ServerLevel world, String version, boolean home) {
         Box from = home ? MOVED : box(MOVED.min().x(), MOVED.min().y(), MOVED.min().z() + MOVE_Z, MOVED.max().x(),
                 MOVED.max().y(), MOVED.max().z() + MOVE_Z);
         Box other = home ? box(MOVED.min().x(), MOVED.min().y(), MOVED.min().z() + MOVE_Z, MOVED.max().x(),
                 MOVED.max().y(), MOVED.max().z() + MOVE_Z) : MOVED;
         List<Entity> there = EntitiesGameTest.entitiesIn(world, from);
-        check(there.size() == 1 && there.get(0) instanceof ArmorStandEntity, version + ": stands " + there);
-        ArmorStandEntity stand = (ArmorStandEntity) there.get(0);
+        check(there.size() == 1 && there.get(0) instanceof ArmorStand, version + ": stands " + there);
+        ArmorStand stand = (ArmorStand) there.get(0);
         check(stand.getCustomName() != null && stand.getCustomName().getString().equals("Frozen sample")
-                && stand.getEquippedStack(EquipmentSlot.HEAD).isOf(Items.IRON_HELMET)
-                && Math.abs(stand.getYaw() - 30f) < 1e-3, version + ": the stand " + stand);
+                && stand.getItemBySlot(EquipmentSlot.HEAD).is(Items.IRON_HELMET)
+                && Math.abs(stand.getYRot() - 30f) < 1e-3, version + ": the stand " + stand);
         check(Math.abs(stand.getX() - (X0 + 11.5)) < 1e-6 && Math.abs(stand.getY() - 102) < 1e-6
-                && Math.abs(stand.getZ() - (Z0 + 11.5 + (home ? 0 : MOVE_Z))) < 1e-6, version + ": at " + stand.getPos());
-        check(home == stand.getUuid().equals(STAND), version + ": the stand's UUID " + stand.getUuid());
+                && Math.abs(stand.getZ() - (Z0 + 11.5 + (home ? 0 : MOVE_Z))) < 1e-6, version + ": at " + stand.position());
+        check(home == stand.getUUID().equals(STAND), version + ": the stand's UUID " + stand.getUUID());
         check(EntitiesGameTest.entitiesIn(world, other).isEmpty(), version + ": a stand left behind");
     }
 
-    private static void clearEntities(ServerWorld world) {
+    private static void clearEntities(ServerLevel world) {
         EntitiesGameTest.entitiesIn(world, AREA).forEach(Entity::discard);
     }
 
@@ -359,12 +359,12 @@ public final class CompatHistoryGameTest implements FabricGameTest {
     }
 
     /** A creative mock player with the samples' UUID and operator rights. */
-    private static ServerPlayerEntity player(TestContext context) {
-        ServerWorld world = context.getWorld();
+    private static ServerPlayer player(GameTestHelper context) {
+        ServerLevel world = context.getLevel();
         GameProfile profile = new GameProfile(PLAYER, "CompatSample");
-        ConnectedClientData data = ConnectedClientData.createDefault(profile, false);
-        ServerPlayerEntity player = new ServerPlayerEntity(world.getServer(), world, data.gameProfile(),
-                data.syncedOptions()) {
+        CommonListenerCookie data = CommonListenerCookie.createInitial(profile, false);
+        ServerPlayer player = new ServerPlayer(world.getServer(), world, data.gameProfile(),
+                data.clientInformation()) {
             @Override
             public boolean isSpectator() {
                 return false;
@@ -375,10 +375,10 @@ public final class CompatHistoryGameTest implements FabricGameTest {
                 return true;
             }
         };
-        ClientConnection connection = new ClientConnection(NetworkSide.SERVERBOUND);
+        Connection connection = new Connection(PacketFlow.SERVERBOUND);
         new EmbeddedChannel(connection);
-        world.getServer().getPlayerManager().onPlayerConnect(connection, player, data);
-        world.getServer().getPlayerManager().getOpList().add(new OperatorEntry(profile, 2, false));
+        world.getServer().getPlayerList().placeNewPlayer(connection, player, data);
+        world.getServer().getPlayerList().getOps().add(new ServerOpListEntry(profile, 2, false));
         return player;
     }
 }

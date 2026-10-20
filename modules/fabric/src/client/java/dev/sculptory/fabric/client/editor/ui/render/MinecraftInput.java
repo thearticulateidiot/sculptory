@@ -1,6 +1,6 @@
 package dev.sculptory.fabric.client.editor.ui.render;
 
-import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screens.Screen;
 import org.lwjgl.glfw.GLFW;
 
 /** Reads live keyboard state that vanilla mouse callbacks don't pass along. */

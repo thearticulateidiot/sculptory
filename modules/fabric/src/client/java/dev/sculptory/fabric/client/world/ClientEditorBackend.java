@@ -9,7 +9,7 @@ import dev.sculptory.protocol.v2.Features;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
-import net.minecraft.client.world.ClientWorld;
+import net.minecraft.client.multiplayer.ClientLevel;
 
 /**
  * The editor's real backend: the protocol session, the client state space and a {@link ClientWorldReader}.
@@ -28,7 +28,7 @@ import net.minecraft.client.world.ClientWorld;
 public final class ClientEditorBackend implements EditorBackend {
     private final EditorSession session;
     private final Supplier<StateSpace> states;
-    private final Supplier<ClientWorld> world;
+    private final Supplier<ClientLevel> world;
     private ClientWorldReader reader;
     /** The last space handed out, for the connection's space and features it was made for (kept for identity). */
     private StateSpace viewOf;
@@ -39,7 +39,7 @@ public final class ClientEditorBackend implements EditorBackend {
      * @param states the current connection's space ({@link ClientStateSpaces})
      * @param world the current client world, e.g. {@code () -> MinecraftClient.getInstance().world}
      */
-    public ClientEditorBackend(EditorSession session, Supplier<StateSpace> states, Supplier<ClientWorld> world) {
+    public ClientEditorBackend(EditorSession session, Supplier<StateSpace> states, Supplier<ClientLevel> world) {
         this.session = Objects.requireNonNull(session);
         this.states = Objects.requireNonNull(states);
         this.world = Objects.requireNonNull(world);
@@ -73,7 +73,7 @@ public final class ClientEditorBackend implements EditorBackend {
     /** A reader over the current world, reused until the world or the state space changes. */
     @Override
     public WorldReader world() {
-        ClientWorld current = world.get();
+        ClientLevel current = world.get();
         if (current == null) throw new IllegalStateException("Not in a world");
         StateSpace space = states();
         if (reader == null || !reader.readsFrom(current, space)) {

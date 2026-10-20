@@ -4,9 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.phys.Vec3;
 import org.junit.jupiter.api.Test;
 
 /** The world-free parts of {@link WorldRaycaster}: range and the plane fallback. */
@@ -51,11 +51,11 @@ class WorldRaycasterTest {
     void fallbackKeepsRealHits() {
         Ray ray = new Ray(0.5, 80, 0.5, 0, -1, 0);
         WorldRaycaster.Hit block = new WorldRaycaster.Hit(
-                WorldRaycaster.Hit.Kind.BLOCK, new BlockPos(0, 70, 0), Direction.UP, new Vec3d(0.5, 71, 0.5), 9);
+                WorldRaycaster.Hit.Kind.BLOCK, new BlockPos(0, 70, 0), Direction.UP, new Vec3(0.5, 71, 0.5), 9);
         assertSame(block, WorldRaycaster.withPlaneFallback(block, ray, 64, 100));
 
         WorldRaycaster.Hit miss = new WorldRaycaster.Hit(
-                WorldRaycaster.Hit.Kind.MISS, new BlockPos(0, -20, 0), Direction.UP, new Vec3d(0.5, -20, 0.5), 100);
+                WorldRaycaster.Hit.Kind.MISS, new BlockPos(0, -20, 0), Direction.UP, new Vec3(0.5, -20, 0.5), 100);
         assertEquals(WorldRaycaster.Hit.Kind.PLANE, WorldRaycaster.withPlaneFallback(miss, ray, 64, 100).kind());
         assertSame(miss, WorldRaycaster.withPlaneFallback(miss, ray, 90, 100), "plane behind the ray");
     }

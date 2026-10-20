@@ -37,20 +37,20 @@ import java.util.Locale;
 import java.util.function.BooleanSupplier;
 import java.util.function.IntUnaryOperator;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.level.border.WorldBorder;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -77,7 +77,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
     }
 
     /** Places one stroke of {@code dabs} (batches of up to 8) and waits for the lane; returns the next sequence. */
-    static int stroke(Harness h, EditExecutor<ServerWorld> executor, int strokeId, BrushSpec spec, List<Dab> dabs,
+    static int stroke(Harness h, EditExecutor<ServerLevel> executor, int strokeId, BrushSpec spec, List<Dab> dabs,
                       int seq) {
         BrushSymmetryGameTest.begin(h, strokeId, spec);
         for (int from = 0; from < dabs.size(); from += 8) {
@@ -112,7 +112,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
     }
 
     /** "" when the world over {@code area} holds {@code expected} (in {@link #expect} order), else the first difference. */
-    private static String differs(ServerWorld world, Box area, int[] expected) {
+    private static String differs(ServerLevel world, Box area, int[] expected) {
         WorldSnapshot now = capture(world, area);
         int i = 0, count = 0;
         String first = null;
@@ -123,8 +123,8 @@ public final class ShapeBrushGameTest implements FabricGameTest {
                     if (now.get(x, y, z) == want) continue;
                     count++;
                     if (first == null) {
-                        first = x + "," + y + "," + z + ": expected " + net.minecraft.block.Block.getStateFromRawId(want)
-                                + ", got " + net.minecraft.block.Block.getStateFromRawId(now.get(x, y, z));
+                        first = x + "," + y + "," + z + ": expected " + net.minecraft.world.level.block.Block.stateById(want)
+                                + ", got " + net.minecraft.world.level.block.Block.stateById(now.get(x, y, z));
                     }
                 }
             }
@@ -144,11 +144,11 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         return count;
     }
 
-    private static void undoAll(Harness h, EditExecutor<ServerWorld> executor, int entries) {
+    private static void undoAll(Harness h, EditExecutor<ServerLevel> executor, int entries) {
         undoAll(h, executor, entries, 20);
     }
 
-    static void undoAll(Harness h, EditExecutor<ServerWorld> executor, int entries, int maxTicks) {
+    static void undoAll(Harness h, EditExecutor<ServerLevel> executor, int entries, int maxTicks) {
         for (int i = 0; i < entries; i++) {
             RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
             MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, maxTicks, "undo " + i);
@@ -161,11 +161,11 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * cube standing north write exactly the cells of the region of their box and nothing else; each click is one
      * history entry "Shape · N blocks" with N the blocks it changed; undoing all four restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_cells", tickLimit = LIMIT)
-    public void eachSolidWritesExactlyItsRegionAndUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_cells", timeoutTicks = LIMIT)
+    public void eachSolidWritesExactlyItsRegionAndUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 680);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 79, 130, z0 + 47);
@@ -201,7 +201,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
             seq = stroke(h, executor, 10 + i, click.spec(), List.of(click.dab()), seq);
             String diff = differs(world, area, expected);
             check(diff.isEmpty(), click.spec().shapeSpec().kind() + ": " + diff);
-            List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+            List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
             check(entries.size() == i + 1, "one entry per click, got " + entries.size());
             String label = String.format(Locale.ROOT, "Shape · %,d blocks", changed(current, expected, area));
             check(entries.get(0).label().equals(label), "label " + entries.get(0).label() + ", expected " + label);
@@ -213,7 +213,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -221,11 +221,11 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * radius-20 spheres (too large for the client to predict): the server's result equals the shared kernel's on a
      * snapshot, cell for cell; each drag is one history entry; undoing both restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_drag", tickLimit = LIMIT)
-    public void aDragIsOneUndoStepAndMatchesTheKernel(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_drag", timeoutTicks = LIMIT)
+    public void aDragIsOneUndoStepAndMatchesTheKernel(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 682);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 90, z0, x0 + 63, 150, z0 + 63);
@@ -266,14 +266,14 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         check(west > 500 && east > 500, "changed " + west + " west and " + east + " east");
         check(before.get(x0 + 30, 101, z0 + 36) == h.state("minecraft:stone")
                 && after.get(x0 + 30, 101, z0 + 36) == h.state("minecraft:air"), "the carving reached into the terrain");
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
         check(entries.size() == 2, "one entry per stroke, got " + entries.size());
         undoAll(h, executor, 2);
         checkSame(before, capture(world, area), "after undoing both strokes");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -281,11 +281,11 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * Place in air fills only the air, and a hollow sphere writes only its shell (the regions' rule, checked by brute
      * force); each is one entry and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_modes", tickLimit = LIMIT)
-    public void modesChangeOnlyTheirCells(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_modes", timeoutTicks = LIMIT)
+    public void modesChangeOnlyTheirCells(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 684);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 47, 125, z0 + 47);
@@ -313,7 +313,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
             seq = stroke(h, executor, 30 + i, spec, List.of(dab), seq);
             String diff = differs(world, area, expected);
             check(diff.isEmpty(), c.mode() + " hollow " + c.hollow() + ": " + diff);
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one entry");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "one entry");
             undoAll(h, executor, 1);
             checkSame(before, capture(world, area), "after undoing " + c.mode());
         }
@@ -321,7 +321,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /** The cells of {@code region} within {@code t} of a cell outside it along an axis direction, as a cell set. */
@@ -351,11 +351,11 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * cells and none of its eastern ones, and the stroke goes on; a cube wholly east writes nothing and is refused
      * PROTECTED. The first cube undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_protected", tickLimit = LIMIT)
-    public void protectedCellsAreSkipped(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_protected", timeoutTicks = LIMIT)
+    public void protectedCellsAreSkipped(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 686);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 63, 130, z0 + 47);
@@ -372,7 +372,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         try {
             border.setCenter(x0 + 32 - 100_000, z0);
             border.setSize(200_000);
-            check(!world.canPlayerModifyAt(h.player, new net.minecraft.util.math.BlockPos(x0 + 40, 110, z0 + 20)),
+            check(!world.mayInteract(h.player, new net.minecraft.core.BlockPos(x0 + 40, 110, z0 + 20)),
                     "the east is not protected");
             int seq = stroke(h, executor, 40, cube, List.of(at(0, x0 + 30, 115, z0 + 20)), 1);
             check(h.events.dabRejections.isEmpty(), "a partly protected shape was refused: " + h.events.dabRejections);
@@ -387,13 +387,13 @@ public final class ShapeBrushGameTest implements FabricGameTest {
             border.setCenter(centerX, centerZ);
             border.setSize(size);
         }
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one entry: the first cube");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "one entry: the first cube");
         undoAll(h, executor, 1);
         checkSame(before, capture(world, area), "after the undo");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -401,11 +401,11 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * in an unloaded chunk refuses the dab UNLOADED; a job holding a section only a long shape's box reaches (16 blocks
      * east of the dab, beyond a terrain brush's area) refuses it AREA_BUSY.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_refused", tickLimit = LIMIT)
-    public void refusalsWriteNothing(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_refused", timeoutTicks = LIMIT)
+    public void refusalsWriteNothing(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 688);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 47, 150, z0 + 47);
@@ -416,10 +416,10 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         BrushSpec sphere = shape(3, ShapeSpec.Kind.SPHERE, 7, Facing.UP, ShapeSpec.Mode.PLACE, 0, new Pattern.Single(glass),
                 Symmetry.NONE);
 
-        ServerPlayerEntity guest = h.addPlayer(false);
+        ServerPlayer guest = h.addPlayer(false);
         try {
             h.service.beginStroke(guest, 50, sphere);
-            throw new GameTestException("a player without the brush permission began a stroke");
+            throw new GameTestAssertException("a player without the brush permission began a stroke");
         } catch (EditRejected e) {
             check(e.reason() == RejectReason.NO_PERMISSION, "refused with " + e.reason());
         }
@@ -442,23 +442,23 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         MultiplayerGameTest.tickUntil(executor, () -> fill.result != null, 20, "the fill");
         undoAll(h, executor, 1);
         checkSame(before, capture(world, area), "after the refusals and undoing the fill");
-        check(h.service.historyService().undoEntries(h.player.getUuid()).isEmpty(), "no shape entry");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).isEmpty(), "no shape entry");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * An executor whose brush lane runs one item a tick (a dab, a part of a large step, or a slice of a commit): its
      * share of the budget is a microsecond, used up by any work. Jobs keep a full budget.
      */
-    static EditExecutor<ServerWorld> onePartATick(TestContext context) {
+    static EditExecutor<ServerLevel> onePartATick(GameTestHelper context) {
         return onePartATick(context, 1024);
     }
 
-    /** {@link #onePartATick(TestContext)} with a brush queue of at most {@code maxBrushQueue} items. */
-    static EditExecutor<ServerWorld> onePartATick(TestContext context, int maxBrushQueue) {
+    /** {@link #onePartATick(GameTestHelper)} with a brush queue of at most {@code maxBrushQueue} items. */
+    static EditExecutor<ServerLevel> onePartATick(GameTestHelper context, int maxBrushQueue) {
         return new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(50_000_000L, 0, 0.00002, 2, 8, 32, 64, UnloadedPolicy.LOAD, maxBrushQueue,
                         16_384));
@@ -468,18 +468,18 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * The lane serves players in turn: while one player's large step is written a part a tick, another player's small
      * dabs are written (and acknowledged) between its parts, not after it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_turns", tickLimit = LIMIT)
-    public void anotherPlayersDabsRunBetweenTheParts(TestContext context) {
-        EditExecutor<ServerWorld> executor = onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_turns", timeoutTicks = LIMIT)
+    public void anotherPlayersDabsRunBetweenTheParts(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 692);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 90, z0, x0 + 95, 150, z0 + 47);
         loadAndForce(world, area);
         WorldSnapshot before = capture(world, area);
         int glass = h.state("minecraft:glass");
-        ServerPlayerEntity other = h.addPlayer();
+        ServerPlayer other = h.addPlayer();
         // 41 layers of 41 x 41 cells: five parts.
         BrushSpec large = shape(20, ShapeSpec.Kind.CUBE, 41, Facing.UP, ShapeSpec.Mode.PLACE, 0, new Pattern.Single(glass),
                 Symmetry.NONE);
@@ -490,7 +490,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(other, 71, small);
         } catch (EditRejected e) {
-            throw new GameTestException("the other player's stroke was refused: " + e.getMessage());
+            throw new GameTestAssertException("the other player's stroke was refused: " + e.getMessage());
         }
         DabOutcome smallDabs = h.service.dabs(other, 71, 200,
                 List.of(at(0, x0 + 70, 120, z0 + 24), at(1, x0 + 76, 120, z0 + 24)));
@@ -501,16 +501,16 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         executor.tick(); // the large step's second part
         executor.tick(); // the other player's second dab
         check(h.acks.seqs.equals(List.of(200)), "the small dabs first: " + h.acks.seqs);
-        check(h.service.queuedDabs(h.player.getUuid()) == 1, "the large step is still being written");
+        check(h.service.queuedDabs(h.player.getUUID()) == 1, "the large step is still being written");
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 2, 20, "the large step");
         check(h.acks.seqs.equals(List.of(200, 100)), "acks " + h.acks.seqs);
         check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
-        check(world.getBlockState(new net.minecraft.util.math.BlockPos(x0 + 24, 138, z0 + 24)).isOf(Blocks.GLASS)
-                && world.getBlockState(new net.minecraft.util.math.BlockPos(x0 + 76, 120, z0 + 24)).isOf(Blocks.GLASS),
+        check(world.getBlockState(new net.minecraft.core.BlockPos(x0 + 24, 138, z0 + 24)).is(Blocks.GLASS)
+                && world.getBlockState(new net.minecraft.core.BlockPos(x0 + 76, 120, z0 + 24)).is(Blocks.GLASS),
                 "both strokes were written");
         h.service.endStroke(other, 71);
         h.service.endStroke(h.player, 70);
-        MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 200, "the commit");
+        MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 200, "the commit");
         undoAll(h, executor, 1);
         RecordingListener undo = MultiplayerGameTest.historyStep(h, other, true);
         MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 20, "the other player's undo");
@@ -518,7 +518,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -526,12 +526,12 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * written stops the step AREA_BUSY at its second part, and the stroke stays refused. The layers written stay, recorded as the stroke's
      * one entry; undoing it and the job restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_partial", tickLimit = LIMIT)
-    public void aLockMidStepStopsItAndWhatWasWrittenUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_partial", timeoutTicks = LIMIT)
+    public void aLockMidStepStopsItAndWhatWasWrittenUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity other = h.addPlayer();
-        ServerWorld world = h.world;
+        ServerPlayer other = h.addPlayer();
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 694);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 47, 150, z0 + 47);
@@ -550,16 +550,16 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         h.fill(other, box(x0 + 30, 120, z0 + 30, x0 + 31, 120, z0 + 31), "minecraft:white_wool", fill);
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1, 20, "the step");
         check(h.events.dabRejections.equals(List.of(RejectReason.AREA_BUSY)), "refusals " + h.events.dabRejections);
-        check(world.getBlockState(new net.minecraft.util.math.BlockPos(x0 + 24, 108, z0 + 24)).isOf(Blocks.GLASS),
+        check(world.getBlockState(new net.minecraft.core.BlockPos(x0 + 24, 108, z0 + 24)).is(Blocks.GLASS),
                 "the first part is written");
-        check(!world.getBlockState(new net.minecraft.util.math.BlockPos(x0 + 24, 109, z0 + 24)).isOf(Blocks.GLASS),
+        check(!world.getBlockState(new net.minecraft.core.BlockPos(x0 + 24, 109, z0 + 24)).is(Blocks.GLASS),
                 "the second part is not");
         DabOutcome later = h.service.dabs(h.player, 80, 2, List.of(at(1, x0 + 26, 120, z0 + 24)));
         check(!later.accepted() && later.reason() == RejectReason.AREA_BUSY, "the stroke stays refused: " + later);
         h.service.endStroke(h.player, 80);
         MultiplayerGameTest.tickUntil(executor,
-                () -> fill.result != null && h.service.queuedCommits(h.player.getUuid()) == 0, 50, "the fill and the commit");
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+                () -> fill.result != null && h.service.queuedCommits(h.player.getUUID()) == 0, 50, "the fill and the commit");
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
         String label = String.format(Locale.ROOT, "Shape · %,d blocks", 41 * 41 * 9);
         check(entries.size() == 1 && entries.get(0).label().equals(label), "one entry " + label + ": " + entries);
         undoAll(h, executor, 1);
@@ -569,31 +569,31 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * Block entities: Place, Paint and Carve over a chest holding items and a written sign replace them (dropping
      * nothing) and undo restores them with their contents exactly; Place in air leaves them as they were.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_tiles", tickLimit = LIMIT)
-    public void blockEntitiesAreReplacedAndUndoneWithTheirContents(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_tiles", timeoutTicks = LIMIT)
+    public void blockEntitiesAreReplacedAndUndoneWithTheirContents(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 696);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 31, 125, z0 + 31);
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 32, 32);
-        net.minecraft.util.math.BlockPos chest = new net.minecraft.util.math.BlockPos(x0 + 16, 112, z0 + 16);
-        net.minecraft.util.math.BlockPos sign = chest.east();
-        world.setBlockState(chest.down(), Blocks.STONE.getDefaultState());
-        world.setBlockState(sign.down(), Blocks.STONE.getDefaultState());
-        world.setBlockState(chest, Blocks.CHEST.getDefaultState());
-        ((ChestBlockEntity) world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 5));
-        world.setBlockState(sign, Blocks.OAK_SIGN.getDefaultState());
-        ((SignBlockEntity) world.getBlockEntity(sign)).setText(new SignText().withMessage(0, Text.literal("Hi")), true);
+        net.minecraft.core.BlockPos chest = new net.minecraft.core.BlockPos(x0 + 16, 112, z0 + 16);
+        net.minecraft.core.BlockPos sign = chest.east();
+        world.setBlockAndUpdate(chest.below(), Blocks.STONE.defaultBlockState());
+        world.setBlockAndUpdate(sign.below(), Blocks.STONE.defaultBlockState());
+        world.setBlockAndUpdate(chest, Blocks.CHEST.defaultBlockState());
+        ((ChestBlockEntity) world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 5));
+        world.setBlockAndUpdate(sign, Blocks.OAK_SIGN.defaultBlockState());
+        ((SignBlockEntity) world.getBlockEntity(sign)).setText(new SignText().setMessage(0, Component.literal("Hi")), true);
         WorldSnapshot before = capture(world, area);
         check(before.tiles.size() == 2, "a chest and a sign: " + before.tiles.size() + " block entities");
         int stone = h.state("minecraft:stone");
@@ -609,9 +609,9 @@ public final class ShapeBrushGameTest implements FabricGameTest {
             } else {
                 check(after.tiles.isEmpty(), mode + ": the chest and sign are still there");
             }
-            check(world.getEntitiesByClass(ItemEntity.class, new net.minecraft.util.math.Box(chest).expand(8), e -> true)
+            check(world.getEntitiesOfClass(ItemEntity.class, new net.minecraft.world.phys.AABB(chest).inflate(8), e -> true)
                     .isEmpty(), mode + ": items were dropped");
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, mode + ": one entry");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, mode + ": one entry");
             undoAll(h, executor, 1);
             checkSame(before, capture(world, area), "after undoing " + mode);
         }
@@ -619,7 +619,7 @@ public final class ShapeBrushGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -627,10 +627,10 @@ public final class ShapeBrushGameTest implements FabricGameTest {
      * begin a cylinder longer than 9 (the largest diameter) or of radius 5, but may a sphere whatever height it carries
      * (its size is its diameter); an op, who has the bypass, may. Changes the shared config for this batch only.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_limits", tickLimit = LIMIT)
-    public void shapesTallerThanTheLargestDiameterAreRefused(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_limits", timeoutTicks = LIMIT)
+    public void shapesTallerThanTheLargestDiameterAreRefused(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.BRUSH);
         SculptoryConfig.LimitsConfig limits = h.runtime.config().limits;
         int saved = limits.maxBrushRadius;
@@ -644,27 +644,27 @@ public final class ShapeBrushGameTest implements FabricGameTest {
             for (BrushSpec refused : List.of(ten, wide)) {
                 EditRejected e = ClipboardGameTest.refusal(() -> h.service.beginStroke(builder, 1, refused));
                 check(e.reason() == RejectReason.TOO_LARGE, "refused with " + e.reason() + ": " + e.getMessage());
-                check(h.service.openStroke(builder.getUuid()).isEmpty(), "a refused stroke is open");
+                check(h.service.openStroke(builder.getUUID()).isEmpty(), "a refused stroke is open");
             }
             int strokeId = 2;
             for (BrushSpec allowed : List.of(nine, sphere)) {
                 try {
                     h.service.beginStroke(builder, strokeId, allowed);
                 } catch (EditRejected e) {
-                    throw new GameTestException("refused " + allowed.shapeSpec() + ": " + e.getMessage());
+                    throw new GameTestAssertException("refused " + allowed.shapeSpec() + ": " + e.getMessage());
                 }
                 h.service.endStroke(builder, strokeId++);
             }
             try {
                 h.service.beginStroke(h.player, strokeId, ten);
             } catch (EditRejected e) {
-                throw new GameTestException("an op was refused a long shape: " + e.getMessage());
+                throw new GameTestAssertException("an op was refused a long shape: " + e.getMessage());
             }
             h.service.endStroke(h.player, strokeId);
         } finally {
             limits.maxBrushRadius = saved;
         }
         h.close();
-        context.complete();
+        context.succeed();
     }
 }

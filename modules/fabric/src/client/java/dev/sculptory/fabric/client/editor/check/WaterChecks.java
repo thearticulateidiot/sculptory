@@ -7,11 +7,11 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor.Face;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import java.util.List;
 import java.util.Optional;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.GameRules;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.GameRules;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -54,17 +54,17 @@ final class WaterChecks {
         // Random ticks kill grass under the water (it turns to dirt), which wakes the water.
         Box under = a.box(17, -1, 17, 22, -1, 22);
         d.onServer(server -> {
-            server.getGameRules().get(GameRules.RANDOM_TICK_SPEED).set(400, server);
+            server.getGameRules().getRule(GameRules.RULE_RANDOMTICKING).set(400, server);
             return null;
         });
         boolean died = false;
         long deadline = System.currentTimeMillis() + 30_000;
         while (!died && System.currentTimeMillis() < deadline) {
             d.millis(250);
-            died = run.server(under).count(state -> state.isOf(Blocks.DIRT)) > 0;
+            died = run.server(under).count(state -> state.is(Blocks.DIRT)) > 0;
         }
         d.onServer(server -> {
-            server.getGameRules().get(GameRules.RANDOM_TICK_SPEED).set(0, server);
+            server.getGameRules().getRule(GameRules.RULE_RANDOMTICKING).set(0, server);
             return null;
         });
         run.require("random ticks kill grass under the water", died, "no dirt under the water after 30 s");
@@ -98,14 +98,14 @@ final class WaterChecks {
         // A player's block in the water wakes it (vanilla block updates).
         BlockPos inWater = new BlockPos(a.x(22), a.y(0), a.z(19));
         BlockPos flowedTo = new BlockPos(a.x(24), a.y(0), a.z(19));
-        d.onServer(server -> server.getOverworld().setBlockState(inWater, Blocks.STONE.getDefaultState(),
-                Block.NOTIFY_ALL));
+        d.onServer(server -> server.overworld().setBlock(inWater, Blocks.STONE.defaultBlockState(),
+                Block.UPDATE_ALL));
         settle(run, area);
         BlockState reached = run.server(Box.of(a.at(24, 0, 19))).at(flowedTo.getX(), flowedTo.getY(), flowedTo.getZ());
         run.require("the water flowed out to where the player builds", Changes.fluid(reached),
                 "24 0 19 is " + Cells.describe(reached));
-        d.onServer(server -> server.getOverworld().setBlockState(flowedTo, Blocks.OAK_PLANKS.getDefaultState(),
-                Block.NOTIFY_ALL));
+        d.onServer(server -> server.overworld().setBlock(flowedTo, Blocks.OAK_PLANKS.defaultBlockState(),
+                Block.UPDATE_ALL));
         settle(run, area);
 
         run.undo("undo the woken Fill");
@@ -161,8 +161,8 @@ final class WaterChecks {
         Cells filled = run.server(area);
         List<Cells.Change> changes = before.diff(filled);
         boolean exact = changes.size() == fill.volume() && changes.stream().allMatch(change ->
-                fill.contains(change.x(), change.y(), change.z()) && change.after().isOf(Blocks.WATER)
-                        && change.after().getFluidState().isStill());
+                fill.contains(change.x(), change.y(), change.z()) && change.after().is(Blocks.WATER)
+                        && change.after().getFluidState().isSource());
         run.check("the water Fill writes still water into exactly the selection", exact, Cells.summary(changes, 4));
         run.clientMatches("after the water Fill", filled);
         d.activeBlock("minecraft:stone");

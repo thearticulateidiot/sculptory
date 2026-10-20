@@ -1,5 +1,7 @@
 package dev.sculptory.fabric.client.editor.mc;
 
+import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.platform.Window;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.fabric.client.editor.CursorPick;
@@ -25,17 +27,15 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.client.network.PlayerListEntry;
-import net.minecraft.client.option.GameOptions;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.resource.language.I18n;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.client.util.Window;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.Registries;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.Options;
+import net.minecraft.client.multiplayer.ClientPacketListener;
+import net.minecraft.client.multiplayer.PlayerInfo;
+import net.minecraft.client.resources.language.I18n;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * The editor's Minecraft side: cursor picking through {@link CursorRay} and {@link WorldRaycaster},
@@ -43,9 +43,9 @@ import net.minecraft.util.Identifier;
  * and movement-key forwarding. Every call happens on the client thread.
  */
 public final class McEditorPlatform implements EditorPlatform {
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final OverlayRenderer overlay;
-    private final KeyBinding toggleKey;
+    private final KeyMapping toggleKey;
     private final McBlockCatalog blocks;
     private final WorldRaycaster raycaster = new WorldRaycaster();
     /** The fly speed, shared with creative flight outside the editor and {@code /flyspeed}. */
@@ -53,7 +53,7 @@ public final class McEditorPlatform implements EditorPlatform {
     /** "Aim at water and lava": lives as long as the editor (the game session); off at every game start. */
     private boolean aimAtFluids;
 
-    public McEditorPlatform(MinecraftClient client, OverlayRenderer overlay, KeyBinding toggleKey, McBlockCatalog blocks,
+    public McEditorPlatform(Minecraft client, OverlayRenderer overlay, KeyMapping toggleKey, McBlockCatalog blocks,
             Flight flight) {
         this.client = Objects.requireNonNull(client);
         this.overlay = Objects.requireNonNull(overlay);
@@ -73,7 +73,7 @@ public final class McEditorPlatform implements EditorPlatform {
         Window window = client.getWindow();
         Optional<Ray> ray = crosshair
                 ? CursorRay.center(camera.get())
-                : CursorRay.fromScaled(camera.get(), x, y, window.getScaledWidth(), window.getScaledHeight());
+                : CursorRay.fromScaled(camera.get(), x, y, window.getGuiScaledWidth(), window.getGuiScaledHeight());
         if (ray.isEmpty()) {
             return CursorPick.NONE;
         }
@@ -105,11 +105,11 @@ public final class McEditorPlatform implements EditorPlatform {
 
     @Override
     public Optional<BlockDescriptor> blockAt(BlockPos pos) {
-        if (client.world == null) {
+        if (client.level == null) {
             return Optional.empty();
         }
-        net.minecraft.util.math.BlockPos at = new net.minecraft.util.math.BlockPos(pos.x(), pos.y(), pos.z());
-        return McBlockCatalog.describe(client.world.getBlockState(at));
+        net.minecraft.core.BlockPos at = new net.minecraft.core.BlockPos(pos.x(), pos.y(), pos.z());
+        return McBlockCatalog.describe(client.level.getBlockState(at));
     }
 
     @Override
@@ -131,13 +131,13 @@ public final class McEditorPlatform implements EditorPlatform {
 
     @Override
     public float cameraYaw() {
-        return client.player != null ? client.player.getYaw() : 0f;
+        return client.player != null ? client.player.getYRot() : 0f;
     }
 
     @Override
     public Optional<ScreenProjector> projector() {
         Window window = client.getWindow();
-        return overlay.camera().map(camera -> camera.projector(window.getScaledWidth(), window.getScaledHeight()));
+        return overlay.camera().map(camera -> camera.projector(window.getGuiScaledWidth(), window.getGuiScaledHeight()));
     }
 
     @Override
@@ -149,17 +149,17 @@ public final class McEditorPlatform implements EditorPlatform {
 
     @Override
     public SystemKey systemKey(int key, int scanCode) {
-        GameOptions options = client.options;
-        if (toggleKey.matchesKey(key, scanCode)) {
+        Options options = client.options;
+        if (toggleKey.matches(key, scanCode)) {
             return SystemKey.TOGGLE_EDITOR;
         }
-        if (options.chatKey.matchesKey(key, scanCode)) {
+        if (options.keyChat.matches(key, scanCode)) {
             return SystemKey.CHAT;
         }
-        if (options.commandKey.matchesKey(key, scanCode)) {
+        if (options.keyCommand.matches(key, scanCode)) {
             return SystemKey.COMMAND;
         }
-        if (options.inventoryKey.matchesKey(key, scanCode)) {
+        if (options.keyInventory.matches(key, scanCode)) {
             return SystemKey.INVENTORY;
         }
         return SystemKey.NONE;
@@ -168,10 +168,10 @@ public final class McEditorPlatform implements EditorPlatform {
     /** The tab list's names, sorted; empty when not connected. */
     @Override
     public List<String> onlinePlayerNames() {
-        ClientPlayNetworkHandler handler = client.getNetworkHandler();
+        ClientPacketListener handler = client.getConnection();
         if (handler == null) return List.of();
         List<String> names = new ArrayList<>();
-        for (PlayerListEntry entry : handler.getPlayerList()) {
+        for (PlayerInfo entry : handler.getOnlinePlayers()) {
             String name = entry.getProfile().getName();
             if (name != null && !name.isEmpty()) names.add(name);
         }
@@ -181,10 +181,10 @@ public final class McEditorPlatform implements EditorPlatform {
 
     @Override
     public List<String> paintingVariants() {
-        if (client.world == null) return List.of();
+        if (client.level == null) return List.of();
         List<String> ids = new ArrayList<>();
-        for (Identifier id : client.world.getRegistryManager().get(net.minecraft.registry.RegistryKeys.PAINTING_VARIANT)
-                .getIds()) {
+        for (ResourceLocation id : client.level.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.PAINTING_VARIANT)
+                .keySet()) {
             ids.add(id.toString());
         }
         ids.sort(null);
@@ -193,36 +193,36 @@ public final class McEditorPlatform implements EditorPlatform {
 
     @Override
     public String itemOf(BlockDescriptor block) {
-        Identifier id = Identifier.tryParse(block.block().value());
-        if (id == null || !Registries.BLOCK.containsId(id)) return "";
-        net.minecraft.item.Item item = Registries.BLOCK.get(id).asItem();
-        return item == net.minecraft.item.Items.AIR ? "" : Registries.ITEM.getId(item).toString();
+        ResourceLocation id = ResourceLocation.tryParse(block.block().value());
+        if (id == null || !BuiltInRegistries.BLOCK.containsKey(id)) return "";
+        net.minecraft.world.item.Item item = BuiltInRegistries.BLOCK.get(id).asItem();
+        return item == net.minecraft.world.item.Items.AIR ? "" : BuiltInRegistries.ITEM.getKey(item).toString();
     }
 
-    private List<KeyBinding> movementBindings() {
-        GameOptions options = client.options;
-        return List.of(options.forwardKey, options.backKey, options.leftKey, options.rightKey, options.jumpKey,
-                options.sneakKey, options.sprintKey);
+    private List<KeyMapping> movementBindings() {
+        Options options = client.options;
+        return List.of(options.keyUp, options.keyDown, options.keyLeft, options.keyRight, options.keyJump,
+                options.keyShift, options.keySprint);
     }
 
     /** The player's movement, chat, command, inventory and editor-toggle keys, which editor chords may not take. */
     public List<EditorKeymap.ReservedKey> reservedKeys() {
-        List<KeyBinding> bindings = new ArrayList<>(movementBindings());
-        GameOptions options = client.options;
-        bindings.add(options.chatKey);
-        bindings.add(options.commandKey);
-        bindings.add(options.inventoryKey);
+        List<KeyMapping> bindings = new ArrayList<>(movementBindings());
+        Options options = client.options;
+        bindings.add(options.keyChat);
+        bindings.add(options.keyCommand);
+        bindings.add(options.keyInventory);
         bindings.add(toggleKey);
         List<EditorKeymap.ReservedKey> reserved = new ArrayList<>();
-        for (KeyBinding binding : bindings) {
-            InputUtil.Key bound = KeyBindingHelper.getBoundKeyOf(binding);
-            String name = I18n.translate(binding.getTranslationKey());
+        for (KeyMapping binding : bindings) {
+            InputConstants.Key bound = KeyBindingHelper.getBoundKeyOf(binding);
+            String name = I18n.get(binding.getName());
             // Only the inventory key may be shared (the insert-point key, E while a path point is selected).
-            boolean shareable = binding == options.inventoryKey;
-            if (bound.getCategory() == InputUtil.Type.KEYSYM && bound.getCode() > 0) {
-                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.KEY, bound.getCode(), name, shareable));
-            } else if (bound.getCategory() == InputUtil.Type.MOUSE) {
-                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.MOUSE, bound.getCode(), name, shareable));
+            boolean shareable = binding == options.keyInventory;
+            if (bound.getType() == InputConstants.Type.KEYSYM && bound.getValue() > 0) {
+                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.KEY, bound.getValue(), name, shareable));
+            } else if (bound.getType() == InputConstants.Type.MOUSE) {
+                reserved.add(new EditorKeymap.ReservedKey(KeyChord.Input.MOUSE, bound.getValue(), name, shareable));
             }
         }
         return reserved;
@@ -230,24 +230,24 @@ public final class McEditorPlatform implements EditorPlatform {
 
     /** The player's vanilla keys as the help sheet shows them. */
     public HelpSheet.VanillaKeys vanillaKeys() {
-        GameOptions options = client.options;
-        String move = String.join(" ", keyName(options.forwardKey), keyName(options.leftKey),
-                keyName(options.backKey), keyName(options.rightKey));
-        return new HelpSheet.VanillaKeys(move, keyName(options.jumpKey), keyName(options.sneakKey),
-                keyName(toggleKey), keyName(options.chatKey), keyName(options.commandKey), keyName(options.inventoryKey));
+        Options options = client.options;
+        String move = String.join(" ", keyName(options.keyUp), keyName(options.keyLeft),
+                keyName(options.keyDown), keyName(options.keyRight));
+        return new HelpSheet.VanillaKeys(move, keyName(options.keyJump), keyName(options.keyShift),
+                keyName(toggleKey), keyName(options.keyChat), keyName(options.keyCommand), keyName(options.keyInventory));
     }
 
-    private static String keyName(KeyBinding binding) {
-        return binding.getBoundKeyLocalizedText().getString();
+    private static String keyName(KeyMapping binding) {
+        return binding.getTranslatedKeyMessage().getString();
     }
 
     /** An item icon by item id ("minecraft:wooden_axe"), or empty for an unknown id. */
     public static ItemStack itemIcon(String itemId) {
-        Identifier id = Identifier.tryParse(itemId);
-        if (id == null || !Registries.ITEM.containsId(id)) {
+        ResourceLocation id = ResourceLocation.tryParse(itemId);
+        if (id == null || !BuiltInRegistries.ITEM.containsKey(id)) {
             return ItemStack.EMPTY;
         }
-        return new ItemStack(Registries.ITEM.get(id));
+        return new ItemStack(BuiltInRegistries.ITEM.get(id));
     }
 
     // ---- Look and movement ----
@@ -257,23 +257,23 @@ public final class McEditorPlatform implements EditorPlatform {
         return new CameraLook.Backend() {
             @Override
             public double mouseX() {
-                return client.mouse.getX();
+                return client.mouseHandler.xpos();
             }
 
             @Override
             public double mouseY() {
-                return client.mouse.getY();
+                return client.mouseHandler.ypos();
             }
 
             @Override
             public void captureCursor(double x, double y) {
-                InputUtil.setCursorParameters(client.getWindow().getHandle(), InputUtil.GLFW_CURSOR_DISABLED, x, y);
+                InputConstants.grabOrReleaseMouse(client.getWindow().getWindow(), InputConstants.CURSOR_DISABLED, x, y);
             }
 
             @Override
             public void releaseCursor(double x, double y) {
-                InputUtil.setCursorParameters(client.getWindow().getHandle(), InputUtil.GLFW_CURSOR_NORMAL, x, y);
-                MouseAccessor mouse = (MouseAccessor) client.mouse;
+                InputConstants.grabOrReleaseMouse(client.getWindow().getWindow(), InputConstants.CURSOR_NORMAL, x, y);
+                MouseAccessor mouse = (MouseAccessor) client.mouseHandler;
                 mouse.sculptory$setX(x);
                 mouse.sculptory$setY(y);
             }
@@ -281,18 +281,18 @@ public final class McEditorPlatform implements EditorPlatform {
             @Override
             public void turn(double yawDelta, double pitchDelta) {
                 if (client.player != null) {
-                    client.player.changeLookDirection(yawDelta, pitchDelta);
+                    client.player.turn(yawDelta, pitchDelta);
                 }
             }
 
             @Override
             public double sensitivity() {
-                return client.options.getMouseSensitivity().getValue();
+                return client.options.sensitivity().get();
             }
 
             @Override
             public boolean invertY() {
-                return client.options.getInvertYMouse().getValue();
+                return client.options.invertYMouse().get();
             }
         };
     }
@@ -302,8 +302,8 @@ public final class McEditorPlatform implements EditorPlatform {
         return new MovementForwarder.Keys() {
             @Override
             public boolean matches(int key, int scanCode) {
-                for (KeyBinding binding : movementBindings()) {
-                    if (binding.matchesKey(key, scanCode)) {
+                for (KeyMapping binding : movementBindings()) {
+                    if (binding.matches(key, scanCode)) {
                         return true;
                     }
                 }
@@ -312,7 +312,7 @@ public final class McEditorPlatform implements EditorPlatform {
 
             @Override
             public void press(int key, int scanCode) {
-                KeyBinding.setKeyPressed(InputUtil.fromKeyCode(key, scanCode), true);
+                KeyMapping.set(InputConstants.getKey(key, scanCode), true);
             }
         };
     }

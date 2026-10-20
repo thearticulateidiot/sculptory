@@ -25,16 +25,16 @@ import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
 import javax.management.ObjectName;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.world.ServerLightingProvider;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.LightType;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ThreadedLevelLightEngine;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -53,12 +53,12 @@ public final class LightBatchGameTest implements FabricGameTest {
     /** The vanilla copy lies this far east of the batched one: their light (at most 15 blocks) never meets. */
     private static final int APART = 96;
     private static final int MARGIN = 15;
-    private static final BlockState STONE = Blocks.STONE.getDefaultState(), AIR = Blocks.AIR.getDefaultState();
+    private static final BlockState STONE = Blocks.STONE.defaultBlockState(), AIR = Blocks.AIR.defaultBlockState();
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_light_batch", tickLimit = 100_000)
-    public void batchedLightChecksSettleWhereVanillasDo(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_light_batch", timeoutTicks = 100_000)
+    public void batchedLightChecksSettleWhereVanillasDo(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1720);
         int ax = at[0], az = at[1], bx = ax + APART;
         Box area = around(ax, az, bx);
@@ -89,8 +89,8 @@ public final class LightBatchGameTest implements FabricGameTest {
         }, () -> {
             compare(world, ax, bx, az);
             check(lit(world, ax, az) > 1_000, "block light reached " + lit(world, ax, az) + " cells");
-            check(world.getLightLevel(LightType.SKY, new BlockPos(ax + 15, Y0 + 10, az + 15)) > 0
-                    && world.getLightLevel(LightType.SKY, new BlockPos(ax + 5, Y0 + 10, az + 26)) < 15,
+            check(world.getBrightness(LightLayer.SKY, new BlockPos(ax + 15, Y0 + 10, az + 15)) > 0
+                    && world.getBrightness(LightLayer.SKY, new BlockPos(ax + 5, Y0 + 10, az + 26)) < 15,
                     "sky light through the roof's hole, dimmer away from it");
         });
         // 2. Light falls on terrain lit before: the glowstone goes, the roof closes over the sky-lit cavity.
@@ -103,7 +103,7 @@ public final class LightBatchGameTest implements FabricGameTest {
         }, () -> {
             compare(world, ax, bx, az);
             check(lit(world, ax, az) < litBefore[0], "block light fell: " + litBefore[0] + " -> " + lit(world, ax, az));
-            check(world.getLightLevel(LightType.SKY, new BlockPos(ax + 15, Y0 + 10, az + 15)) == 0,
+            check(world.getBrightness(LightLayer.SKY, new BlockPos(ax + 15, Y0 + 10, az + 15)) == 0,
                     "no sky light under the closed roof");
         });
         // 3. A writer that never clears its ticks: its checks are handed on only by the tick's flushes (the start of
@@ -112,11 +112,11 @@ public final class LightBatchGameTest implements FabricGameTest {
         BlockWriter[] late = {null};
         steps.add(() -> {
             late[0] = h.runtime.writer(world, WriteOptions.DEFAULT);
-            write(late[0], ax + 20, Y0 + 8, az + 20, Blocks.GLOWSTONE.getDefaultState());
+            write(late[0], ax + 20, Y0 + 8, az + 20, Blocks.GLOWSTONE.defaultBlockState());
             write(late[0], ax + 10, Y0 + 18, az + 25, AIR);
             check(late[0].lightTasks() == 0, "nothing handed on before the tick: " + late[0].lightTasks());
             vanilla(() -> {
-                set(world, bx + 20, Y0 + 8, az + 20, Blocks.GLOWSTONE.getDefaultState());
+                set(world, bx + 20, Y0 + 8, az + 20, Blocks.GLOWSTONE.defaultBlockState());
                 set(world, bx + 10, Y0 + 18, az + 25, AIR);
             });
         }, () -> {
@@ -127,10 +127,10 @@ public final class LightBatchGameTest implements FabricGameTest {
     }
 
     /** Nested collection joins the outer batch; a write that throws inside it leaves no collection open. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_light_batch_scope")
-    public void collectionNestsAndSurvivesAThrow(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_light_batch_scope")
+    public void collectionNestsAndSurvivesAThrow(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1726);
         int x = at[0], z = at[1];
         Box area = box(x, Y0, z, x + 15, Y0 + 15, z + 15);
@@ -140,21 +140,21 @@ public final class LightBatchGameTest implements FabricGameTest {
             check(batch != null, "batching is on for the vanilla light engine");
             try (EditScope scope = EditScope.suppressPhysics()) {
                 try (LightBatch.Scope outer = batch.collect()) {
-                    set(world, x, Y0, z, Blocks.GLOWSTONE.getDefaultState());
+                    set(world, x, Y0, z, Blocks.GLOWSTONE.defaultBlockState());
                     try (LightBatch.Scope inner = batch.collect()) {
-                        set(world, x + 1, Y0, z, Blocks.GLOWSTONE.getDefaultState());
+                        set(world, x + 1, Y0, z, Blocks.GLOWSTONE.defaultBlockState());
                     }
-                    set(world, x + 2, Y0, z, Blocks.GLOWSTONE.getDefaultState());
+                    set(world, x + 2, Y0, z, Blocks.GLOWSTONE.defaultBlockState());
                     throw new IllegalStateException("a write failed");
                 } catch (IllegalStateException expected) {
                     // The scope closed on the way out.
                 }
                 check(batch.pendingCells() == 3, "the outer and nested writes' checks: " + batch.pendingCells());
-                set(world, x + 3, Y0, z, Blocks.GLOWSTONE.getDefaultState());
+                set(world, x + 3, Y0, z, Blocks.GLOWSTONE.defaultBlockState());
                 check(batch.pendingCells() == 3, "a write after the throw went the vanilla way: "
                         + batch.pendingCells());
                 try (LightBatch.Scope again = batch.collect()) {
-                    set(world, x + 4, Y0, z, Blocks.GLOWSTONE.getDefaultState());
+                    set(world, x + 4, Y0, z, Blocks.GLOWSTONE.defaultBlockState());
                 }
             }
             check(batch.pendingCells() == 4, "collecting again works: " + batch.pendingCells());
@@ -165,19 +165,19 @@ public final class LightBatchGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * Batching only for vanilla's own light providers (either may be absent, not both); turned off, a writer's checks
      * go to the light engine one per cell, as vanilla's.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_light_batch_guard")
-    public void checksGoTheVanillaWayUnlessTheLightEngineIsVanillas(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_light_batch_guard")
+    public void checksGoTheVanillaWayUnlessTheLightEngineIsVanillas(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerLightingProvider light = world.getChunkManager().getLightingProvider();
-        Object block = light.blockLightProvider, sky = light.skyLightProvider;
+        ServerLevel world = h.world;
+        ThreadedLevelLightEngine light = world.getChunkSource().getLightEngine();
+        Object block = light.blockEngine, sky = light.skyEngine;
         check(LightBatch.vanillaProviders(block, sky), "vanilla's providers");
         check(LightBatch.vanillaProviders(block, null), "no sky (the Nether)");
         check(!LightBatch.vanillaProviders(null, null), "no providers (an engine that replaced them)");
@@ -205,24 +205,24 @@ public final class LightBatchGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A fill job cancelled part way (its last section half written) and then undone: the light where it wrote equals a
      * vanilla copy of the same blocks, and after the undo the light before the fill.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_light_batch_cancel", tickLimit = 100_000)
-    public void aCancelledFillAndItsUndoLeaveVanillasLight(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_light_batch_cancel", timeoutTicks = 100_000)
+    public void aCancelledFillAndItsUndoLeaveVanillasLight(GameTestHelper context) {
         // A private executor writing at most 2,000 cells a tick: a job stops part way through a section.
         EditExecutor.Settings defaults = EditExecutor.Settings.from(SculptoryConfig.defaults(), true);
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(defaults.tickBudgetNanos(), 2_000, defaults.brushLaneShare(),
                         defaults.maxActivePerOwner(), defaults.maxActiveGlobal(), defaults.maxQueued(),
                         defaults.maxTicketsPerJob(), defaults.unloadedPolicy(), defaults.maxBrushQueue(),
                         defaults.maxColumnsPerJob(), defaults.maxQueuedPerOwner()));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1722);
         int ax = at[0], az = at[1], bx = ax + APART;
         Box area = around(ax, az, bx);
@@ -269,7 +269,7 @@ public final class LightBatchGameTest implements FabricGameTest {
                     for (int y = 0; y < after[t][x].length; y++) {
                         for (int z = 0; z < after[t][x][y].length; z++) {
                             if (after[t][x][y][z] != before[0][t][x][y][z]) {
-                                throw new GameTestException(LightType.values()[t] + " light after the undo at "
+                                throw new GameTestAssertException(LightLayer.values()[t] + " light after the undo at "
                                         + x + ", " + y + ", " + z + ": " + after[t][x][y][z] + ", was "
                                         + before[0][t][x][y][z]);
                             }
@@ -290,11 +290,11 @@ public final class LightBatchGameTest implements FabricGameTest {
      * runs within a few seconds. Wall-clock times, logged, with a loose bound (the GameTest server ticks as fast as it
      * can, so ticks say little). No chunk outside the test's region is loaded.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_light_batch_latency", tickLimit = 1_000_000)
-    public void theLightEngineStaysResponsiveDuringALargeEdit(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_light_batch_latency", timeoutTicks = 1_000_000)
+    public void theLightEngineStaysResponsiveDuringALargeEdit(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerLightingProvider light = world.getChunkManager().getLightingProvider();
+        ServerLevel world = h.world;
+        ThreadedLevelLightEngine light = world.getChunkSource().getLightEngine();
         int[] at = regionCorner(context, 1724);
         int x0 = at[0], z0 = at[1];
         Box edit = box(x0, Y0, z0, x0 + 127, Y0 + 63, z0 + 127);
@@ -311,20 +311,20 @@ public final class LightBatchGameTest implements FabricGameTest {
         int[] markers = {0};
         boolean[] done = {false};
         String[] failure = {null};
-        context.addInstantFinalTask(() -> {
-            if (failure[0] != null) throw new GameTestException(failure[0]);
+        context.succeedWhen(() -> {
+            if (failure[0] != null) throw new GameTestAssertException(failure[0]);
             if (done[0]) return;
             long now = System.nanoTime();
             if (now - start > 300_000_000_000L) {
                 failure[0] = "not done in 5 minutes: fill " + fill.result;
-                throw new GameTestException(failure[0]);
+                throw new GameTestAssertException(failure[0]);
             }
             if (fill.result != null && fillMs[0] < 0) {
                 fillMs[0] = (now - start) / 1_000_000;
                 // Behind every check the edit queued: a marker on each of its chunks.
                 for (int cx = edit.min().x() >> 4; cx <= edit.max().x() >> 4; cx++) {
                     for (int cz = edit.min().z() >> 4; cz <= edit.max().z() >> 4; cz++) {
-                        settle.add(light.enqueue(cx, cz));
+                        settle.add(light.waitForPendingTasks(cx, cz));
                     }
                 }
             }
@@ -333,13 +333,13 @@ public final class LightBatchGameTest implements FabricGameTest {
                 marker[0] = null;
             }
             if (marker[0] == null) {
-                marker[0] = light.enqueue(quietX, quietZ);
+                marker[0] = light.waitForPendingTasks(quietX, quietZ);
                 markerAt[0] = now;
             }
             markerWorst[0] = Math.max(markerWorst[0], (now - markerAt[0]) / 1_000_000);
             boolean settled = fillMs[0] >= 0 && markers[0] > 0
-                    && settle.stream().allMatch(CompletableFuture::isDone) && !light.hasUpdates();
-            if (!settled) throw new GameTestException("the edit and its light are not done");
+                    && settle.stream().allMatch(CompletableFuture::isDone) && !light.hasLightWork();
+            if (!settled) throw new GameTestAssertException("the edit and its light are not done");
             long settleMs = (now - start) / 1_000_000;
             String report = String.format(Locale.ROOT, "fill %s (%d cells) written in %d ms, its light worked out after"
                     + " %d ms; %d light markers on a quiet chunk, the slowest %d ms", fill.result.outcome(),
@@ -351,7 +351,7 @@ public final class LightBatchGameTest implements FabricGameTest {
             done[0] = true;
             if (fill.result.outcome() != JobOutcome.COMPLETED) failure[0] = "the fill: " + report;
             else if (markerWorst[0] > 5_000) failure[0] = "light markers stalled: " + report;
-            if (failure[0] != null) throw new GameTestException(failure[0]);
+            if (failure[0] != null) throw new GameTestAssertException(failure[0]);
         });
     }
 
@@ -378,9 +378,9 @@ public final class LightBatchGameTest implements FabricGameTest {
                 for (int y = HEIGHT - 4; y < HEIGHT; y++) out.set(x, y, z, AIR);
             }
         }
-        out.set(6, 4, 6, Blocks.GLOWSTONE.getDefaultState());
-        out.set(24, 10, 9, Blocks.GLOWSTONE.getDefaultState());
-        out.set(10, 18, 25, Blocks.SEA_LANTERN.getDefaultState());
+        out.set(6, 4, 6, Blocks.GLOWSTONE.defaultBlockState());
+        out.set(24, 10, 9, Blocks.GLOWSTONE.defaultBlockState());
+        out.set(10, 18, 25, Blocks.SEA_LANTERN.defaultBlockState());
     }
 
     /** The first glowstone goes and the roof's hole closes. */
@@ -399,12 +399,12 @@ public final class LightBatchGameTest implements FabricGameTest {
     }
 
     private static void write(BlockWriter writer, int x, int y, int z, BlockState state) {
-        writer.write(x, y, z, Block.getRawIdFromState(state), null);
+        writer.write(x, y, z, Block.getId(state), null);
     }
 
     /** Vanilla's way: one light check per changed cell. */
-    private static void set(ServerWorld world, int x, int y, int z, BlockState state) {
-        world.setBlockState(new BlockPos(x, y, z), state, Block.FORCE_STATE, 0);
+    private static void set(ServerLevel world, int x, int y, int z, BlockState state) {
+        world.setBlock(new BlockPos(x, y, z), state, Block.UPDATE_KNOWN_SHAPE, 0);
     }
 
     private static void vanilla(Runnable writes) {
@@ -414,27 +414,27 @@ public final class LightBatchGameTest implements FabricGameTest {
     }
 
     /** Copies the batched copy's blocks (in and around the structure) onto the vanilla copy where they differ. */
-    private static void copyBlocks(ServerWorld world, int ax, int bx, int az) {
+    private static void copyBlocks(ServerLevel world, int ax, int bx, int az) {
         for (int x = -MARGIN; x < SIDE + MARGIN; x++) {
             for (int z = -MARGIN; z < SIDE + MARGIN; z++) {
                 for (int y = -MARGIN; y < HEIGHT + MARGIN; y++) {
                     BlockState state = world.getBlockState(new BlockPos(ax + x, Y0 + y, az + z));
                     BlockPos b = new BlockPos(bx + x, Y0 + y, az + z);
-                    if (world.getBlockState(b) != state) world.setBlockState(b, state, Block.FORCE_STATE, 0);
+                    if (world.getBlockState(b) != state) world.setBlock(b, state, Block.UPDATE_KNOWN_SHAPE, 0);
                 }
             }
         }
     }
 
-    private static void compare(ServerWorld world, int ax, int bx, int az) {
+    private static void compare(ServerLevel world, int ax, int bx, int az) {
         for (int x = -MARGIN; x < SIDE + MARGIN; x++) {
             for (int z = -MARGIN; z < SIDE + MARGIN; z++) {
                 for (int y = -MARGIN; y < HEIGHT + MARGIN; y++) {
                     BlockPos a = new BlockPos(ax + x, Y0 + y, az + z), b = new BlockPos(bx + x, Y0 + y, az + z);
-                    for (LightType type : LightType.values()) {
-                        int batched = world.getLightLevel(type, a), vanilla = world.getLightLevel(type, b);
+                    for (LightLayer type : LightLayer.values()) {
+                        int batched = world.getBrightness(type, a), vanilla = world.getBrightness(type, b);
                         if (batched != vanilla) {
-                            throw new GameTestException(type + " light at " + x + ", " + y + ", " + z + ": " + batched
+                            throw new GameTestAssertException(type + " light at " + x + ", " + y + ", " + z + ": " + batched
                                     + " batched, " + vanilla + " the vanilla way");
                         }
                     }
@@ -444,12 +444,12 @@ public final class LightBatchGameTest implements FabricGameTest {
     }
 
     /** Whether the fill (stone over the copy at (ax, az) and around it) has written any cell of the air around it. */
-    private static boolean wroteAny(ServerWorld world, int ax, int az) {
+    private static boolean wroteAny(ServerLevel world, int ax, int az) {
         for (int x = -8; x < SIDE + 8; x++) {
             for (int z = -8; z < SIDE + 8; z++) {
                 for (int y = 2; y <= HEIGHT + 8; y++) {
                     boolean inside = x >= 0 && x < SIDE && z >= 0 && z < SIDE && y < HEIGHT;
-                    if (!inside && world.getBlockState(new BlockPos(ax + x, Y0 + y, az + z)).isOf(Blocks.STONE)) {
+                    if (!inside && world.getBlockState(new BlockPos(ax + x, Y0 + y, az + z)).is(Blocks.STONE)) {
                         return true;
                     }
                 }
@@ -459,12 +459,12 @@ public final class LightBatchGameTest implements FabricGameTest {
     }
 
     /** Cells in and around the batched copy with block light. */
-    private static int lit(ServerWorld world, int ax, int az) {
+    private static int lit(ServerLevel world, int ax, int az) {
         int lit = 0;
         for (int x = -MARGIN; x < SIDE + MARGIN; x++) {
             for (int z = -MARGIN; z < SIDE + MARGIN; z++) {
                 for (int y = -MARGIN; y < HEIGHT + MARGIN; y++) {
-                    if (world.getLightLevel(LightType.BLOCK, new BlockPos(ax + x, Y0 + y, az + z)) > 0) lit++;
+                    if (world.getBrightness(LightLayer.BLOCK, new BlockPos(ax + x, Y0 + y, az + z)) > 0) lit++;
                 }
             }
         }
@@ -472,15 +472,15 @@ public final class LightBatchGameTest implements FabricGameTest {
     }
 
     /** Sky and block light in and around the copy at (ax, az), by [type][x][y][z]. */
-    private static int[][][][] lightOf(ServerWorld world, int ax, int az) {
+    private static int[][][][] lightOf(ServerLevel world, int ax, int az) {
         int w = SIDE + 2 * MARGIN, hgt = HEIGHT + 2 * MARGIN;
         int[][][][] light = new int[2][w][hgt][w];
         for (int t = 0; t < 2; t++) {
-            LightType type = LightType.values()[t];
+            LightLayer type = LightLayer.values()[t];
             for (int x = 0; x < w; x++) {
                 for (int y = 0; y < hgt; y++) {
                     for (int z = 0; z < w; z++) {
-                        light[t][x][y][z] = world.getLightLevel(type,
+                        light[t][x][y][z] = world.getBrightness(type,
                                 new BlockPos(ax - MARGIN + x, Y0 - MARGIN + y, az - MARGIN + z));
                     }
                 }
@@ -495,8 +495,8 @@ public final class LightBatchGameTest implements FabricGameTest {
      * checks. A check runs once; its failure stays (the task is retried every tick while it throws).
      */
     private static final class Steps {
-        private final TestContext context;
-        private final ServerLightingProvider light;
+        private final GameTestHelper context;
+        private final ThreadedLevelLightEngine light;
         private final Box area;
         private final Runnable cleanup;
         private final List<Runnable> edits = new ArrayList<>();
@@ -509,9 +509,9 @@ public final class LightBatchGameTest implements FabricGameTest {
         private String failure;
         private boolean finished;
 
-        Steps(TestContext context, ServerWorld world, Box area, Runnable cleanup) {
+        Steps(GameTestHelper context, ServerLevel world, Box area, Runnable cleanup) {
             this.context = context;
-            this.light = world.getChunkManager().getLightingProvider();
+            this.light = world.getChunkSource().getLightEngine();
             this.area = area;
             this.cleanup = cleanup;
         }
@@ -527,11 +527,11 @@ public final class LightBatchGameTest implements FabricGameTest {
         }
 
         void start() {
-            context.addInstantFinalTask(this::tick);
+            context.succeedWhen(this::tick);
         }
 
         private void tick() {
-            if (failure != null) throw new GameTestException(failure);
+            if (failure != null) throw new GameTestAssertException(failure);
             if (finished) return;
             try {
                 if (step < 0 || markers != null && settled()) {
@@ -550,23 +550,23 @@ public final class LightBatchGameTest implements FabricGameTest {
                     markers = new ArrayList<>();
                     for (int cx = area.min().x() >> 4; cx <= area.max().x() >> 4; cx++) {
                         for (int cz = area.min().z() >> 4; cz <= area.max().z() >> 4; cz++) {
-                            markers.add(light.enqueue(cx, cz));
+                            markers.add(light.waitForPendingTasks(cx, cz));
                         }
                     }
                     settledTicks = 0;
                 }
-            } catch (GameTestException e) {
+            } catch (GameTestAssertException e) {
                 failure = "step " + (step + 1) + ": " + e.getMessage();
                 finished = true;
                 cleanup.run();
                 throw e;
             }
-            throw new GameTestException("step " + (step + 1) + " is not done yet");
+            throw new GameTestAssertException("step " + (step + 1) + " is not done yet");
         }
 
         /** Every check queued before the markers is worked out once each marker has run and no update is left. */
         private boolean settled() {
-            boolean done = markers.stream().allMatch(CompletableFuture::isDone) && !light.hasUpdates();
+            boolean done = markers.stream().allMatch(CompletableFuture::isDone) && !light.hasLightWork();
             if (!done) {
                 settledTicks = 0;
                 return false;
@@ -583,12 +583,12 @@ public final class LightBatchGameTest implements FabricGameTest {
                     new Object[] {new String[0]}, new String[] {String[].class.getName()});
             long n = 0;
             for (String line : out.split("\n")) {
-                if (!line.contains("net.minecraft.server.world.ServerLightingProvider$$Lambda")) continue;
+                if (!line.contains("net.minecraft.server.level.ThreadedLevelLightEngine$$Lambda")) continue;
                 n += Long.parseLong(line.trim().split(" +")[1]);
             }
             return n;
         } catch (Exception e) {
-            throw new GameTestException("no class histogram: " + e);
+            throw new GameTestAssertException("no class histogram: " + e);
         }
     }
 }

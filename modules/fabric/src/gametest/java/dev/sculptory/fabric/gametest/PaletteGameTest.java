@@ -30,11 +30,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Palettes against the server's real block registry and data fixer: a save resolves every state (refusing one the
@@ -55,7 +54,7 @@ public final class PaletteGameTest implements FabricGameTest {
         try {
             request.run();
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.reason() + " " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.reason() + " " + e.getMessage());
         }
     }
 
@@ -70,16 +69,16 @@ public final class PaletteGameTest implements FabricGameTest {
      * {@code library.write} saves into their own folder; the file holds the server's own exact state text and loads back
      * the same.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_palette_save", tickLimit = LIMIT)
-    public void aPaletteSaveKeepsTheServersExactStatesAndRefusesUnknownOnes(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_palette_save", timeoutTicks = LIMIT)
+    public void aPaletteSaveKeepsTheServersExactStatesAndRefusesUnknownOnes(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
-        ServerPlayerEntity useOnly = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
+        ServerPlayer useOnly = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD);
         EditTestSupport.grant(useOnly, Perm.USE);
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
-        String own = "_players/" + builder.getUuid();
+        String own = "_players/" + builder.getUUID();
 
         EditRejected unknown = refusal(() -> clips.savePalette(builder, "reef.palette.json",
                 palette("minecraft:stone", "modded:gone"), new Captured<>()));
@@ -97,7 +96,7 @@ public final class PaletteGameTest implements FabricGameTest {
                 == RejectReason.INVALID, "a schematic is never loaded as a palette");
         check(refusal(() -> clips.savePalette(useOnly, "reef.palette.json", palette("minecraft:stone"), new Captured<>()))
                 .reason() == RejectReason.NO_PERMISSION, "the library needs clipboard");
-        check(clips.requests(builder.getUuid()) == 0, "a refusal left a request slot taken");
+        check(clips.requests(builder.getUUID()) == 0, "a refusal left a request slot taken");
         check(!Files.exists(root), "nothing was written: " + root);
 
         Captured<LibraryChange> saved = new Captured<>();
@@ -105,8 +104,8 @@ public final class PaletteGameTest implements FabricGameTest {
         Captured<ClipboardService.Listing> listing = new Captured<>();
         run(() -> clips.savePalette(builder, "biomes/reef.palette.json", palette("minecraft:sea_pickle[waterlogged=true]",
                 "minecraft:seagrass", "minecraft:oak_log"), saved));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     LibraryChange change = saved.get("save");
                     check(change.equals(new LibraryChange(false, "", own + "/biomes/reef.palette.json")),
                             "saved into the player's own folder: " + change);
@@ -122,12 +121,12 @@ public final class PaletteGameTest implements FabricGameTest {
                         check(Files.readString(file, StandardCharsets.UTF_8).contains("\"format\": \"sculptory:palette\""),
                                 "a readable JSON file");
                     } catch (IOException | PaletteFile.PaletteFormatException e) {
-                        throw new GameTestException("unreadable palette file: " + e);
+                        throw new GameTestAssertException("unreadable palette file: " + e);
                     }
                     run(() -> clips.loadPalette(builder, change.to(), loaded));
                     run(() -> clips.list(builder, own + "/biomes", listing));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.LoadedPalette back = loaded.get("load");
                     check(back.dropped() == 0 && back.droppedStates().isEmpty(), "nothing left out: " + back);
                     check(back.palette().entries().get(0).state().equals("minecraft:sea_pickle[pickles=1,waterlogged=true]"),
@@ -139,7 +138,7 @@ public final class PaletteGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -147,8 +146,8 @@ public final class PaletteGameTest implements FabricGameTest {
      * server doesn't know are left out and counted (the first three named), repeats merged; a file of nothing but unknown
      * states, and a malformed file, are refused saying why.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_palette_load", tickLimit = LIMIT)
-    public void aPaletteLoadUpgradesOldStatesAndCountsTheOnesThisServerDoesNotKnow(TestContext context)
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_palette_load", timeoutTicks = LIMIT)
+    public void aPaletteLoadUpgradesOldStatesAndCountsTheOnesThisServerDoesNotKnow(GameTestHelper context)
             throws IOException {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
@@ -177,8 +176,8 @@ public final class PaletteGameTest implements FabricGameTest {
         Captured<ClipboardService.LoadedPalette> newer = new Captured<>();
         run(() -> clips.loadPalette(h.player, "old/paths.palette.json", old));
         run(() -> clips.loadPalette(h.player, "old/none.palette.json", none));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.LoadedPalette palette = old.get("old palette");
                     check(palette.palette().entries().equals(List.of(new BlockPalette.Entry("minecraft:dirt_path", 8),
                             new BlockPalette.Entry("minecraft:stone", 2))),
@@ -191,7 +190,7 @@ public final class PaletteGameTest implements FabricGameTest {
                     run(() -> clips.loadPalette(h.player, "old/broken.palette.json", broken));
                     run(() -> clips.loadPalette(h.player, "old/newer.palette.json", newer));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     broken.failedWith(RejectReason.INVALID, "malformed");
                     check(broken.detail.contains("not valid JSON") && !broken.detail.contains(root.toString()),
                             "says why, never where on disk: " + broken.detail);
@@ -200,15 +199,15 @@ public final class PaletteGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A palette of water plants, saved and loaded, then used as the Scatter tool uses a loaded palette (its states as
      * block variants): every placement stands on the lake's seabed in still water, none on the meadow.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_palette_scatter", tickLimit = LIMIT)
-    public void aLoadedPalettesWaterPlantsPlanUnderWater(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_palette_scatter", timeoutTicks = LIMIT)
+    public void aLoadedPalettesWaterPlantsPlanUnderWater(GameTestHelper context) {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
@@ -221,23 +220,23 @@ public final class PaletteGameTest implements FabricGameTest {
         ScatterGameTest.Reply[] reply = new ScatterGameTest.Reply[1];
         run(() -> clips.savePalette(h.player, "reef.palette.json",
                 palette("minecraft:seagrass", "minecraft:sea_pickle[pickles=3,waterlogged=true]"), saved));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     saved.get("save");
                     run(() -> clips.loadPalette(h.player, "reef.palette.json", loaded));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     List<ScatterSource> sources = loaded.get("load").palette().entries().stream()
                             .<ScatterSource>map(entry -> new ScatterSource.Block(entry.state())).toList();
                     reply[0] = preview(scatter, h.player, ScatterWaterGameTest.request(region(x0, z0, x0 + 31, z0 + 15),
                             0, 23L, ScatterSettings.Fit.DEFAULT, ScatterSettings.ColumnHeight.ONE,
                             sources.toArray(new ScatterSource[0])));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply[0].finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply[0].get("preview");
                     check(plan.placements() > 50, "only " + plan.placements() + " placements: " + plan.rejectedCounts());
                     int[] planned = new int[2];
@@ -251,7 +250,7 @@ public final class PaletteGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -260,23 +259,23 @@ public final class PaletteGameTest implements FabricGameTest {
      * a move that would change a file's kind is refused at admission; a second library write while one runs is refused
      * (the save slot); a player leaving while their save runs still gets the file written and the slots released.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_palette_rights", tickLimit = LIMIT)
-    public void paletteRequestsFollowTheLibraryRightsAndSlots(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_palette_rights", timeoutTicks = LIMIT)
+    public void paletteRequestsFollowTheLibraryRightsAndSlots(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerPlayerEntity alice = h.addPlayer(false);
-        ServerPlayerEntity bob = h.addPlayer(false);
+        ServerPlayer alice = h.addPlayer(false);
+        ServerPlayer bob = h.addPlayer(false);
         EditTestSupport.grant(alice, Perm.USE, Perm.CLIPBOARD);
         EditTestSupport.grant(bob, Perm.USE, Perm.CLIPBOARD);
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
-        String alices = "_players/" + alice.getUuid();
+        String alices = "_players/" + alice.getUUID();
         String mine = alices + "/mine.palette.json";
         BlockPalette stone = palette("minecraft:stone");
 
         EditRejected intoAlices = refusal(() -> clips.savePalette(bob, alices + "/bob.palette.json", stone,
                 new Captured<>()));
         check(intoAlices.reason() == RejectReason.NO_PERMISSION, "bob saving into alice's folder: " + intoAlices);
-        check(clips.requests(bob.getUuid()) == 0, "a refusal left a slot taken");
+        check(clips.requests(bob.getUUID()) == 0, "a refusal left a slot taken");
         check(!Files.exists(root), "nothing written");
 
         Captured<LibraryChange> saved = new Captured<>();
@@ -284,8 +283,8 @@ public final class PaletteGameTest implements FabricGameTest {
         Captured<LibraryChange> first = new Captured<>();
         Captured<LibraryChange> leaving = new Captured<>();
         run(() -> clips.savePalette(alice, "mine.palette.json", stone, saved));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     check(saved.get("alice's save").to().equals(mine), "into her own folder: " + saved.value);
                     EditRejected otherLoad = refusal(() -> clips.loadPalette(bob, mine, new Captured<>()));
                     check(otherLoad.reason() == RejectReason.NO_PERMISSION, "bob loading her palette: " + otherLoad);
@@ -305,7 +304,7 @@ public final class PaletteGameTest implements FabricGameTest {
                     EditRejected toPalette = refusal(() -> clips.move(alice, false, alices + "/x.schem",
                             alices + "/x.palette.json", new Captured<>()));
                     check(toPalette.reason() == RejectReason.INVALID, "a schematic renamed into a palette");
-                    check(clips.requests(alice.getUuid()) == 0, "a refusal left a slot taken");
+                    check(clips.requests(alice.getUUID()) == 0, "a refusal left a slot taken");
 
                     // One library write per player at a time: the second is refused while the first holds the slot.
                     run(() -> clips.savePalette(alice, "one.palette.json", stone, first));
@@ -316,10 +315,10 @@ public final class PaletteGameTest implements FabricGameTest {
                             new Captured<>()));
                     check(busyMove.reason() == RejectReason.QUEUE_FULL, "a change while a save runs: " + busyMove);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(byAdmin.get("admin load").palette().equals(stone), "an admin loads any folder's palette");
                     first.get("first save");
-                    check(clips.requests(alice.getUuid()) == 0, "the slot is free once answered");
+                    check(clips.requests(alice.getUUID()) == 0, "the slot is free once answered");
                     check(Files.isRegularFile(root.resolve(alices).resolve("one.palette.json")), "first save missing");
                     check(!Files.exists(root.resolve(alices).resolve("two.palette.json")), "a refused save written");
 
@@ -327,14 +326,14 @@ public final class PaletteGameTest implements FabricGameTest {
                     run(() -> clips.savePalette(alice, "leaving.palette.json", stone, leaving));
                     EditServiceHost.playerLeft(h.service, null, alice); // what the DISCONNECT hook does
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     leaving.get("save of a player who left");
                     check(Files.isRegularFile(root.resolve(alices).resolve("leaving.palette.json")), "the save lost");
-                    check(clips.requests(alice.getUuid()) == 0, "a slot stayed taken after the player left");
+                    check(clips.requests(alice.getUUID()) == 0, "a slot stayed taken after the player left");
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -342,11 +341,11 @@ public final class PaletteGameTest implements FabricGameTest {
      * forwards palette saves and loads and the library changes (new folder, move, delete, and who is shown them) to the
      * running server's library. Before it forwarded them, all of these were refused {@code DISABLED} in a real server.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_palette_host", tickLimit = LIMIT)
-    public void theHostServiceForwardsPalettesAndLibraryChanges(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_palette_host", timeoutTicks = LIMIT)
+    public void theHostServiceForwardsPalettesAndLibraryChanges(GameTestHelper context) {
         Harness h = new Harness(context);
-        ClipboardService<ServerPlayerEntity> host = EditServiceHost.clipboards();
-        check(EditServiceHost.findClipboards(context.getWorld().getServer()).isPresent(), "the host runs a library");
+        ClipboardService<ServerPlayer> host = EditServiceHost.clipboards();
+        check(EditServiceHost.findClipboards(context.getLevel().getServer()).isPresent(), "the host runs a library");
         Path root = EditServiceHost.defaultLibraryRoot();
         String folder = "palette-host-" + java.util.UUID.randomUUID().toString().substring(0, 8);
         BlockPalette moss = palette("minecraft:moss_block", "minecraft:seagrass");
@@ -357,12 +356,12 @@ public final class PaletteGameTest implements FabricGameTest {
         Captured<LibraryChange> deleted = new Captured<>();
         Captured<LibraryChange> folderGone = new Captured<>();
         run(() -> host.createFolder(h.player, folder, made));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     check(made.get("new folder").equals(new LibraryChange(true, "", folder)), "folder " + made.value);
                     run(() -> host.savePalette(h.player, folder + "/a.palette.json", moss, saved));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(saved.get("save").equals(new LibraryChange(false, "", folder + "/a.palette.json")),
                             "save " + saved.value);
                     check(Files.isRegularFile(root.resolve(folder).resolve("a.palette.json")), "no file written");
@@ -370,25 +369,25 @@ public final class PaletteGameTest implements FabricGameTest {
                             "pushes are decided by the running library");
                     run(() -> host.loadPalette(h.player, folder + "/a.palette.json", loaded));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(loaded.get("load").palette().equals(moss), "load " + loaded.value);
                     run(() -> host.move(h.player, false, folder + "/a.palette.json", folder + "/b.palette.json",
                             moved));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(moved.get("move").to().equals(folder + "/b.palette.json"), "move " + moved.value);
                     check(Files.isRegularFile(root.resolve(folder).resolve("b.palette.json")), "not moved on disk");
                     run(() -> host.delete(h.player, false, folder + "/b.palette.json", deleted));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     deleted.get("delete");
                     run(() -> host.delete(h.player, true, folder, folderGone));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     folderGone.get("delete folder");
                     check(!Files.exists(root.resolve(folder)), "the folder is still there");
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

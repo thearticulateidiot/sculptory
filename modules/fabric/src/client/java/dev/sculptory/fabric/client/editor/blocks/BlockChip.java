@@ -8,7 +8,7 @@ import dev.sculptory.fabric.client.editor.ui.UiContext;
 import dev.sculptory.fabric.client.editor.ui.UiGraphics;
 import dev.sculptory.fabric.client.editor.ui.widget.AbstractButton;
 import java.util.Objects;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 
 /** A button showing a block's icon and name with a drop-down caret; clicking it opens a block picker. */
 public class BlockChip extends AbstractButton {

@@ -19,7 +19,7 @@ import dev.sculptory.fabric.client.editor.ui.TextLayout;
 import dev.sculptory.fabric.client.editor.ui.UiScale;
 import java.util.List;
 import java.util.Map;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 import org.junit.jupiter.api.Test;
 
 /**

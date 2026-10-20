@@ -1,11 +1,11 @@
 package dev.sculptory.fabric.client.editor.demo;
 
 import dev.sculptory.fabric.client.editor.ui.render.MinecraftTextMeasure;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
 import dev.sculptory.fabric.client.editor.ui.Rect;
 import dev.sculptory.fabric.client.editor.ui.TextMeasure;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.util.Util;
 
 /**
  * The demo's caption bar (a dark plate with large text at the bottom centre, cross-fading between captions) and a ring
@@ -38,7 +38,7 @@ public final class CaptionOverlay {
     /** Shows {@code text} (fading the one before out); blank clears the bar. */
     public void show(String text) {
         synchronized (lock) {
-            long now = Util.getMeasuringTimeMs();
+            long now = Util.getMillis();
             // A caption replaced mid-fade: what is on screen now becomes the one fading out.
             previous = alphaOf(now) < 1 ? blend(now) : current;
             current = text == null ? "" : text;
@@ -77,7 +77,7 @@ public final class CaptionOverlay {
 
     public void pointerUp() {
         held = false;
-        releasedAt = Util.getMeasuringTimeMs();
+        releasedAt = Util.getMillis();
     }
 
     private double alphaOf(long now) {
@@ -88,8 +88,8 @@ public final class CaptionOverlay {
      * Draws the bar with its bottom edge at {@code bottomLimit} (GUI pixels) and the pointer ring. Client thread, at
      * the end of the frame.
      */
-    public void render(DrawContext context, MinecraftClient client, int bottomLimit) {
-        long now = Util.getMeasuringTimeMs();
+    public void render(GuiGraphics context, Minecraft client, int bottomLimit) {
+        long now = Util.getMillis();
         String text;
         String old;
         double alpha;
@@ -98,12 +98,12 @@ public final class CaptionOverlay {
             old = previous;
             alpha = alphaOf(now);
         }
-        TextMeasure measure = new MinecraftTextMeasure(client.textRenderer);
-        int width = context.getScaledWindowWidth();
-        int height = context.getScaledWindowHeight();
+        TextMeasure measure = new MinecraftTextMeasure(client.font);
+        int width = context.guiWidth();
+        int height = context.guiHeight();
         // Above everything: the editor layers its windows and popups in depth, and vanilla's tooltips sit at 400.
-        context.getMatrices().push();
-        context.getMatrices().translate(0, 0, ABOVE_ALL);
+        context.pose().pushPose();
+        context.pose().translate(0, 0, ABOVE_ALL);
         if (!old.isEmpty() && alpha < 1) {
             draw(context, client, measure, CaptionLayout.of(width, height, bottomLimit, measure, old), 1 - alpha);
         }
@@ -111,10 +111,10 @@ public final class CaptionOverlay {
             draw(context, client, measure, CaptionLayout.of(width, height, bottomLimit, measure, text), alpha);
         }
         drawRing(context, now);
-        context.getMatrices().pop();
+        context.pose().popPose();
     }
 
-    private void draw(DrawContext context, MinecraftClient client, TextMeasure measure, CaptionLayout layout,
+    private void draw(GuiGraphics context, Minecraft client, TextMeasure measure, CaptionLayout layout,
             double alpha) {
         int plateAlpha = (int) Math.round(alpha * 0xCC);
         int textAlpha = (int) Math.round(alpha * 0xFF);
@@ -125,17 +125,17 @@ public final class CaptionOverlay {
         Rect plate = layout.plate();
         context.fill(plate.x(), plate.y(), plate.right(), plate.bottom(), (plateAlpha << 24) | PLATE);
         int scale = layout.scale();
-        context.getMatrices().push();
-        context.getMatrices().scale(scale, scale, 1);
+        context.pose().pushPose();
+        context.pose().scale(scale, scale, 1);
         for (int i = 0; i < layout.lines().size(); i++) {
             int x = layout.lineX(i, measure) / scale;
             int y = layout.lineY(i, measure) / scale;
-            context.drawText(client.textRenderer, layout.lines().get(i), x, y, (textAlpha << 24) | TEXT, true);
+            context.drawString(client.font, layout.lines().get(i), x, y, (textAlpha << 24) | TEXT, true);
         }
-        context.getMatrices().pop();
+        context.pose().popPose();
     }
 
-    private void drawRing(DrawContext context, long now) {
+    private void drawRing(GuiGraphics context, long now) {
         if (!pointerShown) {
             return;
         }

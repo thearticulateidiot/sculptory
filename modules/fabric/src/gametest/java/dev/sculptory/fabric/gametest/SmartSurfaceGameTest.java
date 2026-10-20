@@ -45,11 +45,11 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
 
 /**
  * Generate's Smart Surface on the server: the kernel's sheet, uploaded as a generated clipboard and pasted with the
@@ -91,12 +91,12 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
     private static GeneratedSource sheet(Harness h, SmartSurfaceKernel.Shape shape, SmartSurfaceKernel.Fill fill,
                                          GroundMap ground) {
         SmartSurfaceKernel.Surface surface = SmartSurfaceKernel.surface(shape);
-        return SmartSurfaceKernel.generate(surface, fill, ground, h.world.getBottomY(), h.world.getTopY(), 1 << 20)
+        return SmartSurfaceKernel.generate(surface, fill, ground, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight(), 1 << 20)
                 .source();
     }
 
     /** Uploads {@code source} as {@code player}'s generated clipboard; the reply lands in the returned capture. */
-    private static Captured<ClipboardService.ClipboardInfo> upload(Harness h, ServerPlayerEntity player,
+    private static Captured<ClipboardService.ClipboardInfo> upload(Harness h, ServerPlayer player,
                                                                     GeneratedSource source) {
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(h.context));
@@ -104,7 +104,7 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         try {
             clips.beginGeneratedUpload(player, source.bounds(), source.cells(), payload.length).completed(payload, reply);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
         return reply;
     }
@@ -118,7 +118,7 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
                     Transform.IDENTITY, options), new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS,
                     OpLabel.SMART_SURFACE), listener);
         } catch (EditRejected e) {
-            throw new GameTestException("paste refused: " + e.getMessage());
+            throw new GameTestAssertException("paste refused: " + e.getMessage());
         }
         return listener;
     }
@@ -131,8 +131,8 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
                     int want = expected.get(x, y, z), got = now.get(x, y, z);
                     if (want != got) {
-                        throw new GameTestException(what + " at " + x + "," + y + "," + z + ": "
-                                + Block.getStateFromRawId(got) + " instead of " + Block.getStateFromRawId(want));
+                        throw new GameTestAssertException(what + " at " + x + "," + y + "," + z + ": "
+                                + Block.stateById(got) + " instead of " + Block.stateById(want));
                     }
                 }
             }
@@ -158,8 +158,8 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
      * Smooth, Extend to Ground, grass over dirt: the paste writes exactly the sheet's cells (down to the stone, the
      * mound included), as one history entry named Smart surface; undo restores every cell.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_smart_surface_build", tickLimit = LIMIT)
-    public void aSheetBuildsAsOneStepAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_smart_surface_build", timeoutTicks = LIMIT)
+    public void aSheetBuildsAsOneStepAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2200);
         int x0 = at[0], z0 = at[1];
@@ -177,34 +177,34 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = upload(h, h.player, source);
         RecordingListener[] pasted = new RecordingListener[1];
         RecordingListener undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
                         new PasteOptions(true, false, false)))
-                .createAndAdd(() -> check(pasted[0].result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted[0].result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(pasted[0].result.outcome() == JobOutcome.COMPLETED, "paste " + pasted[0].result);
                     checkWorld(h, area, expected, "the sheet");
                     check(h.history().undoLabel().contains("Smart surface"), "history " + h.history().undoLabel());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                             "undo " + undo.result);
                     checkSame(before, capture(h.world, area), "after the undo");
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Keep Existing: a faceted sheet three thick pasted into air leaves the glass and the mound's stone it reaches
      * through as they are and writes the rest; undo is exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_smart_surface_keep", tickLimit = LIMIT)
-    public void keepExistingLeavesTheBlocksThere(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_smart_surface_keep", timeoutTicks = LIMIT)
+    public void keepExistingLeavesTheBlocksThere(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2201);
         int x0 = at[0], z0 = at[1];
@@ -231,29 +231,29 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = upload(h, h.player, source);
         RecordingListener[] pasted = new RecordingListener[1];
         RecordingListener undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
                         new PasteOptions(true, false, false).withInto(PasteOptions.Into.AIR)))
-                .createAndAdd(() -> check(pasted[0].result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted[0].result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(pasted[0].result.outcome() == JobOutcome.COMPLETED, "paste " + pasted[0].result);
                     checkWorld(h, area, expected, "the sheet into air");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before, capture(h.world, area), "after the undo");
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Under the global mask "on top of stone" only the sheet's cells resting on stone are written; undo is exact. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_smart_surface_mask", tickLimit = LIMIT)
-    public void theGlobalMaskIsHonoured(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_smart_surface_mask", timeoutTicks = LIMIT)
+    public void theGlobalMaskIsHonoured(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2202);
         int x0 = at[0], z0 = at[1];
@@ -264,16 +264,16 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         fill = new SmartSurfaceKernel.Fill(fill.top(), 1, fill.body(), true, 1, true);
         GeneratedSource source = sheet(h, shape(x0, z0, false), fill, ground);
         try {
-            EditMasks.set(h.player.getUuid(), new EditMask(List.of(MaskEntry.of(new MaskRule.OnTopOf(
+            EditMasks.set(h.player.getUUID(), new EditMask(List.of(MaskEntry.of(new MaskRule.OnTopOf(
                     BlockSet.parse("minecraft:stone")))), false), region -> region, h.runtime.states());
         } catch (EditRejected e) {
-            throw new GameTestException("mask refused: " + e.getMessage());
+            throw new GameTestAssertException("mask refused: " + e.getMessage());
         }
         BoundMask mask;
         try {
-            mask = EditMasks.current(h.player.getUuid());
+            mask = EditMasks.current(h.player.getUUID());
         } catch (EditRejected e) {
-            throw new GameTestException("mask refused: " + e.getMessage());
+            throw new GameTestAssertException("mask refused: " + e.getMessage());
         }
         WorldSnapshot before = capture(h.world, area);
         SnapshotWorld reader = new SnapshotWorld(h.world, h.runtime.states(), area);
@@ -283,25 +283,25 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = upload(h, h.player, source);
         RecordingListener[] pasted = new RecordingListener[1];
         RecordingListener undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
                         new PasteOptions(true, false, false)))
-                .createAndAdd(() -> check(pasted[0].result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted[0].result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(pasted[0].result.outcome() == JobOutcome.COMPLETED, "paste " + pasted[0].result);
                     checkWorld(h, area, expected, "the masked sheet");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before, capture(h.world, area), "after the undo");
-                    EditMasks.reset(h.player.getUuid());
+                    EditMasks.reset(h.player.getUUID());
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -310,8 +310,8 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
      * under a planks overhang down to the stone beneath it. Pasted with Keep Existing (into air) the tree and the
      * overhang stay and the air around them is filled; undo is exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_smart_surface_trees", tickLimit = LIMIT)
-    public void extendToGroundFillsThroughTreesAndUnderOverhangsAndKeepExistingKeepsThem(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_smart_surface_trees", timeoutTicks = LIMIT)
+    public void extendToGroundFillsThroughTreesAndUnderOverhangsAndKeepExistingKeepsThem(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2204);
         int x0 = at[0], z0 = at[1];
@@ -350,8 +350,8 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         check(GroundFill.groundUnder(surface.tops(), reader, 100) == null, "a fill deeper than the budget stops the look");
         SmartSurfaceKernel.Fill fill = new SmartSurfaceKernel.Fill(new Pattern.Single(h.state("minecraft:grass_block")),
                 1, new Pattern.Single(h.state("minecraft:dirt")), true, 1, true);
-        GeneratedSource source = SmartSurfaceKernel.generate(surface, fill, ground, h.world.getBottomY(),
-                h.world.getTopY(), 1 << 20).source();
+        GeneratedSource source = SmartSurfaceKernel.generate(surface, fill, ground, h.world.getMinBuildHeight(),
+                h.world.getMaxBuildHeight(), 1 << 20).source();
         for (int y = 104; y <= 112; y++) {
             check(source.contains(tx, y, tz) && source.contains(tx + 1, y, tz), "through the tree at y " + y);
             check(source.contains(x0 + 20, y, z0 + 20), "under the overhang at y " + y);
@@ -363,24 +363,24 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = upload(h, h.player, source);
         RecordingListener[] pasted = new RecordingListener[1];
         RecordingListener undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> pasted[0] = paste(h, uploaded.get("the upload"), source.bounds(),
                         new PasteOptions(true, false, false).withInto(PasteOptions.Into.AIR)))
-                .createAndAdd(() -> check(pasted[0].result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted[0].result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(pasted[0].result.outcome() == JobOutcome.COMPLETED, "paste " + pasted[0].result);
                     checkWorld(h, area, expected, "the sheet around the tree");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before, capture(h.world, area), "after the undo");
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** The source cells whose expected state is the state before (left out by the rule). */
@@ -397,17 +397,17 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
      * cap is refused by the kernel before any cell, and one announced over the clipboard limit by the server (for a player
      * without {@code limit.bypass}).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_smart_surface_refusals", tickLimit = LIMIT)
-    public void refusalsChangeNothing(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_smart_surface_refusals", timeoutTicks = LIMIT)
+    public void refusalsChangeNothing(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2203);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 98, z0, x0 + 31, 124, z0 + 31);
         loadAndForce(h.world, area);
         GroundMap ground = ground(h, area, x0, z0);
-        ServerPlayerEntity noRegion = h.addPlayer(false);
+        ServerPlayer noRegion = h.addPlayer(false);
         EditTestSupport.grant(noRegion, Perm.USE, Perm.CLIPBOARD);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
         SmartSurfaceKernel.Fill fill = new SmartSurfaceKernel.Fill(new Pattern.Single(h.state("minecraft:dirt")), 1,
                 new Pattern.Single(h.state("minecraft:dirt")), true, 1, true);
@@ -418,12 +418,12 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         EditRejected noNode = refusal(() -> clips.beginGeneratedUpload(noRegion, source.bounds(), source.cells(),
                 payload.length));
         check(noNode.reason() == RejectReason.NO_PERMISSION, "without region: " + noNode.reason());
-        check(h.service.clipboards().get(noRegion.getUuid()).isEmpty(), "a clipboard was made without region");
+        check(h.service.clipboards().get(noRegion.getUUID()).isEmpty(), "a clipboard was made without region");
 
         SmartSurfaceKernel.Surface surface = SmartSurfaceKernel.surface(shape(x0, z0, false));
         boolean refused = false;
         try {
-            SmartSurfaceKernel.generate(surface, fill, ground, h.world.getBottomY(), h.world.getTopY(), source.cells() - 1);
+            SmartSurfaceKernel.generate(surface, fill, ground, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight(), source.cells() - 1);
         } catch (GeneratedTooLargeException e) {
             refused = true;
         }
@@ -433,12 +433,12 @@ public final class SmartSurfaceGameTest implements FabricGameTest {
         check(vast.volume() > limit, "the box holds the limit");
         EditRejected tooLarge = refusal(() -> clips.beginGeneratedUpload(builder, vast, limit + 1, 100));
         check(tooLarge.reason() == RejectReason.TOO_LARGE, "over the clipboard limit: " + tooLarge.reason());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     checkSame(before, capture(h.world, area), "after the refusals");
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

@@ -36,13 +36,13 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.border.WorldBorder;
 
 /**
  * The terrain brushes' two modes on the server: "Terrain (from above)" writes
@@ -62,10 +62,10 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
      * Terrain-mode Raise, Lower (through a pond), Smooth, Flatten and a mirrored Raise, through the server's brush lane,
      * leave the area exactly as they did before the Surface mode existed (a fingerprint of every cell's state).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_brush_surface_golden", tickLimit = LIMIT)
-    public void terrainModeStrokesMatchTheirGoldenFingerprint(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_brush_surface_golden", timeoutTicks = LIMIT)
+    public void terrainModeStrokesMatchTheirGoldenFingerprint(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 940);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 150, z0 + 47);
@@ -79,20 +79,20 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
                 new BrushSpec(BrushTool.FLATTEN, 5, 0.6f, Falloff.SPHERE, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 106, 4L),
                 new BrushSpec(BrushTool.RAISE, 3, 1f, Falloff.SMOOTH, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0, 5L,
                         null, new Symmetry(Symmetry.Mode.MIRROR_X, 2 * (x0 + 24), 0)));
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         int[] seq = {1};
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 begin(h, 70 + current, specs.get(current));
                 List<Dab> dabs = path(x0, z0, current);
                 DabOutcome outcome = h.service.dabs(h.player, 70 + current, seq[0]++, dabs);
                 check(outcome.accepted(), "stroke " + current + ": " + outcome);
             });
-            runner.createAndAdd(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
-            runner.createAndAdd(() -> h.service.endStroke(h.player, 70 + current));
+            runner.thenWaitUntil(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
+            runner.thenWaitUntil(() -> h.service.endStroke(h.player, 70 + current));
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
             long print = fingerprint(world, area);
             check(print == TERRAIN_GOLDEN, "the terrain-mode strokes left fingerprint " + print + ", not "
@@ -100,7 +100,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
@@ -110,10 +110,10 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
      * size only the server runs) with a clip box and a Y mask stays in its box. Every stroke writes exactly what the
      * shared kernel writes on a snapshot, each is one history entry, and undoing them all restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_brush_surface_walls", tickLimit = LIMIT)
-    public void wallAndCeilingStrokesMatchTheKernelAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_brush_surface_walls", timeoutTicks = LIMIT)
+    public void wallAndCeilingStrokesMatchTheKernelAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 942);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 200, z0 + 79);
@@ -142,20 +142,20 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
                 line(i -> new Dab(i, (x0 + 30) * 16 + 4, 126 * 16, (z0 + 40) * 16 + i, 255)));
 
         int[] seq = {1};
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 begin(h, 90 + current, specs.get(current));
                 DabOutcome outcome = h.service.dabs(h.player, 90 + current, seq[0]++, strokes.get(current));
                 check(outcome.accepted(), "stroke " + current + ": " + outcome);
             });
-            runner.createAndAdd(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
-            runner.createAndAdd(() -> h.service.endStroke(h.player, 90 + current));
+            runner.thenWaitUntil(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
+            runner.thenWaitUntil(() -> h.service.endStroke(h.player, 90 + current));
         }
         // The replay mutates the snapshot, so it runs once; a failed check is retried against the same verdict.
         String[] replay = {null};
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
             if (replay[0] == null) replay[0] = replay(specs, strokes, snapshot);
             check(replay[0].isEmpty(), replay[0]);
@@ -190,31 +190,31 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
                     }
                 }
             }
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
         });
         List<RecordingListener> undos = new ArrayList<>();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 if (undos.size() == current) {
                     RecordingListener undo = new RecordingListener();
                     undos.add(undo);
                     h.undo(undo);
                 }
             });
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 RecordingListener undo = undos.get(current);
                 check(undo.result != null, "undo " + current + " running");
                 check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                         "undo " + current + ": " + undo.result);
             });
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(before, capture(world, area), "after undoing every Surface stroke");
             forceChunks(world, area, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
@@ -224,11 +224,11 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
      * history entry; a Surface stroke wholly beyond the world border is refused PROTECTED and writes nothing, and one
      * across the border writes only inside it and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_brush_surface_refused", tickLimit = LIMIT)
-    public void surfaceRefusalsAndLimits(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_brush_surface_refused", timeoutTicks = LIMIT)
+    public void surfaceRefusalsAndLimits(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 944);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 200, z0 + 79);
@@ -271,13 +271,13 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
         checkSame(before, capture(world, area), "after the refused dabs and the undone ones");
 
         // In the open air (30 blocks above everything): no surface in the ball, nothing written, no entry.
-        int entries = h.service.historyService().undoEntries(h.player.getUuid()).size();
+        int entries = h.service.historyService().undoEntries(h.player.getUUID()).size();
         begin(h, 133, surface(BrushTool.SMOOTH, 4, 1f, Falloff.CONSTANT, null, 2L));
         check(h.service.dabs(h.player, 133, 4, List.of(new Dab(0, (x0 + 60) * 16, 170 * 16, (z0 + 10) * 16, 255)))
                 .accepted(), "a dab in the air");
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 2, 20, "the air dab");
         h.service.endStroke(h.player, 133);
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == entries, "an empty stroke made an entry");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == entries, "an empty stroke made an entry");
         checkSame(before, capture(world, area), "after the stroke in the air");
 
         // Beyond the world border: every cell is protected, so the lane refuses the dab PROTECTED.
@@ -336,7 +336,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -347,10 +347,10 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
      * alone, this test would otherwise time them interpreted); best of twenty. Logged; the bound here only catches a
      * pathological slowdown.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_brush_surface_timing", tickLimit = LIMIT)
-    public void aRadius32DabComputesInMilliseconds(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_brush_surface_timing", timeoutTicks = LIMIT)
+    public void aRadius32DabComputesInMilliseconds(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 946);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 200, z0 + 79);
@@ -382,7 +382,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
         org.slf4j.LoggerFactory.getLogger("sculptory").info("Radius-32 dab compute:{}", report);
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /** Times one step of {@code spec} twenty times as one stroke; reports the best in round 1. */
@@ -453,7 +453,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
     /** Cells in column x, y and z ranges that went from air to a block ({@code filled}) or from a block to air. */
     private static int changed(WorldSnapshot before, WorldSnapshot after, int x, int y0, int y1, int za, int zb,
                                boolean filled) {
-        int air = Block.getRawIdFromState(net.minecraft.block.Blocks.AIR.getDefaultState());
+        int air = Block.getId(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
         int count = 0;
         for (int y = y0; y <= y1; y++) {
             for (int z = za; z <= zb; z++) {
@@ -533,9 +533,9 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
     }
 
     /** FNV-1a over every cell's state text, relative to the area (so the test's position makes no difference). */
-    static long fingerprint(ServerWorld world, Box area) {
+    static long fingerprint(ServerLevel world, Box area) {
         long hash = 0xcbf29ce484222325L;
-        net.minecraft.util.math.BlockPos.Mutable pos = new net.minecraft.util.math.BlockPos.Mutable();
+        net.minecraft.core.BlockPos.MutableBlockPos pos = new net.minecraft.core.BlockPos.MutableBlockPos();
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
@@ -551,9 +551,9 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
     }
 
     /** The topmost non-air y of a column (from y 140 down to the stone floor). */
-    static int top(ServerWorld world, int x, int z) {
+    static int top(ServerLevel world, int x, int z) {
         for (int y = 140; y >= 100; y--) {
-            if (!world.getBlockState(new net.minecraft.util.math.BlockPos(x, y, z)).isAir()) return y;
+            if (!world.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).isAir()) return y;
         }
         return 100;
     }
@@ -562,7 +562,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(h.player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 }

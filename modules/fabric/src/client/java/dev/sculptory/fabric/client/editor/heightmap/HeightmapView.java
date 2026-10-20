@@ -2,7 +2,7 @@ package dev.sculptory.fabric.client.editor.heightmap;
 
 import dev.sculptory.fabric.client.editor.Translator;
 import java.util.Optional;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * How the UI shows a height image: its thumbnail, when one is loaded. The game's is {@code HeightmapThumbnails}; without
@@ -14,7 +14,7 @@ public interface HeightmapView {
     HeightmapView NONE = ref -> Optional.empty();
 
     /** A registered texture of {@code width × height} pixels. */
-    record Thumbnail(Identifier texture, int width, int height) {}
+    record Thumbnail(ResourceLocation texture, int width, int height) {}
 
     /** The picture's thumbnail, if it has one (a missing picture has none). */
     Optional<Thumbnail> thumbnail(HeightmapRef ref);

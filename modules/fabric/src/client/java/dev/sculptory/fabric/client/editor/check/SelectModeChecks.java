@@ -11,8 +11,8 @@ import dev.sculptory.fabric.client.editor.tools.place.Placement;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import java.util.List;
 import java.util.Optional;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -69,7 +69,7 @@ final class SelectModeChecks {
                 written(before, region, Fixtures.Build.state(GLASS)));
         run.picture("sphere-filled", "A glass ball between the two stone-brick posts; the selection outline hugs it");
         run.edit("Erase the sphere", () -> d.clickButton(EditorWindows.SELECTION, "sculptory.op.erase"));
-        run.exact("Erase empties exactly the sphere's cells", written(filled, region, Blocks.AIR.getDefaultState()));
+        run.exact("Erase empties exactly the sphere's cells", written(filled, region, Blocks.AIR.defaultBlockState()));
         run.undo("undo the Erase");
         run.exact("undo brings the glass ball back", filled);
 
@@ -211,7 +211,7 @@ final class SelectModeChecks {
         run.require("the move's ghost dropped", offset != null && !offset.equals(BlockPos.ORIGIN), String.valueOf(offset));
         run.edit("Move the lasso selection", () -> d.action(KeyAction.COMMIT));
         Cells.Editor expected = filled.edit();
-        BlockState air = Blocks.AIR.getDefaultState();
+        BlockState air = Blocks.AIR.defaultBlockState();
         forEachCell(region, (x, y, z) -> expected.set(x, y, z, air));
         forEachCell(region, (x, y, z) -> expected.set(x + offset.x(), y + offset.y(), z + offset.z(), filled.at(x, y, z)));
         run.exact("Move takes exactly the lasso's cells " + offset.x() + " " + offset.y() + " " + offset.z()

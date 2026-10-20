@@ -1,9 +1,9 @@
 package dev.sculptory.fabric.client.editor.ui;
 
 import java.util.Objects;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * Draws a panel faded (View > Opacity…): fills in one of the theme's panel surface colours
@@ -99,12 +99,12 @@ public final class FadedGraphics implements UiGraphics {
     }
 
     @Override
-    public void widget(ClickableWidget widget, int mouseX, int mouseY, float delta) {
+    public void widget(AbstractWidget widget, int mouseX, int mouseY, float delta) {
         target.widget(widget, mouseX, mouseY, delta);
     }
 
     @Override
-    public void texture(Identifier texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
+    public void texture(ResourceLocation texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
         target.texture(texture, x, y, width, height, textureWidth, textureHeight);
     }
 }

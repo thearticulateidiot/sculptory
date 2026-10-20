@@ -45,13 +45,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Symmetry for the Select operations and the Place tool on a real server (regionCorner slots 760-799): Fill, Replace, Erase, Hollow, Walls and Paste under every mode
@@ -71,15 +71,15 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         int at(int x, int y, int z);
     }
 
-    private static void checkCells(ServerWorld world, Box area, Expected expected, String what) {
+    private static void checkCells(ServerLevel world, Box area, Expected expected, String what) {
         WorldSnapshot now = capture(world, area);
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
                     int want = expected.at(x, y, z), got = now.get(x, y, z);
                     if (want != got) {
-                        throw new GameTestException(what + " at " + x + "," + y + "," + z + ": "
-                                + Block.getStateFromRawId(got) + " instead of " + Block.getStateFromRawId(want));
+                        throw new GameTestAssertException(what + " at " + x + "," + y + "," + z + ": "
+                                + Block.stateById(got) + " instead of " + Block.stateById(want));
                     }
                 }
             }
@@ -98,11 +98,11 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         }
     }
 
-    private static JobTicket run(Harness h, ServerPlayerEntity player, OpSpec op, RecordingListener listener) {
+    private static JobTicket run(Harness h, ServerPlayer player, OpSpec op, RecordingListener listener) {
         try {
             return h.service.run(player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
         }
     }
 
@@ -113,9 +113,9 @@ public final class OpSymmetryGameTest implements FabricGameTest {
     /** {@code raw} turned as the copy under {@code image} turns it (vanilla's mirror, then rotation). */
     private static int turned(int raw, Symmetry.Image image) {
         Transform t = image.transform();
-        BlockState state = Block.getStateFromRawId(raw);
+        BlockState state = Block.stateById(raw);
         state = state.mirror(ClipboardGameTest.vanilla(t.mirror())).rotate(ClipboardGameTest.vanilla(t.quarterTurnsCw()));
-        return Block.getRawIdFromState(state);
+        return Block.getId(state);
     }
 
     /** Hollow's inside: every cell within t along the six directions is a region cell. */
@@ -153,7 +153,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                         if (!region.contains(x, y, z)) continue;
                         int state = rule.state(region, copy.image(), x, y, z);
                         if (state < 0) continue;
-                        cells.putIfAbsent(net.minecraft.util.math.BlockPos.asLong(x, y, z), state);
+                        cells.putIfAbsent(net.minecraft.core.BlockPos.asLong(x, y, z), state);
                     }
                 }
             }
@@ -169,7 +169,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
 
     private static Expected expected(Map<Long, Integer> covered, WorldSnapshot before) {
         return (x, y, z) -> {
-            Integer state = covered.get(net.minecraft.util.math.BlockPos.asLong(x, y, z));
+            Integer state = covered.get(net.minecraft.core.BlockPos.asLong(x, y, z));
             return state != null ? state : before.get(x, y, z);
         };
     }
@@ -181,10 +181,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
      * Replace, Hollow, Walls and Erase of a cone with Mirror both ways and Rotate 4: each cell as the brute-force model
      * says, one history step per op, every step undone exactly and the last redone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_region", tickLimit = LIMIT)
-    public void regionOpsUnderEveryModeMatchTheModelAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_region", timeoutTicks = LIMIT)
+    public void regionOpsUnderEveryModeMatchTheModelAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 760);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 118, z0 + 63);
@@ -202,17 +202,17 @@ public final class OpSymmetryGameTest implements FabricGameTest {
             if (mode != Symmetry.Mode.OFF) modes.add(new Symmetry(mode, x2, z2));
         }
         int historyBefore = h.history().undoLabels().size();
-        var runner = context.createTimedTaskRunner();
+        var runner = context.startSequence();
         for (Symmetry symmetry : modes) {
             RecordingListener fill = new RecordingListener(), undo = new RecordingListener();
             OpSpec.Fill op = new OpSpec.Fill(cone, new Pattern.Single(east), CellMask.ANY, symmetry);
             long cells = cone.cellCount() * OpSymmetry.copyCount(op);
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                         JobTicket ticket = run(h, h.player, op, fill);
                         check(ticket.estimatedCells() == cells, symmetry + ": estimate " + ticket.estimatedCells() + " of " + cells);
                     })
-                    .createAndAdd(() -> check(fill.result != null, symmetry + " fill running"))
-                    .createAndAdd(() -> {
+                    .thenWaitUntil(() -> check(fill.result != null, symmetry + " fill running"))
+                    .thenWaitUntil(() -> {
                         check(fill.result.outcome() == JobOutcome.COMPLETED && fill.result.changed() == cells,
                                 symmetry + " fill " + fill.result);
                         checkCells(world, area, expected(covered(op, area, (r, image, x, y, z) -> turned(east, image)),
@@ -220,8 +220,8 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                         check(h.history().undoLabels().size() == historyBefore + 1, "history " + h.history().undoLabels());
                         h.undo(undo);
                     })
-                    .createAndAdd(() -> check(undo.result != null, symmetry + " undo running"))
-                    .createAndAdd(() -> {
+                    .thenWaitUntil(() -> check(undo.result != null, symmetry + " undo running"))
+                    .thenWaitUntil(() -> {
                         check(undo.result.skippedConflicts() == 0, symmetry + " undo " + undo.result);
                         checkSame(original, capture(world, area), "after undoing the " + symmetry + " fill");
                     });
@@ -240,9 +240,9 @@ public final class OpSymmetryGameTest implements FabricGameTest {
             int step = i;
             OpSpec op = ops.get(i);
             RecordingListener listener = new RecordingListener();
-            runner.createAndAdd(() -> run(h, h.player, op, listener))
-                    .createAndAdd(() -> check(listener.result != null, op.getClass().getSimpleName() + " running"))
-                    .createAndAdd(() -> {
+            runner.thenWaitUntil(() -> run(h, h.player, op, listener))
+                    .thenWaitUntil(() -> check(listener.result != null, op.getClass().getSimpleName() + " running"))
+                    .thenWaitUntil(() -> {
                         check(listener.result.outcome() == JobOutcome.COMPLETED, op + " " + listener.result);
                         WorldSnapshot before = steps[step];
                         CoverRule rule = switch (op) {
@@ -251,7 +251,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                             case OpSpec.Hollow f -> (r, image, x, y, z) -> inside(r, x, y, z, 2) ? air : -1;
                             case OpSpec.Walls f -> (r, image, x, y, z) -> wall(r, x, y, z, 1) ? turned(east, image) : -1;
                             case OpSpec.Erase f -> (r, image, x, y, z) -> air;
-                            default -> throw new GameTestException("unexpected " + op);
+                            default -> throw new GameTestAssertException("unexpected " + op);
                         };
                         checkCells(world, area, expected(covered(op, area, rule), before), op.getClass().getSimpleName());
                         steps[step + 1] = capture(world, area);
@@ -260,41 +260,41 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         }
         // Undo the last op, redo it, then undo all five back to the original.
         RecordingListener undoLast = new RecordingListener(), redoLast = new RecordingListener();
-        runner.createAndAdd(() -> h.undo(undoLast))
-                .createAndAdd(() -> check(undoLast.result != null, "undo running"))
-                .createAndAdd(() -> {
+        runner.thenWaitUntil(() -> h.undo(undoLast))
+                .thenWaitUntil(() -> check(undoLast.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     checkSame(steps[ops.size() - 1], capture(world, area), "after undoing the erase");
                     h.redo(redoLast);
                 })
-                .createAndAdd(() -> check(redoLast.result != null, "redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(redoLast.result != null, "redo running"))
+                .thenWaitUntil(() -> {
                     check(redoLast.result.skippedConflicts() == 0, "redo " + redoLast.result);
                     checkSame(steps[ops.size()], capture(world, area), "after redoing the erase");
                 });
         for (int i = ops.size(); i >= 1; i--) {
             int step = i;
             RecordingListener undo = new RecordingListener();
-            runner.createAndAdd(() -> h.undo(undo))
-                    .createAndAdd(() -> check(undo.result != null, "undo " + step + " running"))
-                    .createAndAdd(() -> {
+            runner.thenWaitUntil(() -> h.undo(undo))
+                    .thenWaitUntil(() -> check(undo.result != null, "undo " + step + " running"))
+                    .thenWaitUntil(() -> {
                         check(undo.result.skippedConflicts() == 0, "undo " + step + " " + undo.result);
                         checkSame(steps[step - 1], capture(world, area), "after undo " + step);
                     });
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             forceChunks(world, area, false);
             h.close();
-        }).completeIfSuccessful();
+        }).thenSucceed();
     }
 
     /**
      * A box straddling the mirror plane filled with east-facing stairs: where the copy overlaps the original the
      * original wins (east), the rest of the copy faces west, the fill counts each cell once, and the undo is exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_overlap", tickLimit = LIMIT)
-    public void theOriginalWinsWhereTheCopyOverlapsIt(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_overlap", timeoutTicks = LIMIT)
+    public void theOriginalWinsWhereTheCopyOverlapsIt(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 762);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 15);
@@ -308,13 +308,13 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         OpSpec.Fill fill = new OpSpec.Fill(new Region.Cuboid(box), new Pattern.Single(east), CellMask.ANY,
                 new Symmetry(Symmetry.Mode.MIRROR_X, 2 * (x0 + 10), 0));
         RecordingListener listener = new RecordingListener(), undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     JobTicket ticket = run(h, h.player, fill, listener);
                     check(ticket.estimatedCells() == 2 * box.volume(), "estimate " + ticket.estimatedCells());
                 })
-                .createAndAdd(() -> check(listener.result != null, "fill running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(listener.result != null, "fill running"))
+                .thenWaitUntil(() -> {
                     long union = 12L * 3 * 5; // x0+4..x0+15
                     check(listener.result.outcome() == JobOutcome.COMPLETED && listener.result.changed() == union,
                             "each cell written once: " + listener.result);
@@ -326,14 +326,14 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                     }, "overlap");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     checkSame(original, capture(world, area), "after undoing the straddling fill");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== paste, move and stack
@@ -343,10 +343,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
      * exact image of the paste (positions through the paste geometry, states through vanilla's mirror and rotation,
      * the chest's diamonds kept), each paste one history step, both undone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_paste", tickLimit = LIMIT)
-    public void pastesUnderSymmetryAreExactImages(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_paste", timeoutTicks = LIMIT)
+    public void pastesUnderSymmetryAreExactImages(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 764);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 112, z0 + 63);
@@ -356,8 +356,8 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         paint(h, writer, source);
         writer.write(x0 + 2, 101, z0 + 2, h.state("minecraft:oak_stairs[facing=east]"), null);
         writer.write(x0 + 6, 100, z0 + 4, h.state("minecraft:chest[facing=north]"), null);
-        ((net.minecraft.block.entity.ChestBlockEntity) world.getBlockEntity(pos(x0 + 6, 100, z0 + 4)))
-                .setStack(0, new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND, 5));
+        ((net.minecraft.world.level.block.entity.ChestBlockEntity) world.getBlockEntity(pos(x0 + 6, 100, z0 + 4)))
+                .setItem(0, new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.DIAMOND, 5));
         WorldSnapshot sourceContent = capture(world, source);
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         BlockPos anchor = source.min();
@@ -367,9 +367,9 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         List<OpSpec.Paste> pastes = new ArrayList<>();
         RecordingListener[] listeners = new RecordingListener[2];
         WorldSnapshot[] before = new WorldSnapshot[3];
-        var runner = context.createTimedTaskRunner();
-        runner.createAndAdd(() -> check(copied.finished(), "copy running"))
-                .createAndAdd(() -> {
+        var runner = context.startSequence();
+        runner.thenWaitUntil(() -> check(copied.finished(), "copy running"))
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("the copy");
                     Transform t = Transform.rotation(1);
                     pastes.add(new OpSpec.Paste(new SourceRef.Clipboard(info.clipboardId()), new BlockPos(x0 + 12, 104, z0 + 14), t,
@@ -383,8 +383,8 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                 });
         for (int i = 0; i < 2; i++) {
             int step = i;
-            runner.createAndAdd(() -> check(listeners[step].result != null, "paste " + step + " running"))
-                    .createAndAdd(() -> {
+            runner.thenWaitUntil(() -> check(listeners[step].result != null, "paste " + step + " running"))
+                    .thenWaitUntil(() -> {
                         OpSpec.Paste paste = pastes.get(step);
                         check(listeners[step].result.outcome() == JobOutcome.COMPLETED, "paste " + listeners[step].result);
                         Map<Long, Integer> covered = new HashMap<>();
@@ -396,23 +396,23 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                                 for (int ly = 0; ly < size.y(); ly++) {
                                     for (int lz = 0; lz < size.z(); lz++) {
                                         int raw = sourceContent.get(source.min().x() + lx, source.min().y() + ly, source.min().z() + lz);
-                                        BlockState state = Block.getStateFromRawId(raw)
+                                        BlockState state = Block.stateById(raw)
                                                 .mirror(ClipboardGameTest.vanilla(c.t().mirror()))
                                                 .rotate(ClipboardGameTest.vanilla(c.t().quarterTurnsCw()));
                                         int x = target.min().x() + c.t().mapX(lx, lz, size.x(), size.z());
                                         int z = target.min().z() + c.t().mapZ(lx, lz, size.x(), size.z());
                                         int y = target.min().y() + ly;
-                                        long key = net.minecraft.util.math.BlockPos.asLong(x, y, z);
-                                        covered.putIfAbsent(key, Block.getRawIdFromState(state));
-                                        if (state.isOf(net.minecraft.block.Blocks.CHEST)) diamonds.putIfAbsent(key, 5);
+                                        long key = net.minecraft.core.BlockPos.asLong(x, y, z);
+                                        covered.putIfAbsent(key, Block.getId(state));
+                                        if (state.is(net.minecraft.world.level.block.Blocks.CHEST)) diamonds.putIfAbsent(key, 5);
                                     }
                                 }
                             }
                         }
                         checkCells(world, area, expected(covered, before[step]), "paste " + step);
                         for (long key : diamonds.keySet()) {
-                            net.minecraft.util.math.BlockPos chest = net.minecraft.util.math.BlockPos.fromLong(key);
-                            check(((net.minecraft.block.entity.ChestBlockEntity) world.getBlockEntity(chest)).getStack(0).getCount() == 5,
+                            net.minecraft.core.BlockPos chest = net.minecraft.core.BlockPos.of(key);
+                            check(((net.minecraft.world.level.block.entity.ChestBlockEntity) world.getBlockEntity(chest)).getItem(0).getCount() == 5,
                                     "the copied chest at " + chest + " keeps its diamonds");
                         }
                         before[step + 1] = capture(world, area);
@@ -423,23 +423,23 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                     });
         }
         RecordingListener undo1 = new RecordingListener(), undo2 = new RecordingListener();
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
                     check(h.history().undoLabels().size() == 2, "one step per paste: " + h.history().undoLabels());
                     h.undo(undo1);
                 })
-                .createAndAdd(() -> check(undo1.result != null, "undo 1 running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo1.result != null, "undo 1 running"))
+                .thenWaitUntil(() -> {
                     checkSame(before[1], capture(world, area), "after undoing the second paste");
                     h.undo(undo2);
                 })
-                .createAndAdd(() -> check(undo2.result != null, "undo 2 running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo2.result != null, "undo 2 running"))
+                .thenWaitUntil(() -> {
                     check(undo2.result.skippedConflicts() == 0, "undo " + undo2.result);
                     checkSame(before[0], capture(world, area), "after undoing the first paste");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -447,10 +447,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
      * a turned move with Rotate 2 lands the image region's content on the image of the destination (a stair turned
      * with it); both undo exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_move_stack", tickLimit = LIMIT)
-    public void movesAndStacksWorkOnTheImageRegionsOwnContent(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_move_stack", timeoutTicks = LIMIT)
+    public void movesAndStacksWorkOnTheImageRegionsOwnContent(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 766);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 116, z0 + 47);
@@ -468,10 +468,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         RecordingListener stacked = new RecordingListener(), moved = new RecordingListener();
         RecordingListener undoMove = new RecordingListener(), undoStack = new RecordingListener();
         WorldSnapshot[] afterStack = new WorldSnapshot[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> run(h, h.player, stack, stacked))
-                .createAndAdd(() -> check(stacked.result != null, "stack running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> run(h, h.player, stack, stacked))
+                .thenWaitUntil(() -> check(stacked.result != null, "stack running"))
+                .thenWaitUntil(() -> {
                     check(stacked.result.outcome() == JobOutcome.COMPLETED, "stack " + stacked.result);
                     Map<Long, Integer> covered = new HashMap<>();
                     for (OpSymmetry.Copy copy : OpSymmetry.copies(stack)) {
@@ -481,7 +481,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                             for (int x = b.min().x(); x <= b.max().x(); x++) {
                                 for (int y = b.min().y(); y <= b.max().y(); y++) {
                                     for (int z = b.min().z(); z <= b.max().z(); z++) {
-                                        long key = net.minecraft.util.math.BlockPos.asLong(x + k * c.dx(), y + k * c.dy(), z + k * c.dz());
+                                        long key = net.minecraft.core.BlockPos.asLong(x + k * c.dx(), y + k * c.dy(), z + k * c.dz());
                                         // Within a copy the later stack copy wins; across copies the earlier op copy.
                                         if (copy.image() == Symmetry.Image.IDENTITY || !covered.containsKey(key)) {
                                             covered.put(key, original.get(x, y, z));
@@ -495,8 +495,8 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                     afterStack[0] = capture(world, area);
                     run(h, h.player, move, moved);
                 })
-                .createAndAdd(() -> check(moved.result != null, "move running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(moved.result != null, "move running"))
+                .thenWaitUntil(() -> {
                     check(moved.result.outcome() == JobOutcome.COMPLETED, "move " + moved.result);
                     Map<Long, Integer> covered = new HashMap<>();
                     for (OpSymmetry.Copy copy : OpSymmetry.copies(move)) {
@@ -505,7 +505,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                         Map<Long, Integer> own = new HashMap<>();
                         for (int x = b.min().x(); x <= b.max().x(); x++) {
                             for (int y = b.min().y(); y <= b.max().y(); y++) {
-                                for (int z = b.min().z(); z <= b.max().z(); z++) own.put(net.minecraft.util.math.BlockPos.asLong(x, y, z), air);
+                                for (int z = b.min().z(); z <= b.max().z(); z++) own.put(net.minecraft.core.BlockPos.asLong(x, y, z), air);
                             }
                         }
                         BlockPos destMin = b.min().add(c.offset());
@@ -515,10 +515,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                                     int lx = x - b.min().x(), lz = z - b.min().z();
                                     int tx = destMin.x() + c.t().mapX(lx, lz, b.sizeX(), b.sizeZ());
                                     int tz = destMin.z() + c.t().mapZ(lx, lz, b.sizeX(), b.sizeZ());
-                                    BlockState state = Block.getStateFromRawId(afterStack[0].get(x, y, z))
+                                    BlockState state = Block.stateById(afterStack[0].get(x, y, z))
                                             .mirror(ClipboardGameTest.vanilla(c.t().mirror()))
                                             .rotate(ClipboardGameTest.vanilla(c.t().quarterTurnsCw()));
-                                    own.put(net.minecraft.util.math.BlockPos.asLong(tx, y + c.offset().y(), tz), Block.getRawIdFromState(state));
+                                    own.put(net.minecraft.core.BlockPos.asLong(tx, y + c.offset().y(), tz), Block.getId(state));
                                 }
                             }
                         }
@@ -527,20 +527,20 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                     checkCells(world, area, expected(covered, afterStack[0]), "move");
                     h.undo(undoMove);
                 })
-                .createAndAdd(() -> check(undoMove.result != null, "undo move running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoMove.result != null, "undo move running"))
+                .thenWaitUntil(() -> {
                     check(undoMove.result.skippedConflicts() == 0, "undo move " + undoMove.result);
                     checkSame(afterStack[0], capture(world, area), "after undoing the move");
                     h.undo(undoStack);
                 })
-                .createAndAdd(() -> check(undoStack.result != null, "undo stack running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoStack.result != null, "undo stack running"))
+                .thenWaitUntil(() -> {
                     check(undoStack.result.skippedConflicts() == 0, "undo stack " + undoStack.result);
                     checkSame(original, capture(world, area), "after undoing the stack");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== rules
@@ -551,10 +551,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
      * runs (a cut over it is {@code AREA_BUSY}), and a copy in a protected chunk is skipped while the original writes,
      * the whole op one history step that undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_rules", tickLimit = LIMIT)
-    public void copiesFollowTheWorldLimitLoadingLockAndProtectionRules(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_rules", timeoutTicks = LIMIT)
+    public void copiesFollowTheWorldLimitLoadingLockAndProtectionRules(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 768);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 110, z0 + 31);
@@ -574,7 +574,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         check(h.history().undoLabels().isEmpty(), "nothing was pushed");
 
         // An unloaded chunk: the mirror plane 3,000 blocks east puts the copy in chunks nobody loaded.
-        ServerPlayerEntity grounded = h.addPlayer();
+        ServerPlayer grounded = h.addPlayer();
         deny(grounded, Perm.EDIT_UNLOADED);
         EditRejected unloaded = refusal(() -> h.service.run(grounded, new OpSpec.Fill(region, pattern, CellMask.ANY,
                 new Symmetry(Symmetry.Mode.MIRROR_X, 2 * (x0 + 3000), 0)), RunOptions.DEFAULT, null));
@@ -587,16 +587,16 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         RecordingListener fill = new RecordingListener();
         run(h, h.player, new OpSpec.Fill(region, pattern, CellMask.ANY, mirror), fill);
-        ServerPlayerEntity other = h.addPlayer();
-        check(h.runtime.executor().isLockedFor(world, copyBox, other.getUuid()), "the copy's box is locked");
+        ServerPlayer other = h.addPlayer();
+        check(h.runtime.executor().isLockedFor(world, copyBox, other.getUUID()), "the copy's box is locked");
         EditRejected busy = refusal(() -> clips.copy(other, new Region.Cuboid(copyBox), copyBox.min(), true, CellMask.ANY,
                 EntityFilter.NONE, new RecordingListener(), new Captured<>()));
         check(busy.reason() == RejectReason.AREA_BUSY, "a cut over the copy's box: " + busy.reason());
         RecordingListener undo = new RecordingListener(), partial = new RecordingListener(), undoPartial = new RecordingListener();
         // A protected copy: the mirror box lies in chunks protected from the player.
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
                     check(fill.result.outcome() == JobOutcome.COMPLETED && fill.result.changed() == 2 * box.volume(),
                             "fill " + fill.result);
                     checkCells(world, area, (x, y, z) -> box.contains(x, y, z) || copyBox.contains(x, y, z) ? stone
@@ -604,42 +604,42 @@ public final class OpSymmetryGameTest implements FabricGameTest {
                     check(h.history().undoLabels().size() == 1, "one step: " + h.history().undoLabels());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     checkSame(original, capture(world, area), "after undoing the mirrored fill");
                     ProtectionHook.protect(h.player, world, copyBox.min().x() >> 4 << 4, copyBox.min().z() >> 4 << 4,
                             (copyBox.max().x() >> 4 << 4) + 15, (copyBox.max().z() >> 4 << 4) + 15);
-                    check(!world.canPlayerModifyAt(h.player, pos(copyBox.min().x(), 102, copyBox.min().z())), "the copy is protected");
-                    check(world.canPlayerModifyAt(h.player, pos(box.min().x(), 102, box.min().z())), "the original is free");
+                    check(!world.mayInteract(h.player, pos(copyBox.min().x(), 102, copyBox.min().z())), "the copy is protected");
+                    check(world.mayInteract(h.player, pos(box.min().x(), 102, box.min().z())), "the original is free");
                     run(h, h.player, new OpSpec.Fill(region, pattern, CellMask.ANY, mirror), partial);
                 })
-                .createAndAdd(() -> check(partial.result != null, "partial fill running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(partial.result != null, "partial fill running"))
+                .thenWaitUntil(() -> {
                     ProtectionHook.clear(h.player);
                     check(partial.result.outcome() == JobOutcome.COMPLETED && partial.result.changed() == box.volume()
                             && partial.result.skippedProtected() == box.volume(), "the protected copy is skipped: " + partial.result);
                     checkCells(world, area, (x, y, z) -> box.contains(x, y, z) ? stone : original.get(x, y, z), "the partial fill");
                     h.undo(undoPartial);
                 })
-                .createAndAdd(() -> check(undoPartial.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoPartial.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undoPartial.result.skippedConflicts() == 0, "undo " + undoPartial.result);
                     checkSame(original, capture(world, area), "after undoing the partial fill");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A symmetric move is all or nothing across its copies: with the copy's destination protected, or the copy's
      * source, the move is refused PROTECTED, the world is unchanged and nothing is pushed to the history.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_move_protected", tickLimit = LIMIT)
-    public void aSymmetricMoveWithAProtectedCopyIsRefusedWhole(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_move_protected", timeoutTicks = LIMIT)
+    public void aSymmetricMoveWithAProtectedCopyIsRefusedWhole(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 770);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 63, 112, z0 + 31);
@@ -660,7 +660,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
             ProtectionHook.protect(h.player, world, x0 + 16, z0, x0 + 47, z0 + 15);
             EditRejected source = refusal(() -> h.service.run(h.player, move, RunOptions.DEFAULT, null));
             check(source.reason() == RejectReason.PROTECTED, "the copy's source is protected: " + source.reason());
-            check(h.service.jobs(h.player.getUuid()).isEmpty(), "a job was admitted");
+            check(h.service.jobs(h.player.getUUID()).isEmpty(), "a job was admitted");
         } finally {
             ProtectionHook.clear(h.player);
         }
@@ -668,7 +668,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         check(h.history().undoLabels().isEmpty(), "history " + h.history().undoLabels());
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -676,13 +676,13 @@ public final class OpSymmetryGameTest implements FabricGameTest {
      * the stack runs, but the job's captured tiles are untrusted: the command block in the copy's source arrives
      * without its command.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_stack_protected", tickLimit = LIMIT)
-    public void aSymmetricStackFromAProtectedCopySourceNeedsBypassAndIsUntrusted(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_stack_protected", timeoutTicks = LIMIT)
+    public void aSymmetricStackFromAProtectedCopySourceNeedsBypassAndIsUntrusted(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
-        ServerPlayerEntity bypasser = h.addPlayer(false);
+        ServerPlayer bypasser = h.addPlayer(false);
         EditTestSupport.grant(bypasser, Perm.USE, Perm.CLIPBOARD, Perm.REGION, Perm.LIMIT_BYPASS);
         check(!h.runtime.permissions().mayWriteOperatorNbt(bypasser), "the bypasser may write operator NBT");
         int[] at = regionCorner(context, 772);
@@ -691,10 +691,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         loadAndForce(world, area);
         BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         paint(h, writer, box(x0, 100, z0, x0 + 63, 103, z0 + 15));
-        net.minecraft.util.math.BlockPos command = pos(x0 + 33, 101, z0 + 5);
+        net.minecraft.core.BlockPos command = pos(x0 + 33, 101, z0 + 5);
         h.runtime.writer(world, new WriteOptions(false, true))
                 .write(command.getX(), command.getY(), command.getZ(), h.state("minecraft:command_block"), null);
-        ((net.minecraft.block.entity.CommandBlockBlockEntity) world.getBlockEntity(command)).getCommandExecutor().setCommand("op me");
+        ((net.minecraft.world.level.block.entity.CommandBlockEntity) world.getBlockEntity(command)).getCommandBlock().setCommand("op me");
         Box box = box(x0 + 2, 101, z0 + 2, x0 + 9, 103, z0 + 9);
         // The plane x = x0 + 20: the copy's source x0+30..x0+37 lies in protected chunks; both stack 16 south.
         Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * (x0 + 20), 0);
@@ -703,7 +703,7 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         ProtectionHook.protect(builder, world, x0 + 16, z0, x0 + 47, z0 + 15);
         ProtectionHook.protect(bypasser, world, x0 + 16, z0, x0 + 47, z0 + 15);
         try {
-            check(!world.canPlayerModifyAt(builder, command) && world.canPlayerModifyAt(builder, pos(x0 + 5, 101, z0 + 5)),
+            check(!world.mayInteract(builder, command) && world.mayInteract(builder, pos(x0 + 5, 101, z0 + 5)),
                     "the protection is not the copy's source alone");
             check(refusal(() -> h.service.run(builder, stack, RunOptions.DEFAULT, null)).reason() == RejectReason.PROTECTED,
                     "a non-bypass stack whose copy reads a protected source");
@@ -712,23 +712,23 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         } catch (EditRejected e) {
             ProtectionHook.clear(builder);
             ProtectionHook.clear(bypasser);
-            throw new GameTestException("unexpected refusal: " + e.getMessage());
+            throw new GameTestAssertException("unexpected refusal: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(untrusted.result != null, "stack running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(untrusted.result != null, "stack running"))
+                .thenWaitUntil(() -> {
                     ProtectionHook.clear(builder);
                     ProtectionHook.clear(bypasser);
                     check(untrusted.result.outcome() == JobOutcome.COMPLETED && untrusted.result.strippedNbt() == 1
                             && untrusted.result.changed() == 2 * box.volume(), "untrusted symmetric stack " + untrusted.result);
-                    net.minecraft.block.entity.CommandBlockBlockEntity copy =
-                            (net.minecraft.block.entity.CommandBlockBlockEntity) world.getBlockEntity(command.add(0, 0, 16));
-                    check(copy != null && copy.getCommandExecutor().getCommand().isEmpty(),
+                    net.minecraft.world.level.block.entity.CommandBlockEntity copy =
+                            (net.minecraft.world.level.block.entity.CommandBlockEntity) world.getBlockEntity(command.offset(0, 0, 16));
+                    check(copy != null && copy.getCommandBlock().getCommand().isEmpty(),
                             "a bypass stack from a protected copy source kept the command");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -736,10 +736,10 @@ public final class OpSymmetryGameTest implements FabricGameTest {
      * copies) is refused TOO_LARGE for a player without {@code limit.bypass} (nothing pushed), while a player with it
      * is admitted (the job is cancelled at once, before it writes).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_op_symmetry_too_large", tickLimit = LIMIT)
-    public void copiesCountAgainstTheVolumeLimit(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_op_symmetry_too_large", timeoutTicks = LIMIT)
+    public void copiesCountAgainstTheVolumeLimit(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.EDIT_UNLOADED);
         int[] at = regionCorner(context, 774);
         int x0 = at[0], z0 = at[1];
@@ -751,18 +751,18 @@ public final class OpSymmetryGameTest implements FabricGameTest {
         EditRejected tooLarge = refusal(() -> h.service.run(builder, new OpSpec.Fill(new Region.Cuboid(box), stone, CellMask.ANY,
                 both), RunOptions.DEFAULT, null));
         check(tooLarge.reason() == RejectReason.TOO_LARGE, "four copies: " + tooLarge.reason());
-        check(h.history().undoLabels().isEmpty() && h.service.jobs(builder.getUuid()).isEmpty(), "something was admitted");
+        check(h.history().undoLabels().isEmpty() && h.service.jobs(builder.getUUID()).isEmpty(), "something was admitted");
         RecordingListener admitted = new RecordingListener();
         // The op player holds limit.bypass through the op-level fallback.
         run(h, h.player, new OpSpec.Fill(new Region.Cuboid(box), stone, CellMask.ANY, both), admitted);
         check(h.service.cancelAll(h.player) == 1, "the admitted fill was cancelled");
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(admitted.result != null, "the cancelled fill is still running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(admitted.result != null, "the cancelled fill is still running"))
+                .thenWaitUntil(() -> {
                     check(admitted.result.outcome() == JobOutcome.CANCELLED && admitted.result.changed() == 0,
                             "cancelled " + admitted.result);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

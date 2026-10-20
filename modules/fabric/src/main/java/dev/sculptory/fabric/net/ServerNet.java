@@ -27,14 +27,14 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
-import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayNetworkHandler;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerChunkManager;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.ServerGamePacketListenerImpl;
+import net.minecraft.world.level.chunk.LevelChunk;
 
 /**
  * Server side of protocol v2 on Fabric: registers the payload types and the {@code sculptory:c2s}
@@ -48,7 +48,7 @@ import net.minecraft.world.chunk.WorldChunk;
  * sent unless {@code ServerPlayNetworking.canSend} is true for {@code sculptory:s2c}.
  */
 public final class ServerNet {
-    private static final Map<ServerPlayNetworkHandler, NetSession<ServerPlayerEntity>> SESSIONS = new IdentityHashMap<>();
+    private static final Map<ServerGamePacketListenerImpl, NetSession<ServerPlayer>> SESSIONS = new IdentityHashMap<>();
     private static final JobListener NO_JOB_LISTENER = new JobListener() {
         @Override
         public void progress(UUID job, long done, long total, Phase ph) {}
@@ -56,8 +56,8 @@ public final class ServerNet {
         @Override
         public void finished(JobResult r) {}
     };
-    private static ServerDispatcher<ServerPlayerEntity> dispatcher;
-    private static volatile Consumer<ServerPlayerEntity> permissionCheckObserver;
+    private static ServerDispatcher<ServerPlayer> dispatcher;
+    private static volatile Consumer<ServerPlayer> permissionCheckObserver;
 
     private ServerNet() {}
 
@@ -67,8 +67,8 @@ public final class ServerNet {
      * @param states the server's {@code StateSpace}; read when frames are decoded, so it may be built later
      *     (e.g. on server start). While it returns {@code null}, messages carrying block states are refused.
      */
-    public static synchronized void install(EditService<ServerPlayerEntity> edits, ClipboardService<ServerPlayerEntity> clipboards, ScatterService<ServerPlayerEntity> scatter,
-                                            TinkerService<ServerPlayerEntity> tinker, PermissionService<ServerPlayerEntity, ServerWorld> permissions,
+    public static synchronized void install(EditService<ServerPlayer> edits, ClipboardService<ServerPlayer> clipboards, ScatterService<ServerPlayer> scatter,
+                                            TinkerService<ServerPlayer> tinker, PermissionService<ServerPlayer, ServerLevel> permissions,
                                             Supplier<Limits> limits, Supplier<StateSpace> states) {
         if (dispatcher != null) throw new IllegalStateException("Sculptory server networking is already installed");
         Frame.registerTypes();
@@ -103,21 +103,21 @@ public final class ServerNet {
      * mod's changes are caught by the dispatcher's periodic re-check. A no-op for players without a Sculptory
      * session. Safe from any thread: off the server thread it hops onto it.
      */
-    public static void permissionsChanged(ServerPlayerEntity player) {
+    public static void permissionsChanged(ServerPlayer player) {
         if (player == null) return;
         MinecraftServer server = player.server;
-        if (server != null && !server.isOnThread()) {
+        if (server != null && !server.isSameThread()) {
             server.execute(() -> permissionsChanged(player));
             return;
         }
-        Consumer<ServerPlayerEntity> observer = permissionCheckObserver;
+        Consumer<ServerPlayer> observer = permissionCheckObserver;
         if (observer != null) observer.accept(player);
-        NetSession<ServerPlayerEntity> session = session(player);
+        NetSession<ServerPlayer> session = session(player);
         if (session != null) dispatcher.permissionsChanged(session);
     }
 
     /** Test hook (GameTests): sees every {@link #permissionsChanged} call on the server thread; {@code null} clears it. */
-    public static void observePermissionChecks(Consumer<ServerPlayerEntity> observer) {
+    public static void observePermissionChecks(Consumer<ServerPlayer> observer) {
         permissionCheckObserver = observer;
     }
 
@@ -127,8 +127,8 @@ public final class ServerNet {
      * (the one that asked for the job): after that connection ends it reports nothing, even once the player has
      * reconnected, since the new client never saw the job. A no-op when the player has no session.
      */
-    public static JobListener jobListener(ServerPlayerEntity player) {
-        NetSession<ServerPlayerEntity> session = session(Objects.requireNonNull(player));
+    public static JobListener jobListener(ServerPlayer player) {
+        NetSession<ServerPlayer> session = session(Objects.requireNonNull(player));
         return session == null ? NO_JOB_LISTENER : dispatcher.jobListener(session);
     }
 
@@ -139,29 +139,29 @@ public final class ServerNet {
      * engine refused in its {@code DabOutcome} are acknowledged by the dispatcher and must not be reported here.
      * Without a session (no Sculptory handshake) this acknowledges directly.
      */
-    public static void predictionApplied(ServerPlayerEntity player, int seq) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static void predictionApplied(ServerPlayer player, int seq) {
+        NetSession<ServerPlayer> session = session(player);
         if (session != null) {
             dispatcher.predictionApplied(session, seq);
         } else if (player != null && seq >= 0) {
-            player.networkHandler.updateSequence(seq);
+            player.connection.ackBlockChangesUpTo(seq);
         }
     }
 
     /** The brush lane finished the stroke's dabs up to {@code lastIndex} ({@code EditEvents.dabsApplied}). */
-    public static void dabsApplied(ServerPlayerEntity player, int strokeId, int lastIndex) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static void dabsApplied(ServerPlayer player, int strokeId, int lastIndex) {
+        NetSession<ServerPlayer> session = session(player);
         if (session != null) dispatcher.dabsApplied(session, strokeId, lastIndex);
     }
 
     /** Pushes a history state, e.g. after a stroke's idle timeout creates an entry. */
-    public static void sendHistoryState(ServerPlayerEntity player, S2C.HistoryState state) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static void sendHistoryState(ServerPlayer player, S2C.HistoryState state) {
+        NetSession<ServerPlayer> session = session(player);
         if (session != null && session.ready()) dispatcher.send(session, Objects.requireNonNull(state));
     }
 
-    public static void sendNotice(ServerPlayerEntity player, S2C.Notice notice) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static void sendNotice(ServerPlayer player, S2C.Notice notice) {
+        NetSession<ServerPlayer> session = session(player);
         if (session != null && session.ready()) dispatcher.send(session, Objects.requireNonNull(notice));
     }
 
@@ -170,14 +170,14 @@ public final class ServerNet {
      * ends the stroke on the client. The session keeps the stroke open until the client's
      * {@code StrokeEnd} or next {@code StrokeBegin}, as for any refusal.
      */
-    public static void sendStrokeStatus(ServerPlayerEntity player, S2C.StrokeStatus status) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static void sendStrokeStatus(ServerPlayer player, S2C.StrokeStatus status) {
+        NetSession<ServerPlayer> session = session(player);
         if (session != null && session.ready()) dispatcher.send(session, Objects.requireNonNull(status));
     }
 
     /** Whether the player completed the Sculptory handshake. */
-    public static boolean isReady(ServerPlayerEntity player) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static boolean isReady(ServerPlayer player) {
+        NetSession<ServerPlayer> session = session(player);
         return session != null && session.ready();
     }
 
@@ -185,44 +185,44 @@ public final class ServerNet {
      * The build id the player's client sent at the handshake ({@code /sculptory version}), or empty when their client has not
      * sent one (no Sculptory, or not yet). Set whether or not the handshake succeeded.
      */
-    public static Optional<String> clientBuild(ServerPlayerEntity player) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static Optional<String> clientBuild(ServerPlayer player) {
+        NetSession<ServerPlayer> session = session(player);
         if (session == null) return Optional.empty();
         String build = session.clientBuild();
         return build.isEmpty() ? Optional.empty() : Optional.of(build);
     }
 
     /** Whether the player's editor was refused at the handshake (a different protocol). */
-    public static boolean isIncompatible(ServerPlayerEntity player) {
-        NetSession<ServerPlayerEntity> session = session(player);
+    public static boolean isIncompatible(ServerPlayer player) {
+        NetSession<ServerPlayer> session = session(player);
         return session != null && session.stage() == NetSession.Stage.INCOMPATIBLE;
     }
 
-    private static NetSession<ServerPlayerEntity> session(ServerPlayerEntity player) {
+    private static NetSession<ServerPlayer> session(ServerPlayer player) {
         if (dispatcher == null || player == null) return null;
-        return SESSIONS.get(player.networkHandler);
+        return SESSIONS.get(player.connection);
     }
 
-    private static void receive(ServerPlayerEntity player, Frame frame) {
-        ServerPlayNetworkHandler handler = player.networkHandler;
-        NetSession<ServerPlayerEntity> session = SESSIONS.computeIfAbsent(handler, h -> dispatcher.open(new PlayerTransport(h)));
+    private static void receive(ServerPlayer player, Frame frame) {
+        ServerGamePacketListenerImpl handler = player.connection;
+        NetSession<ServerPlayer> session = SESSIONS.computeIfAbsent(handler, h -> dispatcher.open(new PlayerTransport(h)));
         dispatcher.receive(session, frame.bytes());
     }
 
-    private static void close(ServerPlayNetworkHandler handler) {
-        NetSession<ServerPlayerEntity> session = SESSIONS.remove(handler);
+    private static void close(ServerGamePacketListenerImpl handler) {
+        NetSession<ServerPlayer> session = SESSIONS.remove(handler);
         if (session != null) dispatcher.close(session);
     }
 
     private static void tick() {
         if (SESSIONS.isEmpty()) return;
-        for (NetSession<ServerPlayerEntity> session : SESSIONS.values()) dispatcher.tick(session);
+        for (NetSession<ServerPlayer> session : SESSIONS.values()) dispatcher.tick(session);
     }
 
     /** The real transport: the player's play network handler. */
-    private record PlayerTransport(ServerPlayNetworkHandler handler) implements FabricTransport {
+    private record PlayerTransport(ServerGamePacketListenerImpl handler) implements FabricTransport {
         @Override
-        public ServerPlayerEntity player() {
+        public ServerPlayer player() {
             return handler.player;
         }
 
@@ -238,29 +238,29 @@ public final class ServerNet {
 
         @Override
         public void acknowledge(int sequence) {
-            if (sequence >= 0) handler.updateSequence(sequence);
+            if (sequence >= 0) handler.ackBlockChangesUpTo(sequence);
         }
 
         @Override
         public boolean tracks(int cx, int cz) {
             // The chunks vanilla is currently sending this player (its view-distance cylinder).
-            return handler.player.getChunkFilter().isWithinDistance(cx, cz);
+            return handler.player.getChunkTrackingView().contains(cx, cz);
         }
 
         @Override
         public void resendChunk(int cx, int cz) {
-            ServerWorld world = handler.player.getServerWorld();
-            ServerChunkManager chunks = world.getChunkManager();
+            ServerLevel world = handler.player.serverLevel();
+            ServerChunkCache chunks = world.getChunkSource();
             // Loaded chunks only: getWorldChunk never loads or generates.
-            WorldChunk chunk = chunks.getWorldChunk(cx, cz);
+            LevelChunk chunk = chunks.getChunkNow(cx, cz);
             if (chunk != null) {
-                handler.sendPacket(new ChunkDataS2CPacket(chunk, chunks.getLightingProvider(), null, null));
+                handler.send(new ClientboundLevelChunkWithLightPacket(chunk, chunks.getLightEngine(), null, null));
             }
         }
 
         @Override
         public void disconnect(String reason) {
-            handler.disconnect(Text.literal(reason));
+            handler.disconnect(Component.literal(reason));
         }
     }
 }

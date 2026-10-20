@@ -21,15 +21,15 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.GameMenuScreen;
-import net.minecraft.entity.effect.StatusEffectInstance;
-import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Util;
-import net.minecraft.world.GameRules;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.level.GameRules;
 
 /**
  * The dev-only play check: once the world is joined and the editor is ready, it builds the
@@ -52,11 +52,11 @@ public final class PlayCheck {
 
     private enum Phase { WAITING, RUNNING, DONE }
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final CheckConfig config;
     private final CheckReport report;
     private final AtomicLong frames = new AtomicLong();
-    private final long installedMs = Util.getMeasuringTimeMs();
+    private final long installedMs = Util.getMillis();
     private volatile Phase phase = Phase.WAITING;
     private long joinedMs = -1;
     private long startedMs;
@@ -65,7 +65,7 @@ public final class PlayCheck {
     private SizedLayouts savedLayouts;
     private int savedUiPercent;
 
-    private PlayCheck(MinecraftClient client, CheckConfig config) {
+    private PlayCheck(Minecraft client, CheckConfig config) {
         this.client = client;
         this.config = config;
         this.report = new CheckReport("Sculptory play check, " + LocalDateTime.now()
@@ -81,7 +81,7 @@ public final class PlayCheck {
         } catch (IOException e) {
             throw new UncheckedIOException("Play check: cannot prepare " + config.dir(), e);
         }
-        PlayCheck check = new PlayCheck(MinecraftClient.getInstance(), config);
+        PlayCheck check = new PlayCheck(Minecraft.getInstance(), config);
         ClientTickEvents.END_CLIENT_TICK.register(ignored -> check.tick());
         WorldRenderEvents.END.register(ignored -> check.frameRendered());
         SculptoryMod.LOG.info("Play check on: role {}, suite {}, into {}", config.role(), config.suite(),
@@ -120,14 +120,14 @@ public final class PlayCheck {
     }
 
     private void keepFocus() {
-        if (phase == Phase.RUNNING && !client.isWindowFocused()) {
-            client.onWindowFocusChanged(true);
+        if (phase == Phase.RUNNING && !client.isWindowActive()) {
+            client.setWindowActive(true);
         }
     }
 
     private void tick() {
         keepFocus();
-        long now = Util.getMeasuringTimeMs();
+        long now = Util.getMillis();
         switch (phase) {
             case WAITING -> waitForGame(now);
             case RUNNING -> {
@@ -148,7 +148,7 @@ public final class PlayCheck {
             finish();
             return;
         }
-        if (client.world == null || client.player == null) {
+        if (client.level == null || client.player == null) {
             joinedMs = -1;
             waitingFor = "the world to load";
             return;
@@ -158,7 +158,7 @@ public final class PlayCheck {
             // An unfocused window (two clients side by side) would otherwise pause.
             client.options.pauseOnLostFocus = false;
         }
-        if (client.currentScreen instanceof GameMenuScreen) {
+        if (client.screen instanceof PauseScreen) {
             client.setScreen(null);
         }
         if (EditorClient.instance().isEmpty()) {
@@ -171,7 +171,7 @@ public final class PlayCheck {
             waitingFor = "the editor handshake (" + state + ")";
             return;
         }
-        boolean terrain = client.worldRenderer.isTerrainRenderComplete();
+        boolean terrain = client.levelRenderer.hasRenderedAllSections();
         if (now - joinedMs < SETTLE_MS || (!terrain && now - joinedMs < TERRAIN_WAIT_MS)) {
             waitingFor = "the terrain to load";
             return;
@@ -181,13 +181,13 @@ public final class PlayCheck {
 
     private void start() {
         phase = Phase.RUNNING;
-        startedMs = Util.getMeasuringTimeMs();
+        startedMs = Util.getMillis();
         EditorClient editor = EditorClient.instance().orElseThrow();
         savedLayouts = editor.ui().windows().layouts();
         savedUiPercent = editor.ui().uiScale().percent();
-        report.note("Window: " + client.getWindow().getFramebufferWidth() + "x"
-                + client.getWindow().getFramebufferHeight() + " px, GUI scale factor "
-                + (int) client.getWindow().getScaleFactor() + ", the player's editor UI size " + savedUiPercent
+        report.note("Window: " + client.getWindow().getWidth() + "x"
+                + client.getWindow().getHeight() + " px, GUI scale factor "
+                + (int) client.getWindow().getGuiScale() + ", the player's editor UI size " + savedUiPercent
                 + "%; the check runs at " + UI_PERCENT + "% (the reference size: a screen that shows about 850x490 UI units)");
         CheckDriver driver = new CheckDriver(client, editor, config.dir(), report, frames);
         thread = new Thread(() -> runAll(driver), "Sculptory play check");
@@ -241,35 +241,35 @@ public final class PlayCheck {
         }
         long started = System.currentTimeMillis();
         Map<String, Area> areas = driver.onServer(server -> {
-            ServerWorld world = server.getOverworld();
+            ServerLevel world = server.overworld();
             GameRules rules = server.getGameRules();
-            rules.get(GameRules.DO_DAYLIGHT_CYCLE).set(false, server);
-            rules.get(GameRules.DO_WEATHER_CYCLE).set(false, server);
-            rules.get(GameRules.DO_MOB_SPAWNING).set(false, server);
+            rules.getRule(GameRules.RULE_DAYLIGHT).set(false, server);
+            rules.getRule(GameRules.RULE_WEATHER_CYCLE).set(false, server);
+            rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
             // No random ticks unless a scenario asks for them: grass spreading onto a fixture's dirt would change
             // an area between its before and after.
-            rules.get(GameRules.RANDOM_TICK_SPEED).set(0, server);
-            world.setTimeOfDay(NOON);
-            world.setWeather(CLEAR_TICKS, 0, false, false);
+            rules.getRule(GameRules.RULE_RANDOMTICKING).set(0, server);
+            world.setDayTime(NOON);
+            world.setWeatherParameters(CLEAR_TICKS, 0, false, false);
             // At once: rain that is fading out still lays snow at the fixtures' height. The server tells clients
             // about the rain only as its gradient changes tick by tick, so zeroing it here means telling them
             // ourselves (else the client rains on for the whole check).
-            world.setRainGradient(0f);
-            world.setThunderGradient(0f);
-            server.getPlayerManager().sendToAll(new GameStateChangeS2CPacket(GameStateChangeS2CPacket.RAIN_STOPPED,
+            world.setRainLevel(0f);
+            world.setThunderLevel(0f);
+            server.getPlayerList().broadcastAll(new ClientboundGameEventPacket(ClientboundGameEventPacket.STOP_RAINING,
                     0f));
-            server.getPlayerManager().sendToAll(new GameStateChangeS2CPacket(
-                    GameStateChangeS2CPacket.RAIN_GRADIENT_CHANGED, 0f));
-            server.getPlayerManager().sendToAll(new GameStateChangeS2CPacket(
-                    GameStateChangeS2CPacket.THUNDER_GRADIENT_CHANGED, 0f));
-            ServerPlayerEntity player = server.getPlayerManager().getPlayer(client.player.getUuid());
+            server.getPlayerList().broadcastAll(new ClientboundGameEventPacket(
+                    ClientboundGameEventPacket.RAIN_LEVEL_CHANGE, 0f));
+            server.getPlayerList().broadcastAll(new ClientboundGameEventPacket(
+                    ClientboundGameEventPacket.THUNDER_LEVEL_CHANGE, 0f));
+            ServerPlayer player = server.getPlayerList().getPlayer(client.player.getUUID());
             if (player != null) {
-                player.addStatusEffect(new StatusEffectInstance(StatusEffects.NIGHT_VISION, -1, 0, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, -1, 0, false, false));
                 player.getAbilities().flying = true;
-                player.sendAbilitiesUpdate();
+                player.onUpdateAbilities();
             }
             Map<String, Area> placed = Fixtures.layout(fixtures.stream().map(Fixtures.Fixture::area).toList(),
-                    world.getSpawnPos().getX(), world.getSpawnPos().getZ());
+                    world.getSharedSpawnPos().getX(), world.getSharedSpawnPos().getZ());
             Map<String, Area> built = new LinkedHashMap<>();
             for (Fixtures.Fixture fixture : fixtures) {
                 Area area = placed.get(fixture.area());
@@ -369,7 +369,7 @@ public final class PlayCheck {
         SculptoryMod.LOG.info("Play check done: {} PASS, {} FAIL, {} SKIPPED; report in {}",
                 report.count(CheckReport.Status.PASS), report.count(CheckReport.Status.FAIL),
                 report.count(CheckReport.Status.SKIPPED), config.dir().resolve(CheckReport.FILE));
-        client.scheduleStop();
+        client.stop();
     }
 
     static String describe(Throwable e) {

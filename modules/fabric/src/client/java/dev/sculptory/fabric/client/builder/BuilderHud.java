@@ -3,8 +3,8 @@ package dev.sculptory.fabric.client.builder;
 import dev.sculptory.fabric.client.editor.Translator;
 import dev.sculptory.protocol.v2.BuilderPower;
 import java.util.Locale;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
 
 /**
  * The powers that are on, as small tagged chips above the right end of the hotbar; nothing while none is on. Drawn each frame by {@link BuilderClient}'s HUD hook while the editor is closed.
@@ -26,18 +26,18 @@ final class BuilderHud {
     }
 
     /** Draws the chips of the powers in {@code mask}, right-aligned to the hotbar's right edge. */
-    static void render(DrawContext context, TextRenderer text, int mask, Translator translator) {
+    static void render(GuiGraphics context, Font text, int mask, Translator translator) {
         if (mask == 0) return;
-        int right = context.getScaledWindowWidth() / 2 + HOTBAR_HALF_WIDTH;
-        int y = context.getScaledWindowHeight() - ABOVE_HOTBAR - CHIP_HEIGHT;
+        int right = context.guiWidth() / 2 + HOTBAR_HALF_WIDTH;
+        int y = context.guiHeight() - ABOVE_HOTBAR - CHIP_HEIGHT;
         BuilderPower[] powers = BuilderPower.values();
         for (int i = powers.length - 1; i >= 0; i--) {
             if (!powers[i].in(mask)) continue;
             String tag = translator.translate(tagKey(powers[i]));
-            int width = text.getWidth(tag) + 6;
+            int width = text.width(tag) + 6;
             int x = right - width;
             context.fill(x, y, x + width, y + CHIP_HEIGHT, PLATE);
-            context.drawText(text, tag, x + 3, y + 2, TEXT, false);
+            context.drawString(text, tag, x + 3, y + 2, TEXT, false);
             right = x - GAP;
         }
     }

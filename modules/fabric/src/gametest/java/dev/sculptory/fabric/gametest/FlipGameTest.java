@@ -37,21 +37,20 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.enums.DoubleBlockHalf;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.Properties;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.Direction;
+import net.minecraft.core.Direction;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
 /**
  * The flip upside down against a real server: pastes, moves and stacks
@@ -122,7 +121,7 @@ public final class FlipGameTest implements FabricGameTest {
      * nothing else in the box changed from {@code around} (a snapshot of at least the target box before the edit, or null
      * to require air).
      */
-    static void checkTransformed(ServerWorld world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
+    static void checkTransformed(ServerLevel world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
                                  Transform t, WorldSnapshot around, String what) {
         Box source = before.box;
         int sx = source.sizeX(), sy = source.sizeY(), sz = source.sizeZ();
@@ -133,7 +132,7 @@ public final class FlipGameTest implements FabricGameTest {
             for (int z = 0; z < sz; z++) {
                 for (int x = 0; x < sx; x++) {
                     int from = before.get(source.min().x() + x, source.min().y() + y, source.min().z() + z);
-                    if (Block.getStateFromRawId(from).isAir()) continue;
+                    if (Block.stateById(from).isAir()) continue;
                     int tx = t.mapX(x, z, sx, sz), ty = t.mapY(y, sy), tz = t.mapZ(x, z, sx, sz);
                     expected[(ty * size.z() + tz) * size.x() + tx] = t.applyToState(states, from);
                 }
@@ -143,12 +142,12 @@ public final class FlipGameTest implements FabricGameTest {
             for (int z = 0; z < size.z(); z++) {
                 for (int x = 0; x < size.x(); x++) {
                     int wx = targetMin.x() + x, wy = targetMin.y() + y, wz = targetMin.z() + z;
-                    int got = Block.getRawIdFromState(world.getBlockState(pos(wx, wy, wz)));
+                    int got = Block.getId(world.getBlockState(pos(wx, wy, wz)));
                     int want = expected[(y * size.z() + z) * size.x() + x];
                     if (want < 0) want = around == null ? got : around.get(wx, wy, wz);
                     if (got != want) {
-                        throw new GameTestException(what + " " + t + ": at " + wx + "," + wy + "," + wz + " expected "
-                                + Block.getStateFromRawId(want) + ", got " + Block.getStateFromRawId(got));
+                        throw new GameTestAssertException(what + " " + t + ": at " + wx + "," + wy + "," + wz + " expected "
+                                + Block.stateById(want) + ", got " + Block.stateById(got));
                     }
                 }
             }
@@ -162,7 +161,7 @@ public final class FlipGameTest implements FabricGameTest {
     static WorldSnapshot settled(WorldSnapshot snapshot) {
         WorldSnapshot out = new WorldSnapshot(snapshot.box, snapshot.states);
         snapshot.tiles.forEach((key, nbt) -> {
-            net.minecraft.nbt.NbtCompound copy = nbt.copy();
+            net.minecraft.nbt.CompoundTag copy = nbt.copy();
             copy.remove("TransferCooldown");
             out.tiles.put(key, copy);
         });
@@ -173,7 +172,7 @@ public final class FlipGameTest implements FabricGameTest {
         try {
             h.service.run(h.player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
         }
     }
 
@@ -205,10 +204,10 @@ public final class FlipGameTest implements FabricGameTest {
      * where the flip puts it; blocks with no upside-down form keep their state, the door and the sunflower their halves in
      * order; then the eight pastes undo exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_flip_paste", tickLimit = LIMIT)
-    public void pasteUpsideDownWithEveryTurnAndMirrorUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_flip_paste", timeoutTicks = LIMIT)
+    public void pasteUpsideDownWithEveryTurnAndMirrorUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1000);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 5, y0 + 3, z0 + 5);
@@ -224,8 +223,8 @@ public final class FlipGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> copied = ClipboardGameTest.copy(clips, h.player, source, source.min());
         List<RecordingListener> pastes = new ArrayList<>();
         int half = transforms.size() / 2;
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     for (int k = 0; k < half; k++) {
                         RecordingListener listener = new RecordingListener();
@@ -234,10 +233,10 @@ public final class FlipGameTest implements FabricGameTest {
                         pastes.add(listener);
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (int k = half; k < transforms.size(); k++) {
                         RecordingListener listener = new RecordingListener();
                         ClipboardGameTest.paste(h, h.player, copied.value.clipboardId(),
@@ -245,10 +244,10 @@ public final class FlipGameTest implements FabricGameTest {
                         pastes.add(listener);
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (int k = 0; k < transforms.size(); k++) {
                         Transform t = transforms.get(k);
                         check(pastes.get(k).result.outcome() == JobOutcome.COMPLETED, "paste " + t + " " + pastes.get(k).result);
@@ -263,28 +262,28 @@ public final class FlipGameTest implements FabricGameTest {
                             new BlockPos(x0 + spacing, y0 + 3, z0)).min();
                     BlockState lower = world.getBlockState(pos(plain.x(), plain.y() + 1, plain.z() + 3));
                     BlockState upper = world.getBlockState(pos(plain.x(), plain.y() + 2, plain.z() + 3));
-                    check(lower.get(Properties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER
-                            && upper.get(Properties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER, "door " + lower + " / " + upper);
+                    check(lower.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER
+                            && upper.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.UPPER, "door " + lower + " / " + upper);
                     BlockState torch = world.getBlockState(pos(plain.x(), plain.y() + 3, plain.z() + 2));
-                    check(torch.isOf(net.minecraft.block.Blocks.TORCH), "the torch stays a torch: " + torch);
+                    check(torch.is(net.minecraft.world.level.block.Blocks.TORCH), "the torch stays a torch: " + torch);
                 })
-                .createAndAdd(undoAll(h, transforms.size()))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, transforms.size()))
+                .thenWaitUntil(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the flipped pastes");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A move upside down in place (the box stays, its contents turn over), then turned and flipped to another place:
      * exact, and each undone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_flip_move", tickLimit = LIMIT)
-    public void moveUpsideDownInPlaceAndAwayUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_flip_move", timeoutTicks = LIMIT)
+    public void moveUpsideDownInPlaceAndAwayUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1001);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 5, y0 + 3, z0 + 5);
@@ -298,23 +297,23 @@ public final class FlipGameTest implements FabricGameTest {
         RecordingListener away = new RecordingListener();
         Transform turned = new Transform(1, Mirror.X, true);
         BlockPos offset = new BlockPos(12, 2, 1);
-        context.createTimedTaskRunner()
-                .createAndAdd(EntitiesGameTest.once(() -> run(h, new OpSpec.Move(source, BlockPos.ORIGIN,
+        context.startSequence()
+                .thenWaitUntil(EntitiesGameTest.once(() -> run(h, new OpSpec.Move(source, BlockPos.ORIGIN,
                         Transform.UPSIDE_DOWN, air), inPlace)))
-                .createAndAdd(() -> check(inPlace.result != null, "move running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(inPlace.result != null, "move running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(inPlace.result.outcome() == JobOutcome.COMPLETED, "move " + inPlace.result);
                     checkTransformed(world, h.runtime.states(), before, source.min(), Transform.UPSIDE_DOWN, null,
                             "in place");
                     check(h.history().undoLabel().startsWith("Move · "), "history " + h.history());
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the move in place");
                     run(h, new OpSpec.Move(source, offset, turned, air), away);
                 }))
-                .createAndAdd(() -> check(away.result != null, "second move running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(away.result != null, "second move running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(away.result.outcome() == JobOutcome.COMPLETED, "move " + away.result);
                     checkTransformed(world, h.runtime.states(), before, source.min().add(offset), turned, null, "away");
                     for (int y = source.min().y(); y <= source.max().y(); y++) {
@@ -325,20 +324,20 @@ public final class FlipGameTest implements FabricGameTest {
                         }
                     }
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the flipped move");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Three flipped copies side by side and two flipped copies stacked upwards, each undone exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_flip_stack", tickLimit = LIMIT)
-    public void stackUpsideDownUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_flip_stack", timeoutTicks = LIMIT)
+    public void stackUpsideDownUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1002);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 5, y0 + 3, z0 + 5);
@@ -349,11 +348,11 @@ public final class FlipGameTest implements FabricGameTest {
         WorldSnapshot allBefore = capture(world, all);
         RecordingListener sideways = new RecordingListener();
         RecordingListener upwards = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(EntitiesGameTest.once(() -> run(h, new OpSpec.Stack(new Region.Cuboid(source), 8, 0, 0, 3,
+        context.startSequence()
+                .thenWaitUntil(EntitiesGameTest.once(() -> run(h, new OpSpec.Stack(new Region.Cuboid(source), 8, 0, 0, 3,
                         EntityFilter.NONE, Symmetry.NONE, PasteOptions.Into.EVERYTHING, true), sideways)))
-                .createAndAdd(() -> check(sideways.result != null, "stack running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(sideways.result != null, "stack running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(sideways.result.outcome() == JobOutcome.COMPLETED, "stack " + sideways.result);
                     for (int k = 1; k <= 3; k++) {
                         checkTransformed(world, h.runtime.states(), before, source.min().offset(8 * k, 0, 0),
@@ -361,37 +360,37 @@ public final class FlipGameTest implements FabricGameTest {
                     }
                     checkSame(settled(before), settled(capture(world, source)), "the stack source");
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the sideways stack");
                     run(h, new OpSpec.Stack(new Region.Cuboid(source), 0, 4, 0, 2, EntityFilter.NONE, Symmetry.NONE,
                             PasteOptions.Into.EVERYTHING, true), upwards);
                 }))
-                .createAndAdd(() -> check(upwards.result != null, "upward stack running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(upwards.result != null, "upward stack running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(upwards.result.outcome() == JobOutcome.COMPLETED, "stack " + upwards.result);
                     for (int k = 1; k <= 2; k++) {
                         checkTransformed(world, h.runtime.states(), before, source.min().offset(0, 4 * k, 0),
                                 Transform.UPSIDE_DOWN, null, "upward copy " + k);
                     }
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the upward stack");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A flipped paste with a mirror symmetry and Paste into Only air: both copies are the flip (and the image), written
      * only where there was air; one undo takes both back.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_flip_symmetry", tickLimit = LIMIT)
-    public void symmetricFlippedPasteIntoAirUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_flip_symmetry", timeoutTicks = LIMIT)
+    public void symmetricFlippedPasteIntoAirUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1003);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 5, y0 + 3, z0 + 5);
@@ -410,9 +409,9 @@ public final class FlipGameTest implements FabricGameTest {
         Symmetry symmetry = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * (x0 + 27), 2 * z0);
         RecordingListener paste = new RecordingListener();
         List<OpSymmetry.Copy> copies = new ArrayList<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> copied.get("copy"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> copied.get("copy"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     OpSpec.Paste op = new OpSpec.Paste(new SourceRef.Clipboard(info.clipboardId()),
                             new BlockPos(x0 + 14, y0 + 3, z0 + 5), t, PasteOptions.DEFAULT.withInto(PasteOptions.Into.AIR),
@@ -421,8 +420,8 @@ public final class FlipGameTest implements FabricGameTest {
                     check(copies.size() == 2, "copies " + copies.size());
                     run(h, op, paste);
                 }))
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED, "paste " + paste.result);
                     for (OpSymmetry.Copy copy : copies) {
                         OpSpec.Paste c = (OpSpec.Paste) copy.op();
@@ -432,17 +431,17 @@ public final class FlipGameTest implements FabricGameTest {
                         checkIntoAir(world, h.runtime.states(), before, targetMin, c.t(), allBefore, copy.image().toString());
                     }
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the symmetric flipped paste");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Like {@link #checkTransformed}, but a source block lands only where the world held air before. */
-    private static void checkIntoAir(ServerWorld world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
+    private static void checkIntoAir(ServerLevel world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
                                      Transform t, WorldSnapshot around, String what) {
         Box source = before.box;
         int sx = source.sizeX(), sy = source.sizeY(), sz = source.sizeZ();
@@ -450,14 +449,14 @@ public final class FlipGameTest implements FabricGameTest {
             for (int z = 0; z < sz; z++) {
                 for (int x = 0; x < sx; x++) {
                     int from = before.get(source.min().x() + x, source.min().y() + y, source.min().z() + z);
-                    if (Block.getStateFromRawId(from).isAir()) continue;
+                    if (Block.stateById(from).isAir()) continue;
                     int wx = targetMin.x() + t.mapX(x, z, sx, sz), wy = targetMin.y() + t.mapY(y, sy);
                     int wz = targetMin.z() + t.mapZ(x, z, sx, sz);
                     int was = around.get(wx, wy, wz);
-                    int want = Block.getStateFromRawId(was).isAir() ? t.applyToState(states, from) : was;
-                    int got = Block.getRawIdFromState(world.getBlockState(pos(wx, wy, wz)));
+                    int want = Block.stateById(was).isAir() ? t.applyToState(states, from) : was;
+                    int got = Block.getId(world.getBlockState(pos(wx, wy, wz)));
                     check(got == want, what + " " + t + ": at " + wx + "," + wy + "," + wz + " expected "
-                            + Block.getStateFromRawId(want) + ", got " + Block.getStateFromRawId(got));
+                            + Block.stateById(want) + ", got " + Block.stateById(got));
                 }
             }
         }
@@ -468,10 +467,10 @@ public final class FlipGameTest implements FabricGameTest {
      * a wall stays on it at the mirrored height, and an armor stand keeps the space its box had, its feet lowered by its
      * height; after vanilla's support check (100 ticks) the frames still hang; undo takes them away exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_flip_entities", tickLimit = LIMIT)
-    public void entitiesComeAlongUpsideDown(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_flip_entities", timeoutTicks = LIMIT)
+    public void entitiesComeAlongUpsideDown(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1004);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 3, y0 + 3, z0 + 3);
@@ -483,40 +482,40 @@ public final class FlipGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener paste = new RecordingListener();
         int[] waited = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(world, all))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(world, all))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     fixture.addAll(entityFixture(h, x0, y0, z0));
                     EntitiesGameTest.copyInto(copied, clips, h.player, source, source.min(), EntityFilter.DECORATIONS);
                 }))
-                .createAndAdd(() -> copied.get("copy"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> copied.get("copy"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     check(info.entities() == 3, "the clipboard holds " + info.entities() + " entities");
                     // The anchor (the minimum corner) turns over to the top, so the origin is 3 up for the box to start at y0.
                     EntitiesGameTest.paste(h, info.clipboardId(), target.min().offset(0, 3, 0), Transform.UPSIDE_DOWN,
                             paste);
                 }))
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED, "paste " + paste.result);
                     List<Entity> there = EntitiesGameTest.entitiesIn(world, target);
                     check(there.size() == 3, "3 entities pasted: " + there);
                     checkFlippedEntities(world, target, x0 + 20, y0);
                 }))
-                .createAndAdd(() -> check(++waited[0] > 110, "waiting past vanilla's support check"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(++waited[0] > 110, "waiting past vanilla's support check"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     checkFlippedEntities(world, target, x0 + 20, y0);
                     h.undo(new RecordingListener());
                 }))
-                .createAndAdd(() -> check(EntitiesGameTest.entitiesIn(world, target).isEmpty(),
+                .thenWaitUntil(() -> check(EntitiesGameTest.entitiesIn(world, target).isEmpty(),
                         "undo takes them: " + EntitiesGameTest.entitiesIn(world, target)))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(EntitiesGameTest.entitiesIn(world, source).size() == 3, "the source keeps its entities");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -524,10 +523,10 @@ public final class FlipGameTest implements FabricGameTest {
      * the floor turned into, the wall frame keeps its wall, the stand keeps the space its box had; the move undone puts
      * the same entities back where they were.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_flip_entities_move", tickLimit = LIMIT)
-    public void movesAndStacksTakeEntitiesAlongUpsideDown(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_flip_entities_move", timeoutTicks = LIMIT)
+    public void movesAndStacksTakeEntitiesAlongUpsideDown(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1006);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 3, y0 + 3, z0 + 3);
@@ -539,42 +538,42 @@ public final class FlipGameTest implements FabricGameTest {
         RecordingListener move = new RecordingListener();
         RecordingListener stack = new RecordingListener();
         java.util.Map<java.util.UUID, dev.sculptory.core.nbt.NbtCompound> before = new java.util.HashMap<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(world, all))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(world, all))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     fixture.addAll(entityFixture(h, x0, y0, z0));
                     before.putAll(EntitiesGameTest.comparable(fixture));
                     run(h, new OpSpec.Move(new Region.Cuboid(source), BlockPos.ORIGIN, Transform.UPSIDE_DOWN, air,
                             EntityFilter.DECORATIONS), move);
                 }))
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED, "move " + move.result);
                     check(EntitiesGameTest.entitiesIn(world, source).size() == 3, "3 entities moved: "
                             + EntitiesGameTest.entitiesIn(world, source));
                     checkFlippedEntities(world, source, x0, y0);
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(EntitiesGameTest.comparable(EntitiesGameTest.entitiesIn(world, source)).equals(before),
                             "the undo puts back the same entities");
                     run(h, new OpSpec.Stack(new Region.Cuboid(source), 8, 0, 0, 1, EntityFilter.DECORATIONS,
                             Symmetry.NONE, PasteOptions.Into.EVERYTHING, true), stack);
                 }))
-                .createAndAdd(() -> check(stack.result != null, "stack running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(stack.result != null, "stack running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(stack.result.outcome() == JobOutcome.COMPLETED, "stack " + stack.result);
                     check(EntitiesGameTest.entitiesIn(world, copyBox).size() == 3, "3 entities stacked: "
                             + EntitiesGameTest.entitiesIn(world, copyBox));
                     checkFlippedEntities(world, copyBox, x0 + 8, y0);
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     check(EntitiesGameTest.entitiesIn(world, copyBox).isEmpty(), "the undo takes the stacked entities");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -584,12 +583,12 @@ public final class FlipGameTest implements FabricGameTest {
      * their blocks land in (the edit service's destination and the entity jobs follow the same pivot as the block
      * programs), and both undo exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_flip_entities_height", tickLimit = LIMIT)
-    public void movesAndStacksPastTheBuildHeightTakeEntitiesAlongUpsideDown(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_flip_entities_height", timeoutTicks = LIMIT)
+    public void movesAndStacksPastTheBuildHeightTakeEntitiesAlongUpsideDown(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1007);
-        int top = world.getTopY() - 1;
+        int top = world.getMaxBuildHeight() - 1;
         int x0 = at[0], y0 = top - 3, z0 = at[1];
         Box fixture = box(x0, y0, z0, x0 + 3, y0 + 3, z0 + 3);
         Box selection = box(x0, y0, z0, x0 + 3, y0 + 7, z0 + 3);
@@ -601,24 +600,24 @@ public final class FlipGameTest implements FabricGameTest {
         RecordingListener move = new RecordingListener();
         RecordingListener stack = new RecordingListener();
         java.util.Map<java.util.UUID, dev.sculptory.core.nbt.NbtCompound> before = new java.util.HashMap<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(world, all))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(world, all))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     entities.addAll(entityFixture(h, x0, y0, z0));
                     before.putAll(EntitiesGameTest.comparable(entities));
                     run(h, new OpSpec.Move(new Region.Cuboid(selection), new BlockPos(0, -4, 0), Transform.UPSIDE_DOWN,
                             air, EntityFilter.DECORATIONS), move);
                 }))
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED, "move " + move.result);
                     checkFloorAndWall(world, x0, y0, z0, "moved");
                     check(EntitiesGameTest.entitiesIn(world, fixture).size() == 3, "3 entities moved: "
                             + EntitiesGameTest.entitiesIn(world, fixture));
                     checkFlippedEntities(world, fixture, x0, y0);
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(EntitiesGameTest.comparable(EntitiesGameTest.entitiesIn(world, fixture)).equals(before),
                             "the undo puts back the same entities");
                     check(isStone(world, x0 + 1, y0, z0 + 2) && !isStone(world, x0 + 1, y0 + 3, z0 + 2),
@@ -626,32 +625,32 @@ public final class FlipGameTest implements FabricGameTest {
                     run(h, new OpSpec.Stack(new Region.Cuboid(selection), 0, -8, 0, 1, EntityFilter.DECORATIONS,
                             Symmetry.NONE, PasteOptions.Into.EVERYTHING, true), stack);
                 }))
-                .createAndAdd(() -> check(stack.result != null, "stack running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(stack.result != null, "stack running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(stack.result.outcome() == JobOutcome.COMPLETED, "stack " + stack.result);
                     checkFloorAndWall(world, x0, y0 - 4, z0, "stacked");
                     check(EntitiesGameTest.entitiesIn(world, copyBox).size() == 3, "3 entities stacked: "
                             + EntitiesGameTest.entitiesIn(world, copyBox));
                     checkFlippedEntities(world, copyBox, x0, y0 - 4);
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     check(EntitiesGameTest.entitiesIn(world, copyBox).isEmpty(), "the undo takes the stacked entities");
                     check(!isStone(world, x0 + 1, y0 - 1, z0 + 2), "the undo takes the stacked floor");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** The fixture's floor and wall turned over into the box starting at (x0, y, z0): the floor on top, the wall whole. */
-    private static void checkFloorAndWall(ServerWorld world, int x0, int y, int z0, String what) {
+    private static void checkFloorAndWall(ServerLevel world, int x0, int y, int z0, String what) {
         check(isStone(world, x0 + 1, y + 3, z0 + 2) && !isStone(world, x0 + 1, y, z0 + 2), what + ": the floor is on top");
         check(isStone(world, x0 + 2, y, z0) && isStone(world, x0 + 2, y + 3, z0), what + ": the wall is whole");
     }
 
-    private static boolean isStone(ServerWorld world, int x, int y, int z) {
-        return world.getBlockState(pos(x, y, z)).isOf(net.minecraft.block.Blocks.STONE);
+    private static boolean isStone(ServerLevel world, int x, int y, int z) {
+        return world.getBlockState(pos(x, y, z)).is(net.minecraft.world.level.block.Blocks.STONE);
     }
 
     /**
@@ -659,7 +658,7 @@ public final class FlipGameTest implements FabricGameTest {
      * an empty one on the wall and an armor stand (no gravity, pitch 20) on the floor; spawned.
      */
     private static List<Entity> entityFixture(Harness h, int x0, int y0, int z0) {
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = x0; x <= x0 + 3; x++) {
@@ -667,44 +666,44 @@ public final class FlipGameTest implements FabricGameTest {
             for (int y = y0; y <= y0 + 3; y++) writer.write(x, y, z0, stone, null);
         }
         List<Entity> fixture = new ArrayList<>();
-        ItemFrameEntity floor = new ItemFrameEntity(world, pos(x0 + 1, y0 + 1, z0 + 2), Direction.UP);
-        floor.setHeldItemStack(new ItemStack(Items.DIAMOND), false);
-        ItemFrameEntity wall = new ItemFrameEntity(world, pos(x0 + 2, y0 + 1, z0 + 1), Direction.SOUTH);
-        ArmorStandEntity stand = new ArmorStandEntity(world, x0 + 2.5, y0 + 1, z0 + 2.5);
-        stand.setPitch(20f);
+        ItemFrame floor = new ItemFrame(world, pos(x0 + 1, y0 + 1, z0 + 2), Direction.UP);
+        floor.setItem(new ItemStack(Items.DIAMOND), false);
+        ItemFrame wall = new ItemFrame(world, pos(x0 + 2, y0 + 1, z0 + 1), Direction.SOUTH);
+        ArmorStand stand = new ArmorStand(world, x0 + 2.5, y0 + 1, z0 + 2.5);
+        stand.setXRot(20f);
         stand.setNoGravity(true);
         fixture.add(floor);
         fixture.add(wall);
         fixture.add(stand);
-        for (Entity entity : fixture) check(world.spawnEntity(entity), "fixture " + entity + " spawned");
+        for (Entity entity : fixture) check(world.addFreshEntity(entity), "fixture " + entity + " spawned");
         return fixture;
     }
 
     /** The fixture of {@link #entitiesComeAlongUpsideDown} pasted upside down with its box starting at (x, y). */
-    private static void checkFlippedEntities(ServerWorld world, Box target, int x, int y) {
+    private static void checkFlippedEntities(ServerLevel world, Box target, int x, int y) {
         int frames = 0;
         for (Entity entity : EntitiesGameTest.entitiesIn(world, target)) {
             switch (entity) {
-                case ItemFrameEntity frame when frame.getHeldItemStack().isOf(Items.DIAMOND) -> {
+                case ItemFrame frame when frame.getItem().is(Items.DIAMOND) -> {
                     // On the floor at local y 1 (the cell above the floor at 0); turned over, local y 2, on the ceiling.
-                    check(frame.getHorizontalFacing() == Direction.DOWN, "the floor frame faces " + frame.getHorizontalFacing());
-                    check(frame.getBlockPos().equals(pos(x + 1, y + 2, target.min().z() + 2)), "floor frame at "
-                            + frame.getBlockPos().toShortString());
+                    check(frame.getDirection() == Direction.DOWN, "the floor frame faces " + frame.getDirection());
+                    check(frame.blockPosition().equals(pos(x + 1, y + 2, target.min().z() + 2)), "floor frame at "
+                            + frame.blockPosition().toShortString());
                     frames++;
                 }
-                case ItemFrameEntity frame -> {
-                    check(frame.getHorizontalFacing() == Direction.SOUTH, "the wall frame faces " + frame.getHorizontalFacing());
-                    check(frame.getBlockPos().equals(pos(x + 2, y + 2, target.min().z() + 1)), "wall frame at "
-                            + frame.getBlockPos().toShortString());
+                case ItemFrame frame -> {
+                    check(frame.getDirection() == Direction.SOUTH, "the wall frame faces " + frame.getDirection());
+                    check(frame.blockPosition().equals(pos(x + 2, y + 2, target.min().z() + 1)), "wall frame at "
+                            + frame.blockPosition().toShortString());
                     frames++;
                 }
-                case ArmorStandEntity stand -> {
+                case ArmorStand stand -> {
                     // Feet at local 1.0 in a box 4 tall: the image is 3.0, less the stand's height.
-                    double feet = y + 4 - 1.0 - stand.getHeight();
+                    double feet = y + 4 - 1.0 - stand.getBbHeight();
                     check(Math.abs(stand.getY() - feet) < 1e-6, "the stand stands at " + stand.getY() + ", expected " + feet);
-                    check(Math.abs(stand.getPitch() + 20f) < 1e-3, "the stand's pitch turns over: " + stand.getPitch());
+                    check(Math.abs(stand.getXRot() + 20f) < 1e-3, "the stand's pitch turns over: " + stand.getXRot());
                 }
-                default -> throw new GameTestException("unexpected " + entity);
+                default -> throw new GameTestAssertException("unexpected " + entity);
             }
         }
         check(frames == 2, "two frames: " + frames);

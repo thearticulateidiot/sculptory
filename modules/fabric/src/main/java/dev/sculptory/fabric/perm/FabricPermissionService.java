@@ -15,10 +15,10 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import me.lucko.fabric.api.permissions.v0.Permissions;
 import net.fabricmc.fabric.api.util.TriState;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,7 +31,7 @@ import org.slf4j.LoggerFactory;
  * requests are refused {@code NO_PERMISSION}); {@link #check} reports it as unknown instead, so re-checks of work
  * already admitted can leave that work alone. Failures are logged at most once a minute per player.
  */
-public final class FabricPermissionService implements PlatformPermissions<ServerPlayerEntity, ServerWorld> {
+public final class FabricPermissionService implements PlatformPermissions<ServerPlayer, ServerLevel> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Failed permission checks are logged at most this often per player. */
     static final long FAILURE_LOG_INTERVAL_NANOS = 60_000_000_000L;
@@ -56,7 +56,7 @@ public final class FabricPermissionService implements PlatformPermissions<Server
 
     /** Whether the player holds the node; {@code false} when the permissions backend fails (see {@link #check}). */
     @Override
-    public boolean has(ServerPlayerEntity p, Perm node) {
+    public boolean has(ServerPlayer p, Perm node) {
         return check(p, node) == TriState.TRUE;
     }
 
@@ -64,7 +64,7 @@ public final class FabricPermissionService implements PlatformPermissions<Server
      * The node for the player: {@code TRUE} or {@code FALSE}, or {@code DEFAULT} when the permissions backend threw
      * (logged at most once a minute per player).
      */
-    public TriState check(ServerPlayerEntity p, Perm node) {
+    public TriState check(ServerPlayer p, Perm node) {
         Objects.requireNonNull(node);
         if (isSingleplayerHost(p)) return TriState.TRUE;
         try {
@@ -78,13 +78,13 @@ public final class FabricPermissionService implements PlatformPermissions<Server
 
     /** Whether {@link #check} says {@code FALSE}: a definite no (a failing permissions backend is none). */
     @Override
-    public boolean denied(ServerPlayerEntity p, Perm node) {
+    public boolean denied(ServerPlayer p, Perm node) {
         return check(p, node) == TriState.FALSE;
     }
 
-    private void logFailure(ServerPlayerEntity p, Perm node, Throwable e) {
+    private void logFailure(ServerPlayer p, Perm node, Throwable e) {
         long now = System.nanoTime();
-        UUID id = p.getUuid();
+        UUID id = p.getUUID();
         Long last = failureLogged.get(id);
         if (last != null && now - last < FAILURE_LOG_INTERVAL_NANOS) return;
         if (failureLogged.size() >= MAX_FAILURE_ENTRIES) {
@@ -96,7 +96,7 @@ public final class FabricPermissionService implements PlatformPermissions<Server
     }
 
     /** Every node the player holds, for {@code Welcome}/{@code PermissionsChanged}. */
-    public PermissionMask mask(ServerPlayerEntity p) {
+    public PermissionMask mask(ServerPlayer p) {
         EnumSet<Perm> granted = EnumSet.noneOf(Perm.class);
         for (Perm perm : Perm.values()) {
             if (has(p, perm)) granted.add(perm);
@@ -106,34 +106,34 @@ public final class FabricPermissionService implements PlatformPermissions<Server
 
     /** Whether operator-only block-entity NBT is kept for this player. */
     @Override
-    public boolean mayWriteOperatorNbt(ServerPlayerEntity p) {
+    public boolean mayWriteOperatorNbt(ServerPlayer p) {
         return operatorNbt(p) == TriState.TRUE;
     }
 
     /** {@link #mayWriteOperatorNbt} as a {@link #check}: {@code DEFAULT} when the permissions backend failed. */
-    public TriState operatorNbt(ServerPlayerEntity p) {
-        return p.isCreativeLevelTwoOp() ? TriState.TRUE : check(p, Perm.NBT_OPERATOR);
+    public TriState operatorNbt(ServerPlayer p) {
+        return p.canUseGameMasterBlocks() ? TriState.TRUE : check(p, Perm.NBT_OPERATOR);
     }
 
     /** Whether {@link #operatorNbt} says {@code FALSE}. */
     @Override
-    public boolean operatorNbtDenied(ServerPlayerEntity p) {
+    public boolean operatorNbtDenied(ServerPlayer p) {
         return operatorNbt(p) == TriState.FALSE;
     }
 
     /** Corner rule plus a sample at the column nearest world spawn, so small spawn protection is not missed. */
     @Override
-    public ChunkPermit chunk(ServerPlayerEntity p, ServerWorld w, int cx, int cz, Box bounds) {
-        int y = Math.max(w.getBottomY(), Math.min(w.getTopY() - 1, bounds.min().y()));
-        BlockPos spawn = w.getSpawnPos();
-        return ChunkPermits.forChunk(cx, cz, bounds, (x, z) -> w.canPlayerModifyAt(p, new BlockPos(x, y, z)),
+    public ChunkPermit chunk(ServerPlayer p, ServerLevel w, int cx, int cz, Box bounds) {
+        int y = Math.max(w.getMinBuildHeight(), Math.min(w.getMaxBuildHeight() - 1, bounds.min().y()));
+        BlockPos spawn = w.getSharedSpawnPos();
+        return ChunkPermits.forChunk(cx, cz, bounds, (x, z) -> w.mayInteract(p, new BlockPos(x, y, z)),
                 spawn.getX(), spawn.getZ());
     }
 
-    private boolean isSingleplayerHost(ServerPlayerEntity p) {
+    private boolean isSingleplayerHost(ServerPlayer p) {
         if (!config.singleplayerHostAlwaysAllowed) return false;
         MinecraftServer server = p.getServer();
-        return server != null && isSingleplayerHost(server.isDedicated(), server.getHostProfile(), p.getGameProfile());
+        return server != null && isSingleplayerHost(server.isDedicatedServer(), server.getSingleplayerProfile(), p.getGameProfile());
     }
 
     /**

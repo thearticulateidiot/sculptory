@@ -1,5 +1,7 @@
 package dev.sculptory.fabric.client.editor.tour;
 
+import com.mojang.blaze3d.platform.NativeImage;
+import com.mojang.blaze3d.platform.Window;
 import dev.sculptory.fabric.SculptoryMod;
 import dev.sculptory.fabric.client.editor.EditorClient;
 import dev.sculptory.fabric.client.editor.ExitReason;
@@ -22,15 +24,13 @@ import java.util.Locale;
 import java.util.Optional;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.GameMenuScreen;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.util.ScreenshotRecorder;
-import net.minecraft.client.util.Window;
-import net.minecraft.server.integrated.IntegratedServer;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Util;
-import net.minecraft.world.GameRules;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.server.IntegratedServer;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.GameRules;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -65,7 +65,7 @@ public final class UiTour {
 
     private enum Phase { WAITING, RUNNING, DONE }
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final Path dir;
     private final long installedMs;
     private Phase phase = Phase.WAITING;
@@ -90,7 +90,7 @@ public final class UiTour {
     /** The size of the first picture, for the index. */
     private String pictureSize = "";
 
-    private UiTour(MinecraftClient client, Path dir, int baseUiPercent, SizedLayouts baseLayouts, String layoutSource,
+    private UiTour(Minecraft client, Path dir, int baseUiPercent, SizedLayouts baseLayouts, String layoutSource,
             boolean maximize, Path wikiDir) {
         this.client = client;
         this.dir = dir;
@@ -99,7 +99,7 @@ public final class UiTour {
         this.layoutSource = layoutSource;
         this.maximize = maximize;
         this.wikiDir = wikiDir;
-        this.installedMs = Util.getMeasuringTimeMs();
+        this.installedMs = Util.getMillis();
     }
 
     /**
@@ -137,7 +137,7 @@ public final class UiTour {
                 throw new UncheckedIOException("Screenshot tour: cannot create " + wikiDir, e);
             }
         }
-        UiTour tour = new UiTour(MinecraftClient.getInstance(), dir, uiSize, layouts, layoutSource, maximize, wikiDir);
+        UiTour tour = new UiTour(Minecraft.getInstance(), dir, uiSize, layouts, layoutSource, maximize, wikiDir);
         ClientTickEvents.END_CLIENT_TICK.register(ignored -> tour.tick());
         WorldRenderEvents.END.register(ignored -> tour.frameRendered());
         if (wikiDir == null) {
@@ -342,7 +342,7 @@ public final class UiTour {
     // ---- Driving ----
 
     private void tick() {
-        long now = Util.getMeasuringTimeMs();
+        long now = Util.getMillis();
         switch (phase) {
             case WAITING -> waitForEditor(now);
             case RUNNING -> {
@@ -365,7 +365,7 @@ public final class UiTour {
             quit();
             return;
         }
-        if (client.world == null || client.player == null) {
+        if (client.level == null || client.player == null) {
             joinedMs = -1;
             waitingFor = "the world to load";
             return;
@@ -379,11 +379,11 @@ public final class UiTour {
             if (maximize) {
                 // Like a typical game: maximised on its screen (not fullscreen). Earlier, during loading, it
                 // does not stick.
-                GLFW.glfwMaximizeWindow(client.getWindow().getHandle());
+                GLFW.glfwMaximizeWindow(client.getWindow().getWindow());
                 SculptoryMod.LOG.info("Screenshot tour: maximising the game window");
             }
         }
-        if (client.currentScreen instanceof GameMenuScreen) {
+        if (client.screen instanceof PauseScreen) {
             client.setScreen(null);
         }
         Optional<EditorClient> editor = EditorClient.instance();
@@ -396,12 +396,12 @@ public final class UiTour {
             waitingFor = "the editor handshake (" + refusal.get().key() + ")";
             return;
         }
-        boolean terrain = client.worldRenderer.isTerrainRenderComplete();
+        boolean terrain = client.levelRenderer.hasRenderedAllSections();
         if (now - joinedMs < SETTLE_MS || (!terrain && now - joinedMs < TERRAIN_WAIT_MS)) {
             waitingFor = "the terrain to load";
             return;
         }
-        if (client.currentScreen != null) {
+        if (client.screen != null) {
             client.setScreen(null);
         }
         if (!editor.get().mode().enter()) {
@@ -425,29 +425,29 @@ public final class UiTour {
      * shows the terrain in the same light. Does nothing on a dedicated server.
      */
     private void fixDaylight() {
-        IntegratedServer server = client.getServer();
+        IntegratedServer server = client.getSingleplayerServer();
         if (server == null) {
             return;
         }
         server.execute(() -> {
-            server.getGameRules().get(GameRules.DO_DAYLIGHT_CYCLE).set(false, server);
-            server.getGameRules().get(GameRules.DO_WEATHER_CYCLE).set(false, server);
-            ServerWorld world = server.getOverworld();
-            world.setTimeOfDay(NOON);
-            world.setWeather(CLEAR_TICKS, 0, false, false);
+            server.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(false, server);
+            server.getGameRules().getRule(GameRules.RULE_WEATHER_CYCLE).set(false, server);
+            ServerLevel world = server.overworld();
+            world.setDayTime(NOON);
+            world.setWeatherParameters(CLEAR_TICKS, 0, false, false);
         });
     }
 
     /** The setup lines under index.txt's summary: window, GUI scale, UI size, layout. */
     private List<String> setupNotes() {
         Window window = client.getWindow();
-        int guiScale = client.options.getGuiScale().getValue();
-        double factor = window.getScaleFactor();
-        int scaledWidth = window.getScaledWidth();
-        int scaledHeight = window.getScaledHeight();
+        int guiScale = client.options.guiScale().get();
+        double factor = window.getGuiScale();
+        int scaledWidth = window.getGuiScaledWidth();
+        int scaledHeight = window.getGuiScaledHeight();
         return List.of(
-                "Window: " + window.getFramebufferWidth() + "x" + window.getFramebufferHeight() + " px"
-                        + (GLFW.glfwGetWindowAttrib(window.getHandle(), GLFW.GLFW_MAXIMIZED) == GLFW.GLFW_TRUE
+                "Window: " + window.getWidth() + "x" + window.getHeight() + " px"
+                        + (GLFW.glfwGetWindowAttrib(window.getWindow(), GLFW.GLFW_MAXIMIZED) == GLFW.GLFW_TRUE
                                 ? " (maximised)" : ""),
                 "GUI scale: " + (guiScale == 0 ? "Auto" : Integer.toString(guiScale)) + ", factor "
                         + (int) factor + ", " + scaledWidth + "x" + scaledHeight + " GUI px",
@@ -462,7 +462,7 @@ public final class UiTour {
             return;
         }
         frameQueued = true;
-        client.send(this::betweenFrames);
+        client.tell(this::betweenFrames);
     }
 
     private void betweenFrames() {
@@ -470,7 +470,7 @@ public final class UiTour {
         if (phase != Phase.RUNNING) {
             return;
         }
-        lastFrameMs = Util.getMeasuringTimeMs();
+        lastFrameMs = Util.getMillis();
         context.look();
         if (runner.frame()) {
             quit();
@@ -492,7 +492,7 @@ public final class UiTour {
             client.options.pauseOnLostFocus = pauseOnLostFocus;
         }
         SculptoryMod.LOG.info("Screenshot tour done: {}", dir);
-        client.scheduleStop();
+        client.stop();
     }
 
     /**
@@ -522,7 +522,7 @@ public final class UiTour {
             int[] rgb = new int[size.width() * size.height()];
             for (int y = 0; y < size.height(); y++) {
                 for (int x = 0; x < size.width(); x++) {
-                    int abgr = picture.getColor(x, y);
+                    int abgr = picture.getPixelRGBA(x, y);
                     rgb[y * size.width() + x] = (abgr & 0xFF) << 16 | (abgr & 0xFF00) | (abgr >> 16) & 0xFF;
                 }
             }
@@ -544,18 +544,18 @@ public final class UiTour {
 
             @Override
             public void capture(Path file, Optional<Rect> area, int maxWidth) throws IOException {
-                try (NativeImage frame = ScreenshotRecorder.takeScreenshot(client.getFramebuffer())) {
+                try (NativeImage frame = Screenshot.takeScreenshot(client.getMainRenderTarget())) {
                     if (pictureSize.isEmpty()) {
                         pictureSize = frame.getWidth() + "x" + frame.getHeight();
                         runner.index().addNote("Pictures: " + pictureSize + " px");
                     }
                     TourCrop.Pixels source = area.isPresent()
                             ? TourCrop.pixels(area.get(), context.ui().uiScale().factor(),
-                                    client.getWindow().getScaleFactor(), frame.getWidth(), frame.getHeight())
+                                    client.getWindow().getGuiScale(), frame.getWidth(), frame.getHeight())
                             : new TourCrop.Pixels(0, 0, frame.getWidth(), frame.getHeight());
                     TourCrop.Pixels size = TourCrop.fitted(source.width(), source.height(), maxWidth);
                     if (area.isEmpty() && size.width() == frame.getWidth()) {
-                        frame.writeTo(file);
+                        frame.writeToFile(file);
                         return;
                     }
                     writePart(frame, source, size, file);
@@ -564,7 +564,7 @@ public final class UiTour {
 
             @Override
             public long nowMs() {
-                return Util.getMeasuringTimeMs();
+                return Util.getMillis();
             }
 
             @Override

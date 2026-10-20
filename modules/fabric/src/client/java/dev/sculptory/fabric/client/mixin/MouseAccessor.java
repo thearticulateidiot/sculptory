@@ -1,6 +1,6 @@
 package dev.sculptory.fabric.client.mixin;
 
-import net.minecraft.client.Mouse;
+import net.minecraft.client.MouseHandler;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
@@ -9,11 +9,11 @@ import org.spongepowered.asm.mixin.gen.Accessor;
  * mouse handler must also believe it is there, or the next move event jumps. Fields verified with
  * javap: {@code private double x}, {@code private double y} in {@code net.minecraft.client.Mouse}.
  */
-@Mixin(Mouse.class)
+@Mixin(MouseHandler.class)
 public interface MouseAccessor {
-    @Accessor("x")
+    @Accessor("xpos")
     void sculptory$setX(double x);
 
-    @Accessor("y")
+    @Accessor("ypos")
     void sculptory$setY(double y);
 }

@@ -35,13 +35,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
 
 /**
  * The paste-into filter on a real server (regionCorner slots 860-879): a
@@ -60,15 +60,15 @@ public final class PasteIntoGameTest implements FabricGameTest {
         int at(int x, int y, int z);
     }
 
-    private static void checkCells(ServerWorld world, Box area, Expected expected, String what) {
+    private static void checkCells(ServerLevel world, Box area, Expected expected, String what) {
         WorldSnapshot now = capture(world, area);
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
                     int want = expected.at(x, y, z), got = now.get(x, y, z);
                     if (want != got) {
-                        throw new GameTestException(what + " at " + x + "," + y + "," + z + ": "
-                                + Block.getStateFromRawId(got) + " instead of " + Block.getStateFromRawId(want));
+                        throw new GameTestAssertException(what + " at " + x + "," + y + "," + z + ": "
+                                + Block.stateById(got) + " instead of " + Block.stateById(want));
                     }
                 }
             }
@@ -76,7 +76,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
     }
 
     private static boolean isAir(int raw) {
-        return Block.getStateFromRawId(raw).isAir();
+        return Block.stateById(raw).isAir();
     }
 
     /** The contract's rule on the landing cell's content: EXISTING wants a block that is not air, AIR wants air. */
@@ -115,11 +115,11 @@ public final class PasteIntoGameTest implements FabricGameTest {
         }
     }
 
-    private static JobTicket run(Harness h, ServerPlayerEntity player, OpSpec op, RecordingListener listener) {
+    private static JobTicket run(Harness h, ServerPlayer player, OpSpec op, RecordingListener listener) {
         try {
             return h.service.run(player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
         }
     }
 
@@ -127,34 +127,34 @@ public final class PasteIntoGameTest implements FabricGameTest {
      * Adds to {@code runner}: run the op {@code op} gives, check the world against {@code expected}, undo it (exactly),
      * redo it, undo it again.
      */
-    private static void runCheckUndoRedo(TimedTaskRunner runner, Harness h, Supplier<OpSpec> op, Box area,
+    private static void runCheckUndoRedo(GameTestSequence runner, Harness h, Supplier<OpSpec> op, Box area,
                                          WorldSnapshot before, Expected expected, String what, int historyBefore) {
         RecordingListener listener = new RecordingListener();
         RecordingListener undo = new RecordingListener(), redo = new RecordingListener(), undoAgain = new RecordingListener();
         WorldSnapshot[] after = new WorldSnapshot[1];
-        runner.createAndAdd(() -> run(h, h.player, op.get(), listener))
-                .createAndAdd(() -> check(listener.result != null, what + " running"))
-                .createAndAdd(() -> {
+        runner.thenWaitUntil(() -> run(h, h.player, op.get(), listener))
+                .thenWaitUntil(() -> check(listener.result != null, what + " running"))
+                .thenWaitUntil(() -> {
                     check(listener.result.outcome() == JobOutcome.COMPLETED, what + " " + listener.result);
                     checkCells(h.world, area, expected, what);
                     after[0] = capture(h.world, area);
                     check(h.history().undoLabels().size() == historyBefore + 1, what + " history " + h.history().undoLabels());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, what + " undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, what + " undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.skippedConflicts() == 0, what + " undo " + undo.result);
                     checkSame(before, capture(h.world, area), what + " after undo");
                     h.redo(redo);
                 })
-                .createAndAdd(() -> check(redo.result != null, what + " redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(redo.result != null, what + " redo running"))
+                .thenWaitUntil(() -> {
                     check(redo.result.skippedConflicts() == 0, what + " redo " + redo.result);
                     checkSame(after[0], capture(h.world, area), what + " after redo");
                     h.undo(undoAgain);
                 })
-                .createAndAdd(() -> check(undoAgain.result != null, what + " second undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoAgain.result != null, what + " second undo running"))
+                .thenWaitUntil(() -> {
                     check(undoAgain.result.skippedConflicts() == 0, what + " second undo " + undoAgain.result);
                     checkSame(before, capture(h.world, area), what + " after the second undo");
                     check(h.history().undoLabels().size() == historyBefore, what + " history after undo");
@@ -169,10 +169,10 @@ public final class PasteIntoGameTest implements FabricGameTest {
      * one; with Include air the source's holes clear existing blocks and leave air alone); one history step per
      * paste, undone and redone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_paste_into_paste", tickLimit = LIMIT)
-    public void pastesWriteOnlyTheCellsIntoAllows(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_paste_into_paste", timeoutTicks = LIMIT)
+    public void pastesWriteOnlyTheCellsIntoAllows(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 860);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 31);
@@ -191,8 +191,8 @@ public final class PasteIntoGameTest implements FabricGameTest {
         variants.add(new PasteOptions(true, false, false, Into.EXISTING));
         variants.add(new PasteOptions(true, false, false, Into.AIR));
         int historyBefore = h.history().undoLabels().size();
-        TimedTaskRunner runner = context.createTimedTaskRunner();
-        runner.createAndAdd(() -> check(copied.finished(), "copy running"));
+        GameTestSequence runner = context.startSequence();
+        runner.thenWaitUntil(() -> check(copied.finished(), "copy running"));
         for (PasteOptions options : variants) {
             Supplier<OpSpec> paste = () -> new OpSpec.Paste(new SourceRef.Clipboard(copied.get("the copy").clipboardId()),
                     landing.min(), Transform.IDENTITY, options);
@@ -206,7 +206,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
             };
             runCheckUndoRedo(runner, h, paste, area, original, expected, "paste " + options, historyBefore);
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
                     // Sanity: the mixed landing has every kind of cell, so every branch above was taken.
                     boolean air = false, block = false, water = false, plant = false;
                     for (int x = landing.min().x(); x <= landing.max().x(); x++) {
@@ -224,7 +224,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== move
@@ -234,10 +234,10 @@ public final class PasteIntoGameTest implements FabricGameTest {
      * landing cell follows its content, and with Only existing blocks the wool that would have landed on air is gone
      * from the world until the undo brings it back; one history step per move, undone and redone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_paste_into_move", tickLimit = LIMIT)
-    public void movesFilterTheirLandingWhileTheSourceVacates(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_paste_into_move", timeoutTicks = LIMIT)
+    public void movesFilterTheirLandingWhileTheSourceVacates(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 862);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 31);
@@ -250,7 +250,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
         int air = h.state("minecraft:air");
         BlockPos offset = new BlockPos(14, 0, 6);
         int historyBefore = h.history().undoLabels().size();
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         for (Into into : Into.values()) {
             OpSpec.Move move = new OpSpec.Move(new Region.Cuboid(source), offset, Transform.IDENTITY, new Pattern.Single(air),
                     EntityFilter.NONE, Symmetry.NONE, into);
@@ -265,7 +265,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
             };
             runCheckUndoRedo(runner, h, () -> move, area, original, expected, "move " + into, historyBefore);
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             // The documented loss under EXISTING: a wool cell whose landing cell is air is nowhere after the move.
             Box landing = source.offset(offset.x(), offset.y(), offset.z());
             int lost = 0;
@@ -281,7 +281,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
             checkSame(original, capture(world, area), "after every move was undone");
             forceChunks(world, area, false);
             h.close();
-        }).completeIfSuccessful();
+        }).thenSucceed();
     }
 
     // =================================================================== stack
@@ -291,10 +291,10 @@ public final class PasteIntoGameTest implements FabricGameTest {
      * their content allows (the later copy winning where copies overlap), one history step per stack, undone and
      * redone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_paste_into_stack", tickLimit = LIMIT)
-    public void stacksWriteOnlyTheCellsIntoAllows(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_paste_into_stack", timeoutTicks = LIMIT)
+    public void stacksWriteOnlyTheCellsIntoAllows(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 864);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 99, z0, x0 + 31, 106, z0 + 31);
@@ -306,7 +306,7 @@ public final class PasteIntoGameTest implements FabricGameTest {
         WorldSnapshot original = capture(world, area);
         int dx = 4, dz = 5;
         int historyBefore = h.history().undoLabels().size();
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         for (Into into : Into.values()) {
             OpSpec.Stack stack = new OpSpec.Stack(new Region.Cuboid(source), dx, 0, dz, 2, EntityFilter.NONE, Symmetry.NONE, into);
             Expected expected = (x, y, z) -> {
@@ -319,10 +319,10 @@ public final class PasteIntoGameTest implements FabricGameTest {
             };
             runCheckUndoRedo(runner, h, () -> stack, area, original, expected, "stack " + into, historyBefore);
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(original, capture(world, area), "after every stack was undone");
             forceChunks(world, area, false);
             h.close();
-        }).completeIfSuccessful();
+        }).thenSucceed();
     }
 }

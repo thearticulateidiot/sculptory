@@ -15,14 +15,14 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.SplittableRandom;
 import java.util.function.Supplier;
-import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.Minecraft;
 
 /**
  * {@link BrushServices} in the game: prediction into {@code client.world}, the editor's overlay renderer
  * for the brush cursor, window focus, the editor keymap and the cursor ray. Client thread only.
  */
 public final class McBrushServices implements BrushServices {
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final OverlayRenderer overlay;
     private final EditorKeymap keymap;
     private final ClientWorldPrediction prediction;
@@ -30,7 +30,7 @@ public final class McBrushServices implements BrushServices {
     private final Supplier<Optional<Ray>> cursorRay;
 
     /** @param cursorRay the ray of the editor's latest cursor pick */
-    public McBrushServices(MinecraftClient client, OverlayRenderer overlay, EditorKeymap keymap,
+    public McBrushServices(Minecraft client, OverlayRenderer overlay, EditorKeymap keymap,
                            Supplier<Optional<Ray>> cursorRay) {
         this.client = Objects.requireNonNull(client);
         this.overlay = Objects.requireNonNull(overlay);
@@ -62,7 +62,7 @@ public final class McBrushServices implements BrushServices {
 
     @Override
     public boolean windowFocused() {
-        return client.isWindowFocused();
+        return client.isWindowActive();
     }
 
     @Override

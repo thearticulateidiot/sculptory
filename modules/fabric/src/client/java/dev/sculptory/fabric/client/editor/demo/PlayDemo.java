@@ -1,5 +1,7 @@
 package dev.sculptory.fabric.client.editor.demo;
 
+import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.platform.NativeImage;
 import dev.sculptory.fabric.SculptoryMod;
 import dev.sculptory.fabric.client.builder.BuilderClient;
 import dev.sculptory.fabric.client.editor.EditorClient;
@@ -26,19 +28,17 @@ import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.minecraft.SharedConstants;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.GameMenuScreen;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.client.util.ScreenshotRecorder;
-import net.minecraft.entity.effect.StatusEffectInstance;
-import net.minecraft.entity.effect.StatusEffects;
-import net.minecraft.network.packet.s2c.play.GameStateChangeS2CPacket;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Util;
-import net.minecraft.world.GameRules;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.Screenshot;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.network.protocol.game.ClientboundGameEventPacket;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.effect.MobEffectInstance;
+import net.minecraft.world.effect.MobEffects;
+import net.minecraft.world.level.GameRules;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -66,11 +66,11 @@ public final class PlayDemo {
 
     private enum Phase { WAITING, READY, RUNNING, DONE }
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final DemoConfig config;
     private final CaptionOverlay overlay = new CaptionOverlay();
     private final AtomicLong frames = new AtomicLong();
-    private final long installedMs = Util.getMeasuringTimeMs();
+    private final long installedMs = Util.getMillis();
     private volatile Phase phase = Phase.WAITING;
     private volatile boolean enterPressed;
     /** When "Press Enter" came up (the auto-start counts from here). */
@@ -81,7 +81,7 @@ public final class PlayDemo {
     private Thread thread;
     private boolean maximized;
 
-    private PlayDemo(MinecraftClient client, DemoConfig config) {
+    private PlayDemo(Minecraft client, DemoConfig config) {
         this.client = client;
         this.config = config;
     }
@@ -95,13 +95,13 @@ public final class PlayDemo {
         }
         // A bad -DemoFrom fails now, before the game starts.
         DemoRunner.startIndex(DemoScript.steps(), config.from());
-        PlayDemo demo = new PlayDemo(MinecraftClient.getInstance(), config);
+        PlayDemo demo = new PlayDemo(Minecraft.getInstance(), config);
         ClientTickEvents.END_CLIENT_TICK.register(ignored -> demo.tick());
         WorldRenderEvents.END.register(ignored -> demo.frameRendered());
         // The caption bar over everything: after the HUD when no screen is open, after the screen otherwise (the
         // editor and the ring of powers are screens).
         HudRenderCallback.EVENT.register((context, tickCounter) -> {
-            if (demo.client.currentScreen == null) {
+            if (demo.client.screen == null) {
                 demo.renderOverlay(context);
             }
         });
@@ -112,11 +112,11 @@ public final class PlayDemo {
                 config.dir());
     }
 
-    private void renderOverlay(DrawContext context) {
+    private void renderOverlay(GuiGraphics context) {
         if (phase == Phase.WAITING || client.player == null) {
             return;
         }
-        int bottom = context.getScaledWindowHeight() - ABOVE_HOTBAR;
+        int bottom = context.guiHeight() - ABOVE_HOTBAR;
         EditorClient editor = EditorClient.instance().orElse(null);
         if (editor != null && editor.mode().isActive()) {
             EditorUi ui = editor.ui();
@@ -145,20 +145,20 @@ public final class PlayDemo {
 
     /** The game keeps believing its window has focus while the demo runs (a brush stroke ends when focus goes). */
     private void keepFocus() {
-        if (phase == Phase.RUNNING && !client.isWindowFocused()) {
-            client.onWindowFocusChanged(true);
+        if (phase == Phase.RUNNING && !client.isWindowActive()) {
+            client.setWindowActive(true);
         }
     }
 
     private void tick() {
         keepFocus();
-        long now = Util.getMeasuringTimeMs();
+        long now = Util.getMillis();
         switch (phase) {
             case WAITING -> waitForGame(now);
             case READY -> {
-                long window = client.getWindow().getHandle();
-                boolean enter = client.currentScreen == null && (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_ENTER)
-                        || InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_KP_ENTER));
+                long window = client.getWindow().getWindow();
+                boolean enter = client.screen == null && (InputConstants.isKeyDown(window, GLFW.GLFW_KEY_ENTER)
+                        || InputConstants.isKeyDown(window, GLFW.GLFW_KEY_KP_ENTER));
                 boolean auto = config.autoStartSeconds() > 0 && readyMs > 0
                         && now - readyMs > config.autoStartSeconds() * 1_000L;
                 if (enter || auto) {
@@ -186,7 +186,7 @@ public final class PlayDemo {
             phase = Phase.DONE;
             return;
         }
-        if (client.world == null || client.player == null) {
+        if (client.level == null || client.player == null) {
             joinedMs = -1;
             waitingFor = "the world to load";
             return;
@@ -196,10 +196,10 @@ public final class PlayDemo {
             client.options.pauseOnLostFocus = false;
             if (config.maximize() && !maximized) {
                 maximized = true;
-                GLFW.glfwMaximizeWindow(client.getWindow().getHandle());
+                GLFW.glfwMaximizeWindow(client.getWindow().getWindow());
             }
         }
-        if (client.currentScreen instanceof GameMenuScreen) {
+        if (client.screen instanceof PauseScreen) {
             client.setScreen(null);
         }
         if (EditorClient.instance().isEmpty()) {
@@ -212,7 +212,7 @@ public final class PlayDemo {
             waitingFor = "the editor handshake (" + state + ")";
             return;
         }
-        boolean terrain = client.worldRenderer.isTerrainRenderComplete();
+        boolean terrain = client.levelRenderer.hasRenderedAllSections();
         if (now - joinedMs < SETTLE_MS || (!terrain && now - joinedMs < TERRAIN_WAIT_MS)) {
             waitingFor = "the terrain to load";
             return;
@@ -247,7 +247,7 @@ public final class PlayDemo {
                 }
             });
             overlay.show(driver.translate(DemoCaptions.READY));
-            readyMs = Util.getMeasuringTimeMs();
+            readyMs = Util.getMillis();
             DemoRunner<Demo> runner = new DemoRunner<>(DemoScript.steps(), new Host(demo, driver));
             List<DemoRunner.Result> results = runner.run(config.from());
             long ok = results.stream().filter(r -> r.status() == DemoRunner.Status.OK).count();
@@ -266,41 +266,41 @@ public final class PlayDemo {
     private DemoStage setUpWorld(CheckDriver driver) {
         long started = System.currentTimeMillis();
         DemoStage stage = driver.onServer(server -> {
-            ServerWorld world = server.getOverworld();
+            ServerLevel world = server.overworld();
             GameRules rules = server.getGameRules();
-            rules.get(GameRules.DO_DAYLIGHT_CYCLE).set(false, server);
-            rules.get(GameRules.DO_WEATHER_CYCLE).set(false, server);
-            rules.get(GameRules.DO_MOB_SPAWNING).set(false, server);
-            rules.get(GameRules.RANDOM_TICK_SPEED).set(0, server);
-            world.setTimeOfDay(NOON);
-            world.setWeather(CLEAR_TICKS, 0, false, false);
-            world.setRainGradient(0f);
-            world.setThunderGradient(0f);
-            server.getPlayerManager().sendToAll(new GameStateChangeS2CPacket(GameStateChangeS2CPacket.RAIN_STOPPED,
+            rules.getRule(GameRules.RULE_DAYLIGHT).set(false, server);
+            rules.getRule(GameRules.RULE_WEATHER_CYCLE).set(false, server);
+            rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
+            rules.getRule(GameRules.RULE_RANDOMTICKING).set(0, server);
+            world.setDayTime(NOON);
+            world.setWeatherParameters(CLEAR_TICKS, 0, false, false);
+            world.setRainLevel(0f);
+            world.setThunderLevel(0f);
+            server.getPlayerList().broadcastAll(new ClientboundGameEventPacket(ClientboundGameEventPacket.STOP_RAINING,
                     0f));
-            server.getPlayerManager().sendToAll(new GameStateChangeS2CPacket(
-                    GameStateChangeS2CPacket.RAIN_GRADIENT_CHANGED, 0f));
-            server.getPlayerManager().sendToAll(new GameStateChangeS2CPacket(
-                    GameStateChangeS2CPacket.THUNDER_GRADIENT_CHANGED, 0f));
-            ServerPlayerEntity player = server.getPlayerManager().getPlayer(client.player.getUuid());
+            server.getPlayerList().broadcastAll(new ClientboundGameEventPacket(
+                    ClientboundGameEventPacket.RAIN_LEVEL_CHANGE, 0f));
+            server.getPlayerList().broadcastAll(new ClientboundGameEventPacket(
+                    ClientboundGameEventPacket.THUNDER_LEVEL_CHANGE, 0f));
+            ServerPlayer player = server.getPlayerList().getPlayer(client.player.getUUID());
             if (player != null) {
-                player.addStatusEffect(new StatusEffectInstance(StatusEffects.NIGHT_VISION, -1, 0, false, false));
+                player.addEffect(new MobEffectInstance(MobEffects.NIGHT_VISION, -1, 0, false, false));
                 player.getAbilities().flying = true;
-                player.sendAbilitiesUpdate();
+                player.onUpdateAbilities();
             }
-            return DemoStage.build(server, client.player.getUuid());
+            return DemoStage.build(server, client.player.getUUID());
         });
         SculptoryMod.LOG.info("Demo: {} built in {} ms", stage, System.currentTimeMillis() - started);
         try {
             DemoLibrary.seed(EditServiceHost.defaultLibraryRoot(),
-                    SharedConstants.getGameVersion().getSaveVersion().getId());
+                    SharedConstants.getCurrentVersion().getDataVersion().getVersion());
         } catch (IOException e) {
             throw new UncheckedIOException("Demo: cannot write the starter library", e);
         }
         driver.clearClientWeather();
         driver.onClient(() -> {
             if (client.player != null) {
-                client.player.getInventory().selectedSlot = 0;
+                client.player.getInventory().selected = 0;
             }
         });
         return stage;
@@ -416,8 +416,8 @@ public final class PlayDemo {
             String file = String.format(Locale.ROOT, "%02d-%s.png", result.number(), result.id());
             try {
                 driver.onClient(() -> {
-                    try (NativeImage frame = ScreenshotRecorder.takeScreenshot(client.getFramebuffer())) {
-                        frame.writeTo(config.dir().resolve(file));
+                    try (NativeImage frame = Screenshot.takeScreenshot(client.getMainRenderTarget())) {
+                        frame.writeToFile(config.dir().resolve(file));
                     }
                 });
             } catch (RuntimeException e) {
@@ -436,9 +436,9 @@ public final class PlayDemo {
         long total = results.stream().mapToLong(DemoRunner.Result::millis).sum();
         lines.add(String.format(Locale.ROOT, "# %d steps: %d OK, %d FAILED, %d SKIPPED; %d:%02d played", results.size(),
                 ok, failed, skipped, total / 60_000, (total / 1000) % 60));
-        lines.add("# Window: " + client.getWindow().getFramebufferWidth() + "x"
-                + client.getWindow().getFramebufferHeight() + " px, GUI scale factor "
-                + (int) client.getWindow().getScaleFactor());
+        lines.add("# Window: " + client.getWindow().getWidth() + "x"
+                + client.getWindow().getHeight() + " px, GUI scale factor "
+                + (int) client.getWindow().getGuiScale());
         if (!note.isEmpty()) {
             lines.add("# " + note);
         }

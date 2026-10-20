@@ -35,12 +35,12 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.BlockState;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -64,12 +64,12 @@ public final class HeightmapWideGameTest implements FabricGameTest {
      * by 128; each stroke is one entry, and undoing both restores the area exactly; the light engine gets the writes'
      * light checks per chunk column and part, not a task per cell. Logged: ticks and the longest tick.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_wide", tickLimit = LIMIT)
-    public void aRadius128DabSpreadsOverTicksAndUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_wide", timeoutTicks = LIMIT)
+    public void aRadius128DabSpreadsOverTicksAndUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 EditExecutor.Settings.from(SculptoryConfig.defaults(), true));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1700);
         int x0 = at[0], z0 = at[1];
         Box ground = box(x0, FLOOR, z0, x0 + SIDE - 1, 103, z0 + SIDE - 1);
@@ -81,11 +81,11 @@ public final class HeightmapWideGameTest implements FabricGameTest {
                 h.service.run(h.player, new OpSpec.Fill(ground, new Pattern.Single(h.state("minecraft:stone")),
                         CellMask.ANY), RunOptions.DEFAULT, fill);
             } catch (EditRejected e) {
-                throw new GameTestException("the ground's fill was refused: " + e.getMessage());
+                throw new GameTestAssertException("the ground's fill was refused: " + e.getMessage());
             }
             MultiplayerGameTest.tickUntil(executor, () -> fill.result != null, 20_000, "the ground");
             StrokeGameTest.terrain(h, x0, z0, SIDE, SIDE);
-            int entries = h.service.historyService().undoEntries(h.player.getUuid()).size();
+            int entries = h.service.historyService().undoEntries(h.player.getUUID()).size();
             WorldSnapshot before = capture(world, area);
             int cx = x0 + SIDE / 2, cz = z0 + SIDE / 2;
             int top = surface(world, cx, cz);
@@ -99,7 +99,7 @@ public final class HeightmapWideGameTest implements FabricGameTest {
                 try {
                     h.service.beginStroke(h.player, id, spec);
                 } catch (EditRejected e) {
-                    throw new GameTestException("the stroke was refused: " + e.getMessage());
+                    throw new GameTestAssertException("the stroke was refused: " + e.getMessage());
                 }
                 int acks = h.acks.seqs.size();
                 int y = surface(world, cx, cz) + 1;
@@ -107,13 +107,13 @@ public final class HeightmapWideGameTest implements FabricGameTest {
                         255)));
                 check(outcome.accepted(), "the dab: " + outcome);
                 long[] planning = HeightmapGameTest.timedTicks(executor, h,
-                        () -> !h.service.workingOut(h.player.getUuid()), 2_000, "working the dab out");
+                        () -> !h.service.workingOut(h.player.getUUID()), 2_000, "working the dab out");
                 long[] dab = HeightmapGameTest.timedTicks(executor, h, () -> h.acks.seqs.size() == acks + 1, 20_000,
                         "the dab");
                 check(h.events.dabRejections.isEmpty(), "refusals " + h.events.dabRejections);
                 h.service.endStroke(h.player, id);
                 long[] commit = HeightmapGameTest.timedTicks(executor, h,
-                        () -> h.service.queuedCommits(h.player.getUuid()) == 0, 20_000, "the commit");
+                        () -> h.service.queuedCommits(h.player.getUUID()) == 0, 20_000, "the commit");
                 report.append(String.format(Locale.ROOT, " %s: worked out over %d ticks (longest %.1f ms), written over"
                         + " %d more (longest %.1f ms, %d over %d ms), committed over %d (longest %.1f ms); %.1f ms of GC"
                         + " left out, the longest pause %.1f ms, the longest tick with its pauses %.1f ms;",
@@ -138,7 +138,7 @@ public final class HeightmapWideGameTest implements FabricGameTest {
             long lightTasks = LightBatchGameTest.lightTaskObjects();
             check(lightTasks < 50_000, "vanilla light tasks queued: " + lightTasks);
             LoggerFactory.getLogger("sculptory").info("Heightmap radius-128 dabs on a dedicated server's lane:{}", report);
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == entries + 2, "one entry a stroke");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == entries + 2, "one entry a stroke");
             for (int i = 0; i < 2; i++) {
                 RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
                 MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 20_000, "undo " + i);
@@ -151,7 +151,7 @@ public final class HeightmapWideGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -161,10 +161,10 @@ public final class HeightmapWideGameTest implements FabricGameTest {
      * A mirrored stamp white all over and 128 tall (twice {@link HeightmapSpec#MAX_STEP_CELLS}) is refused for everyone.
      * Changes the shared config for this batch only.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_wide_limits", tickLimit = LIMIT)
-    public void aWideStampsLimitsAreChecked(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_wide_limits", timeoutTicks = LIMIT)
+    public void aWideStampsLimitsAreChecked(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.BRUSH);
         SculptoryConfig.LimitsConfig limits = h.runtime.config().limits;
         int savedRadius = limits.maxHeightmapRadius, savedHeight = limits.maxHeightmapHeight;
@@ -209,31 +209,31 @@ public final class HeightmapWideGameTest implements FabricGameTest {
             limits.maxOpVolume = savedVolume;
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
-    private static void refused(Harness h, ServerPlayerEntity player, BrushSpec spec, String why) {
+    private static void refused(Harness h, ServerPlayer player, BrushSpec spec, String why) {
         EditRejected e = ClipboardGameTest.refusal(() -> h.service.beginStroke(player, 98, spec));
         check(e.reason() == RejectReason.TOO_LARGE && e.getMessage().contains(why),
                 "refused with " + e.reason() + ": " + e.getMessage() + " (expected " + why + ")");
-        check(h.service.openStroke(player.getUuid()).isEmpty(), "a refused stroke is open");
+        check(h.service.openStroke(player.getUUID()).isEmpty(), "a refused stroke is open");
     }
 
-    private static int allowed(Harness h, ServerPlayerEntity player, BrushSpec spec, int strokeId, String what) {
+    private static int allowed(Harness h, ServerPlayer player, BrushSpec spec, int strokeId, String what) {
         try {
             h.service.beginStroke(player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException(what + " was refused: " + e.getMessage());
+            throw new GameTestAssertException(what + " was refused: " + e.getMessage());
         }
         h.service.endStroke(player, strokeId);
         return strokeId + 1;
     }
 
     /** The topmost ground of a column (not air, plants or water), from y 300 down. */
-    private static int surface(ServerWorld world, int x, int z) {
+    private static int surface(ServerLevel world, int x, int z) {
         for (int y = 300; y >= FLOOR - 4; y--) {
-            BlockState state = world.getBlockState(new net.minecraft.util.math.BlockPos(x, y, z));
-            if (!state.isAir() && !state.isReplaceable() && state.getFluidState().isEmpty()) return y;
+            BlockState state = world.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+            if (!state.isAir() && !state.canBeReplaced() && state.getFluidState().isEmpty()) return y;
         }
         return FLOOR - 5;
     }

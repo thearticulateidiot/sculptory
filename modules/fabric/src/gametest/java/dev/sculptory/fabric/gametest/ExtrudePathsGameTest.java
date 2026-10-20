@@ -48,17 +48,17 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 
 /**
  * Extrude along a path and to a point, Generate's Sweep and Stamp on a real world: the kernels' cells, uploaded as the
@@ -85,21 +85,21 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
 
     /** A chest holding {@code count} diamonds at (x, y, z). */
     private static void chest(Harness h, int x, int y, int z, int count) {
-        h.world.setBlockState(pos(x, y, z), net.minecraft.block.Blocks.CHEST.getDefaultState());
+        h.world.setBlockAndUpdate(pos(x, y, z), net.minecraft.world.level.block.Blocks.CHEST.defaultBlockState());
         ChestBlockEntity chest = (ChestBlockEntity) h.world.getBlockEntity(pos(x, y, z));
-        chest.setStack(0, new ItemStack(Items.DIAMOND, count));
+        chest.setItem(0, new ItemStack(Items.DIAMOND, count));
     }
 
     private static void checkChest(Harness h, int x, int y, int z, int count, String what) {
         if (!(h.world.getBlockEntity(pos(x, y, z)) instanceof ChestBlockEntity chest)) {
-            throw new GameTestException(what + ": no chest at " + x + "," + y + "," + z);
+            throw new GameTestAssertException(what + ": no chest at " + x + "," + y + "," + z);
         }
-        ItemStack stack = chest.getStack(0);
-        check(stack.isOf(Items.DIAMOND) && stack.getCount() == count, what + ": the chest holds " + stack);
+        ItemStack stack = chest.getItem(0);
+        check(stack.is(Items.DIAMOND) && stack.getCount() == count, what + ": the chest holds " + stack);
     }
 
     /** Every cell of {@code area} holds its source cell, else what {@code before} held. */
-    private static void checkBuilt(ServerWorld world, Box area, GeneratedSource source, WorldSnapshot before, String what) {
+    private static void checkBuilt(ServerLevel world, Box area, GeneratedSource source, WorldSnapshot before, String what) {
         WorldSnapshot now = capture(world, area);
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
@@ -107,8 +107,8 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     int generated = source.get(x, y, z);
                     int want = generated >= 0 ? generated : before.get(x, y, z);
                     if (want != now.get(x, y, z)) {
-                        throw new GameTestException(what + " at " + x + "," + y + "," + z + ": "
-                                + Block.getStateFromRawId(now.get(x, y, z)) + " instead of " + Block.getStateFromRawId(want));
+                        throw new GameTestAssertException(what + " at " + x + "," + y + "," + z + ": "
+                                + Block.stateById(now.get(x, y, z)) + " instead of " + Block.stateById(want));
                     }
                 }
             }
@@ -120,7 +120,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
      * the cells and the history name, undoes and checks every cell is back; {@code extra} runs after the build and after
      * the undo (true then).
      */
-    static void buildAndUndo(TestContext context, Harness h, Box area, GeneratedSource source, OpLabel label,
+    static void buildAndUndo(GameTestHelper context, Harness h, Box area, GeneratedSource source, OpLabel label,
                                      Consumer<Boolean> extra) {
         WorldSnapshot before = capture(h.world, area);
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
@@ -129,23 +129,23 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         try {
             clips.beginGeneratedUpload(h.player, source.bounds(), source.cells(), payload.length).completed(payload, uploaded);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
         RecordingListener pasted = new RecordingListener(), undone = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("the upload");
                     try {
                         h.service.run(h.player, new OpSpec.Paste(new SourceRef.Clipboard(info.clipboardId()),
                                 source.bounds().min(), Transform.IDENTITY, new PasteOptions(true, false, false)),
                                 new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, label), pasted);
                     } catch (EditRejected e) {
-                        throw new GameTestException("the paste was refused: " + e.getMessage());
+                        throw new GameTestAssertException("the paste was refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(pasted.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(pasted.result.outcome() == JobOutcome.COMPLETED, "paste " + pasted.result);
                     checkBuilt(h.world, area, source, before, label.text());
                     check(h.history().undoLabel().startsWith(label.text() + " · "), "history " + h.history().undoLabels());
@@ -153,8 +153,8 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     extra.accept(false);
                     h.undo(undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undone.result.outcome() == JobOutcome.COMPLETED && undone.result.skippedConflicts() == 0,
                             "undo " + undone.result);
                     checkSame(before, capture(h.world, area), "after the undo of " + label.text());
@@ -162,7 +162,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** The face of cells {@code (x, y, z)} as the Extrude tool reads it from the world. */
@@ -174,7 +174,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
             xs[i] = c[0];
             ys[i] = c[1];
             zs[i] = c[2];
-            states[i] = Block.getRawIdFromState(h.world.getBlockState(pos(c[0], c[1], c[2])));
+            states[i] = Block.getId(h.world.getBlockState(pos(c[0], c[1], c[2])));
         }
         return new FaceCells(axis, sign, xs, ys, zs, states);
     }
@@ -183,8 +183,8 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
      * A 3 × 3 floor of stone bricks with a chest of diamonds in its middle, carried up and then along a slope: the cells are
      * the kernel's, the chest's column is left out (counted), the chest keeps its diamonds, and the undo is exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_extrude_path", tickLimit = LIMIT)
-    public void aFaceCarriedAlongAPathBuildsAndUndoesExactlyLeavingItsChestOut(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_extrude_path", timeoutTicks = LIMIT)
+    public void aFaceCarriedAlongAPathBuildsAndUndoesExactlyLeavingItsChestOut(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1300);
         int x0 = at[0], z0 = at[1];
@@ -204,7 +204,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         FaceCells face = face(h, 1, 1, cells);
         GeneratedResult result = PathExtrudeKernel.generate(new PathExtrudeKernel.Spec(face,
                 List.of(new BlockPos(x0 + 1, 106, z0 + 1), new BlockPos(x0 + 12, 110, z0 + 8)), PathKind.STRAIGHT, 0, false),
-                h.runtime.states(), 1 << 20, h.world.getBottomY(), h.world.getTopY());
+                h.runtime.states(), 1 << 20, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight());
         check(result.leftOut() == 1, "the chest is left out: " + result.leftOut());
         GeneratedSource source = result.source();
         check(!source.contains(x0 + 1, 101, z0 + 1), "nothing over the chest");
@@ -214,8 +214,8 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
     }
 
     /** A wall of 5 × 5 tapered to an off-centre tip: a leaning spire that ends on its tip, undone exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_extrude_taper", tickLimit = LIMIT)
-    public void aFaceTaperedToAPointBuildsALeaningSpireAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_extrude_taper", timeoutTicks = LIMIT)
+    public void aFaceTaperedToAPointBuildsALeaningSpireAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1302);
         int x0 = at[0], z0 = at[1];
@@ -233,14 +233,14 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         }
         BlockPos tip = new BlockPos(x0 + 10, 106, z0 + 2);
         GeneratedSource source = TaperKernel.generate(new TaperKernel.Spec(face(h, 0, 1, cells), tip,
-                TaperKernel.Curve.STRAIGHT), h.runtime.states(), 1 << 20, h.world.getBottomY(), h.world.getTopY()).source();
+                TaperKernel.Curve.STRAIGHT), h.runtime.states(), 1 << 20, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight()).source();
         check(source.contains(tip.x(), tip.y(), tip.z()), "it ends on its tip");
         buildAndUndo(context, h, area, source, OpLabel.TAPER, undone -> {});
     }
 
     /** A wall profile with a stair cap swept round a bend: the kernel's cells, its stairs turned, undone exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_sweep", tickLimit = LIMIT)
-    public void aProfileSweptAlongAPathBuildsAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_sweep", timeoutTicks = LIMIT)
+    public void aProfileSweptAlongAPathBuildsAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1304);
         int x0 = at[0], z0 = at[1];
@@ -261,7 +261,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         }
         GeneratedSource source = SweepKernel.generate(new SweepKernel.Spec(new SweepKernel.Profile(xs, ys, zs, states),
                 List.of(new BlockPos(x0, 99, z0), new BlockPos(x0 + 12, 99, z0), new BlockPos(x0 + 12, 99, z0 + 12)),
-                PathKind.STRAIGHT, 0, false), h.runtime.states(), 1 << 20, h.world.getBottomY(), h.world.getTopY())
+                PathKind.STRAIGHT, 0, false), h.runtime.states(), 1 << 20, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight())
                 .source();
         check(source.get(x0 + 4, 102, z0) == stairs, "the cap heads east as built");
         check(source.get(x0 + 12, 102, z0 + 8) == h.state("minecraft:stone_brick_stairs[facing=south]"),
@@ -274,10 +274,10 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
      * middle copy turned a quarter: one "Stamp" step; each copy has its chest with the diamonds and its armor stand;
      * the undo puts every block back and takes the three stands away.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp", tickLimit = LIMIT)
-    public void aStampKeepsChestsAndEntitiesTurnsItsCopiesAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_stamp", timeoutTicks = LIMIT)
+    public void aStampKeepsChestsAndEntitiesTurnsItsCopiesAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1306);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0 - 4, 96, z0 - 4, x0 + 40, 108, z0 + 20);
@@ -288,28 +288,28 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         writer.write(x0, 100, z0, stone, null);
         writer.write(x0, 101, z0, stone, null);
         chest(h, x0 + 1, 100, z0, 5);
-        ArmorStandEntity stand = EntityType.ARMOR_STAND.create(world);
-        stand.refreshPositionAndAngles(x0 + 0.5, 102, z0 + 0.5, 0, 0);
-        world.spawnEntity(stand);
+        ArmorStand stand = EntityType.ARMOR_STAND.create(world);
+        stand.moveTo(x0 + 0.5, 102, z0 + 0.5, 0, 0);
+        world.addFreshEntity(stand);
         Box post = box(x0, 100, z0, x0 + 1, 102, z0);
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         Box targets = box(x0 + 8, 96, z0 + 8, x0 + 36, 108, z0 + 14);
         WorldSnapshot[] before = new WorldSnapshot[1];
         RecordingListener stamped = new RecordingListener(), undone = new RecordingListener();
-        net.minecraft.util.math.Box standArea = new net.minecraft.util.math.Box(targets.min().x(), 96, targets.min().z(),
+        net.minecraft.world.phys.AABB standArea = new net.minecraft.world.phys.AABB(targets.min().x(), 96, targets.min().z(),
                 targets.max().x() + 1, 110, targets.max().z() + 1);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(world, area))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(world, area))
+                .thenWaitUntil(() -> {
                     try {
                         clips.copy(h.player, new Region.Cuboid(post), post.min(), false, CellMask.ANY, EntityFilter.ALL,
                                 null, copied);
                     } catch (EditRejected e) {
-                        throw new GameTestException("copy refused: " + e.getMessage());
+                        throw new GameTestAssertException("copy refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("the copy");
                     check(info.entities() == 1, "the clipboard holds the stand: " + info.entities());
                     before[0] = capture(world, targets);
@@ -323,36 +323,36 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                         h.service.run(h.player, stamp, new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP),
                                 stamped);
                     } catch (EditRejected e) {
-                        throw new GameTestException("the stamp was refused: " + e.getMessage());
+                        throw new GameTestAssertException("the stamp was refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(stamped.result != null, "stamp running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(stamped.result != null, "stamp running"))
+                .thenWaitUntil(() -> {
                     check(stamped.result.outcome() == JobOutcome.COMPLETED, "stamp " + stamped.result);
                     check(h.history().undoLabel().startsWith("Stamp · ") && h.history().undoLabels().size() == 1,
                             "one Stamp step: " + h.history().undoLabels());
                     for (int x : new int[] {x0 + 10, x0 + 30}) {
-                        check(world.getBlockState(pos(x, 101, z0 + 10)).isOf(net.minecraft.block.Blocks.STONE), "post at " + x);
+                        check(world.getBlockState(pos(x, 101, z0 + 10)).is(net.minecraft.world.level.block.Blocks.STONE), "post at " + x);
                         checkChest(h, x + 1, 100, z0 + 10, 5, "the copy at " + x);
                     }
                     // Turned a quarter clockwise: the chest east of the post now lies south of it.
-                    check(world.getBlockState(pos(x0 + 20, 101, z0 + 10)).isOf(net.minecraft.block.Blocks.STONE), "turned post");
+                    check(world.getBlockState(pos(x0 + 20, 101, z0 + 10)).is(net.minecraft.world.level.block.Blocks.STONE), "turned post");
                     checkChest(h, x0 + 20, 100, z0 + 11, 5, "the turned copy");
-                    int stands = world.getEntitiesByClass(ArmorStandEntity.class, standArea, e -> true).size();
+                    int stands = world.getEntitiesOfClass(ArmorStand.class, standArea, e -> true).size();
                     check(stands == 3, "three stamped stands, found " + stands);
                     h.undo(undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undone.result.outcome() == JobOutcome.COMPLETED, "undo " + undone.result);
                     checkSame(before[0], capture(world, targets), "after the undo");
-                    int stands = world.getEntitiesByClass(ArmorStandEntity.class, standArea, e -> true).size();
+                    int stands = world.getEntitiesOfClass(ArmorStand.class, standArea, e -> true).size();
                     check(stands == 0, "the undo took the stamped stands away, found " + stands);
                     check(!stand.isRemoved(), "the original stand stays");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -361,18 +361,18 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
      * in a chunk that is not loaded (the others are not written either), and a generated upload without the clipboard
      * node.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_refusals", tickLimit = LIMIT)
-    public void refusedStampsAndUploadsWriteNothing(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_stamp_refusals", timeoutTicks = LIMIT)
+    public void refusedStampsAndUploadsWriteNothing(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1308);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 96, z0, x0 + 47, 140, z0 + 47);
         loadAndForce(world, area);
         ground(h, area);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.CLIPBOARD);
-        ServerPlayerEntity noClipboard = h.addPlayer(false);
+        ServerPlayer noClipboard = h.addPlayer(false);
         EditTestSupport.grant(noClipboard, Perm.USE, Perm.REGION);
         // A 32 × 16 × 32 block of stone (16,384 cells) held as the builder's clipboard.
         BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
@@ -384,8 +384,8 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                 for (int z = 0; z < 32; z++) big.set(x, y, z, stone);
             }
         }
-        UUID clipboardId = h.service.clipboards().install(builder.getUuid(), big.build()).id();
-        h.service.clipboards().install(noClipboard.getUuid(), dev.sculptory.core.clipboard.Clipboard.builder(
+        UUID clipboardId = h.service.clipboards().install(builder.getUUID(), big.build()).id();
+        h.service.clipboards().install(noClipboard.getUUID(), dev.sculptory.core.clipboard.Clipboard.builder(
                 h.runtime.states(), new BlockPos(1, 1, 1)).set(0, 0, 0, stone).build());
         long limit = h.runtime.config().limits.maxOpVolume;
         int placements = (int) (limit / (32 * 16 * 32)) + 1;
@@ -402,14 +402,14 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         check(tooLarge.reason() == RejectReason.TOO_LARGE, "over the volume once per placement: " + tooLarge.reason());
 
         EditRejected node = refusal(() -> h.service.run(noClipboard, new OpSpec.PasteMany(new SourceRef.Clipboard(
-                h.service.clipboards().get(noClipboard.getUuid()).orElseThrow().id()), List.of(new OpSpec.PasteMany.Placement(
+                h.service.clipboards().get(noClipboard.getUUID()).orElseThrow().id()), List.of(new OpSpec.PasteMany.Placement(
                 new BlockPos(x0 + 8, 100, z0 + 8), Orientation.IDENTITY)), PasteOptions.DEFAULT), RunOptions.DEFAULT, null));
         check(node.reason() == RejectReason.NO_PERMISSION && Perm.CLIPBOARD.node().equals(node.detail()),
                 "without the clipboard node: " + node.reason() + " " + node.detail());
 
         // One placement far away, where no chunk is loaded: the whole stamp is refused.
         int farX = x0 + 4096 * 40;
-        check(!world.isChunkLoaded(farX >> 4, z0 >> 4), "the far chunk is not loaded");
+        check(!world.hasChunk(farX >> 4, z0 >> 4), "the far chunk is not loaded");
         EditRejected unloaded = refusal(() -> h.service.run(builder, new OpSpec.PasteMany(source, List.of(
                 new OpSpec.PasteMany.Placement(new BlockPos(x0 + 8, 100, z0 + 8), Orientation.IDENTITY),
                 new OpSpec.PasteMany.Placement(new BlockPos(farX, 100, z0 + 8), Orientation.IDENTITY)),
@@ -423,20 +423,20 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
 
         checkSame(before, capture(world, box(x0, 96, z0, x0 + 47, 140, z0 + 47)), "after the refusals");
         check(h.service.history(builder).undoLabels().equals(undoBefore), "a refusal pushed history");
-        check(h.service.jobs(builder.getUuid()).isEmpty(), "a refusal left a job");
+        check(h.service.jobs(builder.getUUID()).isEmpty(), "a refusal left a job");
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * Overlapping stamps (one turned, one flipped upside down) write what their pastes would, one after another, the
      * later winning; the undo puts every cell back exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_overlap", tickLimit = LIMIT)
-    public void overlappingStampsWriteAsTheirPastesInTurnAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_stamp_overlap", timeoutTicks = LIMIT)
+    public void overlappingStampsWriteAsTheirPastesInTurnAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1310);
         int x0 = at[0], z0 = at[1];
         int apart = 32;
@@ -453,7 +453,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                 if (x == 1) blocks.set(x, 1, z, stairs);
             }
         }
-        UUID id = h.service.clipboards().install(h.player.getUuid(), blocks.build()).id();
+        UUID id = h.service.clipboards().install(h.player.getUUID(), blocks.build()).id();
         List<OpSpec.PasteMany.Placement> placements = List.of(
                 new OpSpec.PasteMany.Placement(new BlockPos(x0 + 4, 100, z0 + 4), Orientation.IDENTITY),
                 new OpSpec.PasteMany.Placement(new BlockPos(x0 + 5, 100, z0 + 5), Orientation.of(Transform.rotation(1))),
@@ -464,42 +464,42 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         List<RecordingListener> pastes = new ArrayList<>();
         RecordingListener stamped = new RecordingListener(), undone = new RecordingListener();
         SourceRef source = new SourceRef.Clipboard(id);
-        var runner = context.createTimedTaskRunner();
+        var runner = context.startSequence();
         // The same placements, apart, as pastes one after another, each once the one before has finished.
         for (OpSpec.PasteMany.Placement placement : placements) {
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 for (RecordingListener listener : pastes) check(listener.result != null, "the paste before is running");
                 RecordingListener listener = new RecordingListener();
                 try {
                     h.service.run(h.player, new OpSpec.Paste(source, placement.origin().offset(apart, 0, 0),
                             placement.orientation(), PasteOptions.DEFAULT), RunOptions.DEFAULT, listener);
                 } catch (EditRejected e) {
-                    throw new GameTestException("a paste was refused: " + e.getMessage());
+                    throw new GameTestAssertException("a paste was refused: " + e.getMessage());
                 }
                 pastes.add(listener);
             });
         }
         runner
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                     try {
                         h.service.run(h.player, new OpSpec.PasteMany(source, placements, PasteOptions.DEFAULT),
                                 new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP), stamped);
                     } catch (EditRejected e) {
-                        throw new GameTestException("the stamp was refused: " + e.getMessage());
+                        throw new GameTestAssertException("the stamp was refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(stamped.result != null, "stamp running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(stamped.result != null, "stamp running"))
+                .thenWaitUntil(() -> {
                     check(stamped.result.outcome() == JobOutcome.COMPLETED, "stamp " + stamped.result);
                     WorldSnapshot stampedCells = capture(world, stampBox), pasted = capture(world, pastesBox);
                     for (int y = 98; y <= 106; y++) {
                         for (int z = z0; z <= z0 + 15; z++) {
                             for (int x = x0; x <= x0 + 15; x++) {
                                 if (stampedCells.get(x, y, z) != pasted.get(x + apart, y, z)) {
-                                    throw new GameTestException("at " + x + "," + y + "," + z + " the stamp has "
-                                            + Block.getStateFromRawId(stampedCells.get(x, y, z)) + ", the pastes "
-                                            + Block.getStateFromRawId(pasted.get(x + apart, y, z)));
+                                    throw new GameTestAssertException("at " + x + "," + y + "," + z + " the stamp has "
+                                            + Block.stateById(stampedCells.get(x, y, z)) + ", the pastes "
+                                            + Block.stateById(pasted.get(x + apart, y, z)));
                                 }
                             }
                         }
@@ -507,25 +507,25 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     check(h.history().undoLabel().startsWith("Stamp · "), "history " + h.history().undoLabels());
                     h.undo(undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undone.result.outcome() == JobOutcome.COMPLETED && undone.result.skippedConflicts() == 0,
                             "undo " + undone.result);
                     checkSame(before, capture(world, stampBox), "after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A stamp of a free-angle copy and a quarter-turned one, mirrored across the middle of block x0 + 20: each side is
      * the exact mirror image of the other, cell for cell, and the undo puts every cell back.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_free", tickLimit = LIMIT)
-    public void aFreeAngleStampWithSymmetryBuildsTheExactImageAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_stamp_free", timeoutTicks = LIMIT)
+    public void aFreeAngleStampWithSymmetryBuildsTheExactImageAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1312);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 96, z0, x0 + 40, 108, z0 + 15);
@@ -540,7 +540,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                 if (z == 0) blocks.set(x, 1 + x % 2, z, glass);
             }
         }
-        UUID id = h.service.clipboards().install(h.player.getUuid(), blocks.build()).id();
+        UUID id = h.service.clipboards().install(h.player.getUUID(), blocks.build()).id();
         int middle = x0 + 20;
         dev.sculptory.core.brush.Symmetry mirror = new dev.sculptory.core.brush.Symmetry(
                 dev.sculptory.core.brush.Symmetry.Mode.MIRROR_X, 2 * middle + 1, 0);
@@ -555,11 +555,11 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         try {
             h.service.run(h.player, stamp, new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP), stamped);
         } catch (EditRejected e) {
-            throw new GameTestException("the free stamp was refused: " + e.getMessage());
+            throw new GameTestAssertException("the free stamp was refused: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(stamped.result != null, "stamp running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(stamped.result != null, "stamp running"))
+                .thenWaitUntil(() -> {
                     check(stamped.result.outcome() == JobOutcome.COMPLETED, "stamp " + stamped.result);
                     WorldSnapshot now = capture(world, area);
                     int written = 0;
@@ -568,8 +568,8 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                             for (int x = x0; x < middle; x++) {
                                 int image = 2 * middle - x;
                                 check(now.get(x, y, z) == now.get(image, y, z), "at " + x + "," + y + "," + z + ": "
-                                        + Block.getStateFromRawId(now.get(x, y, z)) + ", its image "
-                                        + Block.getStateFromRawId(now.get(image, y, z)));
+                                        + Block.stateById(now.get(x, y, z)) + ", its image "
+                                        + Block.stateById(now.get(image, y, z)));
                                 if (now.get(x, y, z) != before.get(x, y, z)) written++;
                             }
                         }
@@ -578,23 +578,23 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     check(h.history().undoLabel().startsWith("Stamp · "), "history " + h.history().undoLabels());
                     h.undo(undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undone.result.outcome() == JobOutcome.COMPLETED && undone.result.skippedConflicts() == 0,
                             "undo " + undone.result);
                     checkSame(before, capture(world, area), "after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A free placement whose mirror image would land beyond the world limit is refused INVALID (its copy is checked by the
      * image of its box), with nothing written or pushed.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_free_beyond", tickLimit = LIMIT)
-    public void aFreeStampWhoseMirrorImageLeavesTheWorldIsRefused(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_stamp_free_beyond", timeoutTicks = LIMIT)
+    public void aFreeStampWhoseMirrorImageLeavesTheWorldIsRefused(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1314);
         int x0 = at[0], z0 = at[1];
@@ -602,7 +602,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         loadAndForce(h.world, area);
         ground(h, area);
         int stone = h.state("minecraft:stone");
-        UUID id = h.service.clipboards().install(h.player.getUuid(), dev.sculptory.core.clipboard.Clipboard.builder(
+        UUID id = h.service.clipboards().install(h.player.getUUID(), dev.sculptory.core.clipboard.Clipboard.builder(
                 h.runtime.states(), new BlockPos(3, 1, 3)).set(0, 0, 0, stone).set(2, 0, 2, stone).build()).id();
         // Mirrored across x = 29,900,000: the copy of a placement near x0 lands near 54 million, past the 30 million limit.
         dev.sculptory.core.brush.Symmetry far = new dev.sculptory.core.brush.Symmetry(
@@ -620,17 +620,17 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         check(h.history().undoLabels().equals(undoBefore), "a refusal pushed history");
         forceChunks(h.world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A copy turned freely by 30 degrees carries its armor stand: the stand lands turned by the same angle, and the undo
      * takes it away and puts every block back.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_free_entity", tickLimit = LIMIT)
-    public void aFreeAngleStampTurnsItsEntityAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_stamp_free_entity", timeoutTicks = LIMIT)
+    public void aFreeAngleStampTurnsItsEntityAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1316);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0 - 4, 96, z0 - 4, x0 + 30, 108, z0 + 20);
@@ -639,28 +639,28 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
         BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
         int stone = h.state("minecraft:stone");
         for (int x = x0; x <= x0 + 2; x++) writer.write(x, 100, z0, stone, null);
-        ArmorStandEntity stand = EntityType.ARMOR_STAND.create(world);
-        stand.refreshPositionAndAngles(x0 + 1.5, 101, z0 + 0.5, 0, 0);
-        world.spawnEntity(stand);
+        ArmorStand stand = EntityType.ARMOR_STAND.create(world);
+        stand.moveTo(x0 + 1.5, 101, z0 + 0.5, 0, 0);
+        world.addFreshEntity(stand);
         Box post = box(x0, 100, z0, x0 + 2, 102, z0);
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         Box targets = box(x0 + 10, 96, z0 + 6, x0 + 26, 108, z0 + 18);
-        net.minecraft.util.math.Box standArea = new net.minecraft.util.math.Box(targets.min().x(), 96, targets.min().z(),
+        net.minecraft.world.phys.AABB standArea = new net.minecraft.world.phys.AABB(targets.min().x(), 96, targets.min().z(),
                 targets.max().x() + 1, 110, targets.max().z() + 1);
         WorldSnapshot[] before = new WorldSnapshot[1];
         RecordingListener stamped = new RecordingListener(), undone = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(world, area))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(world, area))
+                .thenWaitUntil(() -> {
                     try {
                         clips.copy(h.player, new Region.Cuboid(post), post.min(), false, CellMask.ANY, EntityFilter.ALL,
                                 null, copied);
                     } catch (EditRejected e) {
-                        throw new GameTestException("copy refused: " + e.getMessage());
+                        throw new GameTestAssertException("copy refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("the copy");
                     check(info.entities() == 1, "the clipboard holds the stand: " + info.entities());
                     before[0] = capture(world, targets);
@@ -671,29 +671,29 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                         h.service.run(h.player, stamp, new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP),
                                 stamped);
                     } catch (EditRejected e) {
-                        throw new GameTestException("the stamp was refused: " + e.getMessage());
+                        throw new GameTestAssertException("the stamp was refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(stamped.result != null, "stamp running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(stamped.result != null, "stamp running"))
+                .thenWaitUntil(() -> {
                     check(stamped.result.outcome() == JobOutcome.COMPLETED, "stamp " + stamped.result);
-                    List<ArmorStandEntity> stands = world.getEntitiesByClass(ArmorStandEntity.class, standArea, e -> true);
+                    List<ArmorStand> stands = world.getEntitiesOfClass(ArmorStand.class, standArea, e -> true);
                     check(stands.size() == 1, "one stamped stand, found " + stands.size());
-                    float turned = net.minecraft.util.math.MathHelper.wrapDegrees(stands.get(0).getYaw() - 30f);
-                    check(Math.abs(turned) < 1f, "the stand turned by 30 degrees: its yaw is " + stands.get(0).getYaw());
+                    float turned = net.minecraft.util.Mth.wrapDegrees(stands.get(0).getYRot() - 30f);
+                    check(Math.abs(turned) < 1f, "the stand turned by 30 degrees: its yaw is " + stands.get(0).getYRot());
                     h.undo(undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undone.result.outcome() == JobOutcome.COMPLETED, "undo " + undone.result);
                     checkSame(before[0], capture(world, targets), "after the undo");
-                    check(world.getEntitiesByClass(ArmorStandEntity.class, standArea, e -> true).isEmpty(),
+                    check(world.getEntitiesOfClass(ArmorStand.class, standArea, e -> true).isEmpty(),
                             "the undo took the stamped stand away");
                     check(!stand.isRemoved(), "the original stand stays");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -701,10 +701,10 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
      * copy wins over the image (copies are applied original first). Checked against the same placement pasted alone,
      * with the free placement's image alone showing that they do meet, on cells it would write differently.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_stamp_original_wins", tickLimit = LIMIT)
-    public void whereAFreePlacementsImageMeetsAnOriginalPlacementTheOriginalWins(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_stamp_original_wins", timeoutTicks = LIMIT)
+    public void whereAFreePlacementsImageMeetsAnOriginalPlacementTheOriginalWins(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1318);
         int x0 = at[0], z0 = at[1];
         int c = x0 + 20;
@@ -720,7 +720,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                 for (int z = 0; z < 3; z++) blocks.set(x, y, z, palette.get((x + 2 * y + 3 * z) % palette.size()));
             }
         }
-        UUID id = h.service.clipboards().install(h.player.getUuid(), blocks.build()).id();
+        UUID id = h.service.clipboards().install(h.player.getUUID(), blocks.build()).id();
         SourceRef source = new SourceRef.Clipboard(id);
         dev.sculptory.core.brush.Symmetry mirror = new dev.sculptory.core.brush.Symmetry(
                 dev.sculptory.core.brush.Symmetry.Mode.MIRROR_X, 2 * c + 1, 0);
@@ -743,13 +743,13 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     bImage);
             jobs.addAll(List.of(both, aAlone, bImage));
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     for (RecordingListener job : jobs) check(job.result != null, "jobs running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener job : jobs) check(job.result.outcome() == JobOutcome.COMPLETED, "job " + job.result);
                     WorldSnapshot now = capture(world, area);
                     int met = 0, differing = 0;
@@ -759,7 +759,7 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                                 int alone = now.get(x, y, z + aloneRow);
                                 if (alone == before.get(x, y, z + aloneRow)) continue; // A does not write this cell
                                 check(now.get(x, y, z) == alone, "at " + x + "," + y + "," + z + " A lost to "
-                                        + Block.getStateFromRawId(now.get(x, y, z)));
+                                        + Block.stateById(now.get(x, y, z)));
                                 int image = now.get(x, y, z + imageRow);
                                 if (image != before.get(x, y, z + imageRow)) {
                                     met++;
@@ -773,6 +773,6 @@ public final class ExtrudePathsGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

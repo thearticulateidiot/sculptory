@@ -8,10 +8,10 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.biome.Biome;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.Holder;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * Biome view (protocol 6, View ▸ Biome view): the ground's top faces around the camera tinted by their biome, and a
@@ -49,7 +49,7 @@ public final class BiomeView {
     private long seenChanges = -1;
     private int seenX = Integer.MIN_VALUE;
     private int seenZ = Integer.MIN_VALUE;
-    private ClientWorld seenWorld;
+    private ClientLevel seenWorld;
 
     /** Biomes or chunks arrived: the snapshot is taken again on the next frame. Any thread. */
     public static void changed() {
@@ -75,7 +75,7 @@ public final class BiomeView {
     }
 
     /** Takes the snapshot again around the camera at (x, z) when something changed since; once a frame while on. */
-    public void update(ClientWorld world, double cameraX, double cameraZ, BiomeCatalog catalog) {
+    public void update(ClientLevel world, double cameraX, double cameraZ, BiomeCatalog catalog) {
         if (!enabled) return;
         if (world == null) {
             tint = null;
@@ -93,21 +93,21 @@ public final class BiomeView {
         tint = sample(world, x, z, Objects.requireNonNull(catalog));
     }
 
-    private static Tint sample(ClientWorld world, int cx, int cz, BiomeCatalog catalog) {
+    private static Tint sample(ClientLevel world, int cx, int cz, BiomeCatalog catalog) {
         int side = 2 * RADIUS + 1, max = side * side;
         int[] xs = new int[max], zs = new int[max], ys = new int[max], colors = new int[max];
         int n = 0;
         Map<Long, String> quarts = new HashMap<>();
         Map<String, Integer> counts = new HashMap<>();
-        int bottom = world.getBottomY();
+        int bottom = world.getMinBuildHeight();
         for (int z = cz - RADIUS; z <= cz + RADIUS; z++) {
             for (int x = cx - RADIUS; x <= cx + RADIUS; x++) {
-                if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
-                int top = world.getTopY(Heightmap.Type.WORLD_SURFACE, x, z) - 1;
+                if (!world.hasChunk(x >> 4, z >> 4)) continue;
+                int top = world.getHeight(Heightmap.Types.WORLD_SURFACE, x, z) - 1;
                 if (top < bottom) continue;
                 int qx = x >> 2, qy = top >> 2, qz = z >> 2;
                 long key = ((long) (qx & 0x3FFFFFF) << 38) | ((long) (qz & 0x3FFFFFF) << 12) | (qy & 0xFFF);
-                String id = quarts.computeIfAbsent(key, k -> idOf(world.getBiomeForNoiseGen(qx, qy, qz)));
+                String id = quarts.computeIfAbsent(key, k -> idOf(world.getNoiseBiome(qx, qy, qz)));
                 xs[n] = x;
                 zs[n] = z;
                 ys[n] = top;
@@ -123,7 +123,7 @@ public final class BiomeView {
                 java.util.Arrays.copyOf(colors, n), List.copyOf(legend));
     }
 
-    private static String idOf(RegistryEntry<Biome> biome) {
-        return biome.getKey().map(key -> key.getValue().toString()).orElse("minecraft:plains");
+    private static String idOf(Holder<Biome> biome) {
+        return biome.unwrapKey().map(key -> key.location().toString()).orElse("minecraft:plains");
     }
 }

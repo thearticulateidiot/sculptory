@@ -13,22 +13,22 @@ import dev.sculptory.core.nbt.NbtList;
 import dev.sculptory.core.nbt.NbtTag;
 import dev.sculptory.server.schem.TileSanitizer;
 import java.util.List;
-import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
-import net.minecraft.block.BlockEntityProvider;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.AbstractFurnaceBlockEntity;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.entity.HopperBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.BuiltinRegistries;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.data.registries.VanillaRegistries;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.HopperBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -41,14 +41,14 @@ import org.junit.jupiter.api.Test;
  */
 class FabricTileMatcherTest {
     private static FabricStateSpace states;
-    private static RegistryWrapper.WrapperLookup registries;
+    private static HolderLookup.Provider registries;
 
     @BeforeAll
     static void bootstrap() {
-        SharedConstants.createGameVersion();
-        Bootstrap.initialize();
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
         states = FabricStateSpace.build();
-        registries = BuiltinRegistries.createWrapperLookup();
+        registries = VanillaRegistries.createLookup();
     }
 
     private static int h(String spec) {
@@ -70,8 +70,8 @@ class FabricTileMatcherTest {
     private static BlockEntity placed(int handle, BlockEntityData tile) throws Exception {
         BlockState state = states.state(handle);
         BlockEntity entity = tile == null
-                ? ((BlockEntityProvider) state.getBlock()).createBlockEntity(BlockPos.ORIGIN, state)
-                : BlockEntity.createFromNbt(BlockPos.ORIGIN, state, FabricTile.from(tile).copyNbt(), registries);
+                ? ((EntityBlock) state.getBlock()).newBlockEntity(BlockPos.ZERO, state)
+                : BlockEntity.loadStatic(BlockPos.ZERO, state, FabricTile.from(tile).copyNbt(), registries);
         assertNotNull(entity, "no block entity for " + state);
         return entity;
     }
@@ -155,29 +155,29 @@ class FabricTileMatcherTest {
         NbtBytes recorded = recorded("minecraft:chest", NbtCompound.builder()
                 .put("Items", items(item(0, "minecraft:diamond", 5, true))).build());
         ChestBlockEntity added = (ChestBlockEntity) placed(chest, recorded);
-        added.setStack(1, new ItemStack(Items.EMERALD, 2));
+        added.setItem(1, new ItemStack(Items.EMERALD, 2));
         assertFalse(matcher.matches(chest, live(added), recorded), "items added");
         ChestBlockEntity taken = (ChestBlockEntity) placed(chest, recorded);
-        taken.setStack(0, new ItemStack(Items.DIAMOND, 4));
+        taken.setItem(0, new ItemStack(Items.DIAMOND, 4));
         assertFalse(matcher.matches(chest, live(taken), recorded), "an item taken");
         ChestBlockEntity filled = (ChestBlockEntity) placed(chest, null);
-        filled.setStack(0, new ItemStack(Items.DIAMOND, 1));
+        filled.setItem(0, new ItemStack(Items.DIAMOND, 1));
         assertFalse(matcher.matches(chest, live(filled), null), "a chest placed empty and filled since");
 
         int sign = h("minecraft:oak_sign[rotation=3,waterlogged=false]");
         NbtBytes text = recorded("minecraft:sign", NbtCompound.builder().put("front_text", signSide("\"Hi\"")).build());
         // Edited the way the game stores an edit (setText needs a world): the same sign, other text.
         SignBlockEntity edited = (SignBlockEntity) placed(sign, text);
-        net.minecraft.nbt.NbtCompound bye = edited.createNbt(registries);
-        bye.put("front_text", SignText.CODEC.encodeStart(registries.getOps(net.minecraft.nbt.NbtOps.INSTANCE),
-                new SignText().withMessage(0, Text.literal("Bye"))).getOrThrow());
-        edited.read(bye, registries);
+        net.minecraft.nbt.CompoundTag bye = edited.saveWithoutMetadata(registries);
+        bye.put("front_text", SignText.DIRECT_CODEC.encodeStart(registries.createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE),
+                new SignText().setMessage(0, Component.literal("Bye"))).getOrThrow());
+        edited.loadWithComponents(bye, registries);
         assertTrue(matcher.matches(sign, live(placed(sign, text)), text), "untouched");
         assertFalse(matcher.matches(sign, live(edited), text), "the sign's text edited");
 
         int furnace = h("minecraft:furnace[facing=north,lit=false]");
         AbstractFurnaceBlockEntity fuelled = (AbstractFurnaceBlockEntity) placed(furnace, null);
-        fuelled.setStack(1, new ItemStack(Items.COAL, 8));
+        fuelled.setItem(1, new ItemStack(Items.COAL, 8));
         assertFalse(matcher.matches(furnace, live(fuelled), null), "fuel put in");
     }
 
@@ -190,20 +190,20 @@ class FabricTileMatcherTest {
         FabricTileMatcher matcher = matcher();
         int hopper = h("minecraft:hopper[enabled=true,facing=down]");
         HopperBlockEntity ticked = (HopperBlockEntity) placed(hopper, null);
-        net.minecraft.nbt.NbtCompound nbt = ticked.createNbt(registries);
+        net.minecraft.nbt.CompoundTag nbt = ticked.saveWithoutMetadata(registries);
         nbt.putInt("TransferCooldown", 0); // -1 when made, 0 after a tick
-        ticked.read(nbt, registries);
+        ticked.loadWithComponents(nbt, registries);
         BlockEntityData world = live(ticked);
         assertFalse(world.sameContent(live(placed(hopper, null))), "the cooldown did change");
         assertTrue(matcher.matches(hopper, world, null));
-        ticked.setStack(0, new ItemStack(Items.IRON_INGOT, 1));
+        ticked.setItem(0, new ItemStack(Items.IRON_INGOT, 1));
         assertFalse(matcher.matches(hopper, live(ticked), null), "items in the hopper");
 
         // Only the hopper's own keys are left out: a chest with such a key compares it.
-        net.minecraft.nbt.NbtCompound a = new net.minecraft.nbt.NbtCompound();
+        net.minecraft.nbt.CompoundTag a = new net.minecraft.nbt.CompoundTag();
         a.putString("id", "minecraft:chest");
         a.putInt("TransferCooldown", 3);
-        net.minecraft.nbt.NbtCompound b = a.copy();
+        net.minecraft.nbt.CompoundTag b = a.copy();
         b.putInt("TransferCooldown", 4);
         assertFalse(FabricTileMatcher.sameIgnoring(a, b, FabricTileMatcher.VOLATILE_KEYS.get("minecraft:chest")));
         assertTrue(FabricTileMatcher.sameIgnoring(a, b, FabricTileMatcher.VOLATILE_KEYS.get("minecraft:hopper")));
@@ -215,24 +215,24 @@ class FabricTileMatcherTest {
     }
 
     /** One bee in a nest as the game saves it, {@code ticks} into its stay. */
-    private static net.minecraft.nbt.NbtCompound bee(int ticks, boolean nectar) {
-        net.minecraft.nbt.NbtCompound entity = new net.minecraft.nbt.NbtCompound();
+    private static net.minecraft.nbt.CompoundTag bee(int ticks, boolean nectar) {
+        net.minecraft.nbt.CompoundTag entity = new net.minecraft.nbt.CompoundTag();
         entity.putString("id", "minecraft:bee");
         entity.putBoolean("HasNectar", nectar);
-        net.minecraft.nbt.NbtCompound bee = new net.minecraft.nbt.NbtCompound();
+        net.minecraft.nbt.CompoundTag bee = new net.minecraft.nbt.CompoundTag();
         bee.put("entity_data", entity);
         bee.putInt("ticks_in_hive", ticks);
         bee.putInt("min_ticks_in_hive", 600);
         return bee;
     }
 
-    private static BlockEntity nest(int handle, net.minecraft.nbt.NbtCompound... bees) throws Exception {
+    private static BlockEntity nest(int handle, net.minecraft.nbt.CompoundTag... bees) throws Exception {
         BlockEntity nest = placed(handle, null);
-        net.minecraft.nbt.NbtCompound nbt = nest.createNbt(registries);
-        net.minecraft.nbt.NbtList list = new net.minecraft.nbt.NbtList();
-        for (net.minecraft.nbt.NbtCompound bee : bees) list.add(bee);
+        net.minecraft.nbt.CompoundTag nbt = nest.saveWithoutMetadata(registries);
+        net.minecraft.nbt.ListTag list = new net.minecraft.nbt.ListTag();
+        for (net.minecraft.nbt.CompoundTag bee : bees) list.add(bee);
         nbt.put("bees", list);
-        nest.read(nbt, registries);
+        nest.loadWithComponents(nbt, registries);
         return nest;
     }
 
@@ -254,17 +254,17 @@ class FabricTileMatcherTest {
         assertFalse(matcher.matches(nestState, live(nest(nestState, bee(19, true), bee(307, false))), planned),
                 "a bee's own data changed");
         BlockEntity flowered = nest(nestState, bee(19, false), bee(307, false));
-        net.minecraft.nbt.NbtCompound nbt = flowered.createNbt(registries);
-        nbt.put("flower_pos", net.minecraft.nbt.NbtHelper.fromBlockPos(new BlockPos(1, 2, 3)));
-        flowered.read(nbt, registries);
+        net.minecraft.nbt.CompoundTag nbt = flowered.saveWithoutMetadata(registries);
+        nbt.put("flower_pos", net.minecraft.nbt.NbtUtils.writeBlockPos(new BlockPos(1, 2, 3)));
+        flowered.loadWithComponents(nbt, registries);
         assertFalse(matcher.matches(nestState, live(flowered), planned), "the bees found a flower");
         // Only a beehive's bees are left out like that: another type's list is compared whole.
-        net.minecraft.nbt.NbtCompound a = new net.minecraft.nbt.NbtCompound();
-        net.minecraft.nbt.NbtList bees = new net.minecraft.nbt.NbtList();
+        net.minecraft.nbt.CompoundTag a = new net.minecraft.nbt.CompoundTag();
+        net.minecraft.nbt.ListTag bees = new net.minecraft.nbt.ListTag();
         bees.add(bee(1, false));
         a.put("bees", bees);
-        net.minecraft.nbt.NbtCompound b = a.copy();
-        b.getList("bees", net.minecraft.nbt.NbtElement.COMPOUND_TYPE).getCompound(0).putInt("ticks_in_hive", 2);
+        net.minecraft.nbt.CompoundTag b = a.copy();
+        b.getList("bees", net.minecraft.nbt.Tag.TAG_COMPOUND).getCompound(0).putInt("ticks_in_hive", 2);
         assertTrue(FabricTileMatcher.sameLeavingOutVolatile(a, b, "minecraft:beehive"));
         assertFalse(FabricTileMatcher.sameLeavingOutVolatile(a, b, "minecraft:chest"));
     }
@@ -275,20 +275,20 @@ class FabricTileMatcherTest {
         FabricTileMatcher matcher = matcher();
         int spawner = h("minecraft:spawner");
         BlockEntity counted = placed(spawner, null);
-        net.minecraft.nbt.NbtCompound nbt = counted.createNbt(registries);
+        net.minecraft.nbt.CompoundTag nbt = counted.saveWithoutMetadata(registries);
         nbt.putShort("Delay", (short) 7);
-        counted.read(nbt, registries);
+        counted.loadWithComponents(nbt, registries);
         assertFalse(live(counted).sameContent(live(placed(spawner, null))), "the countdown did change");
         assertTrue(matcher.matches(spawner, live(counted), null));
 
         BlockEntity zombies = placed(spawner, null);
-        net.minecraft.nbt.NbtCompound mob = zombies.createNbt(registries);
-        net.minecraft.nbt.NbtCompound entity = new net.minecraft.nbt.NbtCompound();
+        net.minecraft.nbt.CompoundTag mob = zombies.saveWithoutMetadata(registries);
+        net.minecraft.nbt.CompoundTag entity = new net.minecraft.nbt.CompoundTag();
         entity.putString("id", "minecraft:zombie");
-        net.minecraft.nbt.NbtCompound spawnData = new net.minecraft.nbt.NbtCompound();
+        net.minecraft.nbt.CompoundTag spawnData = new net.minecraft.nbt.CompoundTag();
         spawnData.put("entity", entity);
         mob.put("SpawnData", spawnData);
-        zombies.read(mob, registries);
+        zombies.loadWithComponents(mob, registries);
         assertFalse(matcher.matches(spawner, live(zombies), null), "a spawn egg used on it since");
     }
 
@@ -313,7 +313,7 @@ class FabricTileMatcherTest {
         int chest = h("minecraft:chest[facing=east]");
         BlockEntityData untouched = live(placed(chest, null));
         ChestBlockEntity filled = (ChestBlockEntity) placed(chest, null);
-        filled.setStack(0, new ItemStack(Items.DIAMOND, 1));
+        filled.setItem(0, new ItemStack(Items.DIAMOND, 1));
         List<BlockEntityData> unloadable = List.of(
                 new NbtBytes("minecraft:chest", new byte[] {1, 2, 3}),
                 recorded("nosuchmod:crate", NbtCompound.EMPTY),

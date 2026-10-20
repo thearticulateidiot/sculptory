@@ -1,5 +1,11 @@
 package dev.sculptory.fabric.client.editor.render.ghost;
 
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.fabric.SculptoryMod;
 import java.util.Objects;
@@ -10,29 +16,23 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
-import net.minecraft.block.BlockRenderType;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.BuiltBuffer;
-import net.minecraft.client.render.VertexFormat;
-import net.minecraft.client.render.VertexFormats;
-import net.minecraft.client.render.block.BlockRenderManager;
-import net.minecraft.client.util.BufferAllocator;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.random.LocalRandom;
-import net.minecraft.util.math.random.Random;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.core.BlockPos;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.SingleThreadedRandomSource;
+import net.minecraft.world.level.material.FluidState;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * Meshes ghost sections on at most {@value #WORKERS} background threads, the way vanilla's section builder does:
- * {@code BlockRenderManager.renderBlock} for model blocks and {@code renderFluid} for fluids (waterlogged blocks
+ * {@code BlockRenderDispatcher.renderBatched} for model blocks and {@code renderLiquid} for fluids (waterlogged blocks
  * included), all into one {@code BufferBuilder} in the terrain vertex format
  * ({@code POSITION_COLOR_TEXTURE_LIGHT_NORMAL}, quads). Vertices are relative to the section's minimum corner, as
- * vanilla's section meshes are ({@code renderFluid} writes {@code pos & 15} itself).
+ * vanilla's section meshes are ({@code renderLiquid} writes {@code pos & 15} itself).
  *
  * <p>Blocks drawn by block-entity renderers only ({@code ENTITYBLOCK_ANIMATED}: chests, beds, banners, skulls...)
  * have no model and do not appear. Random model variants use the local position, so they may differ from the final
@@ -41,10 +41,10 @@ import org.jetbrains.annotations.Nullable;
  * <p>A block whose model throws abandons its section (the vertex buffer may hold half a quad): the section gets an
  * empty mesh and one log line, and is not retried until its content changes.
  *
- * <p>Signatures checked with javap against yarn 1.21.1+build.3: {@code renderBlock(BlockState, BlockPos,
- * BlockRenderView, MatrixStack, VertexConsumer, boolean, Random)}, {@code renderFluid(BlockPos, BlockRenderView,
- * VertexConsumer, BlockState, FluidState)}, {@code new BufferBuilder(BufferAllocator, DrawMode, VertexFormat)},
- * {@code BufferBuilder.endNullable()}.
+ * <p>Signatures checked with javap against Minecraft 1.21.1 (Mojang names): {@code renderBatched(BlockState, BlockPos,
+ * BlockAndTintGetter, PoseStack, VertexConsumer, boolean, RandomSource)}, {@code renderLiquid(BlockPos,
+ * BlockAndTintGetter, VertexConsumer, BlockState, FluidState)}, {@code new BufferBuilder(ByteBufferBuilder,
+ * VertexFormat.Mode, VertexFormat)}, {@code BufferBuilder.build()}.
  */
 final class GhostMesher implements AutoCloseable {
     static final int WORKERS = 2;
@@ -52,7 +52,7 @@ final class GhostMesher implements AutoCloseable {
      * The vertex format ghost meshes are built in and drawn with. Iris widens new block-format buffers to its own
      * terrain format while a shader pack is on (on any thread); {@link GhostMeshCache} drops such meshes.
      */
-    static final VertexFormat FORMAT = VertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL;
+    static final VertexFormat FORMAT = DefaultVertexFormat.BLOCK;
     private static final int MIN_BUFFER_BYTES = 16 * 1024;
     private static final int MAX_INITIAL_BUFFER_BYTES = 2 * 1024 * 1024;
     private static final AtomicBoolean WARNED = new AtomicBoolean();
@@ -84,7 +84,7 @@ final class GhostMesher implements AutoCloseable {
             long hash,
             long lightKey,
             GhostSection[] neighbourhood,
-            ClientWorld world,
+            ClientLevel world,
             GhostPlacement.LightMode lightMode,
             GhostMapping mapping) {
         GhostSection section() {
@@ -100,7 +100,7 @@ final class GhostMesher implements AutoCloseable {
      * @param vertexBytes size of the vertex data
      * @param failed a block threw while meshing
      */
-    record Result(Job job, @Nullable BuiltBuffer built, @Nullable BufferAllocator allocator, long vertexBytes, boolean failed)
+    record Result(Job job, @Nullable MeshData built, @Nullable ByteBufferBuilder allocator, long vertexBytes, boolean failed)
             implements AutoCloseable {
         /** Frees the vertex data and the allocator; safe on any thread, and twice. */
         @Override
@@ -127,15 +127,15 @@ final class GhostMesher implements AutoCloseable {
 
     static Result build(Job job) {
         GhostSection section = job.section();
-        BufferAllocator allocator = new BufferAllocator(initialBytes(section.blockCount()));
+        ByteBufferBuilder allocator = new ByteBufferBuilder(initialBytes(section.blockCount()));
         try {
-            BuiltBuffer built = mesh(job, section, allocator);
+            MeshData built = mesh(job, section, allocator);
             if (built == null) {
                 allocator.close();
                 return new Result(job, null, null, 0, false);
             }
-            BuiltBuffer.DrawParameters drawn = built.getDrawParameters();
-            long bytes = (long) drawn.vertexCount() * drawn.format().getVertexSizeByte();
+            MeshData.DrawState drawn = built.drawState();
+            long bytes = (long) drawn.vertexCount() * drawn.format().getVertexSize();
             return new Result(job, built, allocator, bytes, false);
         } catch (Throwable failure) {
             allocator.close();
@@ -147,14 +147,14 @@ final class GhostMesher implements AutoCloseable {
         }
     }
 
-    private static @Nullable BuiltBuffer mesh(Job job, GhostSection section, BufferAllocator allocator) {
-        BlockRenderManager blocks = MinecraftClient.getInstance().getBlockRenderManager();
+    private static @Nullable MeshData mesh(Job job, GhostSection section, ByteBufferBuilder allocator) {
+        BlockRenderDispatcher blocks = Minecraft.getInstance().getBlockRenderer();
         GhostBlockView view = new GhostBlockView(job.neighbourhood(), section.sectionX(), section.sectionY(), section.sectionZ(),
                 job.world(), job.lightMode(), job.mapping());
-        BufferBuilder builder = new BufferBuilder(allocator, VertexFormat.DrawMode.QUADS, FORMAT);
-        MatrixStack matrices = new MatrixStack();
-        Random random = new LocalRandom(0L);
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+        BufferBuilder builder = new BufferBuilder(allocator, VertexFormat.Mode.QUADS, FORMAT);
+        PoseStack matrices = new PoseStack();
+        RandomSource random = new SingleThreadedRandomSource(0L);
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int baseX = section.sectionX() << 4;
         int baseY = section.sectionY() << 4;
         int baseZ = section.sectionZ() << 4;
@@ -173,16 +173,16 @@ final class GhostMesher implements AutoCloseable {
             pos.set(baseX + x, baseY + y, baseZ + z);
             FluidState fluid = state.getFluidState();
             if (!fluid.isEmpty()) {
-                blocks.renderFluid(pos, view, builder, state, fluid);
+                blocks.renderLiquid(pos, view, builder, state, fluid);
             }
-            if (state.getRenderType() == BlockRenderType.MODEL) {
-                matrices.push();
+            if (state.getRenderShape() == RenderShape.MODEL) {
+                matrices.pushPose();
                 matrices.translate((float) x, (float) y, (float) z);
-                blocks.renderBlock(state, pos, view, matrices, builder, true, random);
-                matrices.pop();
+                blocks.renderBatched(state, pos, view, matrices, builder, true, random);
+                matrices.popPose();
             }
         }
-        return builder.endNullable();
+        return builder.build();
     }
 
     /** A first guess at the buffer size; the allocator grows as needed. */

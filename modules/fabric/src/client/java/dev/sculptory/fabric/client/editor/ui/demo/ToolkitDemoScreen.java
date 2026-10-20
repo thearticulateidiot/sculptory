@@ -26,14 +26,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.resource.language.I18n;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.text.Text;
-import net.minecraft.util.Util;
+import net.minecraft.Util;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.resources.language.I18n;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -54,13 +54,13 @@ public final class ToolkitDemoScreen extends Screen {
     private long startMs = -1;
 
     public ToolkitDemoScreen() {
-        super(Text.literal("Sculptory UI toolkit demo"));
+        super(Component.literal("Sculptory UI toolkit demo"));
     }
 
     @Override
     protected void init() {
         if (windows == null) {
-            windows = new WindowManager(new MinecraftTextMeasure(textRenderer), Theme.DARK, ToolkitDemoScreen::title);
+            windows = new WindowManager(new MinecraftTextMeasure(font), Theme.DARK, ToolkitDemoScreen::title);
             windows.register(WindowSpec.builder("demo_brush", "sculptory.demo.brush", this::brushContent)
                     .anchor(Corner.TOP_LEFT, 8, 8)
                     .size(190, 250)
@@ -77,7 +77,7 @@ public final class ToolkitDemoScreen extends Screen {
 
     private static String title(String key) {
         String literal = TITLES.get(key);
-        return literal != null ? literal : I18n.translate(key);
+        return literal != null ? literal : I18n.get(key);
     }
 
     private Node brushContent() {
@@ -163,9 +163,9 @@ public final class ToolkitDemoScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         context.fillGradient(0, 0, width, height, 0x90101014, 0xB0101014);
-        long now = Util.getMeasuringTimeMs();
+        long now = Util.getMillis();
         if (startMs < 0) {
             startMs = now;
         }
@@ -174,8 +174,8 @@ public final class ToolkitDemoScreen extends Screen {
             progress.setProgress(fraction);
             progress.setText("Job " + (int) (fraction * 100) + "%");
         }
-        windows.render(new DrawContextGraphics(context, textRenderer), mouseX, mouseY, now);
-        context.drawText(textRenderer, "Tab: hide windows   Esc: close", 8, height - 14, 0xFF8C95A8, false);
+        windows.render(new DrawContextGraphics(context, font), mouseX, mouseY, now);
+        context.drawString(font, "Tab: hide windows   Esc: close", 8, height - 14, 0xFF8C95A8, false);
     }
 
     @Override
@@ -224,7 +224,7 @@ public final class ToolkitDemoScreen extends Screen {
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 }

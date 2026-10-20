@@ -4,9 +4,9 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * A {@link UiGraphics} that records what was drawn and checks clip/layer/scale pushes balance. Fills and texts are
@@ -170,17 +170,17 @@ public final class RecordingGraphics implements UiGraphics {
     }
 
     @Override
-    public void widget(ClickableWidget widget, int mouseX, int mouseY, float delta) {
+    public void widget(AbstractWidget widget, int mouseX, int mouseY, float delta) {
         widgets++;
     }
 
     /** A texture drawn: which one and where. */
-    public record Texture(Identifier id, Rect rect) {}
+    public record Texture(ResourceLocation id, Rect rect) {}
 
     final List<Texture> textures = new ArrayList<>();
 
     @Override
-    public void texture(Identifier texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
+    public void texture(ResourceLocation texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
         textures.add(new Texture(texture, placed(x, y, width, height)));
     }
 

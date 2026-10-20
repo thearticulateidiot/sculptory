@@ -6,48 +6,48 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Predicate;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.fluid.Fluid;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.particle.ParticleEffect;
-import net.minecraft.registry.DynamicRegistryManager;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.resource.featuretoggle.FeatureSet;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
+import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.sound.SoundEvent;
-import net.minecraft.util.TypeFilter;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.util.math.random.Random;
-import net.minecraft.util.shape.VoxelShape;
-import net.minecraft.world.BlockView;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.LocalDifficulty;
-import net.minecraft.world.WorldAccess;
-import net.minecraft.world.WorldProperties;
-import net.minecraft.world.biome.Biome;
-import net.minecraft.world.biome.ColorResolver;
-import net.minecraft.world.biome.source.BiomeAccess;
-import net.minecraft.world.border.WorldBorder;
-import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.chunk.ChunkManager;
-import net.minecraft.world.chunk.ChunkStatus;
-import net.minecraft.world.chunk.WorldChunk;
-import net.minecraft.world.chunk.light.LightingProvider;
-import net.minecraft.world.dimension.DimensionType;
-import net.minecraft.world.event.GameEvent;
-import net.minecraft.world.tick.OrderedTick;
-import net.minecraft.world.tick.QueryableTickScheduler;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.sounds.SoundEvent;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.DifficultyInstance;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.flag.FeatureFlagSet;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.ColorResolver;
+import net.minecraft.world.level.LevelAccessor;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.BiomeManager;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.border.WorldBorder;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.ChunkSource;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.dimension.DimensionType;
+import net.minecraft.world.level.entity.EntityTypeTest;
+import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.lighting.LevelLightEngine;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.storage.LevelData;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.VoxelShape;
+import net.minecraft.world.ticks.LevelTickAccess;
+import net.minecraft.world.ticks.ScheduledTick;
 
 /**
  * Update blocks on Fabric: a cell's state after vanilla's
@@ -59,11 +59,11 @@ import net.minecraft.world.tick.QueryableTickScheduler;
  * ({@code UpdateProgram}). Server thread only.
  */
 public final class FabricNeighbourShapes implements NeighbourShapes {
-    private final ServerWorld world;
+    private final ServerLevel world;
     private final FabricStateSpace states;
     private final View view;
 
-    public FabricNeighbourShapes(ServerWorld world, FabricStateSpace states) {
+    public FabricNeighbourShapes(ServerLevel world, FabricStateSpace states) {
         this.world = Objects.requireNonNull(world);
         this.states = Objects.requireNonNull(states);
         this.view = new View(world);
@@ -83,7 +83,7 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
         BlockState current = states.state(state);
         BlockState next;
         try {
-            next = Block.postProcessState(current, view, new BlockPos(x, y, z));
+            next = Block.updateFromNeighbourShapes(current, view, new BlockPos(x, y, z));
         } catch (RuntimeException | LinkageError e) {
             return state;
         }
@@ -93,23 +93,23 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
     }
 
     /** Scheduled ticks asked for through the view: dropped. */
-    private static final class NoTicks<T> implements QueryableTickScheduler<T> {
+    private static final class NoTicks<T> implements LevelTickAccess<T> {
         @Override
-        public boolean isTicking(BlockPos pos, T type) {
+        public boolean willTickThisTick(BlockPos pos, T type) {
             return false;
         }
 
         @Override
-        public void scheduleTick(OrderedTick<T> tick) {
+        public void schedule(ScheduledTick<T> tick) {
         }
 
         @Override
-        public boolean isQueued(BlockPos pos, T type) {
+        public boolean hasScheduledTick(BlockPos pos, T type) {
             return false;
         }
 
         @Override
-        public int getTickCount() {
+        public int count() {
             return 0;
         }
     }
@@ -118,26 +118,26 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
      * The world as neighbour updates see it: blocks, fluids and block entities of loaded chunks (air elsewhere),
      * everything else read from the world; no writes, ticks, sounds, particles or events.
      */
-    static final class View implements WorldAccess {
-        private final ServerWorld world;
-        private final QueryableTickScheduler<Block> blockTicks = new NoTicks<>();
-        private final QueryableTickScheduler<Fluid> fluidTicks = new NoTicks<>();
+    static final class View implements LevelAccessor {
+        private final ServerLevel world;
+        private final LevelTickAccess<Block> blockTicks = new NoTicks<>();
+        private final LevelTickAccess<Fluid> fluidTicks = new NoTicks<>();
         /** The job's reader, whose chunk cache is renewed every slice; {@code null}: ask the chunk manager. */
         FabricWorldReader reader;
 
-        View(ServerWorld world) {
+        View(ServerLevel world) {
             this.world = world;
         }
 
-        WorldChunk chunk(int cx, int cz) {
-            return reader != null ? reader.chunkOrNull(cx, cz) : world.getChunkManager().getWorldChunk(cx, cz);
+        LevelChunk chunk(int cx, int cz) {
+            return reader != null ? reader.chunkOrNull(cx, cz) : world.getChunkSource().getChunkNow(cx, cz);
         }
 
         @Override
         public BlockState getBlockState(BlockPos pos) {
-            if (world.isOutOfHeightLimit(pos)) return Blocks.VOID_AIR.getDefaultState();
-            WorldChunk chunk = chunk(pos.getX() >> 4, pos.getZ() >> 4);
-            return chunk == null ? Blocks.AIR.getDefaultState() : chunk.getBlockState(pos);
+            if (world.isOutsideBuildHeight(pos)) return Blocks.VOID_AIR.defaultBlockState();
+            LevelChunk chunk = chunk(pos.getX() >> 4, pos.getZ() >> 4);
+            return chunk == null ? Blocks.AIR.defaultBlockState() : chunk.getBlockState(pos);
         }
 
         @Override
@@ -147,9 +147,9 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
 
         @Override
         public BlockEntity getBlockEntity(BlockPos pos) {
-            if (world.isOutOfHeightLimit(pos)) return null;
-            WorldChunk chunk = chunk(pos.getX() >> 4, pos.getZ() >> 4);
-            return chunk == null ? null : chunk.getBlockEntity(pos, WorldChunk.CreationType.CHECK);
+            if (world.isOutsideBuildHeight(pos)) return null;
+            LevelChunk chunk = chunk(pos.getX() >> 4, pos.getZ() >> 4);
+            return chunk == null ? null : chunk.getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK);
         }
 
         @Override
@@ -160,19 +160,19 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
         }
 
         @Override
-        public boolean testBlockState(BlockPos pos, Predicate<BlockState> test) {
+        public boolean isStateAtPosition(BlockPos pos, Predicate<BlockState> test) {
             return test.test(getBlockState(pos));
         }
 
         @Override
-        public boolean testFluidState(BlockPos pos, Predicate<FluidState> test) {
+        public boolean isFluidAtPosition(BlockPos pos, Predicate<FluidState> test) {
             return test.test(getFluidState(pos));
         }
 
         // ---- Writes, ticks and effects: none.
 
         @Override
-        public boolean setBlockState(BlockPos pos, BlockState state, int flags, int maxUpdateDepth) {
+        public boolean setBlock(BlockPos pos, BlockState state, int flags, int maxUpdateDepth) {
             return false;
         }
 
@@ -182,53 +182,53 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
         }
 
         @Override
-        public boolean breakBlock(BlockPos pos, boolean drop, Entity breakingEntity, int maxUpdateDepth) {
+        public boolean destroyBlock(BlockPos pos, boolean drop, Entity breakingEntity, int maxUpdateDepth) {
             return false;
         }
 
         @Override
-        public QueryableTickScheduler<Block> getBlockTickScheduler() {
+        public LevelTickAccess<Block> getBlockTicks() {
             return blockTicks;
         }
 
         @Override
-        public QueryableTickScheduler<Fluid> getFluidTickScheduler() {
+        public LevelTickAccess<Fluid> getFluidTicks() {
             return fluidTicks;
         }
 
         @Override
-        public void playSound(PlayerEntity source, BlockPos pos, SoundEvent sound, SoundCategory category, float volume,
+        public void playSound(Player source, BlockPos pos, SoundEvent sound, SoundSource category, float volume,
                               float pitch) {
         }
 
         @Override
-        public void addParticle(ParticleEffect parameters, double x, double y, double z, double velocityX,
+        public void addParticle(ParticleOptions parameters, double x, double y, double z, double velocityX,
                                 double velocityY, double velocityZ) {
         }
 
         @Override
-        public void syncWorldEvent(PlayerEntity player, int eventId, BlockPos pos, int data) {
+        public void levelEvent(Player player, int eventId, BlockPos pos, int data) {
         }
 
         @Override
-        public void emitGameEvent(RegistryEntry<GameEvent> event, Vec3d emitterPos, GameEvent.Emitter emitter) {
+        public void gameEvent(Holder<GameEvent> event, Vec3 emitterPos, GameEvent.Context emitter) {
         }
 
         // ---- Reads: the world's.
 
         @Override
-        public long getTickOrder() {
-            return world.getTickOrder();
+        public long nextSubTickCount() {
+            return world.nextSubTickCount();
         }
 
         @Override
-        public WorldProperties getLevelProperties() {
-            return world.getLevelProperties();
+        public LevelData getLevelData() {
+            return world.getLevelData();
         }
 
         @Override
-        public LocalDifficulty getLocalDifficulty(BlockPos pos) {
-            return world.getLocalDifficulty(pos);
+        public DifficultyInstance getCurrentDifficultyAt(BlockPos pos) {
+            return world.getCurrentDifficultyAt(pos);
         }
 
         @Override
@@ -237,59 +237,59 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
         }
 
         @Override
-        public ChunkManager getChunkManager() {
-            return world.getChunkManager();
+        public ChunkSource getChunkSource() {
+            return world.getChunkSource();
         }
 
         @Override
-        public Random getRandom() {
+        public RandomSource getRandom() {
             return world.getRandom();
         }
 
         @Override
-        public long getLunarTime() {
-            return world.getLunarTime();
+        public long dayTime() {
+            return world.dayTime();
         }
 
         @Override
-        public Chunk getChunk(int chunkX, int chunkZ, ChunkStatus leastStatus, boolean create) {
+        public ChunkAccess getChunk(int chunkX, int chunkZ, ChunkStatus leastStatus, boolean create) {
             // Loaded chunks only: the world's own getChunk may wait for one to load.
             return chunk(chunkX, chunkZ);
         }
 
         @Override
-        public boolean isChunkLoaded(int chunkX, int chunkZ) {
+        public boolean hasChunk(int chunkX, int chunkZ) {
             return chunk(chunkX, chunkZ) != null;
         }
 
         @Override
-        public int getTopY(Heightmap.Type heightmap, int x, int z) {
-            WorldChunk chunk = chunk(x >> 4, z >> 4);
-            return chunk == null ? world.getBottomY() : chunk.sampleHeightmap(heightmap, x & 15, z & 15) + 1;
+        public int getHeight(Heightmap.Types heightmap, int x, int z) {
+            LevelChunk chunk = chunk(x >> 4, z >> 4);
+            return chunk == null ? world.getMinBuildHeight() : chunk.getHeight(heightmap, x & 15, z & 15) + 1;
         }
 
         @Override
-        public int getAmbientDarkness() {
-            return world.getAmbientDarkness();
+        public int getSkyDarken() {
+            return world.getSkyDarken();
         }
 
         @Override
-        public BiomeAccess getBiomeAccess() {
-            return world.getBiomeAccess();
+        public BiomeManager getBiomeManager() {
+            return world.getBiomeManager();
         }
 
         @Override
-        public RegistryEntry<Biome> getGeneratorStoredBiome(int biomeX, int biomeY, int biomeZ) {
-            return world.getGeneratorStoredBiome(biomeX, biomeY, biomeZ);
+        public Holder<Biome> getUncachedNoiseBiome(int biomeX, int biomeY, int biomeZ) {
+            return world.getUncachedNoiseBiome(biomeX, biomeY, biomeZ);
         }
 
         @Override
-        public RegistryEntry<Biome> getBiomeForNoiseGen(int biomeX, int biomeY, int biomeZ) {
-            return world.getBiomeForNoiseGen(biomeX, biomeY, biomeZ);
+        public Holder<Biome> getNoiseBiome(int biomeX, int biomeY, int biomeZ) {
+            return world.getNoiseBiome(biomeX, biomeY, biomeZ);
         }
 
         @Override
-        public boolean isClient() {
+        public boolean isClientSide() {
             return false;
         }
 
@@ -299,33 +299,33 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
         }
 
         @Override
-        public DimensionType getDimension() {
-            return world.getDimension();
+        public DimensionType dimensionType() {
+            return world.dimensionType();
         }
 
         @Override
-        public DynamicRegistryManager getRegistryManager() {
-            return world.getRegistryManager();
+        public RegistryAccess registryAccess() {
+            return world.registryAccess();
         }
 
         @Override
-        public FeatureSet getEnabledFeatures() {
-            return world.getEnabledFeatures();
+        public FeatureFlagSet enabledFeatures() {
+            return world.enabledFeatures();
         }
 
         @Override
-        public float getBrightness(Direction direction, boolean shaded) {
-            return world.getBrightness(direction, shaded);
+        public float getShade(Direction direction, boolean shaded) {
+            return world.getShade(direction, shaded);
         }
 
         @Override
-        public LightingProvider getLightingProvider() {
-            return world.getLightingProvider();
+        public LevelLightEngine getLightEngine() {
+            return world.getLightEngine();
         }
 
         @Override
-        public int getColor(BlockPos pos, ColorResolver colorResolver) {
-            return world.getColor(pos, colorResolver);
+        public int getBlockTint(BlockPos pos, ColorResolver colorResolver) {
+            return world.getBlockTint(pos, colorResolver);
         }
 
         @Override
@@ -334,34 +334,34 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
         }
 
         @Override
-        public BlockView getChunkAsView(int chunkX, int chunkZ) {
+        public BlockGetter getChunkForCollisions(int chunkX, int chunkZ) {
             return chunk(chunkX, chunkZ);
         }
 
         @Override
-        public List<VoxelShape> getEntityCollisions(Entity entity, Box box) {
+        public List<VoxelShape> getEntityCollisions(Entity entity, AABB box) {
             return world.getEntityCollisions(entity, box);
         }
 
         @Override
-        public List<Entity> getOtherEntities(Entity except, Box box, Predicate<? super Entity> predicate) {
-            return world.getOtherEntities(except, box, predicate);
+        public List<Entity> getEntities(Entity except, AABB box, Predicate<? super Entity> predicate) {
+            return world.getEntities(except, box, predicate);
         }
 
         @Override
-        public <T extends Entity> List<T> getEntitiesByType(TypeFilter<Entity, T> filter, Box box,
+        public <T extends Entity> List<T> getEntities(EntityTypeTest<Entity, T> filter, AABB box,
                                                             Predicate<? super T> predicate) {
-            return world.getEntitiesByType(filter, box, predicate);
+            return world.getEntities(filter, box, predicate);
         }
 
         @Override
-        public List<? extends PlayerEntity> getPlayers() {
-            return world.getPlayers();
+        public List<? extends Player> players() {
+            return world.players();
         }
 
         @Override
-        public BlockPos getTopPosition(Heightmap.Type heightmap, BlockPos pos) {
-            return new BlockPos(pos.getX(), getTopY(heightmap, pos.getX(), pos.getZ()), pos.getZ());
+        public BlockPos getHeightmapPos(Heightmap.Types heightmap, BlockPos pos) {
+            return new BlockPos(pos.getX(), getHeight(heightmap, pos.getX(), pos.getZ()), pos.getZ());
         }
 
         @Override
@@ -370,8 +370,8 @@ public final class FabricNeighbourShapes implements NeighbourShapes {
         }
 
         @Override
-        public int getBottomY() {
-            return world.getBottomY();
+        public int getMinBuildHeight() {
+            return world.getMinBuildHeight();
         }
     }
 }

@@ -14,32 +14,32 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.IntStream;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.component.DataComponentTypes;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.inventory.Inventory;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.world.ChunkLevelType;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.IntProperty;
-import net.minecraft.state.property.Property;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.BlockMirror;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.util.DyeColor;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.Direction;
+import net.minecraft.core.Direction;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.FullChunkStatus;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Container;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.IntegerProperty;
+import net.minecraft.world.level.block.state.properties.Property;
 import vectorwing.farmersdelight.common.block.entity.CookingPotBlockEntity;
 import vectorwing.farmersdelight.common.block.entity.CuttingBoardBlockEntity;
 import vectorwing.farmersdelight.common.block.entity.SkilletBlockEntity;
@@ -125,7 +125,7 @@ final class FidelitySupport {
     }
 
     /** Writes the build with its minimum corner at (x, y, z) and fills its block entities. */
-    static void build(Harness h, ServerWorld world, int x, int y, int z) {
+    static void build(Harness h, ServerLevel world, int x, int y, int z) {
         BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         for (int dx = 0; dx < SIZE; dx++) {
             for (int dz = 0; dz < SIZE; dz++) writer.write(x + dx, y, z + dz, h.state(floor(dx, dz)), null);
@@ -152,22 +152,22 @@ final class FidelitySupport {
     }
 
     static Item item(String id) {
-        Item item = Registries.ITEM.get(Identifier.of(id));
-        if (item == Items.AIR) throw new GameTestException("unknown item " + id);
+        Item item = BuiltInRegistries.ITEM.get(ResourceLocation.parse(id));
+        if (item == Items.AIR) throw new GameTestAssertException("unknown item " + id);
         return item;
     }
 
-    static <T> T entity(ServerWorld world, int x, int y, int z, Class<T> type) {
+    static <T> T entity(ServerLevel world, int x, int y, int z, Class<T> type) {
         BlockEntity entity = world.getBlockEntity(pos(x, y, z));
         if (!type.isInstance(entity)) {
-            throw new GameTestException("expected a " + type.getSimpleName() + " at " + x + "," + y + "," + z + ", got "
+            throw new GameTestAssertException("expected a " + type.getSimpleName() + " at " + x + "," + y + "," + z + ", got "
                     + entity);
         }
         return type.cast(entity);
     }
 
     /** Ingredients, tools with components, containers and sign text. */
-    private static void fillContents(ServerWorld world, int x, int y, int z) {
+    private static void fillContents(ServerLevel world, int x, int y, int z) {
         StoveBlockEntity stove = entity(world, x, y + 1, z, StoveBlockEntity.class);
         stove.getInventory().setStackInSlot(0, new ItemStack(Items.BEEF));
         stove.getInventory().setStackInSlot(4, new ItemStack(Items.COD));
@@ -182,27 +182,27 @@ final class FidelitySupport {
         skillet.getInventory().setStackInSlot(0, new ItemStack(Items.CHICKEN, 2));
 
         ItemStack knife = new ItemStack(item("farmersdelight:iron_knife"));
-        knife.setDamage(17);
-        knife.set(DataComponentTypes.CUSTOM_NAME, Text.literal("Chef's knife"));
+        knife.setDamageValue(17);
+        knife.set(DataComponents.CUSTOM_NAME, Component.literal("Chef's knife"));
         CuttingBoardBlockEntity board = entity(world, x + 3, y + 1, z, CuttingBoardBlockEntity.class);
         check(board.addItem(knife), "the cutting board refused the knife");
 
-        Inventory cabinet = entity(world, x + 4, y + 1, z, Inventory.class);
-        cabinet.setStack(0, new ItemStack(Items.BREAD, 5));
-        cabinet.setStack(13, new ItemStack(item("farmersdelight:rice"), 12));
-        Inventory basket = entity(world, x + 5, y + 1, z, Inventory.class);
-        basket.setStack(2, new ItemStack(item("farmersdelight:onion"), 7));
+        Container cabinet = entity(world, x + 4, y + 1, z, Container.class);
+        cabinet.setItem(0, new ItemStack(Items.BREAD, 5));
+        cabinet.setItem(13, new ItemStack(item("farmersdelight:rice"), 12));
+        Container basket = entity(world, x + 5, y + 1, z, Container.class);
+        basket.setItem(2, new ItemStack(item("farmersdelight:onion"), 7));
 
         sign(world, x + 4, y + 1, z + 4, "Kitchen", DyeColor.BLUE);
         sign(world, x + 5, y + 1, z + 4, "Garden", DyeColor.GREEN);
         sign(world, x + 6, y + 2, z + 4, "Pantry", DyeColor.RED);
     }
 
-    private static void sign(ServerWorld world, int x, int y, int z, String line, DyeColor color) {
+    private static void sign(ServerLevel world, int x, int y, int z, String line, DyeColor color) {
         SignBlockEntity sign = entity(world, x, y, z, SignBlockEntity.class);
-        sign.setText(new SignText().withMessage(0, Text.literal(line)).withMessage(1, Text.literal("Sculptory"))
-                .withColor(color).withGlowing(true), true);
-        sign.setText(new SignText().withMessage(2, Text.literal("back of " + line)), false);
+        sign.setText(new SignText().setMessage(0, Component.literal(line)).setMessage(1, Component.literal("Sculptory"))
+                .setColor(color).setHasGlowingText(true), true);
+        sign.setText(new SignText().setMessage(2, Component.literal("back of " + line)), false);
     }
 
     /**
@@ -211,14 +211,14 @@ final class FidelitySupport {
      * chunk is first forced; some block entities change their NBT on their first tick (a basket's transfer cooldown
      * goes from -1 to 0), so reference snapshots are taken after this step.
      */
-    static Runnable settled(TestContext context, ServerWorld world, Box box) {
+    static Runnable settled(GameTestHelper context, ServerLevel world, Box box) {
         long[] readyAt = {-1};
         return () -> {
             if (readyAt[0] < 0) {
                 for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
                     for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
-                        check(world.isChunkLoaded(ChunkPos.toLong(cx, cz))
-                                && world.getChunk(cx, cz).getLevelType().isAfter(ChunkLevelType.BLOCK_TICKING),
+                        check(world.areEntitiesLoaded(ChunkPos.asLong(cx, cz))
+                                && world.getChunk(cx, cz).getFullStatus().isOrAfter(FullChunkStatus.BLOCK_TICKING),
                                 "waiting for chunk " + cx + "," + cz + " to tick block entities");
                     }
                 }
@@ -229,8 +229,8 @@ final class FidelitySupport {
     }
 
     /** Item entities in or around a box: an edit must never drop a container's contents. */
-    static int itemEntities(ServerWorld world, Box box) {
-        return world.getEntitiesByClass(ItemEntity.class, new net.minecraft.util.math.Box(box.min().x() - 2,
+    static int itemEntities(ServerLevel world, Box box) {
+        return world.getEntitiesOfClass(ItemEntity.class, new net.minecraft.world.phys.AABB(box.min().x() - 2,
                 box.min().y() - 2, box.min().z() - 2, box.max().x() + 3, box.max().y() + 3, box.max().z() + 3),
                 e -> true).size();
     }
@@ -245,18 +245,18 @@ final class FidelitySupport {
      * of the state exists and the block's own other steps leave it unchanged or agree ({@link #handledByFallback}).
      */
     static BlockState expectedTurn(BlockState from, Transform t) {
-        BlockMirror mirror = ClipboardGameTest.vanilla(t.mirror());
-        BlockRotation rotation = ClipboardGameTest.vanilla(t.quarterTurnsCw());
-        BlockState mirrored = mirror == BlockMirror.NONE ? from
-                : fallbackWhereUnchanged(from, from.mirror(mirror), BlockRotation.NONE, mirror);
-        return rotation == BlockRotation.NONE ? mirrored
-                : fallbackWhereUnchanged(mirrored, mirrored.rotate(rotation), rotation, BlockMirror.NONE);
+        Mirror mirror = ClipboardGameTest.vanilla(t.mirror());
+        Rotation rotation = ClipboardGameTest.vanilla(t.quarterTurnsCw());
+        BlockState mirrored = mirror == Mirror.NONE ? from
+                : fallbackWhereUnchanged(from, from.mirror(mirror), Rotation.NONE, mirror);
+        return rotation == Rotation.NONE ? mirrored
+                : fallbackWhereUnchanged(mirrored, mirrored.rotate(rotation), rotation, Mirror.NONE);
     }
 
     /** Vanilla's {@code own} result, or the fallback's when a modded block's own step left it unchanged. */
-    private static BlockState fallbackWhereUnchanged(BlockState state, BlockState own, BlockRotation rotation,
-                                                     BlockMirror mirror) {
-        if (own != state || Registries.BLOCK.getId(state.getBlock()).getNamespace().equals("minecraft")) return own;
+    private static BlockState fallbackWhereUnchanged(BlockState state, BlockState own, Rotation rotation,
+                                                     Mirror mirror) {
+        if (own != state || BuiltInRegistries.BLOCK.getKey(state.getBlock()).getNamespace().equals("minecraft")) return own;
         return handledByFallback(state) ? turned(state, rotation, mirror) : own;
     }
 
@@ -265,14 +265,14 @@ final class FidelitySupport {
      * steps either leaves it unchanged or gives that form (so every step of it ends up as the fallback's).
      */
     private static boolean handledByFallback(BlockState state) {
-        for (BlockRotation r : List.of(BlockRotation.CLOCKWISE_90, BlockRotation.CLOCKWISE_180,
-                BlockRotation.COUNTERCLOCKWISE_90)) {
-            BlockState form = turned(state, r, BlockMirror.NONE);
+        for (Rotation r : List.of(Rotation.CLOCKWISE_90, Rotation.CLOCKWISE_180,
+                Rotation.COUNTERCLOCKWISE_90)) {
+            BlockState form = turned(state, r, Mirror.NONE);
             BlockState own = state.rotate(r);
             if (form == null || (own != state && own != form)) return false;
         }
-        for (BlockMirror m : List.of(BlockMirror.FRONT_BACK, BlockMirror.LEFT_RIGHT)) {
-            BlockState form = turned(state, BlockRotation.NONE, m);
+        for (Mirror m : List.of(Mirror.FRONT_BACK, Mirror.LEFT_RIGHT)) {
+            BlockState form = turned(state, Rotation.NONE, m);
             BlockState own = state.mirror(m);
             if (form == null || (own != state && own != form)) return false;
         }
@@ -283,21 +283,21 @@ final class FidelitySupport {
      * The state with its horizontal facing, axis and 16-step rotation mirrored, then turned, by vanilla's helpers;
      * {@code null} if the block does not allow a resulting value.
      */
-    static BlockState turned(BlockState state, BlockRotation rotation, BlockMirror mirror) {
+    static BlockState turned(BlockState state, Rotation rotation, Mirror mirror) {
         BlockState result = state;
         for (Property<?> property : state.getProperties()) {
             String name = property.getName();
-            Object value = state.get(property);
+            Object value = state.getValue(property);
             Object next = value;
             if (name.equals("facing") && value instanceof Direction facing && facing.getAxis().isHorizontal()) {
-                next = rotation.rotate(mirror.apply(facing));
+                next = rotation.rotate(mirror.mirror(facing));
             } else if ((name.equals("axis") || name.equals("horizontal_axis")) && value instanceof Direction.Axis axis) {
-                boolean quarter = rotation == BlockRotation.CLOCKWISE_90 || rotation == BlockRotation.COUNTERCLOCKWISE_90;
+                boolean quarter = rotation == Rotation.CLOCKWISE_90 || rotation == Rotation.COUNTERCLOCKWISE_90;
                 if (quarter && axis == Direction.Axis.X) next = Direction.Axis.Z;
                 else if (quarter && axis == Direction.Axis.Z) next = Direction.Axis.X;
-            } else if (name.equals("rotation") && property instanceof IntProperty steps
-                    && steps.getValues().equals(SIXTEEN_STEPS)) {
-                next = rotation.rotate(mirror.mirror(state.get(steps), 16), 16);
+            } else if (name.equals("rotation") && property instanceof IntegerProperty steps
+                    && steps.getPossibleValues().equals(SIXTEEN_STEPS)) {
+                next = rotation.rotate(mirror.mirror(state.getValue(steps), 16), 16);
             }
             if (next.equals(value)) continue;
             result = with(result, property, next);
@@ -307,8 +307,8 @@ final class FidelitySupport {
     }
 
     private static <T extends Comparable<T>> BlockState with(BlockState state, Property<T> property, Object value) {
-        T typed = property.getType().cast(value);
-        return property.getValues().contains(typed) ? state.with(property, typed) : null;
+        T typed = property.getValueClass().cast(value);
+        return property.getPossibleValues().contains(typed) ? state.setValue(property, typed) : null;
     }
 
     /** Where a paste of {@code box} (anchor at its minimum corner) with {@code t} at {@code origin} lands. */
@@ -324,7 +324,7 @@ final class FidelitySupport {
      * the state is {@link #expectedTurn} of the source state, and a block entity's NBT is the source's, unchanged.
      * Nothing else in the target box (and one cell around it) is non-air.
      */
-    static void checkTransformed(ServerWorld world, WorldSnapshot source, BlockPos origin, Transform t, String what) {
+    static void checkTransformed(ServerLevel world, WorldSnapshot source, BlockPos origin, Transform t, String what) {
         Box target = targetBox(source.box, origin, t);
         Box box = source.box;
         int sx = box.sizeX(), sz = box.sizeZ();
@@ -335,19 +335,19 @@ final class FidelitySupport {
             for (int z = 0; z < sz; z++) {
                 for (int x = 0; x < sx; x++) {
                     int sourceX = box.min().x() + x, sourceY = box.min().y() + y, sourceZ = box.min().z() + z;
-                    BlockState from = Block.getStateFromRawId(source.get(sourceX, sourceY, sourceZ));
+                    BlockState from = Block.stateById(source.get(sourceX, sourceY, sourceZ));
                     int tx = minX + t.mapX(x, z, sx, sz), ty = origin.y() + y, tz = minZ + t.mapZ(x, z, sx, sz);
                     BlockState expected = expectedTurn(from, t);
-                    BlockState got = Block.getStateFromRawId(actual.get(tx, ty, tz));
+                    BlockState got = Block.stateById(actual.get(tx, ty, tz));
                     if (got != expected) {
-                        throw new GameTestException(what + " " + t + ": " + from + " at +" + x + "," + y + "," + z
+                        throw new GameTestAssertException(what + " " + t + ": " + from + " at +" + x + "," + y + "," + z
                                 + " should be " + expected + " at " + tx + "," + ty + "," + tz + ", got " + got);
                     }
                     if (!from.isAir()) nonAir++;
-                    NbtCompound sourceTile = source.tiles.get(pos(sourceX, sourceY, sourceZ).asLong());
-                    NbtCompound targetTile = actual.tiles.get(pos(tx, ty, tz).asLong());
+                    CompoundTag sourceTile = source.tiles.get(pos(sourceX, sourceY, sourceZ).asLong());
+                    CompoundTag targetTile = actual.tiles.get(pos(tx, ty, tz).asLong());
                     if (!Objects.equals(sourceTile, targetTile)) {
-                        throw new GameTestException(what + " " + t + ": block entity at " + tx + "," + ty + "," + tz
+                        throw new GameTestAssertException(what + " " + t + ": block entity at " + tx + "," + ty + "," + tz
                                 + " expected " + sourceTile + ", got " + targetTile);
                     }
                 }

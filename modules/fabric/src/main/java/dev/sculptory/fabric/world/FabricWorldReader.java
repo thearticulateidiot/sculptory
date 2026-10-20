@@ -7,36 +7,36 @@ import dev.sculptory.server.platform.LiveReader;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.collection.PackedIntegerArray;
-import net.minecraft.util.collection.PaletteStorage;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.chunk.ChunkSection;
-import net.minecraft.world.chunk.Palette;
-import net.minecraft.world.chunk.PalettedContainer;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.BitStorage;
+import net.minecraft.util.SimpleBitStorage;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.Palette;
+import net.minecraft.world.level.chunk.PalettedContainer;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
- * {@link WorldReader} over a {@link ServerWorld}, for the server thread only. Never loads chunks: reading an
+ * {@link WorldReader} over a {@link ServerLevel}, for the server thread only. Never loads chunks: reading an
  * unloaded chunk throws {@link IllegalStateException} (callers check {@link #isLoaded} first).
  *
- * <p>The last {@link WorldChunk} is cached so per-cell reads resolve each chunk once; call {@link #invalidate()}
+ * <p>The last {@link LevelChunk} is cached so per-cell reads resolve each chunk once; call {@link #invalidate()}
  * when chunks may have unloaded (the executor does so at the start of every slice).
  */
 public final class FabricWorldReader implements LiveReader {
-    private final ServerWorld world;
+    private final ServerLevel world;
     private final FabricStateSpace states;
-    private final RegistryWrapper.WrapperLookup registries;
+    private final HolderLookup.Provider registries;
     private final int bottomY;
     private final int topY;
 
     private long cachedPos = Long.MIN_VALUE;
-    private WorldChunk cachedChunk;
+    private LevelChunk cachedChunk;
     /**
      * Palettes {@link #getColumn} read, and their entries' handles (-1 until looked up), in slots by section position
      * modulo 8 on each axis ({@link #paletteSlot}): sections less than 8 apart (all a brush's box reaches) never share
@@ -45,15 +45,15 @@ public final class FabricWorldReader implements LiveReader {
     private final Palette<?>[] cachedPalettes = new Palette<?>[512];
     private final int[][] cachedHandles = new int[512][];
 
-    public FabricWorldReader(ServerWorld world, FabricStateSpace states) {
+    public FabricWorldReader(ServerLevel world, FabricStateSpace states) {
         this.world = Objects.requireNonNull(world);
         this.states = Objects.requireNonNull(states);
-        this.registries = world.getRegistryManager();
-        this.bottomY = world.getBottomY();
-        this.topY = world.getTopY();
+        this.registries = world.registryAccess();
+        this.bottomY = world.getMinBuildHeight();
+        this.topY = world.getMaxBuildHeight();
     }
 
-    public ServerWorld world() {
+    public ServerLevel world() {
         return world;
     }
 
@@ -85,13 +85,13 @@ public final class FabricWorldReader implements LiveReader {
     @Override
     public int get(int x, int y, int z) {
         if (y < bottomY || y >= topY) return states.air();
-        WorldChunk chunk = chunk(x >> 4, z >> 4);
-        ChunkSection section = chunk.getSection(world.sectionCoordToIndex(y >> 4));
+        LevelChunk chunk = chunk(x >> 4, z >> 4);
+        LevelChunkSection section = chunk.getSection(world.getSectionIndexFromSectionY(y >> 4));
         if (section == null) return states.air();
-        PalettedContainer.Data<BlockState> data = section.getBlockStateContainer().data;
-        PaletteStorage storage = data.storage();
+        PalettedContainer.Data<BlockState> data = section.getStates().data;
+        BitStorage storage = data.storage();
         if (storage.getSize() != SectionBuffer.SIZE) {
-            return Block.getRawIdFromState(section.getBlockState(x & 15, y & 15, z & 15));
+            return Block.getId(section.getBlockState(x & 15, y & 15, z & 15));
         }
         Palette<BlockState> palette = data.palette();
         int slot = paletteSlot(palette, x >> 4, y >> 4, z >> 4);
@@ -101,7 +101,7 @@ public final class FabricWorldReader implements LiveReader {
     /**
      * The column section by section from the containers' own palettes and packed indices (widened access, as
      * {@link #copyStates}): what {@link #get} gives for each cell, without finding the chunk, the section and the handle
-     * again for every one. A {@link PackedIntegerArray}'s words are read directly (vanilla's layout: {@code 64 / bits}
+     * again for every one. A {@link SimpleBitStorage}'s words are read directly (vanilla's layout: {@code 64 / bits}
      * entries a word from the lowest bits up, none across words, as its own {@code get} reads them); a palette entry's
      * handle is looked up once per palette ({@link #paletteSlot}).
      */
@@ -112,18 +112,18 @@ public final class FabricWorldReader implements LiveReader {
         int y = y0;
         for (; y < end && y < bottomY; y++) into[offset + y - y0] = air;
         if (y < end && y < topY) {
-            WorldChunk chunk = chunk(x >> 4, z >> 4);
+            LevelChunk chunk = chunk(x >> 4, z >> 4);
             int lx = x & 15, lz = z & 15;
             while (y < end && y < topY) {
                 int sectionEnd = Math.min(Math.min(end, topY), ((y >> 4) + 1) << 4);
-                ChunkSection section = chunk.getSection(world.sectionCoordToIndex(y >> 4));
+                LevelChunkSection section = chunk.getSection(world.getSectionIndexFromSectionY(y >> 4));
                 if (section == null) {
                     for (; y < sectionEnd; y++) into[offset + y - y0] = air;
                     continue;
                 }
-                PalettedContainer<BlockState> container = section.getBlockStateContainer();
+                PalettedContainer<BlockState> container = section.getStates();
                 PalettedContainer.Data<BlockState> data = container.data;
-                PaletteStorage storage = data.storage();
+                BitStorage storage = data.storage();
                 if (storage.getSize() != SectionBuffer.SIZE) {
                     // Not vanilla's layout: the plain way.
                     for (; y < sectionEnd; y++) into[offset + y - y0] = handleOf(container.get(lx, y & 15, lz));
@@ -133,9 +133,9 @@ public final class FabricWorldReader implements LiveReader {
                 int slot = paletteSlot(palette, x >> 4, y >> 4, z >> 4);
                 // Storage index (y << 8) | (z << 4) | x: 256 apart up the column.
                 int index = ((y & 15) << 8) | (lz << 4) | lx;
-                if (storage instanceof PackedIntegerArray packed) {
-                    long[] words = packed.getData();
-                    int bits = packed.getElementBits(), perWord = 64 / bits;
+                if (storage instanceof SimpleBitStorage packed) {
+                    long[] words = packed.getRaw();
+                    int bits = packed.getBits(), perWord = 64 / bits;
                     long mask = (1L << bits) - 1;
                     int word = index / perWord, inWord = index - word * perWord;
                     int wordStep = 256 / perWord, inWordStep = 256 - wordStep * perWord;
@@ -182,7 +182,7 @@ public final class FabricWorldReader implements LiveReader {
             Arrays.fill(handles, old, handles.length, -1);
         }
         int h = handles[entry];
-        if (h < 0) h = handles[entry] = handleOf(palette.get(entry));
+        if (h < 0) h = handles[entry] = handleOf(palette.valueFor(entry));
         return h;
     }
 
@@ -196,32 +196,32 @@ public final class FabricWorldReader implements LiveReader {
     @Override
     public void copySection(int sx, int sy, int sz, SectionBuffer into) {
         into.clearAll();
-        int minSection = world.getBottomSectionCoord();
-        if (sy < minSection || sy >= world.getTopSectionCoord()) {
+        int minSection = world.getMinSection();
+        if (sy < minSection || sy >= world.getMaxSection()) {
             fill(into, states.air());
             return;
         }
-        WorldChunk chunk = chunk(sx, sz);
-        ChunkSection section = chunk.getSection(sy - minSection);
+        LevelChunk chunk = chunk(sx, sz);
+        LevelChunkSection section = chunk.getSection(sy - minSection);
         if (section == null) {
             fill(into, states.air());
         } else {
-            copyStates(section.getBlockStateContainer(), into);
+            copyStates(section.getStates(), into);
         }
         copyTiles(chunk, sx, sy, sz, into);
     }
 
     /**
      * The chunk's {@code WORLD_SURFACE} heightmap: one above the column's highest non-air block, so every cell at
-     * or above it is air. Checked with javap (yarn 1.21.1): the heightmap's predicate is {@code Heightmap.NOT_AIR}
-     * ({@code !state.isAir()}), {@code WorldChunk.setBlockState} updates it on every state change (physics off
-     * too), and {@code Chunk.sampleHeightmap} returns {@code Heightmap.get(x & 15, z & 15) - 1}. Air states have
+     * or above it is air. Checked with javap (Minecraft 1.21.1, Mojang names): the heightmap's predicate is {@code Heightmap.NOT_AIR}
+     * ({@code !state.isAir()}), {@code LevelChunk.setBlockState} updates it on every state change (physics off
+     * too), and {@code ChunkAccess.getHeight} returns {@code Heightmap.getFirstAvailable(x & 15, z & 15) - 1}. Air states have
      * no block entity and carry {@code StateFlags.AIR}, which is what the brush kernel's scan skips. The type's
      * purpose is {@code CLIENT}, so client chunks keep the same heightmap. The chunk must be loaded.
      */
     @Override
     public int heightHint(int x, int z) {
-        return chunk(x >> 4, z >> 4).sampleHeightmap(Heightmap.Type.WORLD_SURFACE, x, z) + 1;
+        return chunk(x >> 4, z >> 4).getHeight(Heightmap.Types.WORLD_SURFACE, x, z) + 1;
     }
 
     /** Drops the cached chunk and palettes. */
@@ -234,10 +234,10 @@ public final class FabricWorldReader implements LiveReader {
     }
 
     /** The loaded chunk, or {@code null}; never loads. */
-    public WorldChunk chunkOrNull(int cx, int cz) {
+    public LevelChunk chunkOrNull(int cx, int cz) {
         long pos = ((long) cx << 32) | (cz & 0xFFFFFFFFL);
         if (pos == cachedPos && cachedChunk != null) return cachedChunk;
-        WorldChunk chunk = world.getChunkManager().getWorldChunk(cx, cz);
+        LevelChunk chunk = world.getChunkSource().getChunkNow(cx, cz);
         if (chunk != null) {
             cachedPos = pos;
             cachedChunk = chunk;
@@ -245,8 +245,8 @@ public final class FabricWorldReader implements LiveReader {
         return chunk;
     }
 
-    private WorldChunk chunk(int cx, int cz) {
-        WorldChunk chunk = chunkOrNull(cx, cz);
+    private LevelChunk chunk(int cx, int cz) {
+        LevelChunk chunk = chunkOrNull(cx, cz);
         if (chunk == null) throw new IllegalStateException("Chunk " + cx + "," + cz + " is not loaded");
         return chunk;
     }
@@ -260,13 +260,13 @@ public final class FabricWorldReader implements LiveReader {
     private void copyStates(PalettedContainer<BlockState> container, SectionBuffer into) {
         PalettedContainer.Data<BlockState> data = container.data;
         Palette<BlockState> palette = data.palette();
-        PaletteStorage storage = data.storage();
+        BitStorage storage = data.storage();
         if (storage.getSize() != SectionBuffer.SIZE) {
             copyStatesCellByCell(container, into);
             return;
         }
         int[] cells = new int[SectionBuffer.SIZE];
-        storage.writePaletteIndices(cells);
+        storage.unpack(cells);
         int entries = palette.getSize();
         if (entries <= SectionBuffer.SIZE) {
             int[] handles = new int[entries];
@@ -275,7 +275,7 @@ public final class FabricWorldReader implements LiveReader {
                 int p = cells[i];
                 int h = handles[p];
                 if (h < 0) {
-                    h = handleOf(palette.get(p));
+                    h = handleOf(palette.valueFor(p));
                     handles[p] = h;
                 }
                 cells[i] = h;
@@ -288,7 +288,7 @@ public final class FabricWorldReader implements LiveReader {
                 int p = cells[i];
                 if (p != lastIndex) {
                     lastIndex = p;
-                    lastHandle = handleOf(palette.get(p));
+                    lastHandle = handleOf(palette.valueFor(p));
                 }
                 cells[i] = lastHandle;
             }
@@ -317,7 +317,7 @@ public final class FabricWorldReader implements LiveReader {
         into.setDense(cells);
     }
 
-    private void copyTiles(WorldChunk chunk, int sx, int sy, int sz, SectionBuffer into) {
+    private void copyTiles(LevelChunk chunk, int sx, int sy, int sz, SectionBuffer into) {
         Map<BlockPos, BlockEntity> entities = chunk.getBlockEntities();
         if (entities.isEmpty()) return;
         for (Map.Entry<BlockPos, BlockEntity> entry : entities.entrySet()) {
@@ -331,7 +331,7 @@ public final class FabricWorldReader implements LiveReader {
     }
 
     private int handleOf(BlockState state) {
-        int h = state == null ? -1 : Block.getRawIdFromState(state);
+        int h = state == null ? -1 : Block.getId(state);
         if (h < 0) throw new IllegalStateException("Block state not in the state space: " + state);
         return h;
     }

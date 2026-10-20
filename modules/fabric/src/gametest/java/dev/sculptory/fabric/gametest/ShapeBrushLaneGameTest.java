@@ -59,12 +59,12 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -94,10 +94,10 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
     static final class Saved implements AutoCloseable {
         final Harness h;
         final Path dir;
-        final EditExecutor<ServerWorld> executor;
-        final EngineEditService<ServerPlayerEntity, ServerWorld> service;
+        final EditExecutor<ServerLevel> executor;
+        final EngineEditService<ServerPlayer, ServerLevel> service;
 
-        Saved(Harness h, Path dir, EditExecutor<ServerWorld> executor) {
+        Saved(Harness h, Path dir, EditExecutor<ServerLevel> executor) {
             this.h = h;
             this.dir = dir;
             this.executor = executor;
@@ -106,7 +106,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
                 store = HistoryStore.open(dir, new FabricHistoryCodec(h.runtime.states(),
                         FabricDataFixHook.currentDataVersion()), HistoryStore.Settings.DEFAULTS, StorageIo.SYSTEM, STORE_LOG);
             } catch (IOException e) {
-                throw new GameTestException("the history store did not open: " + e);
+                throw new GameTestAssertException("the history store did not open: " + e);
             }
             this.service = new EngineEditService<>(h.runtime, executor, h.runtime.config().toHistoryLimits(),
                     p -> JobRequest.NO_LISTENER, h.acks, h.events, System::nanoTime,
@@ -114,10 +114,10 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         }
 
         /** The player joins: their saved history is loaded. */
-        void load(ServerPlayerEntity player) {
-            service.playerJoined(player.getUuid());
+        void load(ServerPlayer player) {
+            service.playerJoined(player.getUUID());
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-            while (service.historyService().find(player.getUuid()).map(HistoryService.Session::loading).orElse(false)) {
+            while (service.historyService().find(player.getUUID()).map(HistoryService.Session::loading).orElse(false)) {
                 check(System.nanoTime() < deadline, "the history did not load");
                 service.tick();
                 try {
@@ -139,28 +139,28 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             check(done.getAsBoolean(), what + " did not finish in " + maxTicks + " ticks");
         }
 
-        void begin(ServerPlayerEntity player, int strokeId, BrushSpec spec) {
+        void begin(ServerPlayer player, int strokeId, BrushSpec spec) {
             try {
                 service.beginStroke(player, strokeId, spec);
             } catch (EditRejected e) {
-                throw new GameTestException("the stroke was refused: " + e.getMessage());
+                throw new GameTestAssertException("the stroke was refused: " + e.getMessage());
             }
         }
 
-        void undo(ServerPlayerEntity player, int maxTicks) {
+        void undo(ServerPlayer player, int maxTicks) {
             RecordingListener listener = new RecordingListener();
             try {
                 service.undo(player, ConflictPolicy.SKIP_CONFLICTS, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("the undo was refused: " + e.getMessage());
+                throw new GameTestAssertException("the undo was refused: " + e.getMessage());
             }
             tickUntil(() -> listener.result != null, maxTicks, "the undo");
             check(listener.result.outcome() == JobOutcome.COMPLETED && listener.result.skippedConflicts() == 0,
                     "the undo " + listener.result);
         }
 
-        List<HistoryEntry> undoEntries(ServerPlayerEntity player) {
-            return service.historyService().undoEntries(player.getUuid());
+        List<HistoryEntry> undoEntries(ServerPlayer player) {
+            return service.historyService().undoEntries(player.getUUID());
         }
 
         /** A clean stop, in the server's order: jobs end, open strokes become entries, the journal is written. */
@@ -193,13 +193,13 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
                 if (file.getFileName().toString().endsWith(HistoryStore.EXTENSION)) Files.copy(file, copy.resolve(file.getFileName()));
             }
         } catch (IOException e) {
-            throw new GameTestException("copying the history folder failed: " + e);
+            throw new GameTestAssertException("copying the history folder failed: " + e);
         }
         return copy;
     }
 
     /** An executor with a dedicated server's default settings (a 10 ms budget, 4 ms of it for brushes). */
-    private static EditExecutor<ServerWorld> dedicated(TestContext context) {
+    private static EditExecutor<ServerLevel> dedicated(GameTestHelper context) {
         return new EditExecutor<>(EngineTestSupport.runtime(context),
                 EditExecutor.Settings.from(SculptoryConfig.defaults(), true));
     }
@@ -314,10 +314,10 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      * {@code STROKE_PENDING}). No tick runs longer than the brush share plus about one piece. The world equals the
      * kernel's result on a snapshot; after a restart both entries read back sealed and undo exactly. Logs the costs.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_bench", tickLimit = LIMIT)
-    public void maxSizeStepsAreWrittenAndCommittedAFewMillisecondsATick(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_bench", timeoutTicks = LIMIT)
+    public void maxSizeStepsAreWrittenAndCommittedAFewMillisecondsATick(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 740);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 86, z0, x0 + 236, 154, z0 + 160);
@@ -352,16 +352,16 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
                 first.service.endStroke(h.player, strokeId);
                 Timing commit = Timing.NONE;
                 if (s == 0) {
-                    check(first.service.queuedCommits(h.player.getUuid()) == 0, "glass into air has nothing to prepare");
+                    check(first.service.queuedCommits(h.player.getUUID()) == 0, "glass into air has nothing to prepare");
                     check(first.undoEntries(h.player).size() == entries + 1, "pushed when the stroke ended");
                 } else {
-                    check(first.service.queuedCommits(h.player.getUuid()) == 1, "the record is committed over the next ticks");
+                    check(first.service.queuedCommits(h.player.getUUID()) == 1, "the record is committed over the next ticks");
                     check(first.undoEntries(h.player).size() == entries, "an entry already");
                     EditRejected busy = ClipboardGameTest.refusal(() -> first.service.undo(h.player,
                             ConflictPolicy.SKIP_CONFLICTS));
                     check(busy.reason() == RejectReason.QUEUE_FULL && busy.kind().equals(EditRejected.STROKE_PENDING),
                             "an undo meanwhile: " + busy.reason() + " " + busy.kind());
-                    commit = timed(first, () -> first.service.queuedCommits(h.player.getUuid()) == 0, 3_000, "the commit");
+                    commit = timed(first, () -> first.service.queuedCommits(h.player.getUUID()) == 0, 3_000, "the commit");
                     check(commit.ticks() >= 3, "the commit took " + commit.ticks() + " ticks");
                     check(first.undoEntries(h.player).size() == entries + 1, "one entry per stroke");
                 }
@@ -397,7 +397,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             h.close();
             for (Path folder : folders) EngineTestBootstrap.deleteTree(folder);
         }
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------------------------------------- saved history
@@ -407,10 +407,10 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      * saves the chunks, through the history hook, and the process dies) leaves an "(interrupted)" step holding
      * everything the stroke wrote, which undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_crash_commit", tickLimit = LIMIT)
-    public void aCrashBetweenCommitSlicesLeavesAnUndoableStep(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_crash_commit", timeoutTicks = LIMIT)
+    public void aCrashBetweenCommitSlicesLeavesAnUndoableStep(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 742);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 86, z0, x0 + 80, 154, z0 + 80);
@@ -431,9 +431,9 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
                 check(first.service.dabs(h.player, 1, 1, List.of(at(0, x0 + 40, 120, z0 + 40))).accepted(), "the step");
                 first.tickUntil(() -> h.acks.seqs.size() == 1, 200, "the step");
                 first.service.endStroke(h.player, 1);
-                check(first.service.queuedCommits(h.player.getUuid()) == 1, "the commit is queued");
+                check(first.service.queuedCommits(h.player.getUUID()) == 1, "the commit is queued");
                 for (int i = 0; i < 5; i++) first.tick(); // a few sections prepared and journaled, one a tick
-                check(first.service.queuedCommits(h.player.getUuid()) == 1, "the commit is still running");
+                check(first.service.queuedCommits(h.player.getUUID()) == 1, "the commit is still running");
                 for (int cx = area.min().x() >> 4; cx <= area.max().x() >> 4; cx++) {
                     for (int cz = area.min().z() >> 4; cz <= area.max().z() >> 4; cz++) first.service.beforeChunkSave(world, cx, cz);
                 }
@@ -454,7 +454,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             h.close();
             for (Path folder : folders) EngineTestBootstrap.deleteTree(folder);
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -462,10 +462,10 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      * few milliseconds, not the rest of the step), its written parts become a step in the saved history, and back on
      * the server the player undoes it exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_leave", tickLimit = LIMIT)
-    public void leavingMidStepKeepsThePartsWritten(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_leave", timeoutTicks = LIMIT)
+    public void leavingMidStepKeepsThePartsWritten(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 744);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 86, z0, x0 + 160, 154, z0 + 160);
@@ -482,18 +482,18 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             check(run.service.dabs(h.player, 1, 1, List.of(at(0, x0 + 116, 120, z0 + 116))).accepted(), "the step");
             for (int i = 0; i < 3; i++) run.tick(); // three parts of the dab's own cube: 3 layers of 65 x 65 each
             long start = System.nanoTime();
-            run.service.playerLeft(h.player.getUuid());
+            run.service.playerLeft(h.player.getUUID());
             long took = (System.nanoTime() - start) / 1_000_000;
             // Not the 85 parts left (which take several times this), only the commit of what was written.
             check(took < 100, "leaving took " + took + " ms");
             for (int i = 0; i < 20; i++) run.tick();
             int layers = 0;
             for (int y = 88; y <= 152; y++) {
-                if (world.getBlockState(EngineTestSupport.pos(x0 + 116, y, z0 + 116)).isOf(Blocks.GLASS)) layers++;
+                if (world.getBlockState(EngineTestSupport.pos(x0 + 116, y, z0 + 116)).is(Blocks.GLASS)) layers++;
             }
             check(layers == 9, "layers written: " + layers);
-            check(!world.getBlockState(EngineTestSupport.pos(x0 + 116, 97, z0 + 116)).isOf(Blocks.GLASS)
-                    && !world.getBlockState(EngineTestSupport.pos(x0 + 44, 88, z0 + 44)).isOf(Blocks.GLASS), "a later part ran");
+            check(!world.getBlockState(EngineTestSupport.pos(x0 + 116, 97, z0 + 116)).is(Blocks.GLASS)
+                    && !world.getBlockState(EngineTestSupport.pos(x0 + 44, 88, z0 + 44)).is(Blocks.GLASS), "a later part ran");
             run.load(h.player); // back on the server
             List<HistoryEntry> steps = run.undoEntries(h.player);
             check(steps.size() == 1 && steps.get(0).label().equals("Shape · " + blocks(9L * 65 * 65)),
@@ -506,17 +506,17 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             h.close();
             EngineTestBootstrap.deleteTree(dir);
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A server stop mid-step: the executor drops the step between two parts, the stroke's record (what the parts wrote)
      * becomes a step, and after the restart it undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_stop", tickLimit = LIMIT)
-    public void aServerStopMidStepKeepsThePartsWritten(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_stop", timeoutTicks = LIMIT)
+    public void aServerStopMidStepKeepsThePartsWritten(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 746);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 86, z0, x0 + 80, 154, z0 + 80);
@@ -534,7 +534,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
                 for (int i = 0; i < 2; i++) first.tick();
                 first.stop();
             }
-            check(!world.getBlockState(EngineTestSupport.pos(x0 + 40, 94, z0 + 40)).isOf(Blocks.GLASS), "a later part ran");
+            check(!world.getBlockState(EngineTestSupport.pos(x0 + 40, 94, z0 + 40)).is(Blocks.GLASS), "a later part ran");
             try (Saved second = new Saved(h, dir, onePartATick(context))) {
                 second.load(h.player);
                 List<HistoryEntry> steps = second.undoEntries(h.player);
@@ -549,7 +549,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             h.close();
             EngineTestBootstrap.deleteTree(dir);
         }
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------------------------------------- the lane
@@ -558,11 +558,11 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      * A new stroke begun while the last one's step is still being written: the last one is finished and committed
      * first, so the history holds the two in the order they were made, and undoing both restores the area.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_next_stroke", tickLimit = LIMIT)
-    public void aNewStrokeMidStepComesAfterItInHistory(TestContext context) {
-        EditExecutor<ServerWorld> executor = onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_next_stroke", timeoutTicks = LIMIT)
+    public void aNewStrokeMidStepComesAfterItInHistory(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 748);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 86, z0, x0 + 120, 154, z0 + 80);
@@ -578,12 +578,12 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         executor.tick();
         executor.tick();
         BrushSymmetryGameTest.begin(h, 2, small); // ends the first stroke mid-step: too much to finish at once
-        check(h.service.queuedCommits(h.player.getUuid()) == 1, "the first stroke's commit follows its step");
+        check(h.service.queuedCommits(h.player.getUUID()) == 1, "the first stroke's commit follows its step");
         check(h.service.dabs(h.player, 2, 2, List.of(at(0, x0 + 100, 120, z0 + 40))).accepted(), "the small dab");
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 2, 100, "both strokes");
         h.service.endStroke(h.player, 2);
-        MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 50, "the commits");
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+        MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 50, "the commits");
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
         check(entries.size() == 2, "entries " + entries.size());
         check(entries.get(1).label().equals("Shape · " + blocks(65L * 65 * 65)) && entries.get(0).label().startsWith("Shape · "),
                 "the large stroke first: " + entries.stream().map(HistoryEntry::label).toList());
@@ -593,7 +593,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -601,11 +601,11 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      * admitted already), after the step it follows, so what the step writes is in the stroke's one entry and undoes
      * exactly; other work beyond the cap is refused.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_full_queue", tickLimit = LIMIT)
-    public void aFullBrushQueueStillTakesTheCommit(TestContext context) {
-        EditExecutor<ServerWorld> executor = onePartATick(context, 70);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_full_queue", timeoutTicks = LIMIT)
+    public void aFullBrushQueueStillTakesTheCommit(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = onePartATick(context, 70);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 750);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 86, z0, x0 + 80, 154, z0 + 80);
@@ -625,9 +625,9 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         Piece over = new Piece(null, 0, 1);
         check(!executor.submitBrush(over) && over.dropped, "work beyond the cap was taken");
         h.service.endStroke(h.player, 1);
-        check(h.service.queuedCommits(h.player.getUuid()) == 1, "the commit was not queued");
-        MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 500, "the step and commit");
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+        check(h.service.queuedCommits(h.player.getUUID()) == 1, "the commit was not queued");
+        MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 500, "the step and commit");
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
         check(entries.size() == 1 && entries.get(0).label().equals("Shape · " + blocks(65L * 65 * 65)),
                 "entries " + entries.stream().map(HistoryEntry::label).toList());
         ShapeBrushGameTest.undoAll(h, executor, 1, 200);
@@ -635,7 +635,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -643,11 +643,11 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      * {@code QUEUE_FULL} {@code STROKE_PENDING}, the kind the client holds and retries), and the retry a tick or two
      * later goes ahead and undoes it exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_terrain_undo", tickLimit = LIMIT)
-    public void aLargeTerrainStrokeIsUndoneOnceCommitted(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_terrain_undo", timeoutTicks = LIMIT)
+    public void aLargeTerrainStrokeIsUndoneOnceCommitted(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 752);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 255, 135, z0 + 127);
@@ -670,7 +670,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         for (int from = 0; from < dabs.size(); from += 8) {
             DabOutcome outcome = h.service.dabs(h.player, 1, seq++, dabs.subList(from, Math.min(dabs.size(), from + 8)));
             check(outcome.accepted(), "the dabs: " + outcome);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedDabs(h.player.getUuid()) == 0, 20, "the dabs");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedDabs(h.player.getUUID()) == 0, 20, "the dabs");
         }
         h.service.endStroke(h.player, 1);
         RecordingListener undo = new RecordingListener();
@@ -693,24 +693,24 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * The brush permission removed between two parts of a step: the next part is refused NO_PERMISSION, the parts
      * written stay (one step) and undo exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_permission_mid_step", tickLimit = LIMIT)
-    public void thePermissionIsAskedAgainBeforeEachPart(TestContext context) {
-        EditExecutor<ServerWorld> executor = onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_permission_mid_step", timeoutTicks = LIMIT)
+    public void thePermissionIsAskedAgainBeforeEachPart(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 754);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 47, 150, z0 + 47);
         loadAndForce(world, area);
         WorldSnapshot before = capture(world, area);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.BRUSH);
         int glass = h.state("minecraft:glass");
         // 41 layers of 41 x 41 cells, y 100 to 140, in five parts: 100-108, 109-117, 118-126, 127-135 and 136-140.
@@ -719,7 +719,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(builder, 1, large);
         } catch (EditRejected e) {
-            throw new GameTestException("the stroke was refused: " + e.getMessage());
+            throw new GameTestAssertException("the stroke was refused: " + e.getMessage());
         }
         check(h.service.dabs(builder, 1, 1, List.of(at(0, x0 + 24, 120, z0 + 24))).accepted(), "the step");
         executor.tick();
@@ -727,11 +727,11 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         EditTestSupport.grant(builder, Perm.USE); // the brush node is gone
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1, 20, "the step");
         check(h.events.dabRejections.equals(List.of(RejectReason.NO_PERMISSION)), "refusals " + h.events.dabRejections);
-        check(world.getBlockState(EngineTestSupport.pos(x0 + 24, 117, z0 + 24)).isOf(Blocks.GLASS)
-                && !world.getBlockState(EngineTestSupport.pos(x0 + 24, 118, z0 + 24)).isOf(Blocks.GLASS),
+        check(world.getBlockState(EngineTestSupport.pos(x0 + 24, 117, z0 + 24)).is(Blocks.GLASS)
+                && !world.getBlockState(EngineTestSupport.pos(x0 + 24, 118, z0 + 24)).is(Blocks.GLASS),
                 "two parts written, no more");
         h.service.endStroke(builder, 1);
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(builder.getUuid());
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(builder.getUUID());
         check(entries.size() == 1 && entries.get(0).label().equals("Shape · " + blocks(18L * 41 * 41)),
                 "entries " + entries.stream().map(HistoryEntry::label).toList());
         RecordingListener undo = MultiplayerGameTest.historyStep(h, builder, true);
@@ -740,7 +740,7 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /** Brush work of a test: {@code pieces} pieces, each predicted to take {@code predicted} ns; records what ran. */
@@ -800,9 +800,9 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
      * player's other work; a piece that throws is logged and dropped while the lane goes on; a full queue refuses work
      * but takes essential work (a commit).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_lane", tickLimit = LIMIT)
-    public void theBrushLaneStartsOnlyPiecesThatFitAndSurvivesFailures(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_lane", timeoutTicks = LIMIT)
+    public void theBrushLaneStartsOnlyPiecesThatFitAndSurvivesFailures(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(10_000_000L, 0, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 4, 16_384));
         List<Piece> order = new ArrayList<>();
         UUID a = UUID.randomUUID(), b = UUID.randomUUID();
@@ -850,6 +850,6 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
         for (int i = 0; i < 10 && executor.brushQueueSize() > 0; i++) executor.tick();
         check(commit.runs == 1 && queued.stream().allMatch(p -> p.runs == 1), "not all ran");
         executor.shutdown();
-        context.complete();
+        context.succeed();
     }
 }

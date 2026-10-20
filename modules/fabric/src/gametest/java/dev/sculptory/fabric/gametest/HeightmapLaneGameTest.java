@@ -35,11 +35,11 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Heightmap steps written in parts on the brush lane (one part a tick): before each part after the planning turn the
@@ -58,15 +58,15 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
         return heightmap(32, cone(32), 24, lower, SurfaceMask.ANY, null, Symmetry.NONE);
     }
 
-    private static Dab dabAt(ServerWorld world, int index, int x, int z) {
+    private static Dab dabAt(ServerLevel world, int index, int x, int z) {
         return new Dab(index, x * 16 + 8, (ground(world, x, z) + 1) * 16, z * 16 + 8, 255);
     }
 
-    private static void begin(Harness h, ServerPlayerEntity player, int strokeId, BrushSpec spec) {
+    private static void begin(Harness h, ServerPlayer player, int strokeId, BrushSpec spec) {
         try {
             h.service.beginStroke(player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 
@@ -74,8 +74,8 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
      * Ticks until the player's step is worked out: a piece a tick on this lane (its budget is next to nothing), and none
      * of its parts written yet when it is.
      */
-    private static void workedOut(EditExecutor<ServerWorld> executor, Harness h, ServerPlayerEntity player) {
-        MultiplayerGameTest.tickUntil(executor, () -> !h.service.workingOut(player.getUuid()), 2_000, "the step worked out");
+    private static void workedOut(EditExecutor<ServerLevel> executor, Harness h, ServerPlayer player) {
+        MultiplayerGameTest.tickUntil(executor, () -> !h.service.workingOut(player.getUUID()), 2_000, "the step worked out");
     }
 
     /** Cells of {@code area} that differ between two snapshots. */
@@ -97,17 +97,17 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
      * parts written stay, one entry each, undone exactly); the third is left alone while the rest is written, and undo
      * and redo are exact around it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_parts", tickLimit = LIMIT)
-    public void eachPartIsCheckedAgainAndUndoIsExact(TestContext context) {
-        EditExecutor<ServerWorld> executor = onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_parts", timeoutTicks = LIMIT)
+    public void eachPartIsCheckedAgainAndUndoIsExact(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1410);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 160, z0 + 79);
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 80, 80);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.BRUSH);
         try {
             // 1. The brush node goes after two parts.
@@ -124,8 +124,8 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             check(h.events.dabRejections.equals(List.of(RejectReason.NO_PERMISSION)), "refusals " + h.events.dabRejections);
             check(changed(before, capture(world, area), area) == afterTwo, "a part ran without the permission");
             h.service.endStroke(builder, 1);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(builder.getUuid()) == 0, 40, "commit");
-            List<HistoryEntry> entries = h.service.historyService().undoEntries(builder.getUuid());
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(builder.getUUID()) == 0, 40, "commit");
+            List<HistoryEntry> entries = h.service.historyService().undoEntries(builder.getUUID());
             check(entries.size() == 1, "entries " + entries);
             RecordingListener undo = MultiplayerGameTest.historyStep(h, builder, true);
             MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 60, "the undo");
@@ -149,14 +149,14 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
                 h.service.run(h.player, new OpSpec.Fill(locked, new Pattern.Single(h.state("minecraft:stone")),
                         CellMask.ANY), RunOptions.DEFAULT, job);
             } catch (EditRejected e) {
-                throw new GameTestException("the job was refused: " + e.getMessage());
+                throw new GameTestAssertException("the job was refused: " + e.getMessage());
             }
             check(h.service.executor().isLocked(world, lockedColumns), "the job holds the columns");
             MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == acks + 1, 40, "the step");
             check(h.events.dabRejections.equals(List.of(RejectReason.AREA_BUSY)), "refusals " + h.events.dabRejections);
             MultiplayerGameTest.tickUntil(executor, () -> job.result != null, 40, "the job");
             h.service.endStroke(builder, 2);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(builder.getUuid()) == 0, 40, "commit");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(builder.getUUID()) == 0, 40, "commit");
             RecordingListener undo2 = MultiplayerGameTest.historyStep(h, builder, true);
             MultiplayerGameTest.tickUntil(executor, () -> undo2.result != null, 60, "the undo");
             WorldSnapshot undone = capture(world, area);
@@ -195,7 +195,7 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             }
             check(ground(world, sx + 1, sz) > sy, "the column beside it rose");
             h.service.endStroke(builder, 3);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(builder.getUuid()) == 0, 40, "commit");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(builder.getUUID()) == 0, 40, "commit");
             RecordingListener undo3 = MultiplayerGameTest.historyStep(h, builder, true);
             MultiplayerGameTest.tickUntil(executor, () -> undo3.result != null, 60, "the undo");
             check(undo3.result.outcome() == JobOutcome.COMPLETED && undo3.result.skippedConflicts() == 0, "undo " + undo3.result);
@@ -218,17 +218,17 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A player leaving mid-step: the step stops at its part boundary, quickly (not the rest of the step), its parts are
      * saved as one step, and back on the server the player undoes it exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_leave", tickLimit = LIMIT)
-    public void leavingMidStepKeepsThePartsWritten(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_leave", timeoutTicks = LIMIT)
+    public void leavingMidStepKeepsThePartsWritten(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1416);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 160, z0 + 79);
@@ -240,13 +240,13 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             run.load(h.player);
             run.begin(h.player, 1, bigStamp(false));
             check(run.service.dabs(h.player, 1, 1, List.of(dabAt(world, 0, x0 + 40, z0 + 40))).accepted(), "the step");
-            run.tickUntil(() -> !run.service.workingOut(h.player.getUuid()), 2_000, "the step worked out");
+            run.tickUntil(() -> !run.service.workingOut(h.player.getUUID()), 2_000, "the step worked out");
             run.tick();
             run.tick();
             int written = changed(before, capture(world, area), area);
             check(written > 4_000 && written <= 2 * (4_096 + 200), "two parts: " + written);
             long start = System.nanoTime();
-            run.service.playerLeft(h.player.getUuid());
+            run.service.playerLeft(h.player.getUUID());
             long took = (System.nanoTime() - start) / 1_000_000;
             check(took < 100, "leaving took " + took + " ms");
             for (int i = 0; i < 20; i++) run.tick();
@@ -262,7 +262,7 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             h.close();
             EngineTestBootstrap.deleteTree(dir);
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -270,11 +270,11 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
      * stroke leaves them to the lane (an unknown Heightmap step is heavy), writing nothing at once; the lane then writes
      * them over ticks and the stroke becomes one entry.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_heightmap_release", tickLimit = LIMIT)
-    public void aReleaseWithDeepDabsQueuedLeavesThemToTheLane(TestContext context) {
-        EditExecutor<ServerWorld> executor = onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_heightmap_release", timeoutTicks = LIMIT)
+    public void aReleaseWithDeepDabsQueuedLeavesThemToTheLane(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1418);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, -10, z0, x0 + 79, 160, z0 + 79);
@@ -288,18 +288,18 @@ public final class HeightmapLaneGameTest implements FabricGameTest {
             long start = System.nanoTime();
             h.service.endStroke(h.player, 1);
             long took = (System.nanoTime() - start) / 1_000_000;
-            check(h.service.queuedDabs(h.player.getUuid()) == 2, "the release wrote the dabs at once");
+            check(h.service.queuedDabs(h.player.getUUID()) == 2, "the release wrote the dabs at once");
             check(changed(before, capture(world, area), area) == 0, "something was written at once");
             check(took < 50, "the release took " + took + " ms");
             MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1, 4_000, "the dabs");
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 4_000, "commit");
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one entry");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 4_000, "commit");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "one entry");
             check(changed(before, capture(world, area), area) > 10_000, "the cut was written");
         } finally {
             executor.shutdown();
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 }

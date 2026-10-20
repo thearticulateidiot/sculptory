@@ -40,12 +40,12 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Stream;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
 
 /**
  * M4 library management through the server's clipboard service with real players and permissions: who may rename,
@@ -74,7 +74,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         try {
             request.run();
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.reason() + " " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.reason() + " " + e.getMessage());
         }
     }
 
@@ -82,18 +82,18 @@ public final class LibraryManageGameTest implements FabricGameTest {
      * Own folder: always (with {@code clipboard}); shared: {@code library.write}; another player's: admin. Checked at
      * every request (a node taken away refuses the next one), and the listing says which folders may be changed.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_manage_perms", tickLimit = LIMIT)
-    public void libraryChangesFollowTheLibraryPermissions(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_manage_perms", timeoutTicks = LIMIT)
+    public void libraryChangesFollowTheLibraryPermissions(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
-        ServerPlayerEntity writer = h.addPlayer(false);
-        ServerPlayerEntity useOnly = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
+        ServerPlayer writer = h.addPlayer(false);
+        ServerPlayer useOnly = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD);
         EditTestSupport.grant(writer, Perm.USE, Perm.CLIPBOARD, Perm.LIBRARY_WRITE);
         EditTestSupport.grant(useOnly, Perm.USE);
         Path root = ClipTestSupport.libraryRoot(context);
-        String mine = "_players/" + builder.getUuid();
-        String writers = "_players/" + writer.getUuid();
+        String mine = "_players/" + builder.getUUID();
+        String writers = "_players/" + writer.getUUID();
         byte[] stone = schem(h, "minecraft:stone");
         put(root, "shared/tree.schem", stone);
         put(root, mine + "/mine.schem", stone);
@@ -111,11 +111,11 @@ public final class LibraryManageGameTest implements FabricGameTest {
                 .reason() == RejectReason.NO_PERMISSION, "another player's folder");
         check(refusal(() -> clips.delete(writer, false, mine + "/mine.schem", new Captured<>())).reason()
                 == RejectReason.NO_PERMISSION, "library.write is not admin");
-        check(refusal(() -> clips.createFolder(useOnly, "_players/" + useOnly.getUuid() + "/x", new Captured<>()))
+        check(refusal(() -> clips.createFolder(useOnly, "_players/" + useOnly.getUUID() + "/x", new Captured<>()))
                 .reason() == RejectReason.NO_PERMISSION, "the library needs clipboard");
         EditRejected detail = refusal(() -> clips.delete(builder, false, "shared/tree.schem", new Captured<>()));
         check(detail.getMessage().contains("sculptory.library.write"), "the refusal says why: " + detail.getMessage());
-        check(clips.requests(builder.getUuid()) == 0, "a refusal left a request slot taken");
+        check(clips.requests(builder.getUUID()) == 0, "a refusal left a request slot taken");
 
         Captured<LibraryChange> ownFolder = new Captured<>();
         Captured<LibraryChange> ownRename = new Captured<>();
@@ -128,8 +128,8 @@ public final class LibraryManageGameTest implements FabricGameTest {
         run(() -> clips.createFolder(builder, mine + "/sub", ownFolder));
         run(() -> clips.move(writer, false, "shared/tree.schem", "shared/oak.schem", sharedRename));
         run(() -> clips.list(h.player, "_players", adminPlayers));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     check(ownFolder.get("own folder").equals(new LibraryChange(true, "", mine + "/sub")), "own folder");
                     check(sharedRename.get("shared rename").equals(new LibraryChange(false, "shared/tree.schem",
                             "shared/oak.schem")), "shared rename");
@@ -140,7 +140,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
                     run(() -> clips.delete(h.player, false, writers + "/w.schem", adminDelete));
                     run(() -> clips.list(builder, "", builderRoot));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(ownRename.get("own move").to().equals(mine + "/sub/mine.schem"), "own move");
                     check(Files.isRegularFile(root.resolve(mine).resolve("sub").resolve("mine.schem")), "moved file missing");
                     adminDelete.get("admin delete");
@@ -149,7 +149,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
                     run(() -> clips.list(builder, mine, builderOwn));
                     run(() -> clips.list(writer, "", writerRoot));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(builderOwn.get("builder own").writable(), "the own folder is writable");
                     check(writerRoot.get("writer root").writable(), "library.write may change the shared root");
                     // A node taken away is noticed at the next request.
@@ -159,12 +159,12 @@ public final class LibraryManageGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Paths are checked exactly like saves: traversal, absolute paths, bad and reserved names never reach the disk. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_manage_paths", tickLimit = LIMIT)
-    public void libraryChangesValidatePathsLikeSaves(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_manage_paths", timeoutTicks = LIMIT)
+    public void libraryChangesValidatePathsLikeSaves(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
         Path sandbox = root.getParent();
@@ -198,7 +198,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
                 == RejectReason.INVALID, "a folder is renamed in place, not moved");
         check(refusal(() -> clips.move(h.player, false, "ok/fine.schem", "ok/fine.schem", new Captured<>())).reason()
                 == RejectReason.INVALID, "the same name");
-        check(clips.requests(h.player.getUuid()) == 0, "a refusal left state behind");
+        check(clips.requests(h.player.getUUID()) == 0, "a refusal left state behind");
         try (Stream<Path> files = Files.walk(sandbox)) {
             List<Path> stray = files.filter(p -> !p.startsWith(root) && !p.equals(sandbox)
                     && !p.equals(sandbox.resolve("outside"))).toList();
@@ -210,7 +210,7 @@ public final class LibraryManageGameTest implements FabricGameTest {
         }
         ClipTestSupport.deleteTree(sandbox);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -218,10 +218,10 @@ public final class LibraryManageGameTest implements FabricGameTest {
      * asset takes the new path, a fresh lookup by hash finds the file under its new name, and a paste by hash works.
      * After a delete the hash no longer finds it, loaded or not.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_manage_hash", tickLimit = LIMIT)
-    public void renamedAssetsKeepTheirHashReferencesAndDeletedOnesAreGone(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_manage_hash", timeoutTicks = LIMIT)
+    public void renamedAssetsKeepTheirHashReferencesAndDeletedOnesAreGone(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 400);
         Box region = box(at[0], 100, at[1], at[0] + 7, 101, at[1] + 7);
         loadAndForce(world, region);
@@ -238,16 +238,16 @@ public final class LibraryManageGameTest implements FabricGameTest {
         Captured<ClipboardService.Outbound> thirdPreview = new Captured<>();
         RecordingListener paste = new RecordingListener();
         run(() -> clips.list(h.player, "trees", listed)); // indexes the file (as a player's listing does)
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     check(listed.get("list").entries().get(0).contentHash().equals(hash), "listing " + listed.value);
                     run(() -> clips.preview(h.player, new SourceRef.Asset(hash), firstPreview));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check("trees/oak.schem".equals(firstPreview.get("preview").meta().get("path")), "preview path");
                     run(() -> clips.move(h.player, false, "trees/oak.schem", "trees/old_oak.schem", renamed));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     renamed.get("rename");
                     Optional<String> cached = h.service.assets().get(hash).map(asset -> asset.path().toString());
                     check(cached.equals(Optional.of("trees/old_oak.schem")), "the loaded asset keeps the old path: " + cached);
@@ -259,15 +259,15 @@ public final class LibraryManageGameTest implements FabricGameTest {
                     h.service.assets().clear();
                     run(() -> clips.preview(h.player, new SourceRef.Asset(hash), secondPreview));
                 })
-                .createAndAdd(() -> check(paste.result != null && secondPreview.finished(), "paste and preview running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null && secondPreview.finished(), "paste and preview running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED && paste.result.changed() == 2, "paste " + paste.result);
-                    check(world.getBlockState(pos(at[0] + 2, 100, at[1] + 2)).isOf(Blocks.GOLD_BLOCK), "not pasted");
+                    check(world.getBlockState(pos(at[0] + 2, 100, at[1] + 2)).is(Blocks.GOLD_BLOCK), "not pasted");
                     check("trees/old_oak.schem".equals(secondPreview.get("preview by hash").meta().get("path")),
                             "the hash finds the renamed file: " + secondPreview.value.meta());
                     run(() -> clips.delete(h.player, false, "trees/old_oak.schem", deleted));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     deleted.get("delete");
                     check(h.service.assets().get(hash).isEmpty(), "a deleted asset stays loaded");
                     check(refusal(() -> h.service.run(h.player, new OpSpec.Paste(new SourceRef.Asset(hash),
@@ -275,28 +275,28 @@ public final class LibraryManageGameTest implements FabricGameTest {
                             RunOptions.DEFAULT, null)).reason() == RejectReason.ASSET_NOT_LOADED, "pasted a deleted asset");
                     run(() -> clips.preview(h.player, new SourceRef.Asset(hash), thirdPreview));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     thirdPreview.failedWith(RejectReason.INVALID, "preview of a deleted asset");
                     forceChunks(world, region, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A deleted file goes to the hidden trash: recoverable on disk, never listed, loaded or found by hash. Renames never
      * replace a file, and only an empty folder can be deleted.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_manage_trash", tickLimit = LIMIT)
-    public void deletesGoToTheTrashAndNothingIsReplaced(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_manage_trash", timeoutTicks = LIMIT)
+    public void deletesGoToTheTrashAndNothingIsReplaced(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
         byte[] stone = schem(h, "minecraft:stone");
         byte[] dirt = schem(h, "minecraft:dirt");
         put(root, "a/stone.schem", stone);
         put(root, "a/dirt.schem", dirt);
-        ServerPlayerEntity other = h.addPlayer(true);
+        ServerPlayer other = h.addPlayer(true);
         Files.createDirectories(root.resolve("empty"));
         var clips = ClipTestSupport.clipboards(h, root);
         Captured<LibraryChange> onto = new Captured<>();
@@ -307,8 +307,8 @@ public final class LibraryManageGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> load = new Captured<>();
         run(() -> clips.move(h.player, false, "a/stone.schem", "a/dirt.schem", onto));
         run(() -> clips.delete(other, true, "a", fullFolder)); // another player: one library write each at a time
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     onto.failedWith(RejectReason.INVALID, "rename onto an existing name");
                     check(onto.detail.equals("already exists: a/dirt.schem"), onto.detail);
                     fullFolder.failedWith(RejectReason.INVALID, "delete a folder that is not empty");
@@ -317,12 +317,12 @@ public final class LibraryManageGameTest implements FabricGameTest {
                                 && java.util.Arrays.equals(Files.readAllBytes(root.resolve("a").resolve("stone.schem")),
                                 stone), "a file was replaced");
                     } catch (IOException e) {
-                        throw new GameTestException("a file is gone: " + e);
+                        throw new GameTestAssertException("a file is gone: " + e);
                     }
                     run(() -> clips.delete(h.player, false, "a/stone.schem", deleted));
                     run(() -> clips.delete(other, true, "empty", emptyFolder));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     deleted.get("delete");
                     emptyFolder.get("delete the empty folder");
                     check(!Files.exists(root.resolve("empty")), "the empty folder is still there");
@@ -334,12 +334,12 @@ public final class LibraryManageGameTest implements FabricGameTest {
                         check(java.util.Arrays.equals(Files.readAllBytes(root.resolve(trashed.get(0))), stone),
                                 "the trashed file changed");
                     } catch (IOException e) {
-                        throw new GameTestException("no trash: " + e);
+                        throw new GameTestAssertException("no trash: " + e);
                     }
                     run(() -> clips.list(h.player, "", rootListing));
                     run(() -> clips.load(h.player, "a/stone.schem", load));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     List<String> shown = rootListing.get("root").entries().stream().map(e -> e.path()).toList();
                     check(shown.equals(List.of("a", LibraryPath.SHARED)), "the root lists " + shown); // the trash is never listed; Shared with me always is
                     load.failedWith(RejectReason.INVALID, "load of a deleted asset");
@@ -348,28 +348,28 @@ public final class LibraryManageGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * What other players are told about a change: everything they may read, a blank for a path in someone else's
      * folder (a move into a private folder looks like a delete), and nothing without the library.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_manage_push", tickLimit = LIMIT)
-    public void pushedChangesShowOnlyWhatEachPlayerMayRead(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_manage_push", timeoutTicks = LIMIT)
+    public void pushedChangesShowOnlyWhatEachPlayerMayRead(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity owner = h.addPlayer(false);
-        ServerPlayerEntity other = h.addPlayer(false);
-        ServerPlayerEntity useOnly = h.addPlayer(false);
+        ServerPlayer owner = h.addPlayer(false);
+        ServerPlayer other = h.addPlayer(false);
+        ServerPlayer useOnly = h.addPlayer(false);
         EditTestSupport.grant(owner, Perm.USE, Perm.CLIPBOARD, Perm.LIBRARY_WRITE);
         EditTestSupport.grant(other, Perm.USE, Perm.CLIPBOARD);
         EditTestSupport.grant(useOnly, Perm.USE);
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
-        String own = "_players/" + owner.getUuid() + "/x.schem";
+        String own = "_players/" + owner.getUUID() + "/x.schem";
         LibraryChange intoOwn = new LibraryChange(false, "shared/x.schem", own);
         LibraryChange outOfOwn = new LibraryChange(false, own, "shared/x.schem");
-        LibraryChange ownFolder = new LibraryChange(true, "", "_players/" + owner.getUuid() + "/sub");
+        LibraryChange ownFolder = new LibraryChange(true, "", "_players/" + owner.getUUID() + "/sub");
         check(clips.shownTo(owner, intoOwn).equals(Optional.of(intoOwn)), "the owner sees their own folder");
         check(clips.shownTo(h.player, intoOwn).equals(Optional.of(intoOwn)), "an admin sees everything");
         check(clips.shownTo(other, intoOwn).equals(Optional.of(new LibraryChange(false, "shared/x.schem", ""))),
@@ -379,18 +379,18 @@ public final class LibraryManageGameTest implements FabricGameTest {
         check(clips.shownTo(other, ownFolder).isEmpty(), "nothing of another player's folder");
         check(clips.shownTo(useOnly, intoOwn).isEmpty(), "nothing without clipboard");
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A preview and a load by one player race another player's delete of the same file: whatever the order, the
      * deleted asset is not left loaded, so it can't be pasted by hash.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_manage_stale", tickLimit = LIMIT)
-    public void anAssetDeletedWhileItLoadsIsNotLeftLoaded(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_manage_stale", timeoutTicks = LIMIT)
+    public void anAssetDeletedWhileItLoadsIsNotLeftLoaded(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerPlayerEntity other = h.addPlayer(true);
-        ServerPlayerEntity third = h.addPlayer(true);
+        ServerPlayer other = h.addPlayer(true);
+        ServerPlayer third = h.addPlayer(true);
         Path root = ClipTestSupport.libraryRoot(context);
         byte[] stone = schem(h, "minecraft:stone");
         String hash = Sha256.digest(stone).hex();
@@ -401,15 +401,15 @@ public final class LibraryManageGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> load = new Captured<>();
         Captured<LibraryChange> deleted = new Captured<>();
         run(() -> clips.list(h.player, "a", listed)); // indexes it, so a preview by hash finds it
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     listed.get("list");
                     run(() -> clips.preview(h.player, new SourceRef.Asset(hash), preview));
                     run(() -> clips.load(third, "a/x.schem", load));
                     run(() -> clips.delete(other, false, "a/x.schem", deleted));
                 })
-                .createAndAdd(() -> check(preview.finished() && load.finished() && deleted.finished(), "running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(preview.finished() && load.finished() && deleted.finished(), "running"))
+                .thenWaitUntil(() -> {
                     deleted.get("delete");
                     check(h.service.assets().get(hash).isEmpty(), "the deleted asset stayed loaded");
                     check(refusal(() -> h.service.run(h.player, new OpSpec.Paste(new SourceRef.Asset(hash),
@@ -418,16 +418,16 @@ public final class LibraryManageGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Two players change the same file in the same tick: exactly one succeeds, the other is refused cleanly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_manage_race", tickLimit = LIMIT)
-    public void racingPlayersGetOneSuccessAndOneCleanRefusal(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_manage_race", timeoutTicks = LIMIT)
+    public void racingPlayersGetOneSuccessAndOneCleanRefusal(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerPlayerEntity other = h.addPlayer(true);
-        ServerPlayerEntity third = h.addPlayer(true);
-        ServerPlayerEntity fourth = h.addPlayer(true);
+        ServerPlayer other = h.addPlayer(true);
+        ServerPlayer third = h.addPlayer(true);
+        ServerPlayer fourth = h.addPlayer(true);
         Path root = ClipTestSupport.libraryRoot(context);
         byte[] stone = schem(h, "minecraft:stone");
         put(root, "race/one.schem", stone);
@@ -442,10 +442,10 @@ public final class LibraryManageGameTest implements FabricGameTest {
         // Each player has one library write at a time, so the second race is between two more players.
         run(() -> clips.move(third, false, "race/two.schem", "race/c.schem", rename));
         run(() -> clips.delete(fourth, false, "race/two.schem", delete));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(renameA.finished() && renameB.finished() && rename.finished() && delete.finished(),
+        context.startSequence()
+                .thenWaitUntil(() -> check(renameA.finished() && renameB.finished() && rename.finished() && delete.finished(),
                         "changes running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (List<Captured<LibraryChange>> pair : List.of(List.of(renameA, renameB), List.of(rename, delete))) {
                         long wins = pair.stream().filter(c -> c.value != null).count();
                         check(wins == 1, "wins " + wins + ": " + pair.get(0).reason + " / " + pair.get(1).reason);
@@ -468,6 +468,6 @@ public final class LibraryManageGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

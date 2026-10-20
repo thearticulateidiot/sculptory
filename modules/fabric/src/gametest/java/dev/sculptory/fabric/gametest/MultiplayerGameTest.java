@@ -62,18 +62,18 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BooleanSupplier;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.OperatorEntry;
-import net.minecraft.server.OperatorList;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.ServerOpList;
+import net.minecraft.server.players.ServerOpListEntry;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.border.WorldBorder;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -95,13 +95,13 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * fill. His brush in her area is refused AREA_BUSY while her job holds it, and he cannot paste her clipboard (nor she
      * his). Every cell ends as the last job admitted over it left it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_overlap", tickLimit = LIMIT)
-    public void overlappingEditsFromTwoPlayersQueueAndNeverInterleave(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_overlap", timeoutTicks = LIMIT)
+    public void overlappingEditsFromTwoPlayersQueueAndNeverInterleave(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerWorld world = h.world;
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 120);
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 31, 127, z + 15);
@@ -114,8 +114,8 @@ public final class MultiplayerGameTest implements FabricGameTest {
         int stone = h.state("minecraft:stone"), gold = h.state("minecraft:gold_block");
         int diamond = h.state("minecraft:diamond_block");
 
-        UUID aliceClipboard = h.service.clipboards().install(alice.getUuid(), cube(h, 2, "minecraft:emerald_block")).id();
-        UUID bobClipboard = h.service.clipboards().install(bob.getUuid(), cube(h, 8, "minecraft:diamond_block")).id();
+        UUID aliceClipboard = h.service.clipboards().install(alice.getUUID(), cube(h, 2, "minecraft:emerald_block")).id();
+        UUID bobClipboard = h.service.clipboards().install(bob.getUUID(), cube(h, 8, "minecraft:diamond_block")).id();
         check(refusal(() -> h.service.run(alice, paste(bobClipboard, pasteBox.min()), RunOptions.DEFAULT, null)).reason()
                 == RejectReason.INVALID, "Alice pasted Bob's clipboard");
         check(refusal(() -> h.service.run(bob, paste(aliceClipboard, pasteBox.min()), RunOptions.DEFAULT, null)).reason()
@@ -133,7 +133,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         begin(h, bob, 1);
         DabOutcome busy = h.service.dabs(bob, 1, 1, List.of(dab(0, x + 8, 113, z + 8)));
         check(!busy.accepted() && busy.reason() == RejectReason.AREA_BUSY, "Bob's dab over Alice's job: " + busy);
-        check(h.service.queuedDabs(bob.getUuid()) == 0, "a refused dab was queued");
+        check(h.service.queuedDabs(bob.getUUID()) == 0, "a refused dab was queued");
         h.service.endStroke(bob, 1);
 
         int ticks = 0;
@@ -161,7 +161,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, loaded, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -169,13 +169,13 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * conflicts) restores only her cells Bob did not touch and counts the others; Bob's undo restores exactly what his
      * fill found (Alice's blocks). Redoing both, then undoing both in reverse order, returns every cell exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_history", tickLimit = LIMIT)
-    public void perPlayerUndoSkipsTheOtherPlayersCellsAndBothHistoriesStayExact(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_history", timeoutTicks = LIMIT)
+    public void perPlayerUndoSkipsTheOtherPlayersCellsAndBothHistoriesStayExact(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerWorld world = h.world;
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 121);
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 31, 127, z + 15);
@@ -230,7 +230,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, region, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -240,13 +240,13 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * ends the waiting ones at once and the fill at a section boundary; undoing that partial fill restores it exactly,
      * and Bob's cells are left alone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_fairness", tickLimit = LIMIT)
-    public void aSmallEditIsNotStarvedByAnotherPlayersMillionBlockJob(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 4096);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_fairness", timeoutTicks = LIMIT)
+    public void aSmallEditIsNotStarvedByAnotherPlayersMillionBlockJob(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 4096);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerWorld world = h.world;
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 122);
         int x = at[0], z = at[1];
         Box big = box(x, 112, z, x + 127, 175, z + 127);
@@ -304,7 +304,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- permissions
@@ -317,24 +317,24 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * op fallback for that node only. The masks sent to clients say the same. Nothing refused leaves a job, a lease, a
      * preview or a stroke behind.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_nodes", tickLimit = LIMIT)
-    public void everyEntryPointChecksItsNodeWithTheOpLevelFallback(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_nodes", timeoutTicks = LIMIT)
+    public void everyEntryPointChecksItsNodeWithTheOpLevelFallback(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
         var scatter = new ServerScatter<>(h.service);
         MinecraftServer server = h.world.getServer();
-        ServerPlayerEntity nobody = h.addPlayer(false);
-        ServerPlayerEntity levelOne = h.addPlayer(false);
-        server.getPlayerManager().getOpList().add(new OperatorEntry(levelOne.getGameProfile(), 1, false));
-        ServerPlayerEntity user = h.addPlayer(false);
+        ServerPlayer nobody = h.addPlayer(false);
+        ServerPlayer levelOne = h.addPlayer(false);
+        server.getPlayerList().getOps().add(new ServerOpListEntry(levelOne.getGameProfile(), 1, false));
+        ServerPlayer user = h.addPlayer(false);
         EditTestSupport.grant(user, Perm.USE);
-        ServerPlayerEntity clipper = h.addPlayer(false);
+        ServerPlayer clipper = h.addPlayer(false);
         EditTestSupport.grant(clipper, Perm.USE, Perm.CLIPBOARD);
-        ServerPlayerEntity regionOnly = h.addPlayer(false);
+        ServerPlayer regionOnly = h.addPlayer(false);
         EditTestSupport.grant(regionOnly, Perm.USE, Perm.REGION);
-        ServerPlayerEntity deniedOp = h.addPlayer();
+        ServerPlayer deniedOp = h.addPlayer();
         EditTestSupport.deny(deniedOp, Perm.REGION);
 
         int[] at = regionCorner(context, 123);
@@ -372,7 +372,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
                 new ScatterGameTest.Reply()));
 
         // No node, or op level 1 (below the fallback level 2): refused everywhere at sculptory.use.
-        for (ServerPlayerEntity p : List.of(nobody, levelOne)) {
+        for (ServerPlayer p : List.of(nobody, levelOne)) {
             for (Map.Entry<String, Attempt> entry : entries.entrySet()) {
                 expect(p, entry.getKey(), entry.getValue(), RejectReason.NO_PERMISSION, Perm.USE);
             }
@@ -418,7 +418,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(deniedOp, 5, RAISE);
         } catch (EditRejected e) {
-            throw new GameTestException("the op without region may not brush: " + e.getMessage());
+            throw new GameTestAssertException("the op without region may not brush: " + e.getMessage());
         }
         h.service.endStroke(deniedOp, 5);
 
@@ -436,17 +436,17 @@ public final class MultiplayerGameTest implements FabricGameTest {
         // Nothing refused left anything behind.
         check(executor.queuedJobCount() == 0 && executor.activeJobCount() == 0 && executor.holdCount() == 0,
                 "a refused request left a job or hold");
-        for (ServerPlayerEntity p : List.of(nobody, levelOne, user, clipper, regionOnly, deniedOp)) {
-            check(clips.requests(p.getUuid()) == 0, "a refused request left a lease");
-            check(!scatter.planning(p.getUuid()), "a refused preview is planning");
-            check(h.service.openStroke(p.getUuid()).isEmpty(), "a refused stroke is open");
+        for (ServerPlayer p : List.of(nobody, levelOne, user, clipper, regionOnly, deniedOp)) {
+            check(clips.requests(p.getUUID()) == 0, "a refused request left a lease");
+            check(!scatter.planning(p.getUUID()), "a refused preview is planning");
+            check(h.service.openStroke(p.getUUID()).isEmpty(), "a refused stroke is open");
         }
         executor.shutdown();
         clips.shutdown();
         ClipTestSupport.deleteTree(root.getParent());
         forceChunks(h.world, box, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -456,14 +456,14 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * affected. A scatter preview in flight ends NO_PERMISSION and releases its area when scatter goes, and the
      * periodic re-checks catch a removal without an op change.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_revoke", tickLimit = LIMIT)
-    public void removedNodesCancelTheJobsAndPreviewsThatNeedThem(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_revoke", timeoutTicks = LIMIT)
+    public void removedNodesCancelTheJobsAndPreviewsThatNeedThem(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.SCATTER);
-        ServerPlayerEntity other = h.player;
-        ServerWorld world = h.world;
+        ServerPlayer other = h.player;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 124);
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 31, 127, z + 15);
@@ -514,7 +514,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         EditTestSupport.grant(builder, Perm.USE);
         check(scatter.revalidate(builder), "the preview was not ended");
         check(first.reason == RejectReason.NO_PERMISSION && first.calls == 1, "answered " + first.reason);
-        check(executor.holdCount() == 0 && !scatter.planning(builder.getUuid()), "the preview's area is still held");
+        check(executor.holdCount() == 0 && !scatter.planning(builder.getUUID()), "the preview's area is still held");
 
         EditTestSupport.grant(builder, Perm.USE, Perm.SCATTER, Perm.REGION);
         ScatterGameTest.Reply second = ScatterGameTest.preview(scatter, builder,
@@ -534,7 +534,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         forceChunks(world, box(x, 112, z, x + 79, 127, z + 15), false);
         forceChunks(world, floor, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -542,18 +542,18 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * {@code /deop} calls) cancels the player's job at once through {@code PlayerManagerMixin}, ends their scatter
      * preview, and new requests and undo are refused.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_deop", tickLimit = LIMIT)
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_deop", timeoutTicks = LIMIT)
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
-    public void deopCancelsThePlayersJobsAtOnce(TestContext context) {
-        MinecraftServer server = context.getWorld().getServer();
+    public void deopCancelsThePlayersJobsAtOnce(GameTestHelper context) {
+        MinecraftServer server = context.getLevel().getServer();
         var host = EditServiceHost.find(server)
-                .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
+                .orElseThrow(() -> new GameTestAssertException("the mod did not install the edit service"));
         var hostScatter = EditServiceHost.findScatter(server)
-                .orElseThrow(() -> new GameTestException("the mod did not install the scatter service"));
-        ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
-        UUID id = player.getUuid();
-        OperatorList ops = server.getPlayerManager().getOpList();
-        ops.add(new OperatorEntry(player.getGameProfile(), 2, false));
+                .orElseThrow(() -> new GameTestAssertException("the mod did not install the scatter service"));
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
+        UUID id = player.getUUID();
+        ServerOpList ops = server.getPlayerList().getOps();
+        ops.add(new ServerOpListEntry(player.getGameProfile(), 2, false));
         try {
             int[] at = regionCorner(context, 125);
             int x = at[0], z = at[1];
@@ -564,7 +564,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
             try {
                 host.run(player, fill, RunOptions.DEFAULT, job); // starts on a later tick
             } catch (EditRejected e) {
-                throw new GameTestException("the op's fill was refused: " + e.getMessage());
+                throw new GameTestAssertException("the op's fill was refused: " + e.getMessage());
             }
             Clipboard one = Clipboard.builder(host.runtime().states(), new BlockPos(1, 1, 1))
                     .set(0, 0, 0, EngineTestSupport.handle(host.runtime().states(), "minecraft:oak_log")).build();
@@ -573,7 +573,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
                     ScatterGameTest.request(ScatterGameTest.region(x + 64, z, x + 79, z + 15), 4, 1L, log));
             check(job.result == null && host.jobs(id).size() == 1 && hostScatter.planning(id), "nothing in flight");
 
-            server.getPlayerManager().removeFromOperators(player.getGameProfile()); // what /deop calls
+            server.getPlayerList().deop(player.getGameProfile()); // what /deop calls
             check(job.result != null && job.result.outcome() == JobOutcome.CANCELLED && job.result.changed() == 0,
                     "the deop did not cancel the job: " + job.result);
             check(host.jobs(id).isEmpty(), "the job is still listed");
@@ -588,12 +588,12 @@ public final class MultiplayerGameTest implements FabricGameTest {
             hostScatter.playerLeft(id);
             host.playerLeft(id);
             try {
-                server.getPlayerManager().remove(player);
+                server.getPlayerList().remove(player);
             } catch (RuntimeException e) {
                 LoggerFactory.getLogger("sculptory").warn("Could not remove the mock player", e);
             }
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -601,13 +601,13 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * candidate (nothing moves to redo), and further undos are refused. With {@code use} back, undoing again finishes
      * the rest, meeting no conflict, and the area is exactly as before the fill.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_revoke_undo", tickLimit = LIMIT)
-    public void anUndoCutShortByAPermissionLossFinishesExactlyLater(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_revoke_undo", timeoutTicks = LIMIT)
+    public void anUndoCutShortByAPermissionLossFinishesExactlyLater(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 131);
         int x = at[0], z = at[1];
         Box region = box(x, 112, z, x + 31, 127, z + 15);
@@ -642,18 +642,18 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, region, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A permissions mod whose checks throw: the periodic re-checks (edit service and scatter sweep, both run from the
      * server tick) neither let the exception escape nor cancel anything; the work goes on once checks work again.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_broken_perms", tickLimit = LIMIT)
-    public void aThrowingPermissionCheckCancelsNothingAndNeverEscapesTheTick(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_broken_perms", timeoutTicks = LIMIT)
+    public void aThrowingPermissionCheckCancelsNothingAndNeverEscapesTheTick(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.SCATTER);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 130);
@@ -684,11 +684,11 @@ public final class MultiplayerGameTest implements FabricGameTest {
                     ScatterGameTest.region(x + 128, z, x + 143, z + 15), 4, 2L, new SourceRef.Clipboard(UUID.randomUUID())),
                     new ScatterGameTest.Reply()), RejectReason.NO_PERMISSION, Perm.USE);
         } catch (RuntimeException e) {
-            throw new GameTestException("a failing permission check escaped: " + e);
+            throw new GameTestAssertException("a failing permission check escaped: " + e);
         } finally {
             EditTestSupport.failPermissionChecks(builder, false);
         }
-        check(fill.result == null && !preview.finished() && scatter.planning(builder.getUuid()),
+        check(fill.result == null && !preview.finished() && scatter.planning(builder.getUUID()),
                 "a failing permission check cancelled work");
         tickUntil(executor, () -> fill.result != null, 16, "the fill");
         check(fill.result.outcome() == JobOutcome.COMPLETED && fill.result.changed() == region.volume(), "fill " + fill.result);
@@ -698,7 +698,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         forceChunks(h.world, region, false);
         forceChunks(h.world, floor, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -707,14 +707,14 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * operator-NBT tiles it was allowed to keep. Losing one cancels exactly the jobs that used it; a small fill over loaded
      * chunks (which carries no block entities) survives losing all three.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_admission_rights", tickLimit = LIMIT)
-    public void losingARightTheAdmissionUsedCancelsTheJobsThatUsedIt(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0); // never ticked: every job stays waiting
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_admission_rights", timeoutTicks = LIMIT)
+    public void losingARightTheAdmissionUsedCancelsTheJobsThatUsedIt(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0); // never ticked: every job stays waiting
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         Perm[] all = {Perm.USE, Perm.REGION, Perm.CLIPBOARD, Perm.LIMIT_BYPASS, Perm.EDIT_UNLOADED, Perm.NBT_OPERATOR};
         EditTestSupport.grant(builder, all);
-        check(h.runtime.permissions().mayWriteOperatorNbt(builder) && !builder.isCreativeLevelTwoOp(), "operator NBT right");
+        check(h.runtime.permissions().mayWriteOperatorNbt(builder) && !builder.canUseGameMasterBlocks(), "operator NBT right");
         int[] near = regionCorner(context, 132);
         int[] far = regionCorner(context, 133);
         int[] far2 = regionCorner(context, 134);
@@ -726,7 +726,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         long limit = h.runtime.config().limits.maxOpVolume;
         Box huge = box(far[0], 0, far[1], far[0] + 128, 127, far[1] + 127); // 129 × 128 × 128
         check(huge.volume() > limit, "the huge fill is not over the limit");
-        UUID clipboard = h.service.clipboards().install(builder.getUuid(), commandBlockClipboard(h)).id();
+        UUID clipboard = h.service.clipboards().install(builder.getUUID(), commandBlockClipboard(h)).id();
 
         RecordingListener overLimit = new RecordingListener();
         RecordingListener unloaded = new RecordingListener();
@@ -751,11 +751,11 @@ public final class MultiplayerGameTest implements FabricGameTest {
         for (RecordingListener l : List.of(overLimit, unloaded, pasted)) {
             check(l.result.outcome() == JobOutcome.CANCELLED && l.result.changed() == 0, "cancelled job " + l.result);
         }
-        check(h.service.jobs(builder.getUuid()).size() == 1, "the plain fill was cancelled");
+        check(h.service.jobs(builder.getUUID()).size() == 1, "the plain fill was cancelled");
         executor.shutdown();
         forceChunks(h.world, loaded, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -763,11 +763,11 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * world other than the player's, so walking into the nether does not cancel a fill they started in the overworld;
      * an op or deop re-check still covers every world.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_world_contexts", tickLimit = LIMIT)
-    public void thePeriodicRecheckLeavesJobsInOtherWorldsAlone(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_world_contexts", timeoutTicks = LIMIT)
+    public void thePeriodicRecheckLeavesJobsInOtherWorldsAlone(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         int[] at = regionCorner(context, 135);
         Box region = box(at[0], 112, at[1], at[0] + 15, 143, at[1] + 15); // two sections
@@ -776,12 +776,12 @@ public final class MultiplayerGameTest implements FabricGameTest {
         run(h, builder, fill(h, region, "minecraft:stone"), fill);
         executor.tick();
         check(fill.result == null && fill.phases.contains(Phase.APPLY), "the fill is not running");
-        ServerWorld nether = h.world.getServer().getWorld(net.minecraft.world.World.NETHER);
-        check(nether != null && builder.teleport(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport failed");
+        ServerLevel nether = h.world.getServer().getLevel(net.minecraft.world.level.Level.NETHER);
+        check(nether != null && builder.teleportTo(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport failed");
         EditTestSupport.grant(builder, Perm.USE); // region only applies in the overworld now
         for (int i = 0; i < 3 * EngineEditService.PERMISSION_RECHECK_TICKS; i++) h.service.tick();
         EditServiceHost.playerLeft(h.service, null, builder); // leaving from the nether: the same rule
-        check(fill.result == null && h.service.jobs(builder.getUuid()).size() == 1,
+        check(fill.result == null && h.service.jobs(builder.getUUID()).size() == 1,
                 "a re-check from another world cancelled the job: " + fill.result);
         check(h.service.revalidate(builder) == 1, "the op/deop re-check skipped the job in another world");
         tickUntil(executor, () -> fill.result != null, 8, "the cancelled fill");
@@ -789,7 +789,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(h.world, region, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -798,12 +798,12 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * node was removed just before leaving is cancelled too. Back again, their old jobs hold nothing that stops a new
      * edit and its undo.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_leave_jobs", tickLimit = LIMIT)
-    public void leavingCancelsWaitingJobsAndRechecksTheRunningOnes(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_leave_jobs", timeoutTicks = LIMIT)
+    public void leavingCancelsWaitingJobsAndRechecksTheRunningOnes(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer(false);
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer(false);
         EditTestSupport.grant(bob, Perm.USE, Perm.REGION);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 136);
@@ -825,7 +825,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         check(count(h.world, aliceBox, Blocks.STONE) == 1024 && count(h.world, bobBox, Blocks.GOLD_BLOCK) == 1024,
                 "the two fills are not both running");
         run(h, alice, fill(h, aliceBox, "minecraft:dirt"), waiting); // behind her running fill's locks
-        check(running.result == null && bobRunning.result == null && executor.isWaiting(h.service.jobs(alice.getUuid())
+        check(running.result == null && bobRunning.result == null && executor.isWaiting(h.service.jobs(alice.getUUID())
                 .get(1).jobId()), "not one job running and one waiting");
 
         EditServiceHost.playerLeft(h.service, scatter, alice); // Alice keeps her rights
@@ -855,16 +855,16 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * The per-player wait cap counts only jobs that will not start on the next tick: a burst of ten edits on an idle
      * server is admitted (two start at once, eight wait), the eleventh is refused.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_burst", tickLimit = LIMIT)
-    public void aBurstOfTenEditsOnAnIdleServerIsAdmitted(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_burst", timeoutTicks = LIMIT)
+    public void aBurstOfTenEditsOnAnIdleServerIsAdmitted(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 137);
         int x = at[0], z = at[1];
@@ -885,7 +885,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(h.world, row, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -894,20 +894,20 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * a player without admin may not, not even through {@code execute as} from the console. The jobs wait behind an
      * area hold, so nothing depends on how fast they would run.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_admin_cancel", tickLimit = LIMIT)
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_admin_cancel", timeoutTicks = LIMIT)
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
-    public void anAdminCancelsAnotherPlayersJobs(TestContext context) {
-        MinecraftServer server = context.getWorld().getServer();
-        ServerWorld world = context.getWorld();
+    public void anAdminCancelsAnotherPlayersJobs(GameTestHelper context) {
+        MinecraftServer server = context.getLevel().getServer();
+        ServerLevel world = context.getLevel();
         var host = EditServiceHost.find(server)
-                .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
+                .orElseThrow(() -> new GameTestAssertException("the mod did not install the edit service"));
         String name = "bs" + UUID.randomUUID().toString().substring(0, 8);
-        ServerPlayerEntity target = EditTestSupport.namedMockPlayer(context, name);
-        ServerPlayerEntity admin = context.createMockCreativeServerPlayerInWorld();
-        ServerPlayerEntity other = context.createMockCreativeServerPlayerInWorld();
-        OperatorList ops = server.getPlayerManager().getOpList();
-        ops.add(new OperatorEntry(target.getGameProfile(), 2, false));
-        ops.add(new OperatorEntry(admin.getGameProfile(), 2, false));
+        ServerPlayer target = EditTestSupport.namedMockPlayer(context, name);
+        ServerPlayer admin = context.makeMockServerPlayerInLevel();
+        ServerPlayer other = context.makeMockServerPlayerInLevel();
+        ServerOpList ops = server.getPlayerList().getOps();
+        ops.add(new ServerOpListEntry(target.getGameProfile(), 2, false));
+        ops.add(new ServerOpListEntry(admin.getGameProfile(), 2, false));
         EditTestSupport.grant(other, Perm.USE, Perm.REGION); // no admin
         int[] at = regionCorner(context, 138);
         int x = at[0], z = at[1];
@@ -916,34 +916,34 @@ public final class MultiplayerGameTest implements FabricGameTest {
         EditExecutor.AreaHold hold = host.executor().hold(world, x >> 4, z >> 4, x >> 4, z >> 4, 112 >> 4, 127 >> 4);
         OpSpec.Fill fill = new OpSpec.Fill(area, new Pattern.Single(EngineTestSupport.handle(host.runtime().states(),
                 "minecraft:stone")), CellMask.ANY);
-        String uuid = target.getUuid().toString();
+        String uuid = target.getUUID().toString();
         EditTestSupport.CapturedOutput out = new EditTestSupport.CapturedOutput();
         boolean[] targetOnline = {true};
         try {
             RecordingListener first = new RecordingListener();
             host.run(target, fill, RunOptions.DEFAULT, first);
-            check(host.executor().isWaiting(host.jobs(target.getUuid()).get(0).jobId()), "the job is not held back");
+            check(host.executor().isWaiting(host.jobs(target.getUUID()).get(0).jobId()), "the job is not held back");
 
             // A player without admin does not see /sculptory, neither directly nor through "execute as" from the console...
-            server.getCommandManager().executeWithPrefix(other.getCommandSource().withOutput(out), "sculptory cancel " + uuid);
-            server.getCommandManager().executeWithPrefix(server.getCommandSource().withOutput(out),
-                    "execute as " + other.getUuidAsString() + " run sculptory cancel " + uuid);
+            server.getCommands().performPrefixedCommand(other.createCommandSourceStack().withSource(out), "sculptory cancel " + uuid);
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSource(out),
+                    "execute as " + other.getStringUUID() + " run sculptory cancel " + uuid);
             check(!out.all().contains("Cancelled"), "a non-admin reached the command: " + out.all());
             // ...and the command itself refuses one acting for the console (parsed as the console, run as the player).
-            CommandDispatcher<ServerCommandSource> commands = server.getCommandManager().getDispatcher();
-            ParseResults<ServerCommandSource> parsed = commands.parse("sculptory cancel " + uuid, server.getCommandSource());
-            parsed.getContext().withSource(server.getCommandSource().withOutput(out).withEntity(other));
+            CommandDispatcher<CommandSourceStack> commands = server.getCommands().getDispatcher();
+            ParseResults<CommandSourceStack> parsed = commands.parse("sculptory cancel " + uuid, server.createCommandSourceStack());
+            parsed.getContext().withSource(server.createCommandSourceStack().withSource(out).withEntity(other));
             try {
                 commands.execute(parsed);
-                throw new GameTestException("a non-admin acting for the console cancelled the jobs");
+                throw new GameTestAssertException("a non-admin acting for the console cancelled the jobs");
             } catch (CommandSyntaxException e) {
                 check(e.getMessage().contains(Perm.ADMIN.node()), "refusal " + e.getMessage());
             }
-            check(first.result == null && host.jobs(target.getUuid()).size() == 1, "a non-admin cancelled the job");
+            check(first.result == null && host.jobs(target.getUUID()).size() == 1, "a non-admin cancelled the job");
 
             // An admin may, by the target's online name.
             out.lines.clear();
-            server.getCommandManager().executeWithPrefix(admin.getCommandSource().withOutput(out), "sculptory cancel " + name);
+            server.getCommands().performPrefixedCommand(admin.createCommandSourceStack().withSource(out), "sculptory cancel " + name);
             check(out.all().contains("Cancelled 1 job of " + name), "admin output: " + out.all());
             check(first.result != null && first.result.outcome() == JobOutcome.CANCELLED && first.result.changed() == 0,
                     "the admin's cancel " + first.result);
@@ -951,11 +951,11 @@ public final class MultiplayerGameTest implements FabricGameTest {
             // The target is no longer online (the edit service not told): the name recorded on the job finds them.
             RecordingListener second = new RecordingListener();
             host.run(target, fill, RunOptions.DEFAULT, second);
-            server.getPlayerManager().remove(target);
+            server.getPlayerList().remove(target);
             targetOnline[0] = false;
-            check(server.getPlayerManager().getPlayer(name) == null, "the target is still online");
+            check(server.getPlayerList().getPlayerByName(name) == null, "the target is still online");
             out.lines.clear();
-            server.getCommandManager().executeWithPrefix(server.getCommandSource().withOutput(out), "sculptory cancel " + name);
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSource(out), "sculptory cancel " + name);
             check(out.all().contains("Cancelled 1 job of " + name), "console output by job owner name: " + out.all());
             check(second.result != null && second.result.outcome() == JobOutcome.CANCELLED, "the console's cancel");
 
@@ -963,43 +963,43 @@ public final class MultiplayerGameTest implements FabricGameTest {
             RecordingListener third = new RecordingListener();
             host.run(admin, fill, RunOptions.DEFAULT, third);
             out.lines.clear();
-            server.getCommandManager().executeWithPrefix(server.getCommandSource().withOutput(out),
-                    "sculptory cancel " + admin.getUuidAsString());
-            check(out.all().contains("Cancelled 1 job of " + admin.getUuidAsString()) && third.result != null,
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSource(out),
+                    "sculptory cancel " + admin.getStringUUID());
+            check(out.all().contains("Cancelled 1 job of " + admin.getStringUUID()) && third.result != null,
                     "console output by UUID: " + out.all());
             out.lines.clear();
-            server.getCommandManager().executeWithPrefix(server.getCommandSource().withOutput(out), "sculptory cancel NoSuchPlayer9");
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSource(out), "sculptory cancel NoSuchPlayer9");
             check(out.all().contains("No such player, and no jobs for that name"), "unknown name output: " + out.all());
-            check(host.jobs(target.getUuid()).isEmpty() && host.jobs(admin.getUuid()).isEmpty(), "jobs are still listed");
+            check(host.jobs(target.getUUID()).isEmpty() && host.jobs(admin.getUUID()).isEmpty(), "jobs are still listed");
         } catch (EditRejected e) {
-            throw new GameTestException("the fill was refused: " + e.getMessage());
+            throw new GameTestAssertException("the fill was refused: " + e.getMessage());
         } finally {
             hold.release();
             ops.remove(target.getGameProfile());
             ops.remove(admin.getGameProfile());
             EditTestSupport.grant(other);
-            for (ServerPlayerEntity p : List.of(target, admin, other)) {
-                host.cancelAll(p.getUuid());
-                host.playerLeft(p.getUuid());
+            for (ServerPlayer p : List.of(target, admin, other)) {
+                host.cancelAll(p.getUUID());
+                host.playerLeft(p.getUUID());
                 if (p == target && !targetOnline[0]) continue;
                 try {
-                    server.getPlayerManager().remove(p);
+                    server.getPlayerList().remove(p);
                 } catch (RuntimeException e) {
                     LoggerFactory.getLogger("sculptory").warn("Could not remove a mock player", e);
                 }
             }
             forceChunks(world, area, false);
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A player who left keeps their running job (it finishes as designed), but it can still be stopped: cancelling all
      * of that player's jobs by UUID (what {@code /sculptory cancel <player>} does) stops it at its next section boundary.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_cancel_leaver", tickLimit = LIMIT)
-    public void theRunningJobOfAPlayerWhoLeftCanBeCancelled(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_cancel_leaver", timeoutTicks = LIMIT)
+    public void theRunningJobOfAPlayerWhoLeftCanBeCancelled(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 140);
         Box region = box(at[0], 112, at[1], at[0] + 15, 143, at[1] + 15); // two sections
@@ -1008,7 +1008,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         run(h, h.player, fill(h, region, "minecraft:stone"), fill);
         executor.tick();
         check(fill.result == null && fill.phases.contains(Phase.APPLY), "the fill is not running");
-        UUID id = h.player.getUuid();
+        UUID id = h.player.getUUID();
         EditServiceHost.playerLeft(h.service, null, h.player);
         executor.tick();
         check(fill.result == null && h.service.jobs(id).size() == 1, "leaving stopped the running fill");
@@ -1019,7 +1019,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(h.world, region, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -1028,51 +1028,51 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * The fill is 5,242,880 blocks, so it cannot finish within the tick in which it is seen running and deopped (the
      * GameTest server is not dedicated: a 20 ms budget, a few hundred thousand blocks here).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_deop_running", tickLimit = LIMIT)
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_deop_running", timeoutTicks = LIMIT)
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
-    public void deopStopsARunningJobThroughTheMixin(TestContext context) {
-        MinecraftServer server = context.getWorld().getServer();
+    public void deopStopsARunningJobThroughTheMixin(GameTestHelper context) {
+        MinecraftServer server = context.getLevel().getServer();
         var host = EditServiceHost.find(server)
-                .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
-        ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
-        OperatorList ops = server.getPlayerManager().getOpList();
-        ops.add(new OperatorEntry(player.getGameProfile(), 2, false));
+                .orElseThrow(() -> new GameTestAssertException("the mod did not install the edit service"));
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
+        ServerOpList ops = server.getPlayerList().getOps();
+        ops.add(new ServerOpListEntry(player.getGameProfile(), 2, false));
         int[] at = regionCorner(context, 139);
         int x = at[0], z = at[1];
         Box big = box(x, -64, z, x + 127, 255, z + 127);
-        loadAndForce(context.getWorld(), big);
+        loadAndForce(context.getLevel(), big);
         RecordingListener job = new RecordingListener();
         try {
             // An op holds limit.bypass through the op-level fallback, so the fill may exceed maxOpVolume.
             host.run(player, new OpSpec.Fill(big, new Pattern.Single(EngineTestSupport.handle(host.runtime().states(),
                     "minecraft:stone")), CellMask.ANY), RunOptions.DEFAULT, job);
         } catch (EditRejected e) {
-            throw new GameTestException("the fill was refused: " + e.getMessage());
+            throw new GameTestAssertException("the fill was refused: " + e.getMessage());
         }
         Runnable cleanup = () -> {
             ops.remove(player.getGameProfile());
-            host.cancelAll(player.getUuid());
-            host.playerLeft(player.getUuid());
+            host.cancelAll(player.getUUID());
+            host.playerLeft(player.getUUID());
             try {
-                server.getPlayerManager().remove(player);
+                server.getPlayerList().remove(player);
             } catch (RuntimeException e) {
                 LoggerFactory.getLogger("sculptory").warn("Could not remove the mock player", e);
             }
-            forceChunks(context.getWorld(), big, false);
+            forceChunks(context.getLevel(), big, false);
         };
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     check(job.phases.contains(Phase.APPLY), "the fill is not running");
                     // In the tick the fill is first seen running (it has had one tick of work): /deop.
                     if (job.result != null) {
                         cleanup.run();
-                        throw new GameTestException("the fill finished too soon to test: " + job.result);
+                        throw new GameTestAssertException("the fill finished too soon to test: " + job.result);
                     }
-                    server.getPlayerManager().removeFromOperators(player.getGameProfile()); // what /deop calls
+                    server.getPlayerList().deop(player.getGameProfile()); // what /deop calls
                     check(job.result == null, "the running fill stopped mid-section");
                 })
-                .createAndAdd(() -> check(job.result != null, "the deop did not stop the running fill"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(job.result != null, "the deop did not stop the running fill"))
+                .thenWaitUntil(() -> {
                     try {
                         check(job.result.outcome() == JobOutcome.CANCELLED && job.result.changed() > 0
                                 && job.result.changed() < big.volume() && job.result.changed() % 4096 == 0,
@@ -1082,7 +1082,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
                         cleanup.run();
                     }
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -1092,18 +1092,18 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * {@code /deop} ({@code removeFromOperators}) still re-checks every world: from the nether it cancels an overworld
      * job the player may no longer run.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_world_change", tickLimit = LIMIT)
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_world_change", timeoutTicks = LIMIT)
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
-    public void aChangeOfWorldRechecksOnlyTheWorldThePlayerIsIn(TestContext context) {
-        MinecraftServer server = context.getWorld().getServer();
-        ServerWorld overworld = context.getWorld();
-        ServerWorld nether = server.getWorld(net.minecraft.world.World.NETHER);
+    public void aChangeOfWorldRechecksOnlyTheWorldThePlayerIsIn(GameTestHelper context) {
+        MinecraftServer server = context.getLevel().getServer();
+        ServerLevel overworld = context.getLevel();
+        ServerLevel nether = server.getLevel(net.minecraft.world.level.Level.NETHER);
         var host = EditServiceHost.find(server)
-                .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
-        check(nether != null && overworld.getRegistryKey() == net.minecraft.world.World.OVERWORLD, "worlds");
-        ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
+                .orElseThrow(() -> new GameTestAssertException("the mod did not install the edit service"));
+        check(nether != null && overworld.dimension() == net.minecraft.world.level.Level.OVERWORLD, "worlds");
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
         EditTestSupport.grant(player, Perm.USE);
-        EditTestSupport.grantIn(player, net.minecraft.world.World.OVERWORLD, Perm.REGION);
+        EditTestSupport.grantIn(player, net.minecraft.world.level.Level.OVERWORLD, Perm.REGION);
         int[] at = regionCorner(context, 141);
         int x = at[0], z = at[1];
         Box area = box(x, 112, z, x + 15, 127, z + 15);
@@ -1111,45 +1111,45 @@ public final class MultiplayerGameTest implements FabricGameTest {
         EditExecutor.AreaHold hold = host.executor().hold(overworld, x >> 4, z >> 4, x >> 4, z >> 4, 112 >> 4, 127 >> 4);
         OpSpec.Fill fill = new OpSpec.Fill(area, new Pattern.Single(EngineTestSupport.handle(host.runtime().states(),
                 "minecraft:stone")), CellMask.ANY);
-        OperatorList ops = server.getPlayerManager().getOpList();
+        ServerOpList ops = server.getPlayerList().getOps();
         BlockPos home = new BlockPos(x, 130, z);
         try {
             RecordingListener scoped = new RecordingListener();
             host.run(player, fill, RunOptions.DEFAULT, scoped);
-            check(player.teleport(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport to the nether failed");
+            check(player.teleportTo(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport to the nether failed");
             check(!host.runtime().permissions().has(player, Perm.REGION), "the scoped grant holds in the nether");
-            check(player.teleport(overworld, home.x(), home.y(), home.z(), Set.of(), 0, 0), "teleport back failed");
-            check(scoped.result == null && host.jobs(player.getUuid()).size() == 1,
+            check(player.teleportTo(overworld, home.x(), home.y(), home.z(), Set.of(), 0, 0), "teleport back failed");
+            check(scoped.result == null && host.jobs(player.getUUID()).size() == 1,
                     "a change of world cancelled the overworld job: " + scoped.result);
             check(host.runtime().permissions().has(player, Perm.REGION), "the scoped grant is lost in the overworld");
 
             // Opped (every node), a second job; then /deop from the nether: every world is re-checked.
-            ops.add(new OperatorEntry(player.getGameProfile(), 2, false));
+            ops.add(new ServerOpListEntry(player.getGameProfile(), 2, false));
             RecordingListener opped = new RecordingListener();
             host.run(player, fill, RunOptions.DEFAULT, opped);
-            check(player.teleport(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport to the nether failed");
+            check(player.teleportTo(nether, 0.5, 100, 0.5, Set.of(), 0, 0), "teleport to the nether failed");
             check(opped.result == null && scoped.result == null, "the move to the nether cancelled a job");
-            server.getPlayerManager().removeFromOperators(player.getGameProfile());
+            server.getPlayerList().deop(player.getGameProfile());
             check(opped.result != null && opped.result.outcome() == JobOutcome.CANCELLED
                     && scoped.result != null && scoped.result.outcome() == JobOutcome.CANCELLED,
                     "the deop from the nether did not cancel the overworld jobs: " + opped.result + " / " + scoped.result);
         } catch (EditRejected e) {
-            throw new GameTestException("the fill was refused: " + e.getMessage());
+            throw new GameTestAssertException("the fill was refused: " + e.getMessage());
         } finally {
             hold.release();
             ops.remove(player.getGameProfile());
-            host.cancelAll(player.getUuid());
-            host.playerLeft(player.getUuid());
+            host.cancelAll(player.getUUID());
+            host.playerLeft(player.getUUID());
             EditTestSupport.grant(player);
             EditTestSupport.clearWorldGrants(player);
             try {
-                server.getPlayerManager().remove(player);
+                server.getPlayerList().remove(player);
             } catch (RuntimeException e) {
                 LoggerFactory.getLogger("sculptory").warn("Could not remove the mock player", e);
             }
             forceChunks(overworld, area, false);
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -1159,14 +1159,14 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * cancelled when the right goes. A stack from a protected source reads it under {@code limit.bypass}, so it needs
      * that right, and is cancelled when it goes.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_operator_nbt", tickLimit = LIMIT)
-    public void theOperatorNbtRightIsNeededOnlyForUntrustedOperatorTiles(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0); // never ticked: every job stays waiting
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_operator_nbt", timeoutTicks = LIMIT)
+    public void theOperatorNbtRightIsNeededOnlyForUntrustedOperatorTiles(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0); // never ticked: every job stays waiting
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         Perm[] all = {Perm.USE, Perm.REGION, Perm.CLIPBOARD, Perm.NBT_OPERATOR, Perm.LIMIT_BYPASS};
         EditTestSupport.grant(builder, all);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 142);
         int x = at[0], z = at[1];
         Box loaded = box(x - 16, 90, z - 16, x + 47, 130, z + 31);
@@ -1174,7 +1174,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         int commandBlock = h.state("minecraft:command_block[facing=up]");
         check((h.runtime.states().flags(commandBlock) & dev.sculptory.core.state.StateFlags.OPERATOR_NBT) != 0,
                 "command blocks are not operator-NBT states");
-        UUID plain = h.service.clipboards().install(builder.getUuid(), cube(h, 2, "minecraft:stone")).id();
+        UUID plain = h.service.clipboards().install(builder.getUUID(), cube(h, 2, "minecraft:stone")).id();
         RecordingListener move = new RecordingListener();
         RecordingListener stack = new RecordingListener();
         RecordingListener plainPaste = new RecordingListener();
@@ -1183,7 +1183,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
                 Transform.IDENTITY, new Pattern.Single(h.state("minecraft:air"))), move);
         run(h, builder, new OpSpec.Stack(box(x + 2, 104, z + 2, x + 3, 104, z + 3), 3, 0, 0, 2), stack);
         run(h, builder, paste(plain, new BlockPos(x + 8, 106, z + 8)), plainPaste);
-        UUID commands = h.service.clipboards().install(builder.getUuid(), commandBlockClipboard(h)).id();
+        UUID commands = h.service.clipboards().install(builder.getUUID(), commandBlockClipboard(h)).id();
         run(h, builder, paste(commands, new BlockPos(x + 12, 106, z + 12)), commandPaste);
         check(h.service.revalidate(builder) == 0, "a job was cancelled with every right held");
 
@@ -1216,19 +1216,19 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, loaded, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * An undo still waiting to start (behind another player's job on the same cells) is cancelled when its player
      * leaves, having changed nothing; the other player's job runs on.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_leave_undo", tickLimit = LIMIT)
-    public void aWaitingUndoIsCancelledWhenThePlayerLeaves(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_leave_undo", timeoutTicks = LIMIT)
+    public void aWaitingUndoIsCancelledWhenThePlayerLeaves(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
         int[] at = regionCorner(context, 143);
         Box region = box(at[0], 112, at[1], at[0] + 15, 127, at[1] + 15);
         loadAndForce(h.world, region);
@@ -1240,19 +1240,19 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.tick();
         check(bobFill.result == null && bobFill.phases.contains(Phase.APPLY), "Bob's fill is not running");
         RecordingListener undo = historyStep(h, alice, true);
-        check(executor.isWaiting(h.service.jobs(alice.getUuid()).get(0).jobId()), "Alice's undo is not waiting");
+        check(executor.isWaiting(h.service.jobs(alice.getUUID()).get(0).jobId()), "Alice's undo is not waiting");
 
         EditServiceHost.playerLeft(h.service, null, alice);
         check(undo.result != null && undo.result.outcome() == JobOutcome.CANCELLED && undo.result.changed() == 0,
                 "the waiting undo of a player who left: " + undo.result);
-        check(h.service.historyService().find(alice.getUuid()).isEmpty(), "Alice's history was kept");
+        check(h.service.historyService().find(alice.getUUID()).isEmpty(), "Alice's history was kept");
         tickUntil(executor, () -> bobFill.result != null, 8, "Bob's fill");
         check(bobFill.result.outcome() == JobOutcome.COMPLETED && count(h.world, region, Blocks.GOLD_BLOCK) == region.volume(),
                 "Bob's fill " + bobFill.result);
         executor.shutdown();
         forceChunks(h.world, region, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- protection
@@ -1264,13 +1264,13 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * stack's copies landing in B are not written; a dab wholly in B is refused PROTECTED and one on the edge writes A
      * only; an undo made after B became protected leaves B as it is. Chunk B never changes.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_protection", tickLimit = LIMIT)
-    public void protectionHoldsOnEveryWritePath(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_protection", timeoutTicks = LIMIT)
+    public void protectionHoldsOnEveryWritePath(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.CLIPBOARD, Perm.BRUSH);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 126);
         int x = at[0], z = at[1];
         Box chunkA = box(x, 100, z, x + 15, 110, z + 15);
@@ -1287,14 +1287,14 @@ public final class MultiplayerGameTest implements FabricGameTest {
         run(h, builder, fill(h, box(x, 108, z, x + 31, 108, z + 15), "minecraft:glass"), early);
         tickUntil(executor, () -> early.result != null, 4, "the early fill");
         WorldSnapshot bBefore = capture(world, chunkB);
-        UUID clipboard = h.service.clipboards().install(builder.getUuid(), cube(h, 4, "minecraft:emerald_block")).id();
+        UUID clipboard = h.service.clipboards().install(builder.getUUID(), cube(h, 4, "minecraft:emerald_block")).id();
         WorldBorder border = world.getWorldBorder();
         double centerX = border.getCenterX(), centerZ = border.getCenterZ(), size = border.getSize();
         try {
             border.setCenter(x + 16 - 100_000, z);
             border.setSize(200_000);
-            check(!world.canPlayerModifyAt(builder, pos(x + 20, 101, z + 5)), "chunk B is not protected");
-            check(world.canPlayerModifyAt(builder, pos(x + 5, 101, z + 5)), "chunk A is protected");
+            check(!world.mayInteract(builder, pos(x + 20, 101, z + 5)), "chunk B is not protected");
+            check(world.mayInteract(builder, pos(x + 5, 101, z + 5)), "chunk A is protected");
 
             RecordingListener fill = new RecordingListener();
             run(h, builder, fill(h, box(x, 101, z, x + 31, 101, z + 15), "minecraft:gold_block"), fill);
@@ -1345,7 +1345,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, loaded, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- clipboards and connections
@@ -1355,12 +1355,12 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * the other's. A copy still being built when its player's connection ends is dropped, even though the player (a new
      * connection, same UUID) is back when it finishes: it never replaces the new connection's clipboard.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_clipboards", tickLimit = LIMIT)
-    public void clipboardsBelongToTheirPlayerAndConnection(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_clipboards", timeoutTicks = LIMIT)
+    public void clipboardsBelongToTheirPlayerAndConnection(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerWorld world = h.world;
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerLevel world = h.world;
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
         int[] at = regionCorner(context, 127);
@@ -1375,15 +1375,15 @@ public final class MultiplayerGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> aliceCopy = ClipboardGameTest.copy(clips, alice, aliceArea, aliceArea.min());
         Captured<ClipboardService.ClipboardInfo> bobCopy = ClipboardGameTest.copy(clips, bob, bobArea, bobArea.min());
         List<Captured<ClipboardService.ClipboardInfo>> late = new ArrayList<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(aliceCopy.finished() && bobCopy.finished(), "copies running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(aliceCopy.finished() && bobCopy.finished(), "copies running"))
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo a = aliceCopy.get("Alice's copy");
                     ClipboardService.ClipboardInfo b = bobCopy.get("Bob's copy");
                     check(!a.clipboardId().equals(b.clipboardId()), "one clipboard id for both");
                     check(a.cells() == aliceArea.volume() && b.cells() == bobArea.volume(), "cells " + a + " / " + b);
-                    Clipboard aliceHeld = h.service.clipboards().get(alice.getUuid()).orElseThrow().clipboard();
-                    Clipboard bobHeld = h.service.clipboards().get(bob.getUuid()).orElseThrow().clipboard();
+                    Clipboard aliceHeld = h.service.clipboards().get(alice.getUUID()).orElseThrow().clipboard();
+                    Clipboard bobHeld = h.service.clipboards().get(bob.getUUID()).orElseThrow().clipboard();
                     check(aliceHeld.get(0, 0, 0) == h.state("minecraft:stone")
                             && bobHeld.get(0, 0, 0) == h.state("minecraft:gold_block"), "the clipboards crossed");
                     UUID bobs = b.clipboardId();
@@ -1398,21 +1398,21 @@ public final class MultiplayerGameTest implements FabricGameTest {
                     // Alice copies again and her connection ends before the clipboard is built; the mock player stays
                     // online, as the same player reconnected would be.
                     late.add(ClipboardGameTest.copy(clips, alice, aliceArea, aliceArea.min()));
-                    h.service.playerLeft(alice.getUuid());
+                    h.service.playerLeft(alice.getUUID());
                 })
-                .createAndAdd(() -> check(late.get(0).finished(), "the late copy is running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(late.get(0).finished(), "the late copy is running"))
+                .thenWaitUntil(() -> {
                     late.get(0).failedWith(RejectReason.INVALID, "a copy finished after its connection ended");
-                    check(h.service.clipboards().get(alice.getUuid()).isEmpty(),
+                    check(h.service.clipboards().get(alice.getUUID()).isEmpty(),
                             "the old connection's copy became the new connection's clipboard");
-                    check(h.service.clipboards().get(bob.getUuid()).isPresent(), "Bob's clipboard left with Alice");
-                    check(clips.requests(alice.getUuid()) == 0 && clips.requests(bob.getUuid()) == 0, "leases held");
+                    check(h.service.clipboards().get(bob.getUUID()).isPresent(), "Bob's clipboard left with Alice");
+                    check(clips.requests(alice.getUUID()) == 0 && clips.requests(bob.getUUID()) == 0, "leases held");
                     clips.shutdown();
                     ClipTestSupport.deleteTree(root.getParent());
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // ---------------------------------------------------------------- leaving and stopping
@@ -1423,15 +1423,15 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * history are dropped, her preview's area is released, and her running fill finishes (pushing nothing). Bob's jobs
      * then run, his history stays exact, and no lock, ticket or hold is left.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_leave", tickLimit = LIMIT)
-    public void aPlayerLeavingMidJobFreesEverythingAndOthersCarryOn(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_leave", timeoutTicks = LIMIT)
+    public void aPlayerLeavingMidJobFreesEverythingAndOthersCarryOn(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        UUID aliceId = alice.getUuid();
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        UUID aliceId = alice.getUUID();
         var scatter = new ServerScatter<>(h.service);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 128);
         int x = at[0], z = at[1];
         Box aliceBox = box(x, 112, z, x + 31, 127, z + 15);
@@ -1493,7 +1493,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
         forceChunks(world, scatterFloor, false);
         forceChunks(world, brushFloor, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -1502,14 +1502,14 @@ public final class MultiplayerGameTest implements FabricGameTest {
      * (so every section is whole: written entirely or not at all), ends every job CANCELLED, drops and acknowledges the
      * dab, keeps each job's applied work in its owner's history, and leaves no lock or ticket.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mp_stop", tickLimit = LIMIT)
-    public void serverStopEndsEveryPlayersJobsOnWholeSections(TestContext context) {
-        EditExecutor<ServerWorld> executor = executor(context, 1024);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_stop", timeoutTicks = LIMIT)
+    public void serverStopEndsEveryPlayersJobsOnWholeSections(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = executor(context, 1024);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerPlayerEntity alice = h.player;
-        ServerPlayerEntity bob = h.addPlayer();
-        ServerPlayerEntity carol = h.addPlayer();
-        ServerWorld world = h.world;
+        ServerPlayer alice = h.player;
+        ServerPlayer bob = h.addPlayer();
+        ServerPlayer carol = h.addPlayer();
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 129);
         int x = at[0], z = at[1];
         Box aliceBox = box(x, 112, z, x + 31, 127, z + 15);
@@ -1554,33 +1554,33 @@ public final class MultiplayerGameTest implements FabricGameTest {
         check(refusal(() -> h.service.run(bob, fill(h, bobBox, "minecraft:gold_block"), RunOptions.DEFAULT, null)).reason()
                 == RejectReason.DISABLED, "a fill after the stop");
         h.service.shutdown();
-        check(h.service.jobs(alice.getUuid()).isEmpty() && h.service.historyService().totalBytes() == 0, "service state");
+        check(h.service.jobs(alice.getUUID()).isEmpty() && h.service.historyService().totalBytes() == 0, "service state");
         forceChunks(world, all, false);
         forceChunks(world, brushFloor, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- helpers
 
     @FunctionalInterface
     interface Attempt {
-        void run(ServerPlayerEntity player) throws EditRejected;
+        void run(ServerPlayer player) throws EditRejected;
     }
 
     /** A private executor ticked by the test: the LOAD policy and at most {@code cellsPerTick} cells a tick (0: any). */
-    static EditExecutor<ServerWorld> executor(TestContext context, long cellsPerTick) {
+    static EditExecutor<ServerLevel> executor(GameTestHelper context, long cellsPerTick) {
         return new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, cellsPerTick, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
     }
 
-    static void tickUntil(EditExecutor<ServerWorld> executor, BooleanSupplier done, int maxTicks, String what) {
+    static void tickUntil(EditExecutor<ServerLevel> executor, BooleanSupplier done, int maxTicks, String what) {
         ticksUntil(executor, done, maxTicks);
         check(done.getAsBoolean(), what + " did not finish in " + maxTicks + " ticks");
     }
 
     /** Ticks until {@code done} (at most {@code maxTicks}); how many ticks that took. */
-    static int ticksUntil(EditExecutor<ServerWorld> executor, BooleanSupplier done, int maxTicks) {
+    static int ticksUntil(EditExecutor<ServerLevel> executor, BooleanSupplier done, int maxTicks) {
         int ticks = 0;
         while (!done.getAsBoolean() && ticks < maxTicks) {
             executor.tick();
@@ -1598,15 +1598,15 @@ public final class MultiplayerGameTest implements FabricGameTest {
         return new OpSpec.Paste(new SourceRef.Clipboard(clipboard), origin, Transform.IDENTITY, PasteOptions.DEFAULT);
     }
 
-    static JobTicket run(Harness h, ServerPlayerEntity player, OpSpec op, JobListener listener) {
+    static JobTicket run(Harness h, ServerPlayer player, OpSpec op, JobListener listener) {
         try {
             return h.service.run(player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
         }
     }
 
-    static RecordingListener historyStep(Harness h, ServerPlayerEntity player, boolean undo) {
+    static RecordingListener historyStep(Harness h, ServerPlayer player, boolean undo) {
         RecordingListener listener = new RecordingListener();
         try {
             if (undo) {
@@ -1615,16 +1615,16 @@ public final class MultiplayerGameTest implements FabricGameTest {
                 h.service.redo(player, ConflictPolicy.SKIP_CONFLICTS, listener);
             }
         } catch (EditRejected e) {
-            throw new GameTestException((undo ? "undo" : "redo") + " refused: " + e.getMessage());
+            throw new GameTestAssertException((undo ? "undo" : "redo") + " refused: " + e.getMessage());
         }
         return listener;
     }
 
-    static void begin(Harness h, ServerPlayerEntity player, int strokeId) {
+    static void begin(Harness h, ServerPlayer player, int strokeId) {
         try {
             h.service.beginStroke(player, strokeId, RAISE);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 
@@ -1633,7 +1633,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
     }
 
     /** Requires {@code attempt} to be refused with {@code reason}, naming {@code node} when one is given. */
-    static void expect(ServerPlayerEntity player, String what, Attempt attempt, RejectReason reason, Perm node) {
+    static void expect(ServerPlayer player, String what, Attempt attempt, RejectReason reason, Perm node) {
         String who = player.getGameProfile().getName();
         try {
             attempt.run(player);
@@ -1646,7 +1646,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
             }
             return;
         }
-        throw new GameTestException(what + " for " + who + " was not refused (expected " + reason + ")");
+        throw new GameTestAssertException(what + " for " + who + " was not refused (expected " + reason + ")");
     }
 
     /** One command block with its command, as an untrusted tile (neither server-captured nor sanitized). */
@@ -1678,13 +1678,13 @@ public final class MultiplayerGameTest implements FabricGameTest {
         }
     }
 
-    static long count(ServerWorld world, Box box, Block block) {
+    static long count(ServerLevel world, Box box, Block block) {
         long n = 0;
-        net.minecraft.util.math.BlockPos.Mutable at = new net.minecraft.util.math.BlockPos.Mutable();
+        net.minecraft.core.BlockPos.MutableBlockPos at = new net.minecraft.core.BlockPos.MutableBlockPos();
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
-                    if (world.getBlockState(at.set(x, y, z)).isOf(block)) n++;
+                    if (world.getBlockState(at.set(x, y, z)).is(block)) n++;
                 }
             }
         }
@@ -1692,7 +1692,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
     }
 
     /** Every 16³ section of {@code box} holds {@code block} everywhere or nowhere, {@code total} cells in all. */
-    static void checkWholeSections(ServerWorld world, Box box, Block block, long total) {
+    static void checkWholeSections(ServerLevel world, Box box, Block block, long total) {
         long sum = 0;
         for (int sy = box.min().y() >> 4; sy <= box.max().y() >> 4; sy++) {
             for (int sx = box.min().x() >> 4; sx <= box.max().x() >> 4; sx++) {
@@ -1716,7 +1716,7 @@ public final class MultiplayerGameTest implements FabricGameTest {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
                     if (!base.box.contains(x, y, z)) continue;
                     copy.states[copy.index(x, y, z)] = state;
-                    copy.tiles.remove(net.minecraft.util.math.BlockPos.asLong(x, y, z));
+                    copy.tiles.remove(net.minecraft.core.BlockPos.asLong(x, y, z));
                 }
             }
         }

@@ -5,12 +5,12 @@ import dev.sculptory.fabric.world.FabricTile;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import java.util.Objects;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,7 +45,7 @@ public final class BuilderCapture implements AutoCloseable {
         void record(int x, int y, int z, int before, BlockEntityData beforeTile, int after, BlockEntityData afterTile);
     }
 
-    private final World world;
+    private final Level world;
     private final Thread thread;
     private final boolean keepShape;
     private final boolean recording;
@@ -53,7 +53,7 @@ public final class BuilderCapture implements AutoCloseable {
     private boolean captureFailureLogged;
     private boolean closed;
 
-    private BuilderCapture(World world, boolean keepShape, boolean recording) {
+    private BuilderCapture(Level world, boolean keepShape, boolean recording) {
         this.world = world;
         this.thread = Thread.currentThread();
         this.keepShape = keepShape;
@@ -68,11 +68,11 @@ public final class BuilderCapture implements AutoCloseable {
      *     {@code keepShape}
      * @throws IllegalStateException if a capture of that side is already open
      */
-    public static BuilderCapture open(World world, boolean keepShape, boolean recording) {
+    public static BuilderCapture open(Level world, boolean keepShape, boolean recording) {
         Objects.requireNonNull(world);
         BuilderCapture capture = new BuilderCapture(world, keepShape, recording);
         synchronized (BuilderCapture.class) {
-            if (world.isClient) {
+            if (world.isClientSide) {
                 if (clientSide != null) throw new IllegalStateException("A client builder capture is already open");
                 clientSide = capture;
             } else {
@@ -83,7 +83,7 @@ public final class BuilderCapture implements AutoCloseable {
         return capture;
     }
 
-    public World world() {
+    public Level world() {
         return world;
     }
 
@@ -100,7 +100,7 @@ public final class BuilderCapture implements AutoCloseable {
         long key = pos.asLong();
         if (touched.containsKey(key)) return;
         BlockState old = world.getBlockState(pos);
-        touched.put(key, new Before(Block.getRawIdFromState(old), old.hasBlockEntity() ? capture(pos) : null));
+        touched.put(key, new Before(Block.getId(old), old.hasBlockEntity() ? capture(pos) : null));
     }
 
     /** Cells noted so far (changed or not). */
@@ -115,12 +115,12 @@ public final class BuilderCapture implements AutoCloseable {
     public int finish(Sink sink) {
         close();
         int changed = 0;
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (Long2ObjectMap.Entry<Before> entry : touched.long2ObjectEntrySet()) {
             pos.set(entry.getLongKey());
             Before before = entry.getValue();
             BlockState now = world.getBlockState(pos);
-            int after = Block.getRawIdFromState(now);
+            int after = Block.getId(now);
             BlockEntityData tile = now.hasBlockEntity() ? capture(pos) : null;
             if (after == before.state() && sameTile(before.tile(), tile)) continue;
             sink.record(pos.getX(), pos.getY(), pos.getZ(), before.state(), before.tile(), after, tile);
@@ -142,37 +142,37 @@ public final class BuilderCapture implements AutoCloseable {
     // ============================================================================================ hooks (mixin)
 
     /** {@code World.setBlockState}, before it changes anything: notes the cell's first state. */
-    public static void beforeSetBlockState(World world, BlockPos pos, BlockState state) {
+    public static void beforeSetBlockState(Level world, BlockPos pos, BlockState state) {
         BuilderCapture capture = active(world);
         if (capture == null || !capture.recording) return;
         long key = pos.asLong();
         if (capture.touched.containsKey(key)) return;
         BlockState old = world.getBlockState(pos);
         if (old == state) return;
-        capture.touched.put(key, new Before(Block.getRawIdFromState(old), old.hasBlockEntity() ? capture.capture(pos) : null));
+        capture.touched.put(key, new Before(Block.getId(old), old.hasBlockEntity() ? capture.capture(pos) : null));
     }
 
     /**
      * The flags of a {@code World.setBlockState} made inside a keep-shape capture: {@code FORCE_STATE} and no neighbour
      * notification (listeners, and so clients, still hear of the change). Other calls keep theirs.
      */
-    public static int flags(World world, int flags) {
+    public static int flags(Level world, int flags) {
         BuilderCapture capture = active(world);
         if (capture == null || !capture.keepShape) return flags;
-        return (flags | Block.FORCE_STATE) & ~Block.NOTIFY_NEIGHBORS;
+        return (flags | Block.UPDATE_KNOWN_SHAPE) & ~Block.UPDATE_NEIGHBORS;
     }
 
     /** The update depth of such a call: 0, so no shape update ever runs from it. */
-    public static int depth(World world, int maxUpdateDepth) {
+    public static int depth(Level world, int maxUpdateDepth) {
         BuilderCapture capture = active(world);
         return capture == null || !capture.keepShape ? maxUpdateDepth : 0;
     }
 
-    private static BuilderCapture active(World world) {
+    private static BuilderCapture active(Level world) {
         BuilderCapture server = serverSide;
         BuilderCapture client = clientSide;
         if (server == null && client == null) return null;
-        BuilderCapture capture = world.isClient ? client : server;
+        BuilderCapture capture = world.isClientSide ? client : server;
         if (capture == null || capture.world != world || Thread.currentThread() != capture.thread) return null;
         return capture;
     }
@@ -180,8 +180,8 @@ public final class BuilderCapture implements AutoCloseable {
     /** The block entity at {@code pos}, captured; a block entity that fails to save is logged once and taken as none. */
     private BlockEntityData capture(BlockPos pos) {
         try {
-            BlockEntity entity = world.getWorldChunk(pos).getBlockEntity(pos, WorldChunk.CreationType.CHECK);
-            return entity == null || entity.isRemoved() ? null : FabricTile.capture(entity, world.getRegistryManager());
+            BlockEntity entity = world.getChunkAt(pos).getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK);
+            return entity == null || entity.isRemoved() ? null : FabricTile.capture(entity, world.registryAccess());
         } catch (RuntimeException e) {
             if (!captureFailureLogged) {
                 captureFailureLogged = true;

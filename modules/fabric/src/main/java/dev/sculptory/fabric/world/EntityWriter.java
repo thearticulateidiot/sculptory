@@ -20,20 +20,20 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.decoration.AbstractDecorationEntity;
-import net.minecraft.entity.decoration.BlockAttachedEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtHelper;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.BlockMirror;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.decoration.BlockAttachedEntity;
+import net.minecraft.world.entity.decoration.HangingEntity;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,7 +70,7 @@ public final class EntityWriter implements EntityPlacer<Entity> {
     private static final Spawn<Entity> FAILED = new Spawn<>(null, false);
     private static final Spawn<Entity> REFUSED = new Spawn<>(null, true);
 
-    private final ServerWorld world;
+    private final ServerLevel world;
     private final WriteOptions options;
     private final EntityTypeRules rules;
     private long placed;
@@ -84,13 +84,13 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      *     everyone when {@code trustCapturedTiles})
      * @param rules which types are operator-only and which are never placed ({@link EntityTypeRules})
      */
-    public EntityWriter(ServerWorld world, WriteOptions options, EntityTypeRules rules) {
+    public EntityWriter(ServerLevel world, WriteOptions options, EntityTypeRules rules) {
         this.world = Objects.requireNonNull(world);
         this.options = Objects.requireNonNull(options);
         this.rules = Objects.requireNonNull(rules);
     }
 
-    public ServerWorld world() {
+    public ServerLevel world() {
         return world;
     }
 
@@ -163,8 +163,8 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         }
         BlockPos guess = where.attached() != null
                 ? new BlockPos(where.attached().x(), where.attached().y(), where.attached().z())
-                : BlockPos.ofFloored(where.x(), where.y(), where.z());
-        NbtCompound nbt;
+                : BlockPos.containing(where.x(), where.y(), where.z());
+        CompoundTag nbt;
         try {
             dev.sculptory.core.nbt.NbtCompound spawn = EntityNbt.spawnCompound(entity.typeId(), data, where.x(),
                     where.y(), where.z(), entity.yaw(), entity.pitch(),
@@ -179,8 +179,8 @@ public final class EntityWriter implements EntityPlacer<Entity> {
             return failed(entity.typeId(), "entities of its kind are never placed");
         }
         dropNeverRiders(root);
-        if (hangsFacing >= 0 && root instanceof AbstractDecorationEntity decoration
-                && decoration.getHorizontalFacing().getId() != hangsFacing) {
+        if (hangsFacing >= 0 && root instanceof HangingEntity decoration
+                && decoration.getDirection().get3DDataValue() != hangsFacing) {
             // It ignored the flipped face: it cannot hang the other way up, so it is left out.
             notFlipped++;
             return failed(entity.typeId(), "it cannot hang upside down");
@@ -188,31 +188,31 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         if (free) {
             double[] rotation = orientation.rotationMatrix();
             turnFree(root, t, rotation);
-            for (Entity rider : root.getPassengersDeep()) turnFree(rider, t, rotation);
+            for (Entity rider : root.getIndirectPassengers()) turnFree(rider, t, rotation);
         } else {
             turn(root, t);
-            for (Entity rider : root.getPassengersDeep()) turn(rider, t);
+            for (Entity rider : root.getIndirectPassengers()) turn(rider, t);
         }
         if (root instanceof BlockAttachedEntity hanging) {
             hang(hanging, where, guess);
             // Turned by a free angle, the block it hung on may not be behind it any more: it would drop off (and its item
             // with it) once the game checks, so it is left out instead.
-            if (free && !hanging.canStayAttached()) {
+            if (free && !hanging.survives()) {
                 return failed(entity.typeId(), "it has no wall to hang on once turned");
             }
         } else {
             // Flipped, where is the image of its feet: the top of where its box goes.
-            double y = t.upsideDown() && !free ? EntityPlacement.flippedFeet(where.y(), root.getHeight()) : where.y();
-            root.refreshPositionAndAngles(where.x(), y, where.z(), root.getYaw(), root.getPitch());
-            root.setHeadYaw(root.getYaw());
-            root.setBodyYaw(root.getYaw());
+            double y = t.upsideDown() && !free ? EntityPlacement.flippedFeet(where.y(), root.getBbHeight()) : where.y();
+            root.moveTo(where.x(), y, where.z(), root.getYRot(), root.getXRot());
+            root.setYHeadRot(root.getYRot());
+            root.setYBodyRot(root.getYRot());
         }
-        for (Entity rider : root.getPassengersDeep()) {
+        for (Entity rider : root.getIndirectPassengers()) {
             Entity vehicle = rider.getVehicle();
-            if (vehicle != null) vehicle.updatePassengerPosition(rider);
+            if (vehicle != null) vehicle.positionRider(rider);
         }
         if (!allowed.test(root)) return REFUSED;
-        if (!world.spawnNewEntityAndPassengers(root)) return failed(entity.typeId(), "one of its UUIDs is in use");
+        if (!world.tryAddFreshEntityWithPassengers(root)) return failed(entity.typeId(), "one of its UUIDs is in use");
         placed++;
         return new Spawn<>(root, false);
     }
@@ -223,7 +223,7 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      */
     @Override
     public Spawn<Entity> restore(EntityState state, Predicate<Entity> allowed) {
-        NbtCompound nbt;
+        CompoundTag nbt;
         try {
             nbt = FabricEntities.compound(state.nbt());
         } catch (IOException e) {
@@ -235,7 +235,7 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         Entity root = load(nbt, state.typeId());
         if (root == null) return FAILED;
         if (!allowed.test(root)) return REFUSED;
-        if (!world.spawnNewEntityAndPassengers(root)) return failed(state.typeId(), "one of its UUIDs is in use");
+        if (!world.tryAddFreshEntityWithPassengers(root)) return failed(state.typeId(), "one of its UUIDs is in use");
         placed++;
         return new Spawn<>(root, false);
     }
@@ -246,8 +246,8 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      */
     @Override
     public void takeBack(Entity root) {
-        for (Entity rider : root.getPassengersDeep()) {
-            if (!rider.isPlayer()) rider.discard();
+        for (Entity rider : root.getIndirectPassengers()) {
+            if (!rider.isAlwaysTicking()) rider.discard();
         }
         root.discard();
         placed--;
@@ -257,13 +257,13 @@ public final class EntityWriter implements EntityPlacer<Entity> {
     /** Leaves out passengers of a kind that is never placed (with their own riders), each counted as a failure. */
     private void dropNeverRiders(Entity root) {
         List<Entity> refused = new ArrayList<>();
-        for (Entity rider : root.getPassengersDeep()) {
+        for (Entity rider : root.getIndirectPassengers()) {
             if (FabricEntities.kind(rider) == FabricEntities.Kind.NEVER || rules.never(FabricEntities.typeId(rider))) {
                 refused.add(rider);
             }
         }
         for (Entity rider : refused) {
-            if (rider.hasVehicle()) rider.stopRiding();
+            if (rider.isPassenger()) rider.stopRiding();
             failed(FabricEntities.typeId(rider), "passengers of its kind are never placed");
         }
     }
@@ -276,8 +276,8 @@ public final class EntityWriter implements EntityPlacer<Entity> {
     public void remove(Entity root, EntityState recorded) {
         Set<UUID> along = recorded == null ? Set.of() : riderIds(recorded);
         List<Entity> riders = new ArrayList<>();
-        for (Entity rider : root.getPassengersDeep()) {
-            if (!rider.isPlayer() && along.contains(rider.getUuid())) riders.add(rider);
+        for (Entity rider : root.getIndirectPassengers()) {
+            if (!rider.isAlwaysTicking() && along.contains(rider.getUUID())) riders.add(rider);
         }
         for (Entity rider : riders) rider.discard();
         root.discard();
@@ -296,10 +296,10 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         return clean == whole ? data : clean.toBuilder().remove("id").build();
     }
 
-    private Entity load(NbtCompound nbt, String typeId) {
+    private Entity load(CompoundTag nbt, String typeId) {
         Entity root;
         try {
-            root = EntityType.loadEntityWithPassengers(nbt, world, entity -> entity);
+            root = EntityType.loadEntityRecursive(nbt, world, entity -> entity);
         } catch (RuntimeException e) {
             failed(typeId, "loading it failed: " + e);
             return null;
@@ -314,21 +314,21 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      * follows its face, which {@link EntityNbt#flippedAttachment} already swapped, so turning it again would undo that.
      */
     private static void turn(Entity entity, Transform t) {
-        if (t.upsideDown() && !(entity instanceof AbstractDecorationEntity)) {
-            entity.setPitch(EntityPlacement.pitch(entity.getPitch(), t));
+        if (t.upsideDown() && !(entity instanceof HangingEntity)) {
+            entity.setXRot(EntityPlacement.pitch(entity.getXRot(), t));
         }
         if (t.mirror() != dev.sculptory.core.transform.Mirror.NONE) {
-            BlockMirror mirror = t.mirror() == dev.sculptory.core.transform.Mirror.X ? BlockMirror.FRONT_BACK
-                    : BlockMirror.LEFT_RIGHT;
-            entity.setYaw(entity.applyMirror(mirror));
+            Mirror mirror = t.mirror() == dev.sculptory.core.transform.Mirror.X ? Mirror.FRONT_BACK
+                    : Mirror.LEFT_RIGHT;
+            entity.setYRot(entity.mirror(mirror));
         }
         if (t.quarterTurnsCw() != 0) {
-            BlockRotation rotation = switch (t.quarterTurnsCw()) {
-                case 1 -> BlockRotation.CLOCKWISE_90;
-                case 2 -> BlockRotation.CLOCKWISE_180;
-                default -> BlockRotation.COUNTERCLOCKWISE_90;
+            Rotation rotation = switch (t.quarterTurnsCw()) {
+                case 1 -> Rotation.CLOCKWISE_90;
+                case 2 -> Rotation.CLOCKWISE_180;
+                default -> Rotation.COUNTERCLOCKWISE_90;
             };
-            entity.setYaw(entity.applyRotation(rotation));
+            entity.setYRot(entity.rotate(rotation));
         }
     }
 
@@ -338,10 +338,10 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      * own rotation took the turn.
      */
     private static void turnFree(Entity entity, Transform t, double[] rotation) {
-        if (entity instanceof AbstractDecorationEntity) return;
+        if (entity instanceof HangingEntity) return;
         turn(entity, t);
-        if (entity instanceof net.minecraft.entity.decoration.DisplayEntity) return;
-        entity.setYaw(EntityTurn.yaw(entity.getYaw(), rotation));
+        if (entity instanceof net.minecraft.world.entity.Display) return;
+        entity.setYRot(EntityTurn.yaw(entity.getYRot(), rotation));
     }
 
     /**
@@ -349,16 +349,16 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      * centre is a fixed offset from its block for a given facing and size, so one trial placement finds the block.
      */
     private static void hang(BlockAttachedEntity hanging, EntityPlacement.Placed where, BlockPos guess) {
-        hanging.setPosition(guess.getX(), guess.getY(), guess.getZ());
-        Vec3d at = hanging.getPos();
-        BlockPos block = guess.add((int) Math.round(where.x() - at.x), (int) Math.round(where.y() - at.y),
+        hanging.setPos(guess.getX(), guess.getY(), guess.getZ());
+        Vec3 at = hanging.position();
+        BlockPos block = guess.offset((int) Math.round(where.x() - at.x), (int) Math.round(where.y() - at.y),
                 (int) Math.round(where.z() - at.z));
-        hanging.setPosition(block.getX(), block.getY(), block.getZ());
-        if (hanging instanceof AbstractDecorationEntity decoration) {
-            Direction facing = decoration.getHorizontalFacing();
-            if (facing.getAxis().isHorizontal()) decoration.setYaw(facing.getHorizontal() * 90f);
+        hanging.setPos(block.getX(), block.getY(), block.getZ());
+        if (hanging instanceof HangingEntity decoration) {
+            Direction facing = decoration.getDirection();
+            if (facing.getAxis().isHorizontal()) decoration.setYRot(facing.get2DDataValue() * 90f);
         }
-        hanging.resetPosition();
+        hanging.setOldPosAndRot();
     }
 
     /** The UUIDs of the passengers (at any depth) a recorded entity's data names. */
@@ -372,12 +372,12 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         return ids;
     }
 
-    private static void collectRiders(NbtCompound nbt, Set<UUID> ids, int depth) {
-        if (depth > EntityNbt.MAX_PASSENGER_DEPTH || !nbt.contains("Passengers", NbtElement.LIST_TYPE)) return;
-        NbtList riders = nbt.getList("Passengers", NbtElement.COMPOUND_TYPE);
+    private static void collectRiders(CompoundTag nbt, Set<UUID> ids, int depth) {
+        if (depth > EntityNbt.MAX_PASSENGER_DEPTH || !nbt.contains("Passengers", Tag.TAG_LIST)) return;
+        ListTag riders = nbt.getList("Passengers", Tag.TAG_COMPOUND);
         for (int i = 0; i < riders.size(); i++) {
-            NbtCompound rider = riders.getCompound(i);
-            if (rider.containsUuid("UUID")) ids.add(NbtHelper.toUuid(rider.get("UUID")));
+            CompoundTag rider = riders.getCompound(i);
+            if (rider.hasUUID("UUID")) ids.add(NbtUtils.loadUUID(rider.get("UUID")));
             collectRiders(rider, ids, depth + 1);
         }
     }

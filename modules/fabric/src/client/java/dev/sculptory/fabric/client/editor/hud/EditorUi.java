@@ -120,8 +120,8 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.Util;
+import net.minecraft.Util;
+import net.minecraft.world.item.ItemStack;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -1859,7 +1859,7 @@ public final class EditorUi implements InputRouter.Ui, EditorController.Ui, Sele
 
                             @Override
                             public void openFolder(Path folder) {
-                                Util.getOperatingSystem().open(folder);
+                                Util.getPlatform().openPath(folder);
                             }
                         }, onPick);
             }

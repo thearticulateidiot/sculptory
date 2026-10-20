@@ -32,13 +32,12 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -59,8 +58,8 @@ public final class FidelityFlipGameTest implements FabricGameTest {
      * and mirrors (the space's, fallback included), only properties with an up or down meaning change, and the blocks
      * named in the build flip as the rules say. The counts per mod are logged.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_flip_states")
-    public void moddedStatesFlipByTheirVanillaNamedProperties(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_flip_states")
+    public void moddedStatesFlipByTheirVanillaNamedProperties(GameTestHelper context) {
         FabricStateSpace space = EngineTestSupport.runtime(context).states();
         Map<String, int[]> counts = new TreeMap<>();
         for (int h = 0; h < space.size(); h++) {
@@ -108,7 +107,7 @@ public final class FidelityFlipGameTest implements FabricGameTest {
         kind(space, "farmersdelight:cabbages[age=5]", VerticalFlip.KEPT);
         check(space.flip(h(space, "farmersdelight:wild_rice[half=lower,waterlogged=true]"))
                 == h(space, "farmersdelight:wild_rice[half=upper,waterlogged=true]"), "wild rice stays whole");
-        context.complete();
+        context.succeed();
     }
 
     private static int h(FabricStateSpace space, String spec) {
@@ -131,10 +130,10 @@ public final class FidelityFlipGameTest implements FabricGameTest {
      * mirrored upside down: every cell is its source's state flipped where the flip puts it, every block entity keeps its
      * contents, and undoing both pastes leaves the world exactly as before.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_flip_paste", tickLimit = LIMIT)
-    public void theModdedBuildPastedUpsideDownKeepsContentsAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_flip_paste", timeoutTicks = LIMIT)
+    public void theModdedBuildPastedUpsideDownKeepsContentsAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1005);
         int x0 = at[0] + 8, y0 = 100, z0 = at[1] + 8;
         Box source = FidelitySupport.buildBox(x0, y0, z0);
@@ -147,15 +146,15 @@ public final class FidelityFlipGameTest implements FabricGameTest {
         WorldSnapshot[] before = new WorldSnapshot[2];
         List<Captured<ClipboardService.ClipboardInfo>> copied = new ArrayList<>();
         List<RecordingListener> pastes = new ArrayList<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     before[0] = capture(world, source);
                     before[1] = capture(world, all);
                     copied.add(copy(clips, h.player, source, source.min()));
                 }))
-                .createAndAdd(() -> copied.get(0).get("copy"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> copied.get(0).get("copy"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     ClipboardService.ClipboardInfo info = copied.get(0).get("copy");
                     for (int k = 0; k < transforms.size(); k++) {
                         RecordingListener listener = new RecordingListener();
@@ -165,10 +164,10 @@ public final class FidelityFlipGameTest implements FabricGameTest {
                         pastes.add(listener);
                     }
                 }))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     for (int k = 0; k < transforms.size(); k++) {
                         Transform t = transforms.get(k);
                         check(pastes.get(k).result.outcome() == JobOutcome.COMPLETED
@@ -180,40 +179,40 @@ public final class FidelityFlipGameTest implements FabricGameTest {
                         checkContents(world, before[0], targetMin, t);
                     }
                 }))
-                .createAndAdd(FlipGameTest.undoAll(h, transforms.size()))
-                .createAndAdd(() -> {
+                .thenWaitUntil(FlipGameTest.undoAll(h, transforms.size()))
+                .thenWaitUntil(() -> {
                     checkSame(FlipGameTest.settled(before[1]), FlipGameTest.settled(capture(world, all)),
                             "after undoing the flipped pastes");
                     check(FidelitySupport.itemEntities(world, all) == 0, "a paste or undo dropped items");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Every block entity of the source is at its flipped place with the same contents. */
-    private static void checkContents(ServerWorld world, WorldSnapshot source, BlockPos targetMin, Transform t) {
+    private static void checkContents(ServerLevel world, WorldSnapshot source, BlockPos targetMin, Transform t) {
         Box box = source.box;
         int sx = box.sizeX(), sy = box.sizeY(), sz = box.sizeZ();
         BlockPos size = t.size(sx, sy, sz);
         WorldSnapshot pasted = capture(world, new Box(targetMin, targetMin.offset(size.x() - 1, size.y() - 1,
                 size.z() - 1)));
-        for (Map.Entry<Long, NbtCompound> entry : source.tiles.entrySet()) {
-            net.minecraft.util.math.BlockPos from = net.minecraft.util.math.BlockPos.fromLong(entry.getKey());
+        for (Map.Entry<Long, CompoundTag> entry : source.tiles.entrySet()) {
+            net.minecraft.core.BlockPos from = net.minecraft.core.BlockPos.of(entry.getKey());
             int x = from.getX() - box.min().x(), y = from.getY() - box.min().y(), z = from.getZ() - box.min().z();
-            net.minecraft.util.math.BlockPos to = pos(targetMin.x() + t.mapX(x, z, sx, sz),
+            net.minecraft.core.BlockPos to = pos(targetMin.x() + t.mapX(x, z, sx, sz),
                     targetMin.y() + t.mapY(y, sy), targetMin.z() + t.mapZ(x, z, sx, sz));
-            NbtCompound got = pasted.tiles.get(to.asLong());
-            NbtCompound want = entry.getValue().copy();
+            CompoundTag got = pasted.tiles.get(to.asLong());
+            CompoundTag want = entry.getValue().copy();
             want.remove("TransferCooldown");
             if (got != null) {
                 got = got.copy();
                 got.remove("TransferCooldown");
             }
             if (!Objects.equals(want, got)) {
-                throw new GameTestException(t + ": the block entity from " + from.toShortString() + " at "
+                throw new GameTestAssertException(t + ": the block entity from " + from.toShortString() + " at "
                         + to.toShortString() + " is " + got + ", expected " + want + " ("
-                        + Block.getStateFromRawId(source.get(from.getX(), from.getY(), from.getZ())) + ")");
+                        + Block.stateById(source.get(from.getX(), from.getY(), from.getZ())) + ")");
             }
         }
         check(pasted.tiles.size() == source.tiles.size(), t + ": " + pasted.tiles.size() + " block entities pasted");

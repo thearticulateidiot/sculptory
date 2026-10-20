@@ -18,33 +18,33 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
-import net.minecraft.entity.AreaEffectCloudEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.EyeOfEnderEntity;
-import net.minecraft.entity.ExperienceOrbEntity;
-import net.minecraft.entity.FallingBlockEntity;
-import net.minecraft.entity.ItemEntity;
-import net.minecraft.entity.LightningEntity;
-import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.OminousItemSpawnerEntity;
-import net.minecraft.entity.TntEntity;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.entity.boss.WitherEntity;
-import net.minecraft.entity.boss.dragon.EnderDragonEntity;
-import net.minecraft.entity.boss.dragon.EnderDragonPart;
-import net.minecraft.entity.decoration.BlockAttachedEntity;
-import net.minecraft.entity.mob.EvokerFangsEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.projectile.ProjectileEntity;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.nbt.NbtSizeTracker;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.AreaEffectCloud;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.ExperienceOrb;
+import net.minecraft.world.entity.LightningBolt;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.OminousItemSpawner;
+import net.minecraft.world.entity.boss.EnderDragonPart;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
+import net.minecraft.world.entity.boss.wither.WitherBoss;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.BlockAttachedEntity;
+import net.minecraft.world.entity.item.FallingBlockEntity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.projectile.EvokerFangs;
+import net.minecraft.world.entity.projectile.EyeOfEnder;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.level.ChunkPos;
 
 /**
  * Which entities an edit takes and how it reads them, server thread only.
@@ -79,22 +79,22 @@ public final class FabricEntities {
     }
 
     public static Kind kind(Entity entity) {
-        if (entity instanceof PlayerEntity || entity.isRemoved() || !entity.getType().isSaveable()
-                || !entity.getType().isSummonable()) {
+        if (entity instanceof Player || entity.isRemoved() || !entity.getType().canSerialize()
+                || !entity.getType().canSummon()) {
             return Kind.NEVER;
         }
         // Bosses are never copied or placed, whatever the filter.
-        if (entity instanceof WitherEntity || entity instanceof EnderDragonEntity) return Kind.NEVER;
+        if (entity instanceof WitherBoss || entity instanceof EnderDragon) return Kind.NEVER;
         // A part of a multipart entity (the ender dragon's) has its owner's type but is no entity of its own.
         if (entity instanceof EnderDragonPart) return Kind.NEVER;
-        if (entity instanceof ItemEntity || entity instanceof ExperienceOrbEntity || entity instanceof ProjectileEntity
-                || entity instanceof FallingBlockEntity || entity instanceof TntEntity
-                || entity instanceof LightningEntity || entity instanceof AreaEffectCloudEntity
-                || entity instanceof EvokerFangsEntity || entity instanceof EyeOfEnderEntity
-                || entity instanceof OminousItemSpawnerEntity) {
+        if (entity instanceof ItemEntity || entity instanceof ExperienceOrb || entity instanceof Projectile
+                || entity instanceof FallingBlockEntity || entity instanceof PrimedTnt
+                || entity instanceof LightningBolt || entity instanceof AreaEffectCloud
+                || entity instanceof EvokerFangs || entity instanceof EyeOfEnder
+                || entity instanceof OminousItemSpawner) {
             return Kind.NEVER;
         }
-        if (entity instanceof ArmorStandEntity) return Kind.DECORATION;
+        if (entity instanceof ArmorStand) return Kind.DECORATION;
         return entity instanceof LivingEntity ? Kind.MOB : Kind.DECORATION;
     }
 
@@ -112,10 +112,10 @@ public final class FabricEntities {
      * block holding its position.
      */
     public static BlockPos cell(Entity entity) {
-        if (entity instanceof BlockAttachedEntity attached && attached.getAttachedBlockPos() != null) {
-            return attached.getAttachedBlockPos();
+        if (entity instanceof BlockAttachedEntity attached && attached.getPos() != null) {
+            return attached.getPos();
         }
-        return entity.getBlockPos();
+        return entity.blockPosition();
     }
 
     /** Whether {@code entity} belongs to {@code region}. */
@@ -125,22 +125,22 @@ public final class FabricEntities {
     }
 
     /** Whether chunk (cx, cz) is loaded with its entities (vanilla loads entities after the chunk). */
-    public static boolean loaded(ServerWorld world, int cx, int cz) {
-        return WorldChecks.isChunkLoaded(world, cx, cz) && world.isChunkLoaded(ChunkPos.toLong(cx, cz));
+    public static boolean loaded(ServerLevel world, int cx, int cz) {
+        return WorldChecks.isChunkLoaded(world, cx, cz) && world.areEntitiesLoaded(ChunkPos.asLong(cx, cz));
     }
 
     /**
      * The first chunk ("cx,cz") whose entities could belong to a region of {@code bounds} and are not loaded, or
      * {@code null} when every one is: an edit must not miss entities it cannot see.
      */
-    public static String firstUnloaded(ServerWorld world, Box bounds) {
+    public static String firstUnloaded(ServerLevel world, Box bounds) {
         return firstUnloaded(world, EntityColumns.of(bounds));
     }
 
-    /** {@link #firstUnloaded(ServerWorld, Box)} over packed chunk {@code columns}. */
-    public static String firstUnloaded(ServerWorld world, long[] columns) {
+    /** {@link #firstUnloaded(ServerLevel, Box)} over packed chunk {@code columns}. */
+    public static String firstUnloaded(ServerLevel world, long[] columns) {
         for (long column : columns) {
-            int cx = ChunkPos.getPackedX(column), cz = ChunkPos.getPackedZ(column);
+            int cx = ChunkPos.getX(column), cz = ChunkPos.getZ(column);
             if (!loaded(world, cx, cz)) return cx + "," + cz;
         }
         return null;
@@ -151,13 +151,13 @@ public final class FabricEntities {
      * chunk {@code columns} (as {@link EntityColumns#of(Region, int, int)} gives them, which hold every entity that can
      * belong to the region), in a stable order (by UUID).
      */
-    public static List<Entity> inRegion(ServerWorld world, Region region, EntityFilter filter, long[] columns) {
+    public static List<Entity> inRegion(ServerLevel world, Region region, EntityFilter filter, long[] columns) {
         if (filter == EntityFilter.NONE) return List.of();
         List<Entity> found = new ArrayList<>();
         for (long column : columns) {
-            found.addAll(inRegion(world, region, filter, ChunkPos.getPackedX(column), ChunkPos.getPackedZ(column)));
+            found.addAll(inRegion(world, region, filter, ChunkPos.getX(column), ChunkPos.getZ(column)));
         }
-        found.sort(Comparator.comparing(Entity::getUuid));
+        found.sort(Comparator.comparing(Entity::getUUID));
         return found;
     }
 
@@ -166,7 +166,7 @@ public final class FabricEntities {
      * their position): each entity is stored in exactly one chunk, so going through a region's
      * {@link EntityColumns#of(Region, int, int) entity columns} finds each once.
      */
-    public static List<Entity> inRegion(ServerWorld world, Region region, EntityFilter filter, int cx, int cz) {
+    public static List<Entity> inRegion(ServerLevel world, Region region, EntityFilter filter, int cx, int cz) {
         if (filter == EntityFilter.NONE) return List.of();
         Box b = region.bounds();
         double x0 = Math.max(b.min().x() - MARGIN, cx << 4), x1 = Math.min(b.max().x() + 1 + MARGIN, (cx << 4) + 16);
@@ -174,19 +174,19 @@ public final class FabricEntities {
         if (x0 >= x1 || z0 >= z1) return List.of();
         // One block wider on every side: a zero-size entity (a display, a marker) on the chunk's edge touches the
         // query box only from outside (boxes intersect strictly). Which chunk stores it decides; the region filters.
-        return collect(world, region, filter, new net.minecraft.util.math.Box(x0 - 1, b.min().y() - MARGIN - 1, z0 - 1,
+        return collect(world, region, filter, new net.minecraft.world.phys.AABB(x0 - 1, b.min().y() - MARGIN - 1, z0 - 1,
                 x1 + 1, b.max().y() + 1 + MARGIN + 1, z1 + 1), new ChunkPos(cx, cz));
     }
 
-    private static List<Entity> collect(ServerWorld world, Region region, EntityFilter filter,
-                                        net.minecraft.util.math.Box area, ChunkPos only) {
+    private static List<Entity> collect(ServerLevel world, Region region, EntityFilter filter,
+                                        net.minecraft.world.phys.AABB area, ChunkPos only) {
         List<Entity> found = new ArrayList<>();
-        for (Entity entity : world.getOtherEntities(null, area, entity -> !entity.hasVehicle()
-                && (only == null || only.equals(entity.getChunkPos())) && takes(filter, entity) && in(region, entity)
-                && world.getEntity(entity.getUuid()) == entity)) { // a registered entity, not a part of one
+        for (Entity entity : world.getEntities((Entity) null, area, entity -> !entity.isPassenger()
+                && (only == null || only.equals(entity.chunkPosition())) && takes(filter, entity) && in(region, entity)
+                && world.getEntity(entity.getUUID()) == entity)) { // a registered entity, not a part of one
             found.add(entity);
         }
-        found.sort(Comparator.comparing(Entity::getUuid));
+        found.sort(Comparator.comparing(Entity::getUUID));
         return found;
     }
 
@@ -195,20 +195,20 @@ public final class FabricEntities {
      * lists (those {@code filter} takes, at most {@link EntityNbt#MAX_RIDERS}), or {@code null} for an entity the game
      * does not save.
      */
-    public static NbtCompound save(Entity entity, EntityFilter filter) {
+    public static CompoundTag save(Entity entity, EntityFilter filter) {
         return save(entity, filter, new int[] {EntityNbt.MAX_RIDERS}, 0);
     }
 
-    private static NbtCompound save(Entity entity, EntityFilter filter, int[] room, int depth) {
-        NbtCompound nbt = new NbtCompound();
-        if (!entity.saveSelfNbt(nbt)) return null;
+    private static CompoundTag save(Entity entity, EntityFilter filter, int[] room, int depth) {
+        CompoundTag nbt = new CompoundTag();
+        if (!entity.saveAsPassenger(nbt)) return null;
         nbt.remove("Passengers");
-        NbtList riders = new NbtList();
-        for (Entity passenger : entity.getPassengerList()) {
+        ListTag riders = new ListTag();
+        for (Entity passenger : entity.getPassengers()) {
             if (room[0] <= 0 || depth >= EntityNbt.MAX_PASSENGER_DEPTH) break;
             if (!takes(filter, passenger)) continue;
             room[0]--;
-            NbtCompound rider = save(passenger, filter, room, depth + 1);
+            CompoundTag rider = save(passenger, filter, room, depth + 1);
             if (rider != null) riders.add(rider);
         }
         if (!riders.isEmpty()) nbt.put("Passengers", riders);
@@ -227,7 +227,7 @@ public final class FabricEntities {
     }
 
     private static void takenPassengers(Entity entity, EntityFilter filter, List<Entity> out, int depth) {
-        for (Entity passenger : entity.getPassengerList()) {
+        for (Entity passenger : entity.getPassengers()) {
             if (out.size() >= EntityNbt.MAX_RIDERS || depth >= EntityNbt.MAX_PASSENGER_DEPTH) return;
             if (!takes(filter, passenger)) continue;
             out.add(passenger);
@@ -247,7 +247,7 @@ public final class FabricEntities {
      * it): such an entity is neither removed nor recorded.
      */
     public static EntityState state(Entity entity, EntityFilter filter) {
-        NbtCompound nbt = save(entity, filter);
+        CompoundTag nbt = save(entity, filter);
         if (nbt == null) return null;
         byte[] bytes = bytes(nbt);
         if (bytes.length > EntityState.MAX_NBT_BYTES || !restorable(bytes)) return null;
@@ -267,7 +267,7 @@ public final class FabricEntities {
      */
     public static EntitySnapshot snapshot(Entity entity, EntityFilter filter, dev.sculptory.core.BlockPos min,
                                           boolean trusted) {
-        NbtCompound nbt = save(entity, filter);
+        CompoundTag nbt = save(entity, filter);
         if (nbt == null) return null;
         byte[] whole = bytes(nbt);
         if (!restorable(whole)) throw new IllegalArgumentException("entity NBT could not be placed back");
@@ -279,17 +279,17 @@ public final class FabricEntities {
         }
         byte[] data = dev.sculptory.core.nbt.NbtIo.toBytes(EntityNbt.snapshotData(core));
         dev.sculptory.core.BlockPos attached = null;
-        if (entity instanceof BlockAttachedEntity hanging && hanging.getAttachedBlockPos() != null) {
-            BlockPos a = hanging.getAttachedBlockPos();
+        if (entity instanceof BlockAttachedEntity hanging && hanging.getPos() != null) {
+            BlockPos a = hanging.getPos();
             attached = new dev.sculptory.core.BlockPos(a.getX() - min.x(), a.getY() - min.y(), a.getZ() - min.z());
         }
         return new EntitySnapshot(typeId(entity), entity.getX() - min.x(), entity.getY() - min.y(),
-                entity.getZ() - min.z(), entity.getYaw(), entity.getPitch(), attached, data, trusted);
+                entity.getZ() - min.z(), entity.getYRot(), entity.getXRot(), attached, data, trusted);
     }
 
     /** The entity's type id ({@code minecraft:item_frame}). */
     public static String typeId(Entity entity) {
-        return EntityType.getId(entity.getType()).toString();
+        return EntityType.getKey(entity.getType()).toString();
     }
 
     /**
@@ -297,20 +297,20 @@ public final class FabricEntities {
      * a type this game does not know. Reads only the registry: safe off the server thread.
      */
     public static float[] size(String typeId) {
-        net.minecraft.util.Identifier id = net.minecraft.util.Identifier.tryParse(typeId);
+        net.minecraft.resources.ResourceLocation id = net.minecraft.resources.ResourceLocation.tryParse(typeId);
         if (id == null) return new float[] {0.5f, 0.5f};
-        return Registries.ENTITY_TYPE.getOrEmpty(id).map(type -> new float[] {type.getWidth(), type.getHeight()})
+        return BuiltInRegistries.ENTITY_TYPE.getOptional(id).map(type -> new float[] {type.getWidth(), type.getHeight()})
                 .orElse(new float[] {0.5f, 0.5f});
     }
 
     /** Whether an entity type id names a type this game knows. */
     public static boolean knownType(String typeId) {
-        net.minecraft.util.Identifier id = net.minecraft.util.Identifier.tryParse(typeId);
-        return id != null && Registries.ENTITY_TYPE.containsId(id);
+        net.minecraft.resources.ResourceLocation id = net.minecraft.resources.ResourceLocation.tryParse(typeId);
+        return id != null && BuiltInRegistries.ENTITY_TYPE.containsKey(id);
     }
 
     /** A live entity by UUID in this world, among the loaded ones, or {@code null}. */
-    public static Entity find(ServerWorld world, UUID id) {
+    public static Entity find(ServerLevel world, UUID id) {
         return world.getEntity(id);
     }
 
@@ -331,10 +331,10 @@ public final class FabricEntities {
     }
 
     /** The binary NBT (a root compound named {@code ""}) of a compound, as core's {@code NbtIo} reads it. */
-    public static byte[] bytes(NbtCompound nbt) {
+    public static byte[] bytes(CompoundTag nbt) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(256);
         try (DataOutputStream data = new DataOutputStream(out)) {
-            NbtIo.writeCompound(nbt, data);
+            NbtIo.write(nbt, data);
         } catch (IOException impossible) {
             throw new UncheckedIOException(impossible);
         }
@@ -346,9 +346,9 @@ public final class FabricEntities {
      *
      * @throws IOException if it does not decode (or is larger than {@link #MAX_NBT_BYTES})
      */
-    public static NbtCompound compound(byte[] bytes) throws IOException {
+    public static CompoundTag compound(byte[] bytes) throws IOException {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            return NbtIo.readCompound(in, NbtSizeTracker.of(MAX_NBT_BYTES));
+            return NbtIo.read(in, NbtAccounter.create(MAX_NBT_BYTES));
         } catch (RuntimeException e) {
             throw new IOException("entity NBT does not decode: " + e.getMessage(), e);
         }

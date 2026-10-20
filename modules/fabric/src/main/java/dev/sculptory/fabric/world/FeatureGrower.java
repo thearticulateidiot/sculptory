@@ -10,15 +10,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.gen.chunk.ChunkGenerator;
-import net.minecraft.world.gen.feature.ConfiguredFeature;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.levelgen.feature.ConfiguredFeature;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -46,7 +46,7 @@ public final class FeatureGrower implements ScatterPlanner.Grower {
     /** Each tree's sapling, by configured feature id. */
     private static final Map<String, Block> SAPLINGS = saplings();
 
-    private final ServerWorld world;
+    private final ServerLevel world;
     private final FabricStateSpace states;
     private final FeatureCatalog.FeatureDef[] defs;
     private final boolean survive;
@@ -59,13 +59,13 @@ public final class FeatureGrower implements ScatterPlanner.Grower {
      * @param defs per scatter source index, its catalog entry, or {@code null} for a held or block source
      * @param survive whether trees grow only where their sapling could stand
      */
-    public FeatureGrower(ServerWorld world, FabricStateSpace states, List<FeatureCatalog.FeatureDef> defs,
+    public FeatureGrower(ServerLevel world, FabricStateSpace states, List<FeatureCatalog.FeatureDef> defs,
                          boolean survive) {
         this.world = Objects.requireNonNull(world);
         this.states = Objects.requireNonNull(states);
         this.defs = new ArrayList<>(defs).toArray(new FeatureCatalog.FeatureDef[0]);
         this.survive = survive;
-        this.generator = world.getChunkManager().getChunkGenerator();
+        this.generator = world.getChunkSource().getGenerator();
     }
 
     /** How far from its spot a growth of {@code def} may write horizontally. */
@@ -79,11 +79,11 @@ public final class FeatureGrower implements ScatterPlanner.Grower {
     }
 
     /** Whether every catalog entry names a configured feature of this world (the GameTests check it). */
-    public static List<String> missing(ServerWorld world) {
-        Registry<ConfiguredFeature<?, ?>> registry = world.getRegistryManager().get(RegistryKeys.CONFIGURED_FEATURE);
+    public static List<String> missing(ServerLevel world) {
+        Registry<ConfiguredFeature<?, ?>> registry = world.registryAccess().registryOrThrow(Registries.CONFIGURED_FEATURE);
         List<String> missing = new ArrayList<>();
         for (FeatureCatalog.FeatureDef def : FeatureCatalog.ALL) {
-            if (registry.get(Identifier.of(def.id())) == null) missing.add(def.id());
+            if (registry.get(ResourceLocation.parse(def.id())) == null) missing.add(def.id());
         }
         return missing;
     }
@@ -100,14 +100,14 @@ public final class FeatureGrower implements ScatterPlanner.Grower {
                 above(def), seed);
         if (survive && def.kind() == FeatureCatalog.Kind.TREE) {
             Block sapling = SAPLINGS.get(def.id());
-            if (sapling != null && !sapling.getDefaultState().canPlaceAt(capture, origin)) {
+            if (sapling != null && !sapling.defaultBlockState().canSurvive(capture, origin)) {
                 return capture.reachedUnloaded() ? ScatterPlanner.Growth.failed(Outcome.UNLOADED, capture.reads())
                         : ScatterPlanner.Growth.failed(Outcome.SURVIVAL, capture.reads());
             }
         }
         boolean generated;
         try {
-            generated = feature.generate(capture, generator, capture.getRandom(), origin);
+            generated = feature.place(capture, generator, capture.getRandom(), origin);
         } catch (RuntimeException e) {
             if (warned.add(def.id())) {
                 LOG.warn("Sculptory: growing {} for a scatter preview failed: {}", def.id(), e.toString());
@@ -125,8 +125,8 @@ public final class FeatureGrower implements ScatterPlanner.Grower {
 
     private ConfiguredFeature<?, ?> feature(String id) {
         if (features.containsKey(id)) return features.get(id);
-        Registry<ConfiguredFeature<?, ?>> registry = world.getRegistryManager().get(RegistryKeys.CONFIGURED_FEATURE);
-        ConfiguredFeature<?, ?> feature = registry.get(Identifier.of(id));
+        Registry<ConfiguredFeature<?, ?>> registry = world.registryAccess().registryOrThrow(Registries.CONFIGURED_FEATURE);
+        ConfiguredFeature<?, ?> feature = registry.get(ResourceLocation.parse(id));
         if (feature == null && warned.add(id)) LOG.warn("Sculptory: this world has no configured feature {}", id);
         features.put(id, feature);
         return feature;

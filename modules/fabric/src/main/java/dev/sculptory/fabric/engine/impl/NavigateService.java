@@ -16,9 +16,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Jump and Through on the server: the client names the block it looks
@@ -63,7 +63,7 @@ public final class NavigateService {
     }
 
     /** Decides the request and carries it out: the player moved to the spot, or the refusal's notice sent. */
-    public static S2C.NavigateResult navigate(EngineRuntime runtime, ServerPlayerEntity player, C2S.Navigate request) {
+    public static S2C.NavigateResult navigate(EngineRuntime runtime, ServerPlayer player, C2S.Navigate request) {
         Decision decision = decide(runtime, player, request);
         if (!decision.landed()) {
             ServerNet.sendNotice(player, decision.notice());
@@ -71,23 +71,23 @@ public final class NavigateService {
         }
         BlockPos feet = decision.feet();
         player.stopRiding();
-        player.teleport(player.getServerWorld(), feet.x() + 0.5, feet.y(), feet.z() + 0.5, player.getYaw(),
-                player.getPitch());
-        player.setVelocity(Vec3d.ZERO);
-        player.velocityModified = true;
+        player.teleportTo(player.serverLevel(), feet.x() + 0.5, feet.y(), feet.z() + 0.5, player.getYRot(),
+                player.getXRot());
+        player.setDeltaMovement(Vec3.ZERO);
+        player.hurtMarked = true;
         player.fallDistance = 0;
         // Through may leave the feet over nothing (under a floor, in a cave's air): a Creative player flies there
         // instead of falling (into the void, past the End's islands).
-        if (!player.isSpectator() && player.getAbilities().allowFlying && !player.getAbilities().flying
-                && !Landing.grounded(runtime.reader(player.getServerWorld()), feet)) {
+        if (!player.isSpectator() && player.getAbilities().mayfly && !player.getAbilities().flying
+                && !Landing.grounded(runtime.reader(player.serverLevel()), feet)) {
             player.getAbilities().flying = true;
-            player.sendAbilitiesUpdate();
+            player.onUpdateAbilities();
         }
         return S2C.NavigateResult.landed(request.reqId(), feet);
     }
 
     /** Where the request would put the player, or why not; changes nothing. */
-    public static Decision decide(EngineRuntime runtime, ServerPlayerEntity player, C2S.Navigate request) {
+    public static Decision decide(EngineRuntime runtime, ServerPlayer player, C2S.Navigate request) {
         Objects.requireNonNull(runtime);
         Objects.requireNonNull(player);
         Objects.requireNonNull(request);
@@ -98,14 +98,14 @@ public final class NavigateService {
         if (!player.isCreative() && !player.isSpectator()) return Decision.refused(RejectReason.NO_PERMISSION, NEEDS_MODE);
         SculptoryConfig.NavigateConfig config = runtime.config().navigate;
         BlockPos hit = request.hit();
-        Vec3d eyes = player.getEyePos();
+        Vec3 eyes = player.getEyePosition();
         double dx = hit.x() + 0.5 - eyes.x, dy = hit.y() + 0.5 - eyes.y, dz = hit.z() + 0.5 - eyes.z;
         double distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (distance > config.maxDistance) {
             return Decision.refused(RejectReason.TOO_LARGE, TOO_FAR, String.format(Locale.ROOT, "%.0f", distance),
                     Integer.toString(config.maxDistance));
         }
-        ServerWorld world = player.getServerWorld();
+        ServerLevel world = player.serverLevel();
         FabricWorldReader reader = runtime.reader(world);
         if (!reader.isLoaded(hit.x() >> 4, hit.z() >> 4)) return Decision.refused(RejectReason.UNLOADED, UNLOADED);
         Optional<BlockPos> spot = request.mode() == NavigateMode.JUMP

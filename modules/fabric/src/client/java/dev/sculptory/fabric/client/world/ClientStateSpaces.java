@@ -19,9 +19,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.CommonLifecycleEvents;
  *   <li><b>Disconnect:</b> cleared.</li>
  * </ul>
  *
- * <p>Checked against yarn 1.21.1 and Fabric API 0.116.4: {@code ClientPlayConnectionEvents.JOIN} fires at the end
- * of {@code onGameJoin}, after registry sync (a configuration-phase receiver) and after the static registries'
- * tags were bound ({@code ClientTagLoader.load}, which also fires {@code TAGS_LOADED} with {@code client = true}).
+ * <p>Checked against Minecraft 1.21.1 (Mojang names) and Fabric API 0.116.4: {@code ClientPlayConnectionEvents.JOIN}
+ * fires at the end of {@code handleLogin}, after registry sync (a configuration-phase receiver) and after the static
+ * registries' tags were bound (the server's tag packet, which also fires {@code TAGS_LOADED} with {@code client = true}).
  * The lifecycle methods are plain Java so they are tested without Minecraft. Render thread only.
  */
 public final class ClientStateSpaces implements Supplier<StateSpace> {

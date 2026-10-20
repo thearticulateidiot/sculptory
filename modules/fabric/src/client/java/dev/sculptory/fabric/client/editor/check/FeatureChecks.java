@@ -21,7 +21,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
-import net.minecraft.block.BlockState;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -233,7 +233,7 @@ final class FeatureChecks {
             d.client().setScreen(null);
         });
         run.require("the editor is closed", d.until(5_000, () -> !d.editor().mode().isEditing()
-                && d.client().currentScreen == null), "");
+                && d.client().screen == null), "");
         List<String> unavailable = d.onClient(() -> java.util.Arrays.stream(BuilderPower.values())
                 .filter(power -> !builder.powers().available(power))
                 .map(power -> power.name() + " (" + builder.powers().unavailableKey(power) + ")").toList());
@@ -243,9 +243,9 @@ final class FeatureChecks {
         try {
             d.onClient(() -> builder.pinRingKey(true));
             d.keyDown(GLFW.GLFW_KEY_G);
-            boolean ring = d.until(5_000, () -> d.client().currentScreen instanceof RingScreen);
+            boolean ring = d.until(5_000, () -> d.client().screen instanceof RingScreen);
             run.check("holding G outside the editor opens the ring of powers", ring, "screen: "
-                    + d.onClient(() -> String.valueOf(d.client().currentScreen)) + "; on screen: " + d.shownMessages()
+                    + d.onClient(() -> String.valueOf(d.client().screen)) + "; on screen: " + d.shownMessages()
                     + d.toastNote());
             d.frames(10);
             run.picture("ring", "Builder mode's ring of powers over the world, no editor UI: the powers around the"
@@ -254,7 +254,7 @@ final class FeatureChecks {
             d.onClient(() -> builder.pinRingKey(false));
             d.keyUp(GLFW.GLFW_KEY_G);
         }
-        run.check("releasing G closes the ring", d.until(5_000, () -> !(d.client().currentScreen instanceof RingScreen)),
+        run.check("releasing G closes the ring", d.until(5_000, () -> !(d.client().screen instanceof RingScreen)),
                 "");
         List<String> shown = d.shownMessages();
         run.check("no refusal was shown", shown.stream().noneMatch(s -> s.toLowerCase(Locale.ROOT).contains("builder")
@@ -264,7 +264,7 @@ final class FeatureChecks {
         // rest of the check, and its action-bar text is cleared so it doesn't linger into the next picture.
         d.onClient(() -> {
             builder.powers().clear();
-            d.client().inGameHud.setOverlayMessage(net.minecraft.text.Text.empty(), false);
+            d.client().gui.setOverlayMessage(net.minecraft.network.chat.Component.empty(), false);
         });
         d.frames(2);
     }
@@ -280,7 +280,7 @@ final class FeatureChecks {
         d.activeBlock(PLANKS);
         run.edit("Fill", () -> d.clickButton(EditorWindows.SELECTION, "sculptory.op.fill"));
         Cells filled = run.server(area);
-        run.check("the Fill wrote planks", filled.at(a.x(31), a.y(-1), a.z(31)).isOf(net.minecraft.block.Blocks.OAK_PLANKS),
+        run.check("the Fill wrote planks", filled.at(a.x(31), a.y(-1), a.z(31)).is(net.minecraft.world.level.block.Blocks.OAK_PLANKS),
                 Cells.describe(filled.at(a.x(31), a.y(-1), a.z(31))));
         d.onClient(() -> d.ctx().setSelection(null));
         d.selectTool(ToolId.RAISE);

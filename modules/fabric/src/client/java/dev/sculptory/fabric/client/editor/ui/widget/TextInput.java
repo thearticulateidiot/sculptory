@@ -8,14 +8,14 @@ import dev.sculptory.fabric.client.editor.ui.UiContext;
 import dev.sculptory.fabric.client.editor.ui.UiGraphics;
 import java.util.Objects;
 import java.util.function.Consumer;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.widget.TextFieldWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 /**
- * Single-line text entry. Wraps a vanilla {@link TextFieldWidget} as a leaf so caret movement,
+ * Single-line text entry. Wraps a vanilla {@link EditBox} as a leaf so caret movement,
  * selection and clipboard shortcuts behave exactly like the rest of Minecraft. This node draws the
  * box; the vanilla widget draws only the text and caret. The placeholder shows while the field is empty, also while it
  * has the keyboard (as the vanilla widget's grey suggestion after the caret), so a search box that opens focused
@@ -26,7 +26,7 @@ import org.lwjgl.glfw.GLFW;
  * F1-F25, so typing never triggers editor shortcuts.
  */
 public class TextInput extends Node {
-    private TextFieldWidget widget;
+    private EditBox widget;
     private String text;
     private String placeholder = "";
     private int maxLength = 256;
@@ -41,7 +41,7 @@ public class TextInput extends Node {
     }
 
     public String text() {
-        return widget != null ? widget.getText() : text;
+        return widget != null ? widget.getValue() : text;
     }
 
     /** Replaces the text without notifying {@code onChange}. */
@@ -50,7 +50,7 @@ public class TextInput extends Node {
         if (widget != null) {
             Consumer<String> listener = onChange;
             onChange = null;
-            widget.setText(text);
+            widget.setValue(text);
             onChange = listener;
             showPlaceholder();
         }
@@ -74,7 +74,7 @@ public class TextInput extends Node {
      */
     private void showPlaceholder() {
         if (widget != null) {
-            widget.setSuggestion(widget.getText().isEmpty() && !placeholder.isEmpty() ? placeholder : null);
+            widget.setSuggestion(widget.getValue().isEmpty() && !placeholder.isEmpty() ? placeholder : null);
         }
     }
 
@@ -89,8 +89,8 @@ public class TextInput extends Node {
     /** Selects the whole text, so typing replaces it. */
     public TextInput selectAll() {
         if (widget != null) {
-            widget.setCursorToEnd(false);
-            widget.setSelectionEnd(0);
+            widget.moveCursorToEnd(false);
+            widget.setHighlightPos(0);
         } else {
             selectAllPending = true;
         }
@@ -104,9 +104,9 @@ public class TextInput extends Node {
     }
 
     /** The wrapped vanilla widget, created on first use. Requires a running client. */
-    private TextFieldWidget widget(UiContext ctx) {
+    private EditBox widget(UiContext ctx) {
         if (widget == null) {
-            attach(MinecraftClient.getInstance().textRenderer, ctx);
+            attach(Minecraft.getInstance().font, ctx);
         }
         return widget;
     }
@@ -116,13 +116,13 @@ public class TextInput extends Node {
      * {@link #selectAll} asked for before is applied last: moving the caret, as the scroll below does, clears a
      * selection, and a slider's typed value must replace what the field holds ("20", not "10020").
      */
-    void attach(TextRenderer textRenderer, UiContext ctx) {
-        TextFieldWidget field = new TextFieldWidget(textRenderer, 0, 0, 10, 10, Text.literal(placeholder));
-        field.setDrawsBackground(false);
+    void attach(Font textRenderer, UiContext ctx) {
+        EditBox field = new EditBox(textRenderer, 0, 0, 10, 10, Component.literal(placeholder));
+        field.setBordered(false);
         field.setMaxLength(maxLength);
-        field.setText(text);
-        field.setEditableColor(ctx.theme().text);
-        field.setChangedListener(value -> {
+        field.setValue(text);
+        field.setTextColor(ctx.theme().text);
+        field.setResponder(value -> {
             text = value;
             showPlaceholder();
             if (onChange != null) {
@@ -135,12 +135,12 @@ public class TextInput extends Node {
         position(ctx);
         // The text was set while the field was 10 px wide, which scrolled it to its last character; scroll again
         // at the real width so text given before the first frame shows from its start.
-        field.setCursorToStart(false);
-        field.setCursorToEnd(false);
+        field.moveCursorToStart(false);
+        field.moveCursorToEnd(false);
         if (selectAllPending) {
             selectAllPending = false;
-            field.setCursorToEnd(false);
-            field.setSelectionEnd(0);
+            field.moveCursorToEnd(false);
+            field.setHighlightPos(0);
         }
     }
 
@@ -181,11 +181,11 @@ public class TextInput extends Node {
         g.fill(bounds, enabled ? theme.inputBackground : theme.controlDisabled);
         int border = focused ? theme.focusRing : ctx.isHovered(this) && enabled ? theme.textDim : theme.controlBorder;
         g.outline(bounds, border);
-        if (MinecraftClient.getInstance() == null) {
+        if (Minecraft.getInstance() == null) {
             renderPlain(g, ctx, enabled);
             return;
         }
-        TextFieldWidget field = widget(ctx);
+        EditBox field = widget(ctx);
         field.setEditable(enabled);
         g.pushClip(bounds.inset(1));
         g.widget(field, (int) ctx.mouseX(), (int) ctx.mouseY(), 0);

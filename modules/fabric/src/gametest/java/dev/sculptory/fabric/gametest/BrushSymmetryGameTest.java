@@ -35,13 +35,13 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.world.World;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.border.WorldBorder;
 
 /**
  * Brush symmetry on the server (regionCorner slots 500-519 and 560-564): symmetric strokes of every mode give exactly
@@ -58,11 +58,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * with copies overlapping near the planes: the server's result equals the kernel's on a snapshot cell for cell,
      * every quadrant changed, each stroke is one history entry, and undoing them restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_strokes", tickLimit = LIMIT)
-    public void symmetricStrokesMatchTheKernelAndUndoExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_strokes", timeoutTicks = LIMIT)
+    public void symmetricStrokesMatchTheKernelAndUndoExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 500);
         int x0 = at[0], z0 = at[1];
         // Up to y 180: a copy's ground is searched up to 64 blocks above its dab (y 108-110).
@@ -122,7 +122,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
             }
         }
         for (int q = 0; q < 4; q++) check(quadrants[q] > 50, "quadrant " + q + " changed " + quadrants[q] + " cells");
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
         check(entries.size() == specs.size(), "one entry per stroke, got " + entries.size());
         for (int i = 0; i < specs.size(); i++) {
             RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
@@ -133,7 +133,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -141,11 +141,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * inverted mask and a Rotate 2 Flatten, both clipped, match the kernel on a snapshot; both sides of the plane
      * change, nothing outside the clip boxes does.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_large", tickLimit = LIMIT)
-    public void largeServerOnlySmoothAndFlattenReplicateToo(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_large", timeoutTicks = LIMIT)
+    public void largeServerOnlySmoothAndFlattenReplicateToo(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 502);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 95, 180, z0 + 95); // the ground search reads up to y 174
@@ -197,11 +197,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
             }
         }
         check(west > 200 && east > 200, "changed " + west + " cells west of the plane and " + east + " east");
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -212,11 +212,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * on either side; a copy beyond the world border writes nothing while the dab's own side changes, and that stroke
      * still undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_refused", tickLimit = LIMIT)
-    public void refusalsAndBudgetsCountEveryCopy(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_refused", timeoutTicks = LIMIT)
+    public void refusalsAndBudgetsCountEveryCopy(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 504);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
@@ -225,15 +225,15 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         BrushSpec raise = new BrushSpec(BrushTool.RAISE, 2, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0, 1L);
 
         // A centre beyond the world's horizontal limit.
-        int far = 2 * World.HORIZONTAL_LIMIT + 2;
+        int far = 2 * Level.MAX_LEVEL_SIZE + 2;
         for (Symmetry outside : List.of(new Symmetry(Symmetry.Mode.MIRROR_X, far, 0), new Symmetry(Symmetry.Mode.ROTATE_2, 0, -far))) {
             try {
                 h.service.beginStroke(h.player, 80, raise.withSymmetry(outside));
-                throw new GameTestException("a centre outside the world was accepted: " + outside);
+                throw new GameTestAssertException("a centre outside the world was accepted: " + outside);
             } catch (EditRejected e) {
                 check(e.reason() == RejectReason.INVALID, "refused with " + e.reason());
             }
-            check(h.service.openStroke(h.player.getUuid()).isEmpty(), "a refused stroke is open");
+            check(h.service.openStroke(h.player.getUUID()).isEmpty(), "a refused stroke is open");
         }
 
         // A centre inside the world (x 29,900,000) whose copy of a dab near the region lands beyond the limit.
@@ -241,7 +241,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         begin(h, 80, raise.withSymmetry(new Symmetry(Symmetry.Mode.MIRROR_X, 2 * 29_900_000, 0)));
         DabOutcome beyond = h.service.dabs(h.player, 80, 30, row(0, 1, x0 + 10, z0 + 10));
         check(!beyond.accepted() && beyond.reason() == RejectReason.INVALID, "a copy beyond the world limit: " + beyond);
-        check(h.service.queuedDabs(h.player.getUuid()) == 0, "the refused dab was queued");
+        check(h.service.queuedDabs(h.player.getUUID()) == 0, "the refused dab was queued");
         h.service.endStroke(h.player, 80);
         checkSame(untouched, capture(world, area), "after the refused dab");
 
@@ -251,8 +251,8 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         DabOutcome over = h.service.dabs(h.player, 81, 1, row(0, 9, x0 + 28, z0 + 30));
         check(!over.accepted() && over.reason() == RejectReason.RATE_LIMITED, "36 copies: " + over);
         check(h.service.dabs(h.player, 81, 2, row(0, 8, x0 + 28, z0 + 30)).accepted(), "32 copies were refused");
-        check(h.service.queuedDabs(h.player.getUuid()) == 8 && h.service.queuedUnits(h.player.getUuid()) == 32,
-                "queued " + h.service.queuedDabs(h.player.getUuid()) + " dabs, " + h.service.queuedUnits(h.player.getUuid()));
+        check(h.service.queuedDabs(h.player.getUUID()) == 8 && h.service.queuedUnits(h.player.getUUID()) == 32,
+                "queued " + h.service.queuedDabs(h.player.getUUID()) + " dabs, " + h.service.queuedUnits(h.player.getUUID()));
         DabOutcome full = h.service.dabs(h.player, 81, 3, row(8, 1, x0 + 28, z0 + 30));
         check(!full.accepted() && full.reason() == RejectReason.RATE_LIMITED, "the queue is full: " + full);
         // Refused batches are never acknowledged by the service (the network layer answers them).
@@ -312,7 +312,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -322,11 +322,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * copies and neither eastern one, and the stroke goes on. A step whose every copy is protected writes nothing and
      * is refused PROTECTED. The first stroke undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_protected", tickLimit = LIMIT)
-    public void aProtectedCopyWritesNothingWhileTheOthersWrite(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_protected", timeoutTicks = LIMIT)
+    public void aProtectedCopyWritesNothingWhileTheOthersWrite(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 506);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 63, 170, z0 + 63);
@@ -345,7 +345,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         try {
             border.setCenter(x0 + 32 - 100_000, z0);
             border.setSize(200_000);
-            check(!world.canPlayerModifyAt(h.player, new net.minecraft.util.math.BlockPos(x0 + 40, 110, z0 + 20)),
+            check(!world.mayInteract(h.player, new net.minecraft.core.BlockPos(x0 + 40, 110, z0 + 20)),
                     "the east half is not protected");
             // Around the corner (x0 + 32, z0 + 32): the dab 12 blocks north-west of it, its copies north-east,
             // south-east and south-west.
@@ -372,7 +372,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
             border.setCenter(centerX, centerZ);
             border.setSize(size);
         }
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one entry: the rotated stroke");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "one entry: the rotated stroke");
         RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
         MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 20, "the undo");
         check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0, "undo " + undo.result);
@@ -380,7 +380,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -388,11 +388,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * after the dab was admitted makes the lane refuse the dab AREA_BUSY, and nothing of the step is written, the dab's
      * own area included.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_recheck", tickLimit = LIMIT)
-    public void theLaneChecksEveryCopyAgain(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_recheck", timeoutTicks = LIMIT)
+    public void theLaneChecksEveryCopyAgain(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 508);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
@@ -405,13 +405,13 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         // The dab at x0 + 12, its mirror at x0 + 35.
         check(h.service.dabs(h.player, 92, 1, row(0, 1, x0 + 12, z0 + 20)).accepted(), "the dab");
         // Another player's fill over the mirror's area only, admitted before the lane runs the dab.
-        net.minecraft.server.network.ServerPlayerEntity other = h.addPlayer();
+        net.minecraft.server.level.ServerPlayer other = h.addPlayer();
         RecordingListener fill = new RecordingListener();
         h.fill(other, box(x0 + 32, 125, z0 + 16, x0 + 40, 125, z0 + 24), "minecraft:glass", fill);
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1, 4, "the dab");
         check(h.events.dabRejections.equals(List.of(RejectReason.AREA_BUSY)), "refusals: " + h.events.dabRejections);
         h.service.endStroke(h.player, 92);
-        check(h.service.historyService().undoEntries(h.player.getUuid()).isEmpty(), "the refused step made an entry");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).isEmpty(), "the refused step made an entry");
         MultiplayerGameTest.tickUntil(executor, () -> fill.result != null, 20, "the fill");
         Box glass = box(x0 + 32, 125, z0 + 16, x0 + 40, 125, z0 + 24);
         WorldSnapshot after = capture(world, area);
@@ -426,7 +426,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ------------------------------------------------------------------ copies follow the terrain (slots 560-564)
@@ -438,11 +438,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * client's prediction) on a snapshot cell for cell, no copy is reported without ground, each stroke is one history
      * entry and undoing them restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_slope", tickLimit = LIMIT)
-    public void copiesFollowASlopeOnHigherGroundAndUndoExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_terrain_slope", timeoutTicks = LIMIT)
+    public void copiesFollowASlopeOnHigherGroundAndUndoExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 560);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 63, 190, z0 + 63);
@@ -494,7 +494,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
             }
         }
         check(onTheSlope > 100, "the copies changed " + onTheSlope + " cells of the slope (its lowest top is y 118)");
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
         for (int i = 0; i < specs.size(); i++) {
             RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
             MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 20, "undo " + i);
@@ -504,7 +504,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -513,11 +513,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * dab's own side is raised. The ground around the pillar, at the dab's height, stays as it was: a copy never works at
      * another height. The stroke is not refused, makes one history entry and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_no_ground", tickLimit = LIMIT)
-    public void aCopyWithoutGroundWritesNothingAndIsReported(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_terrain_no_ground", timeoutTicks = LIMIT)
+    public void aCopyWithoutGroundWritesNothingAndIsReported(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 562);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 190, z0 + 47);
@@ -552,7 +552,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         check(h.events.noGround.equals(List.of("95:0:1")), "reported once, at the first dab: " + h.events.noGround);
         checkSame(eastBefore, capture(world, east), "the copies' side");
         check(EditTestSupport.difference(westBefore, capture(world, west)) != null, "the dab's own side did not change");
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one entry");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "one entry");
         RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
         MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 20, "the undo");
         check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0, "undo " + undo.result);
@@ -560,7 +560,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -569,11 +569,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * under its copy down to the same y 106 (13 blocks a dab at most, the copy standing on the ground left by the
      * previous dab), matching the kernel on a snapshot; the stroke undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_flatten", tickLimit = LIMIT)
-    public void flattenBringsEveryCopyToTheStrokesPlane(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_terrain_flatten", timeoutTicks = LIMIT)
+    public void flattenBringsEveryCopyToTheStrokesPlane(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 564);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 63, 190, z0 + 63);
@@ -603,7 +603,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
                 check(west == 106 && east == 106, "column offset " + dx + "," + dz + ": west at " + west + ", east at " + east);
             }
         }
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one entry");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "one entry");
         RecordingListener undo = MultiplayerGameTest.historyStep(h, h.player, true);
         MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 20, "the undo");
         check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0, "undo " + undo.result);
@@ -611,7 +611,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -621,11 +621,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * ends exactly as a dab without symmetry at that side's position and height leaves it (the kernel applied to each
      * alone, on two snapshots), including the shared columns next to the plane. The stroke undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_cliff", tickLimit = LIMIT)
-    public void aCliffAtThePlaneIsShapedOnEachSideAsEachDabAloneWould(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_terrain_cliff", timeoutTicks = LIMIT)
+    public void aCliffAtThePlaneIsShapedOnEachSideAsEachDabAloneWould(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 566);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 63, 200, z0 + 63);
@@ -658,16 +658,16 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
             BrushKernels.forTool(BrushTool.RAISE).applyStep(plain, List.of(dab), dabAlone, west, west::set);
             BrushKernels.forTool(BrushTool.RAISE).applyStep(plain, List.of(step.dabs().get(1)), copyAlone, east, east::set);
         }
-        net.minecraft.util.math.BlockPos.Mutable pos = new net.minecraft.util.math.BlockPos.Mutable();
+        net.minecraft.core.BlockPos.MutableBlockPos pos = new net.minecraft.core.BlockPos.MutableBlockPos();
         String first = null;
         for (int y = area.min().y(); y <= area.max().y() && first == null; y++) {
             for (int z = area.min().z(); z <= area.max().z() && first == null; z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
-                    int server = Block.getRawIdFromState(world.getBlockState(pos.set(x, y, z)));
+                    int server = Block.getId(world.getBlockState(pos.set(x, y, z)));
                     int alone = (x < plane ? west : east).get(x, y, z);
                     if (server != alone) {
-                        first = x + "," + y + "," + z + ": server " + Block.getStateFromRawId(server) + ", alone "
-                                + Block.getStateFromRawId(alone);
+                        first = x + "," + y + "," + z + ": server " + Block.stateById(server) + ", alone "
+                                + Block.stateById(alone);
                         break;
                     }
                 }
@@ -687,7 +687,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -696,11 +696,11 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
      * symmetric dab AREA_BUSY at admission, while the same dab without symmetry is admitted; a dab admitted before such a
      * job is refused AREA_BUSY by the lane, writing nothing. Everything undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_symmetry_terrain_search_lock", tickLimit = LIMIT)
-    public void aLockOnACopysSearchedColumnRefusesTheDab(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_symmetry_terrain_search_lock", timeoutTicks = LIMIT)
+    public void aLockOnACopysSearchedColumnRefusesTheDab(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 568);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 200, z0 + 47);
@@ -738,13 +738,13 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         // Admitted first, then another player's job takes the searched column: the lane refuses the dab.
         begin(h, 122, mirrored);
         check(h.service.dabs(h.player, 122, 3, List.of(dab)).accepted(), "the symmetric dab, nothing held");
-        net.minecraft.server.network.ServerPlayerEntity other = h.addPlayer();
+        net.minecraft.server.level.ServerPlayer other = h.addPlayer();
         RecordingListener otherFill = new RecordingListener();
         h.fill(other, lock, "minecraft:glass", otherFill);
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 2 && otherFill.result != null, 20, "the lane");
         check(h.events.dabRejections.equals(List.of(RejectReason.AREA_BUSY)), "refusals: " + h.events.dabRejections);
         h.service.endStroke(h.player, 122);
-        check(h.service.historyService().undoEntries(h.player.getUuid()).isEmpty(), "the refused step made an entry");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).isEmpty(), "the refused step made an entry");
         WorldSnapshot after = capture(world, area);
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
@@ -757,14 +757,14 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ------------------------------------------------------------------ helpers
 
     /** The highest non-air y of column (x, z) from y 200 down, or 0. */
-    private static int topSolid(ServerWorld world, int x, int z) {
-        net.minecraft.util.math.BlockPos.Mutable pos = new net.minecraft.util.math.BlockPos.Mutable();
+    private static int topSolid(ServerLevel world, int x, int z) {
+        net.minecraft.core.BlockPos.MutableBlockPos pos = new net.minecraft.core.BlockPos.MutableBlockPos();
         for (int y = 200; y > 0; y--) {
             if (!world.getBlockState(pos.set(x, y, z)).isAir()) return y;
         }
@@ -815,20 +815,20 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
     }
 
     /** "" when the world equals the snapshot over {@code area}, else the count and the first difference. */
-    static String mismatches(ServerWorld world, Box area, SnapshotWorld snapshot) {
+    static String mismatches(ServerLevel world, Box area, SnapshotWorld snapshot) {
         int mismatches = 0;
         String first = null;
-        net.minecraft.util.math.BlockPos.Mutable pos = new net.minecraft.util.math.BlockPos.Mutable();
+        net.minecraft.core.BlockPos.MutableBlockPos pos = new net.minecraft.core.BlockPos.MutableBlockPos();
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
-                    int server = Block.getRawIdFromState(world.getBlockState(pos.set(x, y, z)));
+                    int server = Block.getId(world.getBlockState(pos.set(x, y, z)));
                     int kernel = snapshot.get(x, y, z);
                     if (server == kernel) continue;
                     mismatches++;
                     if (first == null) {
-                        first = x + "," + y + "," + z + ": server " + Block.getStateFromRawId(server) + ", kernel "
-                                + Block.getStateFromRawId(kernel);
+                        first = x + "," + y + "," + z + ": server " + Block.stateById(server) + ", kernel "
+                                + Block.stateById(kernel);
                     }
                 }
             }
@@ -852,7 +852,7 @@ public final class BrushSymmetryGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(h.player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 }

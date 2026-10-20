@@ -23,10 +23,10 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
 
 /**
  * The contracts of the batch after 0.3.0-alpha (protocol 6), all built now: what stays is that the multi-paste asks for
@@ -36,8 +36,8 @@ import net.minecraft.test.TestContext;
 public final class ContractStubsGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_contract_stubs", tickLimit = LIMIT)
-    public void theProtocolSixStubsAreRefusedCleanly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_contract_stubs", timeoutTicks = LIMIT)
+    public void theProtocolSixStubsAreRefusedCleanly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 990);
         int x0 = at[0], z0 = at[1];
@@ -58,7 +58,7 @@ public final class ContractStubsGameTest implements FabricGameTest {
                 new BlockPos(x0, 101, z0), Orientation.IDENTITY)), PasteOptions.DEFAULT);
         EditRejected stampNoNode = refusal(() -> h.service.run(h.addPlayer(false), exactStamp, RunOptions.DEFAULT, null));
         check(stampNoNode.reason() == RejectReason.NO_PERMISSION, "a stamp without any node: " + stampNoNode.reason());
-        ServerPlayerEntity noClipboard = h.addPlayer(false);
+        ServerPlayer noClipboard = h.addPlayer(false);
         EditTestSupport.grant(noClipboard, Perm.USE, Perm.REGION, Perm.BRUSH);
         EditRejected stampNoClipboard = refusal(() -> h.service.run(noClipboard, exactStamp, RunOptions.DEFAULT, null));
         check(stampNoClipboard.reason() == RejectReason.NO_PERMISSION
@@ -67,20 +67,20 @@ public final class ContractStubsGameTest implements FabricGameTest {
 
         // Nothing written, nothing held, nothing pushed, no stroke left open.
         check(!h.service.executor().isLocked(h.world, area), "a refusal held the area");
-        check(h.service.jobs(h.player.getUuid()).isEmpty(), "a refusal left a job");
+        check(h.service.jobs(h.player.getUUID()).isEmpty(), "a refusal left a job");
         check(h.service.history(h.player).undoLabels().equals(undoBefore), "a refusal pushed history");
         check(h.service.dabs(h.player, 7, 0, List.of(new dev.sculptory.core.brush.Dab(0, (x0 + 3) * 16, 101 * 16,
                 (z0 + 3) * 16, 255))).reason() == RejectReason.INVALID, "a refused stroke takes no dabs");
         for (int x = x0; x <= x0 + 7; x++) {
             for (int z = z0; z <= z0 + 7; z++) {
-                check(h.world.getBlockState(new net.minecraft.util.math.BlockPos(x, 100, z)).isOf(Blocks.STONE),
+                check(h.world.getBlockState(new net.minecraft.core.BlockPos(x, 100, z)).is(Blocks.STONE),
                         "a refusal changed " + x + ", 100, " + z);
-                check(h.world.getBlockState(new net.minecraft.util.math.BlockPos(x, 101, z)).isAir(),
+                check(h.world.getBlockState(new net.minecraft.core.BlockPos(x, 101, z)).isAir(),
                         "a refusal wrote above " + x + ", " + z);
             }
         }
         forceChunks(h.world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 }

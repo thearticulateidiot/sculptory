@@ -53,13 +53,13 @@ import java.util.function.Predicate;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ChunkTicketType;
-import net.minecraft.server.world.ServerChunkManager;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.UserCache;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.server.players.GameProfileCache;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.border.WorldBorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -71,25 +71,25 @@ import org.slf4j.LoggerFactory;
  * <p>It is also the Fabric {@link EngineHost}: the game as the shared engine sees it, over this
  * {@link MinecraftServer}.
  */
-public final class EngineRuntime implements EngineHost<ServerPlayerEntity, ServerWorld> {
+public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel> {
     /**
      * Each world's biomes ({@link #biomes}). The value holds its world, so a weak map would never drop it: the entry is
      * removed when the world unloads (ServerWorldEvents.UNLOAD). Server thread only.
      */
-    private final java.util.Map<ServerWorld, FabricWorldBiomes> worldBiomes = new java.util.IdentityHashMap<>();
+    private final java.util.Map<ServerLevel, FabricWorldBiomes> worldBiomes = new java.util.IdentityHashMap<>();
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static boolean installed;
     private static volatile EngineRuntime current;
 
     /** Region-op chunk ticket: radius 0, expires after 600 ticks unless refreshed ({@link #chunkTickets}). */
-    public static final ChunkTicketType<ChunkPos> EDIT_TICKET =
-            ChunkTicketType.create("sculptory:edit", Comparator.comparingLong(ChunkPos::toLong), 600);
+    public static final TicketType<ChunkPos> EDIT_TICKET =
+            TicketType.create("sculptory:edit", Comparator.comparingLong(ChunkPos::toLong), 600);
     /**
      * Prediction acknowledgements the game's own way ({@code networkHandler.updateSequence}; negative sequences are
      * ignored): the edit service's default, for GameTests and servers without the network layer.
      */
-    public static final AckSink<ServerPlayerEntity> VANILLA_ACKS = (player, seq) -> {
-        if (seq >= 0 && player.networkHandler != null) player.networkHandler.updateSequence(seq);
+    public static final AckSink<ServerPlayer> VANILLA_ACKS = (player, seq) -> {
+        if (seq >= 0 && player.connection != null) player.connection.ackBlockChangesUpTo(seq);
     };
 
     private final MinecraftServer server;
@@ -97,7 +97,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
     private volatile SculptoryConfig config;
     private final FabricStateSpace states;
     private final FabricPermissionService permissions;
-    private final EditExecutor<ServerWorld> executor;
+    private final EditExecutor<ServerLevel> executor;
     private final FluidTrails fluidTrails;
     /** Told the new config after a reload has applied it (server thread). */
     private final List<Consumer<SculptoryConfig>> reloadListeners = new CopyOnWriteArrayList<>();
@@ -107,8 +107,8 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
         this.config = Objects.requireNonNull(config);
         this.states = buildStates(config);
         this.permissions = new FabricPermissionService(config);
-        this.executor = new EditExecutor<>(this, EditExecutor.Settings.from(config, server.isDedicated()));
-        this.fluidTrails = new FluidTrails(server.getThread());
+        this.executor = new EditExecutor<>(this, EditExecutor.Settings.from(config, server.isDedicatedServer()));
+        this.fluidTrails = new FluidTrails(server.getRunningThread());
     }
 
     /**
@@ -125,7 +125,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
         installed = true;
         ServerLifecycleEvents.SERVER_STARTING.register(EngineRuntime::start);
         // Every entity type is known once the worlds exist: scanned before any player can send a file.
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> EntityTypeRules.scan(server.getOverworld()));
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> EntityTypeRules.scan(server.overworld()));
         // A world unloading takes its biomes object (and its pending biome packets) with it.
         net.fabricmc.fabric.api.event.lifecycle.v1.ServerWorldEvents.UNLOAD.register((server, world) -> {
             EngineRuntime runtime = current;
@@ -212,7 +212,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
      * are wired in at start: their changes are reported as needing a restart and the running values stay.
      */
     public Reload reload(Path file) {
-        if (!server.isOnThread()) throw new IllegalStateException("reload the config on the server thread");
+        if (!server.isSameThread()) throw new IllegalStateException("reload the config on the server thread");
         SculptoryConfig.Read read = SculptoryConfig.read(file);
         if (read.config() == null) {
             LOG.warn("Sculptory config reload: {} could not be used ({}); the running settings stay as they were",
@@ -225,7 +225,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
         List<SculptoryConfig.Change> needRestart = changes.stream().filter(SculptoryConfig.Change::needsRestart)
                 .toList();
         SculptoryConfig next = read.config().keepRestartSectionsOf(running);
-        EditExecutor.Settings settings = EditExecutor.Settings.from(next, server.isDedicated());
+        EditExecutor.Settings settings = EditExecutor.Settings.from(next, server.isDedicatedServer());
         permissions.configure(next);
         executor.updateSettings(settings);
         config = next;
@@ -262,17 +262,17 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
     }
 
     @Override
-    public EditExecutor<ServerWorld> executor() {
+    public EditExecutor<ServerLevel> executor() {
         return executor;
     }
 
     @Override
-    public FabricWorldReader reader(ServerWorld world) {
+    public FabricWorldReader reader(ServerLevel world) {
         return new FabricWorldReader(world, states);
     }
 
     @Override
-    public BlockWriter writer(ServerWorld world, WriteOptions options) {
+    public BlockWriter writer(ServerLevel world, WriteOptions options) {
         return new BlockWriter(world, states, options);
     }
 
@@ -280,19 +280,19 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     /** {@link #EDIT_TICKET} tickets in {@code world}. */
     @Override
-    public TicketWindow.Tickets chunkTickets(ServerWorld world) {
-        ServerChunkManager manager = world.getChunkManager();
+    public TicketWindow.Tickets chunkTickets(ServerLevel world) {
+        ServerChunkCache manager = world.getChunkSource();
         return new TicketWindow.Tickets() {
             @Override
             public void add(int cx, int cz) {
                 ChunkPos pos = new ChunkPos(cx, cz);
-                manager.addTicket(EDIT_TICKET, pos, 0, pos);
+                manager.addRegionTicket(EDIT_TICKET, pos, 0, pos);
             }
 
             @Override
             public void remove(int cx, int cz) {
                 ChunkPos pos = new ChunkPos(cx, cz);
-                manager.removeTicket(EDIT_TICKET, pos, 0, pos);
+                manager.removeRegionTicket(EDIT_TICKET, pos, 0, pos);
             }
 
             /** Adding an equal ticket again restarts its expiry timer. */
@@ -305,27 +305,27 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     /** A {@link BuilderService}: vanilla's own placement and break steps. */
     @Override
-    public BuilderMode<ServerPlayerEntity> builderMode(EngineEditService<ServerPlayerEntity, ServerWorld> edits,
-                                                       HistoryService history, EditExecutor<ServerWorld> executor,
+    public BuilderMode<ServerPlayer> builderMode(EngineEditService<ServerPlayer, ServerLevel> edits,
+                                                       HistoryService history, EditExecutor<ServerLevel> executor,
                                                        LongSupplier clock) {
         return new BuilderService(edits, this, executor, history, clock);
     }
 
     /** {@link TinkerEdits}. */
     @Override
-    public TinkerService<ServerPlayerEntity> tinker(EngineEditService<ServerPlayerEntity, ServerWorld> edits) {
+    public TinkerService<ServerPlayer> tinker(EngineEditService<ServerPlayer, ServerLevel> edits) {
         return new TinkerEdits(edits, this);
     }
 
     /** {@link NavigateService}. */
     @Override
-    public S2C.NavigateResult navigate(ServerPlayerEntity player, C2S.Navigate request) {
+    public S2C.NavigateResult navigate(ServerPlayer player, C2S.Navigate request) {
         return NavigateService.navigate(this, player, request);
     }
 
     @Override
     public boolean isOnThread() {
-        return server.isOnThread();
+        return server.isSameThread();
     }
 
     @Override
@@ -335,46 +335,46 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     @Override
     public int ticks() {
-        return server.getTicks();
+        return server.getTickCount();
     }
 
     @Override
-    public UUID id(ServerPlayerEntity player) {
-        return player.getUuid();
+    public UUID id(ServerPlayer player) {
+        return player.getUUID();
     }
 
     @Override
-    public String name(ServerPlayerEntity player) {
+    public String name(ServerPlayer player) {
         return player.getGameProfile().getName();
     }
 
     @Override
-    public ServerWorld world(ServerPlayerEntity player) {
-        return player.getServerWorld();
+    public ServerLevel world(ServerPlayer player) {
+        return player.serverLevel();
     }
 
     @Override
-    public ServerPlayerEntity online(UUID id) {
-        return server.getPlayerManager().getPlayer(id);
+    public ServerPlayer online(UUID id) {
+        return server.getPlayerList().getPlayer(id);
     }
 
     @Override
-    public ServerPlayerEntity online(String name) {
-        return server.getPlayerManager().getPlayer(name);
+    public ServerPlayer online(String name) {
+        return server.getPlayerList().getPlayerByName(name);
     }
 
     /** The server's user cache only ({@code UserCache.getByUuid}). */
     @Override
     public Optional<Profile> knownProfile(UUID id) {
-        UserCache cache = server.getUserCache();
-        return cache == null ? Optional.empty() : cache.getByUuid(id).map(EngineRuntime::profile);
+        GameProfileCache cache = server.getProfileCache();
+        return cache == null ? Optional.empty() : cache.get(id).map(EngineRuntime::profile);
     }
 
     /** {@code UserCache.findByName}: the cache, else Mojang's session service. */
     @Override
     public Optional<Profile> lookUpProfile(String name) {
-        UserCache cache = server.getUserCache();
-        return cache == null ? Optional.empty() : cache.findByName(name).map(EngineRuntime::profile);
+        GameProfileCache cache = server.getProfileCache();
+        return cache == null ? Optional.empty() : cache.get(name).map(EngineRuntime::profile);
     }
 
     private static Profile profile(GameProfile profile) {
@@ -383,102 +383,102 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     /** {@link #VANILLA_ACKS}: {@code networkHandler.updateSequence}. */
     @Override
-    public void acknowledge(ServerPlayerEntity player, int sequence) {
+    public void acknowledge(ServerPlayer player, int sequence) {
         VANILLA_ACKS.ack(player, sequence);
     }
 
     @Override
-    public Iterable<ServerWorld> worlds() {
-        return server.getWorlds();
+    public Iterable<ServerLevel> worlds() {
+        return server.getAllLevels();
     }
 
     @Override
-    public String worldId(ServerWorld world) {
-        return world.getRegistryKey().getValue().toString();
+    public String worldId(ServerLevel world) {
+        return world.dimension().location().toString();
     }
 
     /** The world's registry key. */
     @Override
-    public Object worldKey(ServerWorld world) {
-        return world.getRegistryKey();
+    public Object worldKey(ServerLevel world) {
+        return world.dimension();
     }
 
     @Override
-    public boolean exists(ServerWorld world) {
-        return server.getWorld(world.getRegistryKey()) == world;
+    public boolean exists(ServerLevel world) {
+        return server.getLevel(world.dimension()) == world;
     }
 
     @Override
-    public int bottomY(ServerWorld world) {
-        return world.getBottomY();
+    public int bottomY(ServerLevel world) {
+        return world.getMinBuildHeight();
     }
 
     @Override
-    public int topY(ServerWorld world) {
-        return world.getTopY();
+    public int topY(ServerLevel world) {
+        return world.getMaxBuildHeight();
     }
 
     @Override
-    public int bottomSection(ServerWorld world) {
-        return world.getBottomSectionCoord();
+    public int bottomSection(ServerLevel world) {
+        return world.getMinSection();
     }
 
     @Override
-    public int topSection(ServerWorld world) {
-        return world.getTopSectionCoord();
+    public int topSection(ServerLevel world) {
+        return world.getMaxSection();
     }
 
     @Override
-    public boolean inBuildLimit(ServerWorld world, int x, int y, int z) {
+    public boolean inBuildLimit(ServerLevel world, int x, int y, int z) {
         return WorldChecks.inBuildLimit(world, x, y, z);
     }
 
     @Override
-    public boolean intersectsBuildLimit(ServerWorld world, Box box) {
+    public boolean intersectsBuildLimit(ServerLevel world, Box box) {
         return WorldChecks.intersectsBuildLimit(world, box);
     }
 
     @Override
-    public boolean chunkLoaded(ServerWorld world, int cx, int cz) {
+    public boolean chunkLoaded(ServerLevel world, int cx, int cz) {
         return WorldChecks.isChunkLoaded(world, cx, cz);
     }
 
     @Override
-    public boolean insideBorder(ServerWorld world, int x, int z) {
+    public boolean insideBorder(ServerLevel world, int x, int z) {
         return WorldChecks.insideBorder(world.getWorldBorder(), x, z);
     }
 
     @Override
-    public BorderBounds border(ServerWorld world) {
+    public BorderBounds border(ServerLevel world) {
         WorldBorder border = world.getWorldBorder();
-        return new BorderBounds(border.getBoundWest(), border.getBoundEast(), border.getBoundNorth(),
-                border.getBoundSouth());
+        return new BorderBounds(border.getMinX(), border.getMaxX(), border.getMinZ(),
+                border.getMaxZ());
     }
 
     /** A {@link ClientSync}. */
     @Override
-    public ClientSync clientUpdates(ServerWorld world, Predicate<UUID> predicting) {
+    public ClientSync clientUpdates(ServerLevel world, Predicate<UUID> predicting) {
         Objects.requireNonNull(predicting);
-        return new ClientSync(world, player -> predicting.test(player.getUuid()));
+        return new ClientSync(world, player -> predicting.test(player.getUUID()));
     }
 
     @Override
-    public int relightSection(ServerWorld world, int sx, int sy, int sz) {
+    public int relightSection(ServerLevel world, int sx, int sy, int sz) {
         return Relighter.relightSection(world, sx, sy, sz);
     }
 
     @Override
-    public FabricTileMatcher tileMatcher(ServerWorld world) {
-        return new FabricTileMatcher(world.getRegistryManager(), states);
+    public FabricTileMatcher tileMatcher(ServerLevel world) {
+        return new FabricTileMatcher(world.registryAccess(), states);
     }
 
     @Override
-    public FabricNeighbourShapes neighbourShapes(ServerWorld world) {
+    public FabricNeighbourShapes neighbourShapes(ServerLevel world) {
         return new FabricNeighbourShapes(world, states);
     }
 
     @Override
-    public FabricWorldEntities entities(ServerWorld world) {
+    public FabricWorldEntities entities(ServerLevel world) {
         return new FabricWorldEntities(world);
     }
 
@@ -487,13 +487,13 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
      * stroke changed go out together once per tick. Forgotten when the world unloads.
      */
     @Override
-    public WorldBiomes biomes(ServerWorld world) {
+    public WorldBiomes biomes(ServerLevel world) {
         return worldBiomes.computeIfAbsent(world, FabricWorldBiomes::new);
     }
 
     /** {@link EntityTypeRules#scan}. */
     @Override
-    public EntityTypeRules entityRules(ServerWorld world) {
+    public EntityTypeRules entityRules(ServerLevel world) {
         return EntityTypeRules.scan(world);
     }
 
@@ -527,7 +527,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
 
     /** A {@link FeatureGrower}. */
     @Override
-    public FeatureGrower featureGrower(ServerWorld world, List<FeatureCatalog.FeatureDef> features, boolean survive) {
+    public FeatureGrower featureGrower(ServerLevel world, List<FeatureCatalog.FeatureDef> features, boolean survive) {
         return new FeatureGrower(world, states, features, survive);
     }
 
@@ -547,7 +547,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayerEntity, Serve
     }
 
     @Override
-    public ScatterPlanner.SurvivalCheck survivalCheck(ServerWorld world, int[] blockStates) {
+    public ScatterPlanner.SurvivalCheck survivalCheck(ServerLevel world, int[] blockStates) {
         return ScatterSurvival.survivalCheck(states, world, blockStates);
     }
 

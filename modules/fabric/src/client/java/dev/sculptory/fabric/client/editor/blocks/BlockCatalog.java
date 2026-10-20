@@ -4,7 +4,7 @@ import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.NamespacedId;
 import java.util.List;
 import java.util.Objects;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * The blocks the player can choose from, with names and item icons. The game implementation reads

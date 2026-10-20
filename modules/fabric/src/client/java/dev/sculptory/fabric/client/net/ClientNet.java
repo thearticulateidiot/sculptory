@@ -12,9 +12,9 @@ import java.util.function.Supplier;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayNetworkHandler;
-import net.minecraft.util.Util;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientPacketListener;
 
 /**
  * Client side of protocol v2 on Fabric: registers the payload types and the {@code sculptory:s2c} receiver
@@ -49,7 +49,7 @@ public final class ClientNet {
             return thread;
         });
         FabricEditorSession created = new FabricEditorSession(new NetworkTransport(), states, System::nanoTime, version,
-                Util.getMainWorkerExecutor(), encoder, PreviewDecoder.Limits.DEFAULT);
+                Util.backgroundExecutor(), encoder, PreviewDecoder.Limits.DEFAULT);
         ClientPlayNetworking.registerGlobalReceiver(Frame.S2C_ID, (frame, context) -> created.onFrame(frame.bytes()));
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> created.onJoin());
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> client.execute(created::onDisconnect));
@@ -82,8 +82,8 @@ public final class ClientNet {
         /** The id the server gave this player at login (offline-mode servers too), from the connection's profile. */
         @Override
         public UUID player() {
-            ClientPlayNetworkHandler handler = MinecraftClient.getInstance().getNetworkHandler();
-            return handler == null ? null : handler.getProfile().getId();
+            ClientPacketListener handler = Minecraft.getInstance().getConnection();
+            return handler == null ? null : handler.getLocalGameProfile().getId();
         }
     }
 }

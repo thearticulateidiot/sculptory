@@ -19,8 +19,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -117,12 +117,12 @@ final class ViewChecks {
         Cells pasted = run.server(area);
         List<Cells.Change> changes = before.diff(pasted);
         Predicate<Cells.Change> placed = c -> c.before().isAir()
-                && (c.after().isOf(Blocks.OAK_PLANKS) || c.after().isOf(Blocks.GOLD_BLOCK));
+                && (c.after().is(Blocks.OAK_PLANKS) || c.after().is(Blocks.GOLD_BLOCK));
         long blocks = bar.volume();
         run.check("Exact count: the turned paste places every block of the bar, each into air", changes.size() == blocks
                 && Changes.offenders(changes, placed).isEmpty(), changes.size() + " of " + blocks + " cells; "
                 + Changes.offenders(changes, placed));
-        run.check("one gold block among them", changes.stream().filter(c -> c.after().isOf(Blocks.GOLD_BLOCK))
+        run.check("one gold block among them", changes.stream().filter(c -> c.after().is(Blocks.GOLD_BLOCK))
                 .count() == 1, "");
         run.clientMatches("the turned paste", pasted);
         run.picture("pasted", "The plank bar pasted turned 30°: a stepped diagonal of planks, the gold block at one end");
@@ -231,7 +231,7 @@ final class ViewChecks {
         run.edit("build the surface", () -> d.action(KeyAction.COMMIT));
         Cells built = run.server(area);
         List<Cells.Change> changes = before.diff(built);
-        Predicate<Cells.Change> inside = c -> c.after().isOf(Blocks.MOSS_BLOCK) && c.x() >= a.x(3) && c.x() <= a.x(17)
+        Predicate<Cells.Change> inside = c -> c.after().is(Blocks.MOSS_BLOCK) && c.x() >= a.x(3) && c.x() <= a.x(17)
                 && c.z() >= a.z(3) && c.z() <= a.z(17);
         run.check("Enter builds a moss sheet within the outline", changes.size() > 40
                 && Changes.offenders(changes, inside).isEmpty(), changes.size() + " cells; "

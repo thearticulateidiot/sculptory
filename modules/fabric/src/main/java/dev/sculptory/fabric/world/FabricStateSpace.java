@@ -21,61 +21,60 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
-import net.minecraft.block.AbstractPlantBlock;
-import net.minecraft.block.AbstractPlantPartBlock;
-import net.minecraft.block.AbstractPlantStemBlock;
-import net.minecraft.block.AbstractSignBlock;
-import net.minecraft.block.AbstractTorchBlock;
-import net.minecraft.block.BambooBlock;
-import net.minecraft.block.BambooShootBlock;
-import net.minecraft.block.BigDripleafBlock;
-import net.minecraft.block.BigDripleafStemBlock;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockEntityProvider;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.CactusBlock;
-import net.minecraft.block.CoralBlock;
-import net.minecraft.block.CoralBlockBlock;
-import net.minecraft.block.CoralFanBlock;
-import net.minecraft.block.CoralWallFanBlock;
-import net.minecraft.block.DoorBlock;
-import net.minecraft.block.FallingBlock;
-import net.minecraft.block.FluidBlock;
-import net.minecraft.block.LeavesBlock;
-import net.minecraft.block.OperatorBlock;
-import net.minecraft.block.PitcherCropBlock;
-import net.minecraft.block.PlantBlock;
-import net.minecraft.block.SugarCaneBlock;
-import net.minecraft.block.TallPlantBlock;
-import net.minecraft.block.VineBlock;
-import net.minecraft.block.WallBlock;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.enums.DoubleBlockHalf;
-import net.minecraft.fluid.FlowableFluid;
-import net.minecraft.fluid.Fluid;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.fluid.Fluids;
-import net.minecraft.item.PlaceableOnWaterItem;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.tag.BlockTags;
-import net.minecraft.registry.tag.TagKey;
-import net.minecraft.state.StateManager;
-import net.minecraft.state.property.Properties;
-import net.minecraft.state.property.Property;
-import net.minecraft.util.BlockMirror;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.function.BooleanBiFunction;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.shape.VoxelShape;
-import net.minecraft.util.shape.VoxelShapes;
-import net.minecraft.world.EmptyBlockView;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.item.PlaceOnWaterBlockItem;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.BambooSaplingBlock;
+import net.minecraft.world.level.block.BambooStalkBlock;
+import net.minecraft.world.level.block.BaseTorchBlock;
+import net.minecraft.world.level.block.BigDripleafBlock;
+import net.minecraft.world.level.block.BigDripleafStemBlock;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.BushBlock;
+import net.minecraft.world.level.block.CactusBlock;
+import net.minecraft.world.level.block.CoralBlock;
+import net.minecraft.world.level.block.CoralFanBlock;
+import net.minecraft.world.level.block.CoralPlantBlock;
+import net.minecraft.world.level.block.CoralWallFanBlock;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.DoublePlantBlock;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.FallingBlock;
+import net.minecraft.world.level.block.GameMasterBlock;
+import net.minecraft.world.level.block.GrowingPlantBlock;
+import net.minecraft.world.level.block.GrowingPlantBodyBlock;
+import net.minecraft.world.level.block.GrowingPlantHeadBlock;
+import net.minecraft.world.level.block.LeavesBlock;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.PitcherCropBlock;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.SignBlock;
+import net.minecraft.world.level.block.SugarCaneBlock;
+import net.minecraft.world.level.block.VineBlock;
+import net.minecraft.world.level.block.WallBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.level.material.FlowingFluid;
+import net.minecraft.world.level.material.Fluid;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.shapes.BooleanOp;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -83,7 +82,7 @@ import org.slf4j.LoggerFactory;
  * The vanilla block-state space: handle {@code h} is {@code Block.getRawIdFromState}, so handles are only valid
  * inside this JVM's registry (rebuild after registry sync; never send handles over the wire).
  *
- * <p>Flags are computed eagerly from {@link Block#STATE_IDS} when the space is built:
+ * <p>Flags are computed eagerly from {@link Block#BLOCK_STATE_REGISTRY} when the space is built:
  * <ul>
  *   <li>{@code TERRAIN_SOLID}: not replaceable, not leaves, and a collision shape that is a full cube or covers at
  *       least the lower 14/16 of the cell (mud, soul sand, dirt path, farmland). Logs count.</li>
@@ -94,7 +93,7 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code NO_COLLISION}: an empty collision shape in an empty world (air, fluids, grass, flowers, torches).</li>
  * </ul>
  * <p>The same pass records the {@linkplain #isSignBlockEntity sign block-entity types}: those of blocks extending
- * vanilla's {@link AbstractSignBlock} whose block entity is a {@link SignBlockEntity}, vanilla's sign and hanging sign
+ * vanilla's {@link SignBlock} whose block entity is a {@link SignBlockEntity}, vanilla's sign and hanging sign
  * and modded ones built on them (Farmer's Delight canvas signs). The file sanitizer keeps their text.
  *
  * <p>{@link #rotate}/{@link #mirror} are vanilla's {@code BlockState.rotate}/{@code mirror}, except for modded blocks
@@ -108,11 +107,11 @@ import org.slf4j.LoggerFactory;
  */
 public final class FabricStateSpace implements StateSpace {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
-    private static final VoxelShape LOWER_FOURTEEN_SIXTEENTHS = VoxelShapes.cuboid(0, 0, 0, 1, 0.875, 1);
+    private static final VoxelShape LOWER_FOURTEEN_SIXTEENTHS = Shapes.box(0, 0, 0, 1, 0.875, 1);
     /** A pitcher crop stands two cells tall from this age on (vanilla's {@code PitcherCropBlock.isDoubleTallAtAge}). */
     private static final int PITCHER_TWO_TALL_AGE = 3;
-    private static final BlockRotation[] ROTATIONS = {
-        BlockRotation.NONE, BlockRotation.CLOCKWISE_90, BlockRotation.CLOCKWISE_180, BlockRotation.COUNTERCLOCKWISE_90
+    private static final Rotation[] ROTATIONS = {
+        Rotation.NONE, Rotation.CLOCKWISE_90, Rotation.CLOCKWISE_180, Rotation.COUNTERCLOCKWISE_90
     };
 
     private final BlockState[] states;
@@ -169,7 +168,7 @@ public final class FabricStateSpace implements StateSpace {
     }
 
     /**
-     * Builds the space from the current {@link Block#STATE_IDS} with the modded facing fallback switched on (the
+     * Builds the space from the current {@link Block#BLOCK_STATE_REGISTRY} with the modded facing fallback switched on (the
      * config default). Call after registries (and tags) are ready.
      */
     public static FabricStateSpace build() {
@@ -177,11 +176,11 @@ public final class FabricStateSpace implements StateSpace {
     }
 
     /**
-     * Builds the space from the current {@link Block#STATE_IDS}, with the modded facing fallback switched on or off.
+     * Builds the space from the current {@link Block#BLOCK_STATE_REGISTRY}, with the modded facing fallback switched on or off.
      * Its tables are built either way, so {@link #withModdedFacingFallback} can switch it later.
      */
     public static FabricStateSpace build(boolean moddedFacingFallback) {
-        int size = Block.STATE_IDS.size();
+        int size = Block.BLOCK_STATE_REGISTRY.size();
         BlockState[] states = new BlockState[size];
         int[] flags = new int[size];
         int[] fluidSources = new int[size];
@@ -190,7 +189,7 @@ public final class FabricStateSpace implements StateSpace {
         Map<Block, Boolean> operatorOnly = new IdentityHashMap<>();
         Set<String> signTypes = new HashSet<>();
         for (int h = 0; h < size; h++) {
-            BlockState state = Block.STATE_IDS.get(h);
+            BlockState state = Block.BLOCK_STATE_REGISTRY.byId(h);
             fluidSources[h] = -1;
             if (state == null) continue;
             states[h] = state;
@@ -203,7 +202,7 @@ public final class FabricStateSpace implements StateSpace {
                 LOG.warn("Could not classify block state {}; treating it as having no flags", state, e);
             }
         }
-        int air = Block.getRawIdFromState(Blocks.AIR.getDefaultState());
+        int air = Block.getId(Blocks.AIR.defaultBlockState());
         int[] columnTops = new int[size], columnBodies = new int[size];
         columns(states, columnTops, columnBodies);
         // Vanilla's own turns, for the fallback to look at.
@@ -264,8 +263,8 @@ public final class FabricStateSpace implements StateSpace {
 
     /**
      * Fills in the column plants ({@link #columnPart}): sugar cane, cactus and bamboo repeat their own state; an
-     * upward-growing two-part plant (kelp, twisting vines: an {@link AbstractPlantStemBlock} top over its
-     * {@link AbstractPlantBlock}) has the stem's state on top and the plant block's default below. The stem of a plant
+     * upward-growing two-part plant (kelp, twisting vines: an {@link GrowingPlantHeadBlock} top over its
+     * {@link GrowingPlantBodyBlock}) has the stem's state on top and the plant block's default below. The stem of a plant
      * block is its pick stack's block (vanilla picks the stem's item); a plant whose pick stack cannot be told is
      * left out.
      */
@@ -274,12 +273,12 @@ public final class FabricStateSpace implements StateSpace {
         Arrays.fill(bodies, -1);
         Map<Block, Block> plantOfStem = new IdentityHashMap<>();
         Map<Block, Block> stemOfPlant = new IdentityHashMap<>();
-        for (Block block : Registries.BLOCK) {
-            if (!(block instanceof AbstractPlantBlock plant) || plant.growthDirection != Direction.UP) continue;
+        for (Block block : BuiltInRegistries.BLOCK) {
+            if (!(block instanceof GrowingPlantBodyBlock plant) || plant.growthDirection != Direction.UP) continue;
             try {
-                Block stem = Block.getBlockFromItem(plant.getPickStack(null, BlockPos.ORIGIN, plant.getDefaultState())
+                Block stem = Block.byItem(plant.getCloneItemStack(null, BlockPos.ZERO, plant.defaultBlockState())
                         .getItem());
-                if (stem instanceof AbstractPlantStemBlock && ((AbstractPlantStemBlock) stem).growthDirection == Direction.UP) {
+                if (stem instanceof GrowingPlantHeadBlock && ((GrowingPlantHeadBlock) stem).growthDirection == Direction.UP) {
                     plantOfStem.put(stem, plant);
                     stemOfPlant.put(plant, stem);
                 }
@@ -291,14 +290,14 @@ public final class FabricStateSpace implements StateSpace {
             BlockState state = states[h];
             if (state == null) continue;
             Block block = state.getBlock();
-            if (block instanceof SugarCaneBlock || block instanceof CactusBlock || block instanceof BambooBlock) {
+            if (block instanceof SugarCaneBlock || block instanceof CactusBlock || block instanceof BambooStalkBlock) {
                 tops[h] = h;
                 bodies[h] = h;
             } else if (plantOfStem.containsKey(block)) {
                 tops[h] = h;
-                bodies[h] = Block.getRawIdFromState(plantOfStem.get(block).getDefaultState());
+                bodies[h] = Block.getId(plantOfStem.get(block).defaultBlockState());
             } else if (stemOfPlant.containsKey(block)) {
-                tops[h] = Block.getRawIdFromState(stemOfPlant.get(block).getDefaultState());
+                tops[h] = Block.getId(stemOfPlant.get(block).defaultBlockState());
                 bodies[h] = h;
             }
         }
@@ -326,9 +325,9 @@ public final class FabricStateSpace implements StateSpace {
         return states[h];
     }
 
-    /** The handle of a vanilla state; -1 if it is not in {@link Block#STATE_IDS}. */
+    /** The handle of a vanilla state; -1 if it is not in {@link Block#BLOCK_STATE_REGISTRY}. */
     public int handle(BlockState state) {
-        int h = Block.getRawIdFromState(Objects.requireNonNull(state));
+        int h = Block.getId(Objects.requireNonNull(state));
         return h >= 0 && h < states.length && states[h] == state ? h : -1;
     }
 
@@ -375,13 +374,13 @@ public final class FabricStateSpace implements StateSpace {
     @Override
     public int resolve(BlockDescriptor d) {
         if (d == null) return -1;
-        Identifier id = Identifier.tryParse(d.block().value());
+        ResourceLocation id = ResourceLocation.tryParse(d.block().value());
         if (id == null) return -1;
-        Optional<Block> found = Registries.BLOCK.getOrEmpty(id);
+        Optional<Block> found = BuiltInRegistries.BLOCK.getOptional(id);
         if (found.isEmpty()) return -1;
         Block block = found.get();
-        StateManager<Block, BlockState> manager = block.getStateManager();
-        BlockState state = block.getDefaultState();
+        StateDefinition<Block, BlockState> manager = block.getStateDefinition();
+        BlockState state = block.defaultBlockState();
         for (Map.Entry<String, String> entry : d.properties().entrySet()) {
             Property<?> property = manager.getProperty(entry.getKey());
             if (property == null) return -1;
@@ -400,8 +399,8 @@ public final class FabricStateSpace implements StateSpace {
     @Override
     public boolean inTag(int h, NamespacedId tag) {
         check(h);
-        Identifier id = Identifier.tryParse(Objects.requireNonNull(tag).value());
-        return id != null && states[h].isIn(TagKey.of(RegistryKeys.BLOCK, id));
+        ResourceLocation id = ResourceLocation.tryParse(Objects.requireNonNull(tag).value());
+        return id != null && states[h].is(TagKey.create(Registries.BLOCK, id));
     }
 
     @Override
@@ -421,8 +420,8 @@ public final class FabricStateSpace implements StateSpace {
         if (mirrored >= 0) return mirrored;
         return switch (Objects.requireNonNull(m)) {
             case NONE -> h;
-            case X -> handle(states[h].mirror(BlockMirror.FRONT_BACK));
-            case Z -> handle(states[h].mirror(BlockMirror.LEFT_RIGHT));
+            case X -> handle(states[h].mirror(net.minecraft.world.level.block.Mirror.FRONT_BACK));
+            case Z -> handle(states[h].mirror(net.minecraft.world.level.block.Mirror.LEFT_RIGHT));
         };
     }
 
@@ -466,8 +465,8 @@ public final class FabricStateSpace implements StateSpace {
     public int withWaterlogged(int h, boolean on) {
         check(h);
         BlockState state = states[h];
-        if (!state.contains(Properties.WATERLOGGED)) return h;
-        return handle(state.with(Properties.WATERLOGGED, on));
+        if (!state.hasProperty(BlockStateProperties.WATERLOGGED)) return h;
+        return handle(state.setValue(BlockStateProperties.WATERLOGGED, on));
     }
 
     @Override
@@ -484,7 +483,7 @@ public final class FabricStateSpace implements StateSpace {
     }
 
     /**
-     * True for the block-entity types of sign blocks: a block extending vanilla's {@link AbstractSignBlock} whose
+     * True for the block-entity types of sign blocks: a block extending vanilla's {@link SignBlock} whose
      * block entity is a {@link SignBlockEntity} (or subclass), so its NBT is sign text. That is
      * {@code minecraft:sign} and {@code minecraft:hanging_sign}, and modded signs built on them.
      */
@@ -504,14 +503,14 @@ public final class FabricStateSpace implements StateSpace {
     @Override
     public List<String> propertyValues(int h, String name) {
         BlockState state = state(h);
-        Property<?> property = name == null ? null : state.getBlock().getStateManager().getProperty(name);
+        Property<?> property = name == null ? null : state.getBlock().getStateDefinition().getProperty(name);
         if (property == null) return List.of();
         return valueNames(property);
     }
 
     private static <T extends Comparable<T>> List<String> valueNames(Property<T> property) {
         List<String> names = new ArrayList<>();
-        for (T value : property.getValues()) names.add(property.name(value));
+        for (T value : property.getPossibleValues()) names.add(property.getName(value));
         return List.copyOf(names);
     }
 
@@ -522,7 +521,7 @@ public final class FabricStateSpace implements StateSpace {
     }
 
     private static NamespacedId blockId(Block block) {
-        return new NamespacedId(Registries.BLOCK.getId(block).toString());
+        return new NamespacedId(BuiltInRegistries.BLOCK.getKey(block).toString());
     }
 
     /** The fallback's and the flip's property access on this space (package-private for FabricStateSpaceTest). */
@@ -546,14 +545,14 @@ public final class FabricStateSpace implements StateSpace {
         @Override
         public String value(int h, String name) {
             BlockState state = state(h);
-            Property<?> property = state.getBlock().getStateManager().getProperty(name);
+            Property<?> property = state.getBlock().getStateDefinition().getProperty(name);
             return property == null ? null : valueName(state, property);
         }
 
         @Override
         public int with(int h, String name, String value) {
             BlockState state = state(h);
-            Property<?> property = state.getBlock().getStateManager().getProperty(name);
+            Property<?> property = state.getBlock().getStateDefinition().getProperty(name);
             if (property == null) return -1;
             BlockState changed = withValue(state, property, value);
             return changed == null ? -1 : handle(changed);
@@ -561,8 +560,8 @@ public final class FabricStateSpace implements StateSpace {
     }
 
     /**
-     * What the upside-down flip needs from Minecraft ({@link VerticalFlip.Hints}): plants (a {@link PlantBlock} or
-     * {@link AbstractPlantPartBlock}, big dripleaf) and torches ({@link AbstractTorchBlock}, standing or on a wall) are
+     * What the upside-down flip needs from Minecraft ({@link VerticalFlip.Hints}): plants (a {@link BushBlock} or
+     * {@link GrowingPlantBlock}, big dripleaf) and torches ({@link BaseTorchBlock}, standing or on a wall) are
      * upright by nature; a state whose outline is not its own mirror image upside down is lopsided (a bed, a carpet, a
      * rail, a chest, a hopper, an anvil, a vine on a ceiling). Walls are taken as the same either way up (their low sides
      * are two pixels shorter than their posts). The outline is asked at the origin of an empty world; one that throws
@@ -580,8 +579,8 @@ public final class FabricStateSpace implements StateSpace {
         @Override
         public boolean upright(int h) {
             Block block = states[h].getBlock();
-            return block instanceof PlantBlock || block instanceof AbstractPlantPartBlock
-                    || block instanceof AbstractTorchBlock || block instanceof BigDripleafBlock
+            return block instanceof BushBlock || block instanceof GrowingPlantBlock
+                    || block instanceof BaseTorchBlock || block instanceof BigDripleafBlock
                     || block instanceof BigDripleafStemBlock;
         }
 
@@ -589,7 +588,7 @@ public final class FabricStateSpace implements StateSpace {
         public boolean lopsided(int h) {
             if (states[h].getBlock() instanceof WallBlock) return false;
             try {
-                VoxelShape shape = states[h].getOutlineShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN);
+                VoxelShape shape = states[h].getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
                 if (shape.isEmpty()) return false;
                 // States share shape instances (waterlogged or powered variants, a block's precomputed shapes).
                 return lopsided.computeIfAbsent(shape, FlipHints::notItsOwnMirrorImage);
@@ -599,12 +598,12 @@ public final class FabricStateSpace implements StateSpace {
         }
 
         private static boolean notItsOwnMirrorImage(VoxelShape shape) {
-            VoxelShape flipped = VoxelShapes.empty();
-            for (Box box : shape.getBoundingBoxes()) {
-                flipped = VoxelShapes.union(flipped,
-                        VoxelShapes.cuboid(box.minX, 1.0 - box.maxY, box.minZ, box.maxX, 1.0 - box.minY, box.maxZ));
+            VoxelShape flipped = Shapes.empty();
+            for (AABB box : shape.toAabbs()) {
+                flipped = Shapes.or(flipped,
+                        Shapes.box(box.minX, 1.0 - box.maxY, box.minZ, box.maxX, 1.0 - box.minY, box.maxZ));
             }
-            return VoxelShapes.matchesAnywhere(shape, flipped, BooleanBiFunction.NOT_SAME);
+            return Shapes.joinIsNotEmpty(shape, flipped, BooleanOp.NOT_SAME);
         }
     }
 
@@ -628,8 +627,8 @@ public final class FabricStateSpace implements StateSpace {
         public boolean keepsShape(int h, CubeTurn.Tip tip) {
             if (tip == CubeTurn.Tip.NONE) return true;
             try {
-                VoxelShape shape = states[h].getOutlineShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN);
-                if (shape.isEmpty() || shape == VoxelShapes.fullCube()) return true;
+                VoxelShape shape = states[h].getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+                if (shape.isEmpty() || shape == Shapes.block()) return true;
                 return (tip == CubeTurn.Tip.PITCH ? pitch : roll).computeIfAbsent(shape, s -> sameTipped(s, tip));
             } catch (RuntimeException e) {
                 return true;
@@ -638,14 +637,14 @@ public final class FabricStateSpace implements StateSpace {
 
         private static boolean sameTipped(VoxelShape shape, CubeTurn.Tip tip) {
             int[] m = tip.matrix();
-            VoxelShape[] turned = {VoxelShapes.empty()};
-            shape.forEachBox((x0, y0, z0, x1, y1, z1) -> {
+            VoxelShape[] turned = {Shapes.empty()};
+            shape.forAllBoxes((x0, y0, z0, x1, y1, z1) -> {
                 double[] a = turn(m, x0 - 0.5, y0 - 0.5, z0 - 0.5), b = turn(m, x1 - 0.5, y1 - 0.5, z1 - 0.5);
-                turned[0] = VoxelShapes.union(turned[0], VoxelShapes.cuboid(Math.min(a[0], b[0]) + 0.5,
+                turned[0] = Shapes.or(turned[0], Shapes.box(Math.min(a[0], b[0]) + 0.5,
                         Math.min(a[1], b[1]) + 0.5, Math.min(a[2], b[2]) + 0.5, Math.max(a[0], b[0]) + 0.5,
                         Math.max(a[1], b[1]) + 0.5, Math.max(a[2], b[2]) + 0.5));
             });
-            return !VoxelShapes.matchesAnywhere(shape, turned[0], BooleanBiFunction.NOT_SAME);
+            return !Shapes.joinIsNotEmpty(shape, turned[0], BooleanOp.NOT_SAME);
         }
 
         private static double[] turn(int[] m, double x, double y, double z) {
@@ -677,11 +676,11 @@ public final class FabricStateSpace implements StateSpace {
         int result = 0;
         boolean isAir = state.isAir();
         if (isAir) result |= StateFlags.AIR;
-        boolean fluidBlock = block instanceof FluidBlock;
+        boolean fluidBlock = block instanceof LiquidBlock;
         if (fluidBlock) result |= StateFlags.FLUID_BLOCK;
-        if (state.contains(Properties.WATERLOGGED)) {
+        if (state.hasProperty(BlockStateProperties.WATERLOGGED)) {
             result |= StateFlags.WATERLOGGABLE;
-            if (state.get(Properties.WATERLOGGED)) result |= StateFlags.WATERLOGGED;
+            if (state.getValue(BlockStateProperties.WATERLOGGED)) result |= StateFlags.WATERLOGGED;
         }
         if (state.hasBlockEntity()) {
             result |= StateFlags.HAS_BLOCK_ENTITY;
@@ -689,22 +688,22 @@ public final class FabricStateSpace implements StateSpace {
                 result |= StateFlags.OPERATOR_NBT;
             }
         }
-        boolean replaceable = state.isReplaceable();
+        boolean replaceable = state.canBeReplaced();
         if (replaceable) result |= StateFlags.REPLACEABLE;
         if (block instanceof FallingBlock) result |= StateFlags.FALLING;
-        boolean leaves = block instanceof LeavesBlock || state.isIn(BlockTags.LEAVES);
+        boolean leaves = block instanceof LeavesBlock || state.is(BlockTags.LEAVES);
         if (!replaceable && !leaves && coversCell(state)) result |= StateFlags.TERRAIN_SOLID;
         boolean vegetation = !isAir && !fluidBlock && isVegetation(state, block, leaves, replaceable);
         if (vegetation) result |= StateFlags.VEGETATION;
         if (standsTwoTall(state, block)) {
-            result |= state.get(Properties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER ? StateFlags.LOWER_HALF
+            result |= state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER ? StateFlags.LOWER_HALF
                     : StateFlags.UPPER_HALF;
         }
         FluidState fluid = state.getFluidState();
-        boolean water = !fluid.isEmpty() && Fluids.WATER.matchesType(fluid.getFluid());
+        boolean water = !fluid.isEmpty() && Fluids.WATER.isSame(fluid.getType());
         if (water) result |= StateFlags.WATER;
         if (isAquatic(state, block, water, fluidBlock, vegetation)) result |= StateFlags.AQUATIC;
-        if (!isAir && block.asItem() instanceof PlaceableOnWaterItem) result |= StateFlags.ON_WATER;
+        if (!isAir && block.asItem() instanceof PlaceOnWaterBlockItem) result |= StateFlags.ON_WATER;
         if (noCollision(state)) result |= StateFlags.NO_COLLISION;
         return result;
     }
@@ -716,22 +715,22 @@ public final class FabricStateSpace implements StateSpace {
      */
     private static boolean isAquatic(BlockState state, Block block, boolean water, boolean fluidBlock,
                                      boolean vegetation) {
-        if (block instanceof CoralBlock || block instanceof CoralFanBlock || block instanceof CoralWallFanBlock
-                || block instanceof CoralBlockBlock) {
+        if (block instanceof CoralPlantBlock || block instanceof CoralFanBlock || block instanceof CoralWallFanBlock
+                || block instanceof CoralBlock) {
             return true;
         }
-        return water && !fluidBlock && vegetation && !state.contains(Properties.WATERLOGGED);
+        return water && !fluidBlock && vegetation && !state.hasProperty(BlockStateProperties.WATERLOGGED);
     }
 
     /**
-     * A vanilla block made of a lower and an upper half: the two-block plants ({@link TallPlantBlock}: tall grass, large
+     * A vanilla block made of a lower and an upper half: the two-block plants ({@link DoublePlantBlock}: tall grass, large
      * ferns, the tall flowers, pitcher plants, small dripleaf, tall seagrass; a pitcher crop only once it has grown two
      * tall) and doors. A {@code half} property alone (a modded vertical slab) is not enough.
      */
     private static boolean standsTwoTall(BlockState state, Block block) {
-        if (!state.contains(Properties.DOUBLE_BLOCK_HALF)) return false;
-        if (block instanceof PitcherCropBlock) return state.get(PitcherCropBlock.AGE) >= PITCHER_TWO_TALL_AGE;
-        return block instanceof TallPlantBlock || block instanceof DoorBlock;
+        if (!state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)) return false;
+        if (block instanceof PitcherCropBlock) return state.getValue(PitcherCropBlock.AGE) >= PITCHER_TWO_TALL_AGE;
+        return block instanceof DoublePlantBlock || block instanceof DoorBlock;
     }
 
     /**
@@ -740,7 +739,7 @@ public final class FabricStateSpace implements StateSpace {
      */
     private static boolean noCollision(BlockState state) {
         try {
-            return state.getCollisionShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN).isEmpty();
+            return state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty();
         } catch (RuntimeException e) {
             return false;
         }
@@ -749,10 +748,10 @@ public final class FabricStateSpace implements StateSpace {
     /** A full collision cube, or a collision shape covering at least the lower 14/16 of the cell. */
     private static boolean coversCell(BlockState state) {
         try {
-            VoxelShape shape = state.getCollisionShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN);
+            VoxelShape shape = state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
             if (shape.isEmpty()) return false;
-            if (Block.isShapeFullCube(shape)) return true;
-            return !VoxelShapes.matchesAnywhere(LOWER_FOURTEEN_SIXTEENTHS, shape, BooleanBiFunction.ONLY_FIRST);
+            if (Block.isShapeFullBlock(shape)) return true;
+            return !Shapes.joinIsNotEmpty(LOWER_FOURTEEN_SIXTEENTHS, shape, BooleanOp.ONLY_FIRST);
         } catch (RuntimeException e) {
             return false;
         }
@@ -760,16 +759,16 @@ public final class FabricStateSpace implements StateSpace {
 
     private static boolean isVegetation(BlockState state, Block block, boolean leaves, boolean replaceable) {
         return leaves
-                || block instanceof PlantBlock
-                || block instanceof AbstractPlantPartBlock
+                || block instanceof BushBlock
+                || block instanceof GrowingPlantBlock
                 || block instanceof VineBlock
                 || block instanceof SugarCaneBlock
                 || block instanceof CactusBlock
-                || block instanceof BambooBlock
-                || block instanceof BambooShootBlock
-                || state.isIn(BlockTags.FLOWERS)
-                || state.isIn(BlockTags.SAPLINGS)
-                || (replaceable && state.isIn(BlockTags.REPLACEABLE_BY_TREES));
+                || block instanceof BambooStalkBlock
+                || block instanceof BambooSaplingBlock
+                || state.is(BlockTags.FLOWERS)
+                || state.is(BlockTags.SAPLINGS)
+                || (replaceable && state.is(BlockTags.REPLACEABLE_BY_TREES));
     }
 
     /**
@@ -784,7 +783,7 @@ public final class FabricStateSpace implements StateSpace {
         if (source.getBlock() == target.getBlock()) return true;
         Optional<BlockEntityType<?>> type = BLOCK_ENTITY_TYPES.computeIfAbsent(source.getBlock(),
                 block -> Optional.ofNullable(blockEntityType(source)));
-        return type.isPresent() && type.get().supports(target);
+        return type.isPresent() && type.get().isValid(target);
     }
 
     /** Block-entity types by block, found once each ({@link #keepsBlockEntity}). */
@@ -792,9 +791,9 @@ public final class FabricStateSpace implements StateSpace {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     private static BlockEntityType<?> blockEntityType(BlockState state) {
-        if (!(state.getBlock() instanceof BlockEntityProvider provider)) return null;
+        if (!(state.getBlock() instanceof EntityBlock provider)) return null;
         try {
-            BlockEntity entity = provider.createBlockEntity(BlockPos.ORIGIN, state);
+            BlockEntity entity = provider.newBlockEntity(BlockPos.ZERO, state);
             return entity == null ? null : entity.getType();
         } catch (RuntimeException | LinkageError e) {
             return null;
@@ -804,15 +803,15 @@ public final class FabricStateSpace implements StateSpace {
     /** Whether the block's NBT needs an operator; adds its block-entity type to {@code signTypes} if it is a sign. */
     private static boolean requiresOperator(BlockState state, Set<String> signTypes) {
         Block block = state.getBlock();
-        if (block instanceof OperatorBlock) return true;
-        if (!(block instanceof BlockEntityProvider provider)) return false;
+        if (block instanceof GameMasterBlock) return true;
+        if (!(block instanceof EntityBlock provider)) return false;
         try {
-            BlockEntity entity = provider.createBlockEntity(BlockPos.ORIGIN, state);
-            if (block instanceof AbstractSignBlock && entity instanceof SignBlockEntity) {
-                Identifier type = BlockEntityType.getId(entity.getType());
+            BlockEntity entity = provider.newBlockEntity(BlockPos.ZERO, state);
+            if (block instanceof SignBlock && entity instanceof SignBlockEntity) {
+                ResourceLocation type = BlockEntityType.getKey(entity.getType());
                 if (type != null) signTypes.add(type.toString());
             }
-            return entity != null && entity.copyItemDataRequiresOperator();
+            return entity != null && entity.onlyOpCanSetNbt();
         } catch (RuntimeException | LinkageError e) {
             LOG.warn("Could not create a block entity for {}; treating its NBT as operator-only", state, e);
             return true;
@@ -822,21 +821,21 @@ public final class FabricStateSpace implements StateSpace {
     private static int computeFluidSource(BlockState state) {
         FluidState fluid = state.getFluidState();
         if (fluid.isEmpty()) return -1;
-        Fluid type = fluid.getFluid();
-        Fluid still = type instanceof FlowableFluid flowable ? flowable.getStill() : type;
-        BlockState source = still.getDefaultState().getBlockState();
+        Fluid type = fluid.getType();
+        Fluid still = type instanceof FlowingFluid flowable ? flowable.getSource() : type;
+        BlockState source = still.defaultFluidState().createLegacyBlock();
         if (source.isAir()) return -1;
-        return Block.getRawIdFromState(source);
+        return Block.getId(source);
     }
 
     private static <T extends Comparable<T>> String valueName(BlockState state, Property<T> property) {
-        return property.name(state.get(property));
+        return property.getName(state.getValue(property));
     }
 
     /** The state with {@code property} set to {@code value}, or {@code null} if the value is unknown or not canonical. */
     private static <T extends Comparable<T>> BlockState withValue(BlockState state, Property<T> property, String value) {
-        Optional<T> parsed = property.parse(value);
-        if (parsed.isEmpty() || !property.name(parsed.get()).equals(value)) return null;
-        return state.with(property, parsed.get());
+        Optional<T> parsed = property.getValue(value);
+        if (parsed.isEmpty() || !property.getName(parsed.get()).equals(value)) return null;
+        return state.setValue(property, parsed.get());
     }
 }

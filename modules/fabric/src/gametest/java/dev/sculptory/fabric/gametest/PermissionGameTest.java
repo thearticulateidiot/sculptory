@@ -21,29 +21,29 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.OperatorEntry;
-import net.minecraft.server.OperatorList;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.ServerOpList;
+import net.minecraft.server.players.ServerOpListEntry;
 import org.slf4j.LoggerFactory;
 
 /** Permission nodes and refusals for a real (mock-connected) non-op player. */
 public final class PermissionGameTest implements FabricGameTest {
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_perm")
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_perm")
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
-    public void permissionRefusalNonOp(TestContext context) {
+    public void permissionRefusalNonOp(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
-        ServerWorld world = context.getWorld();
+        ServerLevel world = context.getLevel();
         MinecraftServer server = world.getServer();
         FabricPermissionService permissions = runtime.permissions();
-        ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
         try {
             // Fabric's GameTest server reports itself as dedicated; either way the mock player is not a host.
-            check(!server.isHost(player.getGameProfile()), "mock player is a host");
+            check(!server.isSingleplayerOwner(player.getGameProfile()), "mock player is a host");
             for (Perm perm : Perm.values()) check(!permissions.has(player, perm), "non-op holds " + perm.node());
             check(permissions.mask(player).bits() == 0, "non-op mask is not empty");
             check(!permissions.mayWriteOperatorNbt(player), "non-op may write operator NBT");
@@ -52,11 +52,11 @@ public final class PermissionGameTest implements FabricGameTest {
             int[] at = EngineTestSupport.regionCorner(context, 5);
             Box far = box(at[0], 0, at[1], at[0] + 15, 15, at[1] + 15);
             BoxFill program = new BoxFill("far", far, handle(runtime.states(), "minecraft:stone"));
-            JobRequest<ServerWorld> request = forPlayer(runtime, player, program, RunOptions.DEFAULT);
+            JobRequest<ServerLevel> request = forPlayer(runtime, player, program, RunOptions.DEFAULT);
             check(!request.mayLoadChunks(), "non-op may load chunks");
             try {
                 runtime.executor().submit(request);
-                throw new GameTestException("job over unloaded chunks was admitted for a non-op");
+                throw new GameTestAssertException("job over unloaded chunks was admitted for a non-op");
             } catch (EditRejected e) {
                 check(e.reason() == RejectReason.UNLOADED, "reason " + e.reason());
             }
@@ -66,7 +66,7 @@ public final class PermissionGameTest implements FabricGameTest {
             try {
                 JobRequest.forPlayer(runtime, player, program, new RunOptions(true, ConflictPolicy.SKIP_CONFLICTS),
                         null, null);
-                throw new GameTestException("physics was allowed for a non-op");
+                throw new GameTestAssertException("physics was allowed for a non-op");
             } catch (EditRejected e) {
                 check(e.reason() == RejectReason.NO_PERMISSION, "reason " + e.reason());
             }
@@ -75,8 +75,8 @@ public final class PermissionGameTest implements FabricGameTest {
             check(permissions.chunk(player, world, at[0] >> 4, at[1] >> 4, far) == ChunkPermit.ALLOW, "permit");
 
             // Op level 2 is the fallback when no permissions mod decides a node.
-            OperatorList ops = server.getPlayerManager().getOpList();
-            ops.add(new OperatorEntry(player.getGameProfile(), 2, false));
+            ServerOpList ops = server.getPlayerList().getOps();
+            ops.add(new ServerOpListEntry(player.getGameProfile(), 2, false));
             try {
                 check(permissions.has(player, Perm.USE) && permissions.has(player, Perm.EDIT_UNLOADED), "level-2 op");
                 check(permissions.mayWriteOperatorNbt(player), "creative level-2 op may write operator NBT");
@@ -87,12 +87,12 @@ public final class PermissionGameTest implements FabricGameTest {
             check(!permissions.has(player, Perm.USE), "node still held after deop");
         } finally {
             try {
-                server.getPlayerManager().remove(player);
+                server.getPlayerList().remove(player);
             } catch (RuntimeException e) {
                 LoggerFactory.getLogger("sculptory").warn("Could not remove the mock player", e);
             }
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -100,56 +100,56 @@ public final class PermissionGameTest implements FabricGameTest {
      * {@code PlayerManagerMixin} turns that into a permission re-check (which pushes {@code PermissionsChanged} to a
      * client with the editor; this mock player has no Sculptory session, so nothing is sent).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_perm_push")
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_perm_push")
     @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
-    public void opAndDeopRecheckEditorPermissions(TestContext context) {
+    public void opAndDeopRecheckEditorPermissions(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
-        MinecraftServer server = context.getWorld().getServer();
-        ServerPlayerEntity player = context.createMockCreativeServerPlayerInWorld();
-        UUID id = player.getUuid();
+        MinecraftServer server = context.getLevel().getServer();
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
+        UUID id = player.getUUID();
         // Whether the player held the editor node when each re-check ran.
         List<Boolean> rechecks = new ArrayList<>();
         ServerNet.observePermissionChecks(checked -> {
-            if (checked.getUuid().equals(id)) rechecks.add(runtime.permissions().has(checked, Perm.USE));
+            if (checked.getUUID().equals(id)) rechecks.add(runtime.permissions().has(checked, Perm.USE));
         });
-        OperatorList ops = server.getPlayerManager().getOpList();
+        ServerOpList ops = server.getPlayerList().getOps();
         try {
             check(!runtime.permissions().has(player, Perm.USE), "mock player starts without the editor node");
 
             // The vanilla op and deop paths re-check. (The GameTest server ops at level 0, so no node changes here.)
-            server.getPlayerManager().addToOperators(player.getGameProfile());
+            server.getPlayerList().op(player.getGameProfile());
             check(rechecks.size() == 1, "op re-checked the editor permissions " + rechecks.size() + " times");
-            server.getPlayerManager().removeFromOperators(player.getGameProfile());
+            server.getPlayerList().deop(player.getGameProfile());
             check(rechecks.size() == 2, "deop re-checked the editor permissions " + (rechecks.size() - 1) + " times");
 
             // What op does on a real server (a level-2+ entry, then the command tree): the re-check sees the node.
-            ops.add(new OperatorEntry(player.getGameProfile(), 2, false));
-            server.getPlayerManager().sendCommandTree(player);
+            ops.add(new ServerOpListEntry(player.getGameProfile(), 2, false));
+            server.getPlayerList().sendPlayerPermissionLevel(player);
             check(rechecks.size() == 3 && rechecks.get(2), "the re-check after a level-2 op sees sculptory.use");
             ops.remove(player.getGameProfile());
-            server.getPlayerManager().sendCommandTree(player);
+            server.getPlayerList().sendPlayerPermissionLevel(player);
             check(rechecks.size() == 4 && !rechecks.get(3), "the re-check after deop sees the node gone");
             check(!ServerNet.isReady(player), "a player without the editor has no session to push to");
         } finally {
             ServerNet.observePermissionChecks(null);
-            if (server.getPlayerManager().isOperator(player.getGameProfile())) {
+            if (server.getPlayerList().isOp(player.getGameProfile())) {
                 ops.remove(player.getGameProfile());
             }
             try {
-                server.getPlayerManager().remove(player);
+                server.getPlayerList().remove(player);
             } catch (RuntimeException e) {
                 LoggerFactory.getLogger("sculptory").warn("Could not remove the mock player", e);
             }
         }
-        context.complete();
+        context.succeed();
     }
 
-    private static JobRequest<ServerWorld> forPlayer(EngineRuntime runtime, ServerPlayerEntity player, BoxFill program,
+    private static JobRequest<ServerLevel> forPlayer(EngineRuntime runtime, ServerPlayer player, BoxFill program,
                                         RunOptions options) {
         try {
             return JobRequest.forPlayer(runtime, player, program, options, null, null);
         } catch (EditRejected e) {
-            throw new GameTestException("forPlayer rejected: " + e.getMessage());
+            throw new GameTestAssertException("forPlayer rejected: " + e.getMessage());
         }
     }
 }

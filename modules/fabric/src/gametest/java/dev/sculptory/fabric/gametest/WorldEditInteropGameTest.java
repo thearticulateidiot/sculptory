@@ -33,15 +33,14 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.block.Block;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -62,19 +61,19 @@ import org.slf4j.LoggerFactory;
 public final class WorldEditInteropGameTest implements FabricGameTest {
     private static final String ENV = "SCULPTORY_WE_INTEROP";
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_we_interop",
-            tickLimit = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
-    public void worldEditSpongeV3Interop(TestContext context) throws Exception {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_we_interop",
+            timeoutTicks = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
+    public void worldEditSpongeV3Interop(GameTestHelper context) throws Exception {
         boolean enabled = "1".equals(System.getenv(ENV));
         boolean loaded = FabricLoader.getInstance().isModLoaded("worldedit");
         if (!enabled || !loaded) {
             LoggerFactory.getLogger("sculptory").info("worldEditSpongeV3Interop skipped ({}={}, WorldEdit jar loaded: {})",
                     ENV, System.getenv(ENV), loaded);
-            context.complete();
+            context.succeed();
             return;
         }
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FabricStateSpace states = h.runtime.states();
         int[] at = regionCorner(context, 60);
         Box source = box(at[0], 100, at[1], at[0] + 5, 102, at[1] + 4);
@@ -86,9 +85,9 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         for (int x = 0; x < 6; x++) {
             for (int z = 0; z < 5; z++) writer.write(at[0] + x, 100, at[1] + z, h.state(specs[(x + z) % specs.length]), null);
         }
-        net.minecraft.util.math.BlockPos chest = pos(at[0] + 2, 101, at[1] + 2);
+        net.minecraft.core.BlockPos chest = pos(at[0] + 2, 101, at[1] + 2);
         writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=north]"), null);
-        ((ChestBlockEntity) world.getBlockEntity(chest)).setStack(4, new ItemStack(Items.EMERALD, 9));
+        ((ChestBlockEntity) world.getBlockEntity(chest)).setItem(4, new ItemStack(Items.EMERALD, 9));
         BlockPos origin = new BlockPos(at[0] + 2, 100, at[1] + 1);
         BlockPos anchor = new BlockPos(2, 0, 1);
 
@@ -104,7 +103,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         for (int y = 0; y < 3; y++) {
             for (int z = 0; z < 5; z++) {
                 for (int x = 0; x < 6; x++) {
-                    int expected = Block.getRawIdFromState(world.getBlockState(pos(at[0] + x, 100 + y, at[1] + z)));
+                    int expected = Block.getId(world.getBlockState(pos(at[0] + x, 100 + y, at[1] + z)));
                     check(ours.get(x, y, z) == expected, "cell " + x + "," + y + "," + z + ": "
                             + states.format(ours.get(x, y, z)) + " vs " + states.format(expected));
                 }
@@ -119,30 +118,30 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = ClipboardGameTest.copy(clips, h.player, source, origin);
         Captured<ClipboardService.Outbound> exported = new Captured<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     try {
                         clips.export(h.player, info.clipboardId(), exported);
                     } catch (EditRejected e) {
-                        throw new GameTestException("export refused: " + e.getMessage());
+                        throw new GameTestAssertException("export refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     byte[] mine = exported.get("export").payload();
                     try {
                         checkWorldEditRead(mine, world, states, source, anchor);
                     } catch (ReflectiveOperationException | IOException e) {
-                        throw new GameTestException("WorldEdit could not read our file: " + e);
+                        throw new GameTestAssertException("WorldEdit could not read our file: " + e);
                     }
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** WorldEdit's v3 bytes for {@code box} with the clipboard origin at {@code origin}. */
-    private static byte[] worldEditWrite(ServerWorld world, Box box, BlockPos origin) throws Exception {
+    private static byte[] worldEditWrite(ServerLevel world, Box box, BlockPos origin) throws Exception {
         Object weWorld = callStatic("com.sk89q.worldedit.fabric.FabricAdapter", "adapt", world);
         Object min = vector(box.min().x(), box.min().y(), box.min().z());
         Object max = vector(box.max().x(), box.max().y(), box.max().z());
@@ -167,7 +166,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         return out.toByteArray();
     }
 
-    private static void checkWorldEditRead(byte[] bytes, ServerWorld world, FabricStateSpace states, Box box,
+    private static void checkWorldEditRead(byte[] bytes, ServerLevel world, FabricStateSpace states, Box box,
                                            BlockPos anchor) throws ReflectiveOperationException, IOException {
         Object reader = call(format(), "getReader", new ByteArrayInputStream(bytes));
         Object clipboard;
@@ -187,7 +186,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
                 for (int x = 0; x < 6; x++) {
                     Object state = call(clipboard, "getBlock", vector(weMin[0] + x, weMin[1] + y, weMin[2] + z));
                     String text = (String) call(state, "getAsString");
-                    int expected = Block.getRawIdFromState(world.getBlockState(pos(box.min().x() + x, box.min().y() + y,
+                    int expected = Block.getId(world.getBlockState(pos(box.min().x() + x, box.min().y() + y,
                             box.min().z() + z)));
                     check(states.parse(text) == expected, "WorldEdit read " + text + " at " + x + "," + y + "," + z
                             + ", expected " + states.format(expected));

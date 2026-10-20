@@ -9,19 +9,19 @@ import java.io.UncheckedIOException;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.SharedConstants;
-import net.minecraft.datafixer.Schemas;
-import net.minecraft.datafixer.TypeReferences;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.nbt.NbtString;
+import net.minecraft.nbt.StringTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.util.datafix.DataFixers;
+import net.minecraft.util.datafix.fixes.References;
 
 /**
- * {@link DataFixHook} over Minecraft's DataFixer ({@code Schemas.getFixer()}, checked with javap for yarn 1.21.1):
- * palette strings go through {@code TypeReferences.FLAT_BLOCK_STATE} as an {@code NbtString}, block entities
- * through {@code TypeReferences.BLOCK_ENTITY} as a compound, both as a {@code Dynamic} over {@code NbtOps.INSTANCE},
+ * {@link DataFixHook} over Minecraft's DataFixer ({@code DataFixers.getDataFixer()}, checked with javap for Minecraft 1.21.1, Mojang names):
+ * palette strings go through {@code References.FLAT_BLOCK_STATE} as a {@code StringTag}, block entities
+ * through {@code References.BLOCK_ENTITY} as a compound, both as a {@code Dynamic} over {@code NbtOps.INSTANCE},
  * from the file's {@code DataVersion} to the running game's save version
- * ({@code SharedConstants.getGameVersion().getSaveVersion().getId()}, 3955 for 1.21.1).
+ * ({@code SharedConstants.getCurrentVersion().getDataVersion().getVersion()}, 3955 for 1.21.1).
  *
  * <p>Fixed palette strings are cached per (string, version), up to {@value #MAX_CACHED} entries (then the cache
  * starts over). Thread-safe: DataFixerUpper is, and imports run on I/O workers.
@@ -48,7 +48,7 @@ public final class FabricDataFixHook implements DataFixHook {
             synchronized (FabricDataFixHook.class) {
                 hook = shared;
                 if (hook == null) {
-                    hook = new FabricDataFixHook(Schemas.getFixer(), currentDataVersion());
+                    hook = new FabricDataFixHook(DataFixers.getDataFixer(), currentDataVersion());
                     shared = hook;
                 }
             }
@@ -58,7 +58,7 @@ public final class FabricDataFixHook implements DataFixHook {
 
     /** The running game's data version (3955 for 1.21.1). */
     public static int currentDataVersion() {
-        return SharedConstants.getGameVersion().getSaveVersion().getId();
+        return SharedConstants.getCurrentVersion().getDataVersion().getVersion();
     }
 
     @Override
@@ -73,8 +73,8 @@ public final class FabricDataFixHook implements DataFixHook {
         Key key = new Key(state, fromDataVersion);
         String cached = states.get(key);
         if (cached != null) return cached;
-        Dynamic<NbtElement> fixed = fixer.update(TypeReferences.FLAT_BLOCK_STATE,
-                new Dynamic<>(NbtOps.INSTANCE, NbtString.of(state)), fromDataVersion, target);
+        Dynamic<Tag> fixed = fixer.update(References.FLAT_BLOCK_STATE,
+                new Dynamic<>(NbtOps.INSTANCE, StringTag.valueOf(state)), fromDataVersion, target);
         String result = fixed.asString().result()
                 .orElseThrow(() -> new IllegalStateException("the data fixer did not return a string for " + state));
         if (states.size() >= MAX_CACHED) states.clear();
@@ -87,7 +87,7 @@ public final class FabricDataFixHook implements DataFixHook {
     public String fixBiome(String biomeId, int fromDataVersion) {
         Objects.requireNonNull(biomeId);
         if (fromDataVersion >= target) return biomeId;
-        Dynamic<NbtElement> fixed = fixer.update(TypeReferences.BIOME, new Dynamic<>(NbtOps.INSTANCE, NbtString.of(biomeId)),
+        Dynamic<Tag> fixed = fixer.update(References.BIOME, new Dynamic<>(NbtOps.INSTANCE, StringTag.valueOf(biomeId)),
                 fromDataVersion, target);
         return fixed.asString().result()
                 .orElseThrow(() -> new IllegalStateException("the data fixer did not return a string for " + biomeId));
@@ -103,10 +103,10 @@ public final class FabricDataFixHook implements DataFixHook {
         Objects.requireNonNull(entity);
         if (fromDataVersion >= target) return entity;
         try {
-            NbtCompound input = NbtBridge.toMinecraft(entity, NbtLimits.BLOCK_ENTITY.maxBytes());
-            Dynamic<NbtElement> fixed = fixer.update(TypeReferences.ENTITY_TREE, new Dynamic<>(NbtOps.INSTANCE, input),
+            CompoundTag input = NbtBridge.toMinecraft(entity, NbtLimits.BLOCK_ENTITY.maxBytes());
+            Dynamic<Tag> fixed = fixer.update(References.ENTITY_TREE, new Dynamic<>(NbtOps.INSTANCE, input),
                     fromDataVersion, target);
-            if (!(fixed.getValue() instanceof NbtCompound compound)) {
+            if (!(fixed.getValue() instanceof CompoundTag compound)) {
                 throw new IllegalStateException("the data fixer did not return a compound");
             }
             return NbtBridge.toCore(compound, NbtLimits.BLOCK_ENTITY);
@@ -121,10 +121,10 @@ public final class FabricDataFixHook implements DataFixHook {
         Objects.requireNonNull(blockEntity);
         if (fromDataVersion >= target) return blockEntity;
         try {
-            NbtCompound input = NbtBridge.toMinecraft(blockEntity, NbtLimits.BLOCK_ENTITY.maxBytes());
-            Dynamic<NbtElement> fixed = fixer.update(TypeReferences.BLOCK_ENTITY, new Dynamic<>(NbtOps.INSTANCE, input),
+            CompoundTag input = NbtBridge.toMinecraft(blockEntity, NbtLimits.BLOCK_ENTITY.maxBytes());
+            Dynamic<Tag> fixed = fixer.update(References.BLOCK_ENTITY, new Dynamic<>(NbtOps.INSTANCE, input),
                     fromDataVersion, target);
-            if (!(fixed.getValue() instanceof NbtCompound compound)) {
+            if (!(fixed.getValue() instanceof CompoundTag compound)) {
                 throw new IllegalStateException("the data fixer did not return a compound");
             }
             return NbtBridge.toCore(compound, NbtLimits.BLOCK_ENTITY);

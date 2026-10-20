@@ -9,13 +9,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
-import net.minecraft.registry.Registries;
-import net.minecraft.state.property.Property;
-import net.minecraft.util.Identifier;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 
 /**
  * The block catalog from {@code Registries.BLOCK}, modded blocks included, with each block's item
@@ -31,8 +31,8 @@ public final class McBlockCatalog implements BlockCatalog {
     public List<Entry> entries() {
         if (entries == null) {
             List<Entry> built = new ArrayList<>();
-            for (Block block : Registries.BLOCK) {
-                Identifier id = Registries.BLOCK.getId(block);
+            for (Block block : BuiltInRegistries.BLOCK) {
+                ResourceLocation id = BuiltInRegistries.BLOCK.getKey(block);
                 try {
                     built.add(new Entry(BlockDescriptor.of(new NamespacedId(id.toString())), block.getName().getString()));
                 } catch (IllegalArgumentException unusualId) {
@@ -51,11 +51,11 @@ public final class McBlockCatalog implements BlockCatalog {
     public List<Tag> tags() {
         if (tags == null) {
             List<Tag> built = new ArrayList<>();
-            Registries.BLOCK.streamTagsAndEntries().forEach(pair -> {
+            BuiltInRegistries.BLOCK.getTags().forEach(pair -> {
                 try {
                     int size = 0;
                     for (var ignored : pair.getSecond()) size++;
-                    built.add(new Tag(new NamespacedId(pair.getFirst().id().toString()), size));
+                    built.add(new Tag(new NamespacedId(pair.getFirst().location().toString()), size));
                 } catch (IllegalArgumentException unusualId) {
                     // Not offered.
                 }
@@ -82,21 +82,21 @@ public final class McBlockCatalog implements BlockCatalog {
 
     /** The registered block for a descriptor, if the id is known. */
     public static Optional<Block> block(BlockDescriptor descriptor) {
-        Identifier id = Identifier.tryParse(descriptor.block().value());
-        if (id == null || !Registries.BLOCK.containsId(id)) {
+        ResourceLocation id = ResourceLocation.tryParse(descriptor.block().value());
+        if (id == null || !BuiltInRegistries.BLOCK.containsKey(id)) {
             return Optional.empty();
         }
-        return Optional.of(Registries.BLOCK.get(id));
+        return Optional.of(BuiltInRegistries.BLOCK.get(id));
     }
 
     /** The exact state as a descriptor (block id plus every property value). */
     public static Optional<BlockDescriptor> describe(BlockState state) {
         try {
             Map<String, String> properties = new HashMap<>();
-            for (Map.Entry<Property<?>, Comparable<?>> entry : state.getEntries().entrySet()) {
+            for (Map.Entry<Property<?>, Comparable<?>> entry : state.getValues().entrySet()) {
                 properties.put(entry.getKey().getName(), valueName(entry.getKey(), entry.getValue()));
             }
-            NamespacedId id = new NamespacedId(Registries.BLOCK.getId(state.getBlock()).toString());
+            NamespacedId id = new NamespacedId(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString());
             return Optional.of(BlockDescriptor.of(id, properties));
         } catch (IllegalArgumentException unusual) {
             return Optional.empty();
@@ -105,6 +105,6 @@ public final class McBlockCatalog implements BlockCatalog {
 
     @SuppressWarnings("unchecked")
     private static <T extends Comparable<T>> String valueName(Property<T> property, Comparable<?> value) {
-        return property.name((T) value);
+        return property.getName((T) value);
     }
 }

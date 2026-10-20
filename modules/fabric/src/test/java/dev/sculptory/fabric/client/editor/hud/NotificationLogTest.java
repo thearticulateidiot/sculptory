@@ -11,8 +11,8 @@ import dev.sculptory.fabric.client.editor.ui.UiGraphics;
 import dev.sculptory.fabric.client.session.Notice;
 import java.time.LocalTime;
 import java.util.List;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.item.ItemStack;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.world.item.ItemStack;
 import org.junit.jupiter.api.Test;
 
 /** The toasts' log (the Notifications window's content) and dismissing a toast with a click. */
@@ -112,6 +112,6 @@ class NotificationLogTest {
         public void item(ItemStack stack, int x, int y) {}
 
         @Override
-        public void widget(ClickableWidget widget, int mouseX, int mouseY, float delta) {}
+        public void widget(AbstractWidget widget, int mouseX, int mouseY, float delta) {}
     }
 }

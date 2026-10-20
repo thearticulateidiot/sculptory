@@ -1,14 +1,14 @@
 package dev.sculptory.fabric.client.editor.render.ghost;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.VertexBuffer;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import net.minecraft.client.gl.VertexBuffer;
-import net.minecraft.client.world.ClientWorld;
+import net.minecraft.client.multiplayer.ClientLevel;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -163,7 +163,7 @@ final class GhostMeshCache implements AutoCloseable {
      *
      * @return whether a job was submitted
      */
-    boolean request(Entry entry, long lightKey, ClientWorld world, GhostPlacement.LightMode lightMode, GhostMapping mapping) {
+    boolean request(Entry entry, long lightKey, ClientLevel world, GhostPlacement.LightMode lightMode, GhostMapping mapping) {
         if (closed || entry.pending || inFlight >= MAX_IN_FLIGHT) {
             return false;
         }
@@ -235,7 +235,7 @@ final class GhostMeshCache implements AutoCloseable {
             result.close();
             return false;
         }
-        if (result.built() != null && result.built().getDrawParameters().format() != GhostMesher.FORMAT) {
+        if (result.built() != null && result.built().drawState().format() != GhostMesher.FORMAT) {
             // Built in another vertex format (Iris widens block-format buffers while a shader pack is on): drawn with
             // the ghost programs its vertices would be misread. Dropped without a measurement; the section is meshed
             // again when wanted, at most once a second (with a shader pack on, sections are boxes and none is wanted,
@@ -259,7 +259,7 @@ final class GhostMeshCache implements AutoCloseable {
             result.close();
             return false;
         }
-        if (entry.buffer == null || entry.buffer.isClosed()) {
+        if (entry.buffer == null || entry.buffer.isInvalid()) {
             entry.buffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
         }
         try {

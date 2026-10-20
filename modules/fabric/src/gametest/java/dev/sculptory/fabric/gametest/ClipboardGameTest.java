@@ -44,25 +44,24 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.entity.CommandBlockBlockEntity;
-import net.minecraft.block.entity.FurnaceBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.BlockMirror;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.world.border.WorldBorder;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.CommandBlockEntity;
+import net.minecraft.world.level.block.entity.FurnaceBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.border.WorldBorder;
 
 /**
  * Copy, cut, paste, move and stack against a real server. Each test works in its own
@@ -115,42 +114,42 @@ public final class ClipboardGameTest implements FabricGameTest {
             {"1,3,5", "minecraft:end_rod[facing=east]"},
     };
 
-    static BlockMirror vanilla(Mirror mirror) {
+    static net.minecraft.world.level.block.Mirror vanilla(Mirror mirror) {
         return switch (mirror) {
-            case NONE -> BlockMirror.NONE;
-            case X -> BlockMirror.FRONT_BACK;
-            case Z -> BlockMirror.LEFT_RIGHT;
+            case NONE -> net.minecraft.world.level.block.Mirror.NONE;
+            case X -> net.minecraft.world.level.block.Mirror.FRONT_BACK;
+            case Z -> net.minecraft.world.level.block.Mirror.LEFT_RIGHT;
         };
     }
 
-    static BlockRotation vanilla(int turns) {
+    static Rotation vanilla(int turns) {
         return switch (turns & 3) {
-            case 0 -> BlockRotation.NONE;
-            case 1 -> BlockRotation.CLOCKWISE_90;
-            case 2 -> BlockRotation.CLOCKWISE_180;
-            default -> BlockRotation.COUNTERCLOCKWISE_90;
+            case 0 -> Rotation.NONE;
+            case 1 -> Rotation.CLOCKWISE_90;
+            case 2 -> Rotation.CLOCKWISE_180;
+            default -> Rotation.COUNTERCLOCKWISE_90;
         };
     }
 
     /** Copies {@code box} for {@code player} (anchor {@code origin - box.min}); the reply arrives on a later tick. */
-    static Captured<ClipboardService.ClipboardInfo> copy(ServerClipboards<ServerPlayerEntity, ServerWorld> clips,
-                                                         ServerPlayerEntity player, Box box, BlockPos origin) {
+    static Captured<ClipboardService.ClipboardInfo> copy(ServerClipboards<ServerPlayer, ServerLevel> clips,
+                                                         ServerPlayer player, Box box, BlockPos origin) {
         Captured<ClipboardService.ClipboardInfo> reply = new Captured<>();
         try {
             clips.copy(player, box, origin, false, CellMask.ANY, null, reply);
         } catch (EditRejected e) {
-            throw new GameTestException("copy refused: " + e.getMessage());
+            throw new GameTestAssertException("copy refused: " + e.getMessage());
         }
         return reply;
     }
 
-    static JobTicket paste(Harness h, ServerPlayerEntity player, java.util.UUID clipboardId, BlockPos origin,
+    static JobTicket paste(Harness h, ServerPlayer player, java.util.UUID clipboardId, BlockPos origin,
                            Transform t, RecordingListener listener) {
         try {
             return h.service.run(player, new OpSpec.Paste(new SourceRef.Clipboard(clipboardId), origin, t,
                     PasteOptions.DEFAULT), RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException("paste refused: " + e.getMessage());
+            throw new GameTestAssertException("paste refused: " + e.getMessage());
         }
     }
 
@@ -160,7 +159,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         } catch (EditRejected e) {
             return e;
         }
-        throw new GameTestException("expected a refusal");
+        throw new GameTestAssertException("expected a refusal");
     }
 
     @FunctionalInterface
@@ -172,10 +171,10 @@ public final class ClipboardGameTest implements FabricGameTest {
      * A copy of stairs, slabs, doors, beds, rails and friends pasted with every turn and mirror: each pasted cell
      * holds vanilla's {@code mirror(...).rotate(...)} of its source cell, at the transformed position.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_rotate", tickLimit = LIMIT)
-    public void pasteRotatedStairsSlabsDoorsBedsRails(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_rotate", timeoutTicks = LIMIT)
+    public void pasteRotatedStairsSlabsDoorsBedsRails(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 40);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 5, y0 + 3, z0 + 5);
@@ -205,8 +204,8 @@ public final class ClipboardGameTest implements FabricGameTest {
                 origins.add(origin);
             }
         };
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     check(info.dims().equals(new BlockPos(6, 4, 6)) && info.anchor().equals(BlockPos.ORIGIN), "info " + info);
                     for (int k = 0; k < half; k++) {
@@ -217,14 +216,14 @@ public final class ClipboardGameTest implements FabricGameTest {
                         origins.add(origin);
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(secondRound)
-                .createAndAdd(() -> {
+                .thenWaitUntil(secondRound)
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (int k = 0; k < transforms.size(); k++) {
                         check(pastes.get(k).result.outcome() == JobOutcome.COMPLETED, "paste " + k + " " + pastes.get(k).result);
                         checkTransformed(world, source, origins.get(k), transforms.get(k));
@@ -232,15 +231,15 @@ public final class ClipboardGameTest implements FabricGameTest {
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Every source cell of {@code source} (anchor at its minimum corner) found transformed around {@code origin}. */
-    private static void checkTransformed(ServerWorld world, Box source, BlockPos origin, Transform t) {
+    private static void checkTransformed(ServerLevel world, Box source, BlockPos origin, Transform t) {
         int sx = source.sizeX(), sz = source.sizeZ();
         int ax = t.mapX(0, 0, sx, sz), az = t.mapZ(0, 0, sx, sz);
-        BlockMirror mirror = vanilla(t.mirror());
-        BlockRotation rotation = vanilla(t.quarterTurnsCw());
+        net.minecraft.world.level.block.Mirror mirror = vanilla(t.mirror());
+        Rotation rotation = vanilla(t.quarterTurnsCw());
         int nonAir = 0;
         for (int y = 0; y < source.sizeY(); y++) {
             for (int z = 0; z < sz; z++) {
@@ -249,11 +248,11 @@ public final class ClipboardGameTest implements FabricGameTest {
                     if (from.isAir()) continue;
                     nonAir++;
                     BlockState expected = from.mirror(mirror).rotate(rotation);
-                    net.minecraft.util.math.BlockPos to = pos(origin.x() + t.mapX(x, z, sx, sz) - ax, origin.y() + y,
+                    net.minecraft.core.BlockPos to = pos(origin.x() + t.mapX(x, z, sx, sz) - ax, origin.y() + y,
                             origin.z() + t.mapZ(x, z, sx, sz) - az);
                     BlockState got = world.getBlockState(to);
                     if (got != expected) {
-                        throw new GameTestException(t + ": " + from + " at " + x + "," + y + "," + z + " should be "
+                        throw new GameTestAssertException(t + ": " + from + " at " + x + "," + y + "," + z + " should be "
                                 + expected + " at " + to.toShortString() + ", got " + got);
                     }
                 }
@@ -274,10 +273,10 @@ public final class ClipboardGameTest implements FabricGameTest {
     }
 
     /** Chest items, sign text, furnace contents and a command block survive copy and paste exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_nbt", tickLimit = LIMIT)
-    public void copyPasteRoundTripWithNbt(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_nbt", timeoutTicks = LIMIT)
+    public void copyPasteRoundTripWithNbt(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 41);
         Box source = box(at[0], 100, at[1], at[0] + 7, 103, at[1] + 7);
         Box all = box(at[0], 100, at[1], at[0] + 63, 110, at[1] + 7);
@@ -291,36 +290,36 @@ public final class ClipboardGameTest implements FabricGameTest {
         RecordingListener paste = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         BlockPos target = new BlockPos(at[0] + 40 + 2, 104, at[1] + 3); // where the anchor lands
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     check(info.anchor().equals(new BlockPos(2, 0, 3)) && info.cells() == source.volume(), "info " + info);
-                    Clipboard held = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                    Clipboard held = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     check(held.tileCount() == 4, "clipboard tiles " + held.tileCount());
                     paste(h, h.player, info.clipboardId(), target, Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED && paste.result.strippedNbt() == 0, "paste " + paste.result);
                     ClipTestSupport.checkShifted(world, before, pos(at[0] + 40, 104, at[1]), "the paste");
                     check(h.history().undoLabel().startsWith("Paste · "), "history " + h.history());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     Box pasted = box(at[0] + 40, 104, at[1], at[0] + 47, 107, at[1] + 7);
                     WorldSnapshot now = capture(world, pasted);
-                    for (int state : now.states) check(Block.getStateFromRawId(state).isAir(), "undo left a block");
+                    for (int state : now.states) check(Block.stateById(state).isAir(), "undo left a block");
                     check(now.tiles.isEmpty(), "undo left block entities");
                     checkSame(before, capture(world, source), "the source");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Stone, planks, a chest with items, a sign, a furnace and a command block with a command. */
-    static void decorate(Harness h, ServerWorld world, Box box) {
+    static void decorate(Harness h, ServerLevel world, Box box) {
         BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         int x = box.min().x(), y = box.min().y(), z = box.min().z();
         for (int dx = 0; dx < box.sizeX(); dx++) {
@@ -330,28 +329,28 @@ public final class ClipboardGameTest implements FabricGameTest {
         }
         writer.write(x + 1, y + 1, z + 1, h.state("minecraft:oak_stairs[facing=east,half=top]"), null);
         writer.write(x + 2, y + 1, z + 1, h.state("minecraft:water"), null);
-        net.minecraft.util.math.BlockPos chest = pos(x + 3, y + 1, z + 3);
+        net.minecraft.core.BlockPos chest = pos(x + 3, y + 1, z + 3);
         writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
         ChestBlockEntity chestEntity = (ChestBlockEntity) world.getBlockEntity(chest);
-        chestEntity.setStack(0, new ItemStack(Items.DIAMOND, 5));
-        chestEntity.setStack(20, new ItemStack(Items.OAK_LOG, 64));
-        net.minecraft.util.math.BlockPos sign = pos(x + 5, y + 1, z + 2);
+        chestEntity.setItem(0, new ItemStack(Items.DIAMOND, 5));
+        chestEntity.setItem(20, new ItemStack(Items.OAK_LOG, 64));
+        net.minecraft.core.BlockPos sign = pos(x + 5, y + 1, z + 2);
         writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign[rotation=4]"), null);
         ((SignBlockEntity) world.getBlockEntity(sign)).setText(
-                new SignText().withMessage(0, Text.literal("Builder")).withMessage(1, Text.literal("Suite")), true);
-        net.minecraft.util.math.BlockPos furnace = pos(x + 6, y + 2, z + 6);
+                new SignText().setMessage(0, Component.literal("Builder")).setMessage(1, Component.literal("Suite")), true);
+        net.minecraft.core.BlockPos furnace = pos(x + 6, y + 2, z + 6);
         writer.write(furnace.getX(), furnace.getY(), furnace.getZ(), h.state("minecraft:furnace[facing=south]"), null);
-        ((FurnaceBlockEntity) world.getBlockEntity(furnace)).setStack(0, new ItemStack(Items.IRON_ORE, 3));
-        net.minecraft.util.math.BlockPos command = pos(x + 1, y + 3, z + 6);
+        ((FurnaceBlockEntity) world.getBlockEntity(furnace)).setItem(0, new ItemStack(Items.IRON_ORE, 3));
+        net.minecraft.core.BlockPos command = pos(x + 1, y + 3, z + 6);
         writer.write(command.getX(), command.getY(), command.getZ(), h.state("minecraft:command_block[facing=up]"), null);
-        ((CommandBlockBlockEntity) world.getBlockEntity(command)).getCommandExecutor().setCommand("say sculptory");
+        ((CommandBlockEntity) world.getBlockEntity(command)).getCommandBlock().setCommand("say sculptory");
     }
 
     /** A cut copies the box, erases it with one undoable job, and the clipboard pastes the original back. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_cut", tickLimit = LIMIT)
-    public void cutIsUndoable(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_cut", timeoutTicks = LIMIT)
+    public void cutIsUndoable(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 42);
         Box source = box(at[0], 100, at[1], at[0] + 7, 103, at[1] + 7);
         Box all = box(at[0], 100, at[1], at[0] + 47, 103, at[1] + 7);
@@ -368,45 +367,45 @@ public final class ClipboardGameTest implements FabricGameTest {
             ticket = clips.copy(h.player, source, new BlockPos(source.min().x(), source.min().y(), source.min().z()), true,
                     CellMask.ANY, erase, cut);
         } catch (EditRejected e) {
-            throw new GameTestException("cut refused: " + e.getMessage());
+            throw new GameTestAssertException("cut refused: " + e.getMessage());
         }
         check(ticket != null && ticket.label().equals("Erase"), "cut job " + ticket);
         // While the clipboard is being made, a second copy is refused rather than racing it.
-        check(clips.building(h.player.getUuid()), "the cut's clipboard is not pending");
+        check(clips.building(h.player.getUUID()), "the cut's clipboard is not pending");
         check(refusal(() -> clips.copy(h.player, source, new BlockPos(0, 0, 0), false, CellMask.ANY, null, new Captured<>()))
                 .reason() == RejectReason.QUEUE_FULL, "a second copy was not refused");
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(erase.result != null && cut.finished(), "cut running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(erase.result != null && cut.finished(), "cut running"))
+                .thenWaitUntil(() -> {
                     check(erase.result.outcome() == JobOutcome.COMPLETED, "erase " + erase.result);
                     ClipboardService.ClipboardInfo info = cut.get("cut");
                     check(info.cells() == source.volume(), "clipboard cells " + info.cells());
                     WorldSnapshot erased = capture(world, source);
-                    for (int state : erased.states) check(Block.getStateFromRawId(state).isAir(), "the cut left a block");
+                    for (int state : erased.states) check(Block.stateById(state).isAir(), "the cut left a block");
                     check(erased.tiles.isEmpty(), "the cut left block entities");
                     check(h.history().undoLabel().startsWith("Erase · "), "history " + h.history());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before, capture(world, source), "after undoing the cut");
                     paste(h, h.player, cut.value.clipboardId(), new BlockPos(at[0] + 32, 100, at[1]), Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     ClipTestSupport.checkShifted(world, before, pos(at[0] + 32, 100, at[1]), "the cut clipboard pasted");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A move onto an overlapping destination reads its source before writing; undo restores everything. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_move", tickLimit = LIMIT)
-    public void moveOverlappingIsExactAndUndoable(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_move", timeoutTicks = LIMIT)
+    public void moveOverlappingIsExactAndUndoable(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 43);
         Box source = box(at[0], 100, at[1], at[0] + 9, 104, at[1] + 9);
         Box union = box(at[0], 100, at[1], at[0] + 12, 105, at[1] + 11);
@@ -426,12 +425,12 @@ public final class ClipboardGameTest implements FabricGameTest {
             h.service.run(h.player, new OpSpec.Move(source, new BlockPos(3, 1, 2), Transform.IDENTITY,
                     new Pattern.Single(h.state("minecraft:air"))), RunOptions.DEFAULT, move);
         } catch (EditRejected e) {
-            throw new GameTestException("move refused: " + e.getMessage());
+            throw new GameTestAssertException("move refused: " + e.getMessage());
         }
         Box destination = source.offset(3, 1, 2);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED && move.result.skippedProtected() == 0,
                             "move " + move.result);
                     ClipTestSupport.checkShifted(world, sourceBefore, pos(at[0] + 3, 101, at[1] + 2), "the moved box");
@@ -443,7 +442,7 @@ public final class ClipboardGameTest implements FabricGameTest {
                                 if (source.contains(x, y, z)) {
                                     check(state.isAir(), "vacated cell " + x + "," + y + "," + z + " holds " + state);
                                 } else {
-                                    check(Block.getRawIdFromState(state) == unionBefore.get(x, y, z), "outside cell changed");
+                                    check(Block.getId(state) == unionBefore.get(x, y, z), "outside cell changed");
                                 }
                             }
                         }
@@ -451,22 +450,22 @@ public final class ClipboardGameTest implements FabricGameTest {
                     check(h.history().undoLabel().startsWith("Move · "), "history " + h.history());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                             "undo " + undo.result);
                     checkSame(unionBefore, capture(world, union), "after undoing the move");
                     forceChunks(world, union, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Three adjacent copies of a box, then one undo removes them all. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_stack", tickLimit = LIMIT)
-    public void stackUndo(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_stack", timeoutTicks = LIMIT)
+    public void stackUndo(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 44);
         Box source = box(at[0], 100, at[1], at[0] + 7, 103, at[1] + 7);
         Box all = box(at[0], 100, at[1], at[0] + 31, 103, at[1] + 7);
@@ -479,7 +478,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         check(refusal(() -> h.service.run(h.player, new OpSpec.Stack(source, 8, 0, 0, 257), RunOptions.DEFAULT, null))
                 .reason() == RejectReason.TOO_LARGE, "a stack of 257 was not refused");
         // Volumes are refused before anything is compiled, for a player without limit.bypass.
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         Box huge = box(at[0], -64, at[1], at[0] + 6399, 319, at[1] + 3199);
         long started = System.nanoTime();
@@ -493,11 +492,11 @@ public final class ClipboardGameTest implements FabricGameTest {
         try {
             h.service.run(h.player, new OpSpec.Stack(source, 8, 0, 0, 3), RunOptions.DEFAULT, stack);
         } catch (EditRejected e) {
-            throw new GameTestException("stack refused: " + e.getMessage());
+            throw new GameTestAssertException("stack refused: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(stack.result != null, "stack running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(stack.result != null, "stack running"))
+                .thenWaitUntil(() -> {
                     check(stack.result.outcome() == JobOutcome.COMPLETED && stack.result.strippedNbt() == 0,
                             "stack " + stack.result);
                     for (int k = 1; k <= 3; k++) {
@@ -507,21 +506,21 @@ public final class ClipboardGameTest implements FabricGameTest {
                     check(h.history().undoLabel().startsWith("Stack · "), "history " + h.history());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(allBefore, capture(world, all), "after undoing the stack");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A copy applies the player's queued brush dabs before its snapshot, so the clipboard holds their result. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_dabs", tickLimit = LIMIT)
-    public void copyAppliesQueuedDabsFirst(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_dabs", timeoutTicks = LIMIT)
+    public void copyAppliesQueuedDabsFirst(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 47);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 100, z0, x0 + 31, 130, z0 + 31);
@@ -532,21 +531,21 @@ public final class ClipboardGameTest implements FabricGameTest {
             h.service.beginStroke(h.player, 3, new BrushSpec(BrushTool.RAISE, 5, 1f, Falloff.SMOOTH, Shape.CIRCLE, null,
                     SurfaceMask.ANY, 0, 0, 1L));
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
         List<Dab> dabs = new ArrayList<>();
         for (int i = 0; i < 8; i++) dabs.add(EditTestSupport.dab(i, x0 + 12 + i, 110, z0 + 16));
         check(h.service.dabs(h.player, 3, 50, dabs).accepted(), "dabs refused");
-        check(h.service.queuedDabs(h.player.getUuid()) == 8, "the dabs ran already");
+        check(h.service.queuedDabs(h.player.getUUID()) == 8, "the dabs ran already");
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = copy(clips, h.player, area, area.min());
-        check(h.service.queuedDabs(h.player.getUuid()) == 0, "the copy did not apply the queued dabs first");
+        check(h.service.queuedDabs(h.player.getUUID()) == 0, "the copy did not apply the queued dabs first");
         WorldSnapshot atCopy = capture(world, area);
         check(EditTestSupport.difference(before, atCopy) != null, "the dabs changed nothing");
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     copied.get("copy");
-                    Clipboard clipboard = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                    Clipboard clipboard = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     for (int y = area.min().y(); y <= area.max().y(); y++) {
                         for (int z = area.min().z(); z <= area.max().z(); z++) {
                             for (int x = area.min().x(); x <= area.max().x(); x++) {
@@ -559,7 +558,7 @@ public final class ClipboardGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -568,23 +567,23 @@ public final class ClipboardGameTest implements FabricGameTest {
      * {@code limit.bypass} may stack from the half-protected chunk, but the captured tiles are then untrusted: the
      * command block arrives without its command. The same stack from an unprotected source keeps it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_bypass", tickLimit = LIMIT)
-    public void bypassStackFromProtectedSourceIsUntrusted(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_bypass", timeoutTicks = LIMIT)
+    public void bypassStackFromProtectedSourceIsUntrusted(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
-        ServerPlayerEntity bypasser = h.addPlayer(false);
+        ServerPlayer bypasser = h.addPlayer(false);
         EditTestSupport.grant(bypasser, Perm.USE, Perm.CLIPBOARD, Perm.REGION, Perm.LIMIT_BYPASS);
         check(!h.runtime.permissions().mayWriteOperatorNbt(bypasser), "the bypasser may write operator NBT");
         int[] at = regionCorner(context, 46);
         int x0 = at[0], z0 = at[1];
         Box all = box(x0 - 16, 100, z0, x0 + 15, 103, z0 + 31);
         loadAndForce(world, all);
-        net.minecraft.util.math.BlockPos command = pos(x0 + 13, 101, z0 + 5);
+        net.minecraft.core.BlockPos command = pos(x0 + 13, 101, z0 + 5);
         h.runtime.writer(world, new WriteOptions(false, true))
                 .write(command.getX(), command.getY(), command.getZ(), h.state("minecraft:command_block"), null);
-        ((CommandBlockBlockEntity) world.getBlockEntity(command)).getCommandExecutor().setCommand("op me");
+        ((CommandBlockEntity) world.getBlockEntity(command)).getCommandBlock().setCommand("op me");
         Box source = box(x0 + 8, 100, z0 + 2, x0 + 15, 102, z0 + 9);
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> inside = new Captured<>();
@@ -595,7 +594,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         try {
             border.setCenter(x0 + 12 - 100_000, z0);
             border.setSize(200_000);
-            check(!world.canPlayerModifyAt(builder, command) && world.canPlayerModifyAt(builder, pos(x0 + 11, 101, z0 + 5)),
+            check(!world.mayInteract(builder, command) && world.mayInteract(builder, pos(x0 + 11, 101, z0 + 5)),
                     "the border does not cut the chunk");
             clips.copy(builder, box(x0 + 2, 100, z0 + 2, x0 + 11, 102, z0 + 9), new BlockPos(x0 + 2, 100, z0 + 2), false,
                     CellMask.ANY, null, inside);
@@ -606,36 +605,36 @@ public final class ClipboardGameTest implements FabricGameTest {
                     .reason() == RejectReason.PROTECTED, "a non-bypass stack from protected columns");
             h.service.run(bypasser, new OpSpec.Stack(source, -16, 0, 0, 1), RunOptions.DEFAULT, untrusted);
         } catch (EditRejected e) {
-            throw new GameTestException("unexpected refusal: " + e.getMessage());
+            throw new GameTestAssertException("unexpected refusal: " + e.getMessage());
         } finally {
             border.setCenter(centerX, centerZ);
             border.setSize(size);
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(untrusted.result != null && inside.finished(), "stack running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(untrusted.result != null && inside.finished(), "stack running"))
+                .thenWaitUntil(() -> {
                     inside.get("the copy of the allowed columns");
                     check(untrusted.result.outcome() == JobOutcome.COMPLETED && untrusted.result.strippedNbt() == 1,
                             "untrusted stack " + untrusted.result);
-                    CommandBlockBlockEntity copy = (CommandBlockBlockEntity) world.getBlockEntity(command.add(-16, 0, 0));
-                    check(copy != null && copy.getCommandExecutor().getCommand().isEmpty(),
+                    CommandBlockEntity copy = (CommandBlockEntity) world.getBlockEntity(command.offset(-16, 0, 0));
+                    check(copy != null && copy.getCommandBlock().getCommand().isEmpty(),
                             "a bypass stack from a protected source kept the command");
                     try {
                         h.service.run(bypasser, new OpSpec.Stack(source, 0, 0, 16, 1), RunOptions.DEFAULT, trusted);
                     } catch (EditRejected e) {
-                        throw new GameTestException("control stack refused: " + e.getMessage());
+                        throw new GameTestAssertException("control stack refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(trusted.result != null, "control stack running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(trusted.result != null, "control stack running"))
+                .thenWaitUntil(() -> {
                     check(trusted.result.strippedNbt() == 0, "control stack " + trusted.result);
-                    CommandBlockBlockEntity copy = (CommandBlockBlockEntity) world.getBlockEntity(command.add(0, 0, 16));
-                    check(copy != null && copy.getCommandExecutor().getCommand().equals("op me"),
+                    CommandBlockEntity copy = (CommandBlockEntity) world.getBlockEntity(command.offset(0, 0, 16));
+                    check(copy != null && copy.getCommandBlock().getCommand().equals("op me"),
                             "a stack from a writable source lost the command");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -645,11 +644,11 @@ public final class ClipboardGameTest implements FabricGameTest {
      * into it; an op with {@code limit.bypass} may copy it, but its tiles are no longer trusted, and may still not
      * move across it (a move is all or nothing). The border is restored in the same step.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_protect", tickLimit = LIMIT)
-    public void copyRefusedFromProtectedSource(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_protect", timeoutTicks = LIMIT)
+    public void copyRefusedFromProtectedSource(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
         check(h.runtime.permissions().has(builder, Perm.REGION) && !h.runtime.permissions().has(builder, Perm.LIMIT_BYPASS),
                 "grants did not apply");
@@ -661,7 +660,7 @@ public final class ClipboardGameTest implements FabricGameTest {
         loadAndForce(world, all);
         BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         writer.write(x0 + 20, 101, z0 + 5, h.state("minecraft:command_block"), null);
-        ((CommandBlockBlockEntity) world.getBlockEntity(pos(x0 + 20, 101, z0 + 5))).getCommandExecutor().setCommand("op me");
+        ((CommandBlockEntity) world.getBlockEntity(pos(x0 + 20, 101, z0 + 5))).getCommandBlock().setCommand("op me");
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> allowed = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> bypassed = new Captured<>();
@@ -672,8 +671,8 @@ public final class ClipboardGameTest implements FabricGameTest {
             // East bound at x0 + 16: chunk A inside, chunk B outside.
             border.setCenter(x0 + 16 - 100_000, z0);
             border.setSize(200_000);
-            check(!world.canPlayerModifyAt(builder, pos(x0 + 20, 101, z0 + 5)), "chunk B is not protected");
-            check(world.canPlayerModifyAt(builder, pos(x0 + 5, 101, z0 + 5)), "chunk A is protected");
+            check(!world.mayInteract(builder, pos(x0 + 20, 101, z0 + 5)), "chunk B is not protected");
+            check(world.mayInteract(builder, pos(x0 + 5, 101, z0 + 5)), "chunk A is protected");
 
             BlockPos o = new BlockPos(x0 + 8, 100, z0 + 2);
             check(refusal(() -> clips.copy(builder, spanning, o, false, CellMask.ANY, null, new Captured<>())).reason()
@@ -693,24 +692,24 @@ public final class ClipboardGameTest implements FabricGameTest {
             clips.copy(builder, inner, new BlockPos(x0 + 2, 100, z0 + 2), false, CellMask.ANY, null, allowed);
             clips.copy(h.player, spanning, o, false, CellMask.ANY, null, bypassed);
         } catch (EditRejected e) {
-            throw new GameTestException("unexpected refusal: " + e.getMessage());
+            throw new GameTestAssertException("unexpected refusal: " + e.getMessage());
         } finally {
             border.setCenter(centerX, centerZ);
             border.setSize(size);
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(allowed.finished() && bypassed.finished(), "copies running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(allowed.finished() && bypassed.finished(), "copies running"))
+                .thenWaitUntil(() -> {
                     allowed.get("the builder's copy inside chunk A");
                     bypassed.get("the bypass copy");
-                    Clipboard clipboard = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                    Clipboard clipboard = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     BlockEntityData tile = clipboard.tile(12, 1, 3);
                     check(tile != null && tile.typeId().equals("minecraft:command_block"), "tile " + tile);
                     check(!FabricTile.isServerCaptured(tile), "a bypass copy of a protected area kept trusted tiles");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -718,25 +717,25 @@ public final class ClipboardGameTest implements FabricGameTest {
      * ({@code EditRejected.STROKE_PENDING}, which the client retries) before it takes a request slot or changes anything:
      * once the step is written, a copy goes ahead, so the refusals left no slot behind.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_clip_stroke_pending", tickLimit = LIMIT)
-    public void aCopyWaitingForAStrokeLeavesNoRequestSlotBehind(TestContext context) {
-        dev.sculptory.server.engine.impl.EditExecutor<ServerWorld> executor = ShapeBrushGameTest.onePartATick(context);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_clip_stroke_pending", timeoutTicks = LIMIT)
+    public void aCopyWaitingForAStrokeLeavesNoRequestSlotBehind(GameTestHelper context) {
+        dev.sculptory.server.engine.impl.EditExecutor<ServerLevel> executor = ShapeBrushGameTest.onePartATick(context);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 758);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 86, z0, x0 + 80, 154, z0 + 80);
         loadAndForce(world, area);
         Box copied = box(x0 + 2, 100, z0 + 2, x0 + 5, 103, z0 + 5);
         h.fill(copied, "minecraft:white_wool", new RecordingListener());
-        MultiplayerGameTest.tickUntil(executor, () -> h.service.jobs(h.player.getUuid()).isEmpty(), 20, "the wool");
+        MultiplayerGameTest.tickUntil(executor, () -> h.service.jobs(h.player.getUUID()).isEmpty(), 20, "the wool");
         BrushSpec cube = BrushSpec.shape(32, new dev.sculptory.core.brush.ShapeSpec(dev.sculptory.core.brush.ShapeSpec.Kind.CUBE,
                 65, dev.sculptory.core.region.Facing.UP, dev.sculptory.core.brush.ShapeSpec.Mode.PLACE, 0),
                 new Pattern.Single(h.state("minecraft:glass")), 1L, null, dev.sculptory.core.brush.Symmetry.NONE);
         try {
             h.service.beginStroke(h.player, 5, cube);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
         check(h.service.dabs(h.player, 5, 1, List.of(ShapeBrushGameTest.at(0, x0 + 44, 120, z0 + 44))).accepted(), "the step");
         executor.tick(); // its first part
@@ -747,13 +746,13 @@ public final class ClipboardGameTest implements FabricGameTest {
             check(e.reason() == RejectReason.QUEUE_FULL && e.kind().equals(EditRejected.STROKE_PENDING),
                     (cut ? "cut " : "copy ") + e.reason() + " " + e.kind());
         }
-        check(world.getBlockState(EngineTestSupport.pos(x0 + 3, 101, z0 + 3)).isOf(Blocks.WHITE_WOOL), "a refused cut erased");
+        check(world.getBlockState(EngineTestSupport.pos(x0 + 3, 101, z0 + 3)).is(Blocks.WHITE_WOOL), "a refused cut erased");
         // The step, and the commit its record's size queues after it (built at once: glass into air).
         MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == 1
-                && h.service.queuedCommits(h.player.getUuid()) == 0, 100, "the step");
+                && h.service.queuedCommits(h.player.getUUID()) == 0, 100, "the step");
         Captured<ClipboardService.ClipboardInfo> copy = copy(clips, h.player, copied, copied.min());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copy.get("the copy after the step");
                     check(info != null, "no clipboard");
                     h.service.endStroke(h.player, 5);
@@ -761,6 +760,6 @@ public final class ClipboardGameTest implements FabricGameTest {
                     executor.shutdown();
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

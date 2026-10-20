@@ -26,22 +26,22 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.SpreadableBlock;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.World;
-import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.SpreadingSnowyDirtBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.Heightmap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -88,7 +88,7 @@ import org.slf4j.LoggerFactory;
  * Trails and wakes are in memory only (a trail is folded into its entry when the game saves its chunks). Entries no
  * history holds any more are forgotten every {@value #SWEEP_TICKS} ticks ({@link #register}).
  */
-public final class FluidTrails implements FluidTrailHook<ServerWorld> {
+public final class FluidTrails implements FluidTrailHook<ServerLevel> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** How often entries no history holds any more lose their marks and trails, in server ticks. */
     public static final int SWEEP_TICKS = 1200;
@@ -121,7 +121,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
     private boolean captureFailureLogged;
     /** The kinds of chunk-data problem met so far (each logged once): {@link #chunkDataProblem}. */
     private final Set<String> chunkDataProblems = new LinkedHashSet<>();
-    private final Map<ServerWorld, WorldTrails> worlds = new IdentityHashMap<>();
+    private final Map<ServerLevel, WorldTrails> worlds = new IdentityHashMap<>();
     private final Set<UUID> frozen = new HashSet<>();
     private final List<WeakReference<Supplier<Set<UUID>>>> holders = new ArrayList<>();
     /** The tick being recorded, or {@code null}. */
@@ -147,10 +147,10 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
     // ============================================================================================ hooks (mixins)
 
     /** {@code World.setBlockState}, before it changes anything: records the cell, or clears its mark. */
-    public static void beforeSetBlockState(World world, BlockPos pos, BlockState state) {
+    public static void beforeSetBlockState(Level world, BlockPos pos, BlockState state) {
         FluidTrails trails = active;
-        if (trails == null || world.isClient || Thread.currentThread() != trails.thread) return;
-        if (world instanceof ServerWorld server) trails.changing(server, pos, state);
+        if (trails == null || world.isClientSide || Thread.currentThread() != trails.thread) return;
+        if (world instanceof ServerLevel server) trails.changing(server, pos, state);
     }
 
     /**
@@ -158,14 +158,14 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * to put it off (its entry's step is writing: the caller schedules it again), or a recording the caller closes
      * after the tick.
      */
-    public static Recording fluidTick(ServerWorld world, BlockPos pos) {
+    public static Recording fluidTick(ServerLevel world, BlockPos pos) {
         FluidTrails trails = active;
         if (trails == null || trails.recording != null || Thread.currentThread() != trails.thread) return null;
         WorldTrails w = trails.worlds.get(world);
         if (w == null || (w.sections.isEmpty() && w.woken.isEmpty())) return null;
         UUID owner = w.ownerAt(pos.getX(), pos.getY(), pos.getZ());
-        if (owner == null) owner = w.wokenBy(pos.asLong(), world.getTime());
-        if (owner == null && !world.getFluidState(pos).isStill()) owner = flowingBeside(w, world, pos);
+        if (owner == null) owner = w.wokenBy(pos.asLong(), world.getGameTime());
+        if (owner == null && !world.getFluidState(pos).isSource()) owner = flowingBeside(w, world, pos);
         if (owner == null) return null;
         if (trails.frozen.contains(owner)) return Recording.SKIPPED;
         return trails.start(world, owner);
@@ -175,9 +175,9 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * The entry whose fluid lies beside or above {@code pos}: a flowing cell's level follows its neighbours', so an
      * entry's water beside a player's stream raises it in the stream's own ticks.
      */
-    private static UUID flowingBeside(WorldTrails w, ServerWorld world, BlockPos pos) {
+    private static UUID flowingBeside(WorldTrails w, ServerLevel world, BlockPos pos) {
         for (Direction direction : FEEDING) {
-            BlockPos next = pos.offset(direction);
+            BlockPos next = pos.relative(direction);
             UUID owner = w.ownerAt(next.getX(), next.getY(), next.getZ());
             if (owner != null && !world.getFluidState(next).isEmpty()) return owner;
         }
@@ -189,20 +189,20 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
             Direction.EAST};
 
     /**
-     * A random tick of {@code state} at {@code pos} is about to run: a grass block (any {@link SpreadableBlock}) under
+     * A random tick of {@code state} at {@code pos} is about to run: a grass block (any {@link SpreadingSnowyDirtBlock}) under
      * a full block of marked fluid (a source or falling fluid) dies to dirt in it, and marked ice (an entry's water
      * that froze) melts in enough light, so they are recorded; {@code null} for every other tick;
      * {@link Recording#SKIPPED} (skip the tick) while that entry is frozen.
      */
-    public static Recording blockRandomTick(ServerWorld world, BlockPos pos, BlockState state) {
+    public static Recording blockRandomTick(ServerLevel world, BlockPos pos, BlockState state) {
         FluidTrails trails = active;
         if (trails == null || trails.markedSections == 0 || trails.recording != null) return null;
         if (Thread.currentThread() != trails.thread) return null;
-        if (state.isOf(Blocks.ICE)) return trails.startUnlessFrozen(world, trails.ownerAt(world, pos));
-        if (!(state.getBlock() instanceof SpreadableBlock)) return null;
-        BlockPos above = pos.up();
+        if (state.is(Blocks.ICE)) return trails.startUnlessFrozen(world, trails.ownerAt(world, pos));
+        if (!(state.getBlock() instanceof SpreadingSnowyDirtBlock)) return null;
+        BlockPos above = pos.above();
         // Only a full fluid block kills grass; under flowing water it lives on and may spread, which is not the fluid's.
-        if (world.getFluidState(above).getLevel() != 8) return null;
+        if (world.getFluidState(above).getAmount() != 8) return null;
         return trails.startUnlessFrozen(world, trails.ownerAt(world, above));
     }
 
@@ -211,12 +211,12 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * cold biome the water at the top of the column freezes, and snow falls in the rain): recorded for the entry whose
      * fluid is that top cell, {@link Recording#SKIPPED} (skip the tick) while that entry is frozen, else {@code null}.
      */
-    public static Recording iceAndSnowTick(ServerWorld world, BlockPos pos) {
+    public static Recording iceAndSnowTick(ServerLevel world, BlockPos pos) {
         FluidTrails trails = active;
         if (trails == null || trails.markedSections == 0 || trails.recording != null) return null;
         if (Thread.currentThread() != trails.thread) return null;
         // The cell vanilla freezes: the one below the column's top (fluids count as motion blocking).
-        BlockPos top = world.getTopPosition(Heightmap.Type.MOTION_BLOCKING, pos).down();
+        BlockPos top = world.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING, pos).below();
         if (world.getFluidState(top).isEmpty()) return null;
         return trails.startUnlessFrozen(world, trails.ownerAt(world, top));
     }
@@ -225,7 +225,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * A random tick of the fluid at {@code pos} (lava setting fire) is about to run: recorded when it is marked,
      * {@link Recording#SKIPPED} (skip the tick) while its entry is frozen.
      */
-    public static Recording fluidRandomTick(ServerWorld world, BlockPos pos) {
+    public static Recording fluidRandomTick(ServerLevel world, BlockPos pos) {
         FluidTrails trails = active;
         if (trails == null || trails.markedSections == 0 || trails.recording != null) return null;
         if (Thread.currentThread() != trails.thread) return null;
@@ -241,7 +241,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * that changed no more would never be saved again, and a crash would leave fluid changes the journal lacks). Never
      * throws; off the server thread (a mod saving chunks elsewhere) nothing is added, logged once.
      */
-    public static void chunkSaved(ServerWorld world, ChunkPos pos, NbtCompound chunkData, Chunk chunk) {
+    public static void chunkSaved(ServerLevel world, ChunkPos pos, CompoundTag chunkData, ChunkAccess chunk) {
         FluidTrails trails = active;
         if (trails == null || world == null || pos == null || chunkData == null) return;
         try {
@@ -250,19 +250,19 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
                         + "not followed after a restart", null);
                 return;
             }
-            NbtCompound marks = trails.saveMarks(world, pos.x, pos.z);
+            CompoundTag marks = trails.saveMarks(world, pos.x, pos.z);
             if (marks != null) chunkData.put(NBT_KEY, marks);
-            if (chunk != null && trails.holdsUnfoldedPart(world, pos.x, pos.z)) chunk.setNeedsSaving(true);
+            if (chunk != null && trails.holdsUnfoldedPart(world, pos.x, pos.z)) chunk.setUnsaved(true);
         } catch (RuntimeException e) {
             trails.chunkDataProblem("save", "the fluid marks of chunk " + pos + " could not be saved", e);
         }
     }
 
     /** Whether a trail still holds a part for chunk column (cx, cz) of {@code world} (the save hook did not fold it). */
-    public boolean holdsUnfoldedPart(ServerWorld world, int cx, int cz) {
+    public boolean holdsUnfoldedPart(ServerLevel world, int cx, int cz) {
         WorldTrails w = worlds.get(world);
         if (w == null) return false;
-        long column = ChunkPos.toLong(cx, cz);
+        long column = ChunkPos.asLong(cx, cz);
         for (Trail trail : w.trails.values()) {
             RecordBuilder part = trail.columns.get(column);
             if (part != null && !part.build().isEmpty()) return true;
@@ -274,11 +274,11 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * The game read chunk column {@code pos} of {@code world} from {@code chunkData} (before it ticks): its saved marks
      * are restored, unless this run has seen the column already (then memory holds its marks). Never throws.
      */
-    public static void chunkLoaded(ServerWorld world, ChunkPos pos, NbtCompound chunkData) {
+    public static void chunkLoaded(ServerLevel world, ChunkPos pos, CompoundTag chunkData) {
         FluidTrails trails = active;
         if (trails == null || world == null || pos == null || chunkData == null) return;
-        String key = chunkData.contains(NBT_KEY, NbtElement.COMPOUND_TYPE) ? NBT_KEY
-                : chunkData.contains(LEGACY_NBT_KEY, NbtElement.COMPOUND_TYPE) ? LEGACY_NBT_KEY : null;
+        String key = chunkData.contains(NBT_KEY, Tag.TAG_COMPOUND) ? NBT_KEY
+                : chunkData.contains(LEGACY_NBT_KEY, Tag.TAG_COMPOUND) ? LEGACY_NBT_KEY : null;
         if (key == null) return;
         try {
             if (Thread.currentThread() != trails.thread) {
@@ -303,7 +303,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
         return Set.copyOf(chunkDataProblems);
     }
 
-    private Recording startUnlessFrozen(ServerWorld world, UUID owner) {
+    private Recording startUnlessFrozen(ServerLevel world, UUID owner) {
         if (owner == null) return null;
         if (frozen.contains(owner)) return Recording.SKIPPED;
         return start(world, owner);
@@ -315,12 +315,12 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
         public static final Recording SKIPPED = new Recording(null, null, null, null);
 
         private final FluidTrails trails;
-        private final ServerWorld world;
+        private final ServerLevel world;
         private final WorldTrails state;
         private final UUID owner;
         private final Long2ObjectLinkedOpenHashMap<Before> touched = new Long2ObjectLinkedOpenHashMap<>();
 
-        private Recording(FluidTrails trails, ServerWorld world, WorldTrails state, UUID owner) {
+        private Recording(FluidTrails trails, ServerLevel world, WorldTrails state, UUID owner) {
             this.trails = trails;
             this.world = world;
             this.state = state;
@@ -346,7 +346,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * job's writes belong to).
      */
     @Override
-    public RecordSink marking(RecordSink sink, ServerWorld world, UUID owner) {
+    public RecordSink marking(RecordSink sink, ServerLevel world, UUID owner) {
         Objects.requireNonNull(sink);
         Objects.requireNonNull(world);
         Objects.requireNonNull(owner);
@@ -391,7 +391,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * mark.)
      */
     @Override
-    public boolean wrote(ServerWorld world, int x, int y, int z, int after, UUID owner) {
+    public boolean wrote(ServerLevel world, int x, int y, int z, int after, UUID owner) {
         if (!followed(after)) return false;
         mark(worlds.computeIfAbsent(world, k -> new WorldTrails()), x, y, z, owner);
         return true;
@@ -404,7 +404,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * left unmarked: it is not the entry's.
      */
     @Override
-    public RecordSink stepMarking(RecordSink sink, ServerWorld world, CellOwner owner) {
+    public RecordSink stepMarking(RecordSink sink, ServerLevel world, CellOwner owner) {
         Objects.requireNonNull(sink);
         Objects.requireNonNull(world);
         Objects.requireNonNull(owner);
@@ -446,7 +446,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
     }
 
     private static boolean followed(int handle) {
-        return followed(Block.getStateFromRawId(handle));
+        return followed(Block.stateById(handle));
     }
 
     /**
@@ -454,7 +454,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * into water).
      */
     private static boolean followed(BlockState state) {
-        return !state.getFluidState().isEmpty() || state.isOf(Blocks.ICE);
+        return !state.getFluidState().isEmpty() || state.is(Blocks.ICE);
     }
 
     /**
@@ -463,7 +463,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * entry's next step takes it. The trail starts afresh (its cap counts from here).
      */
     @Override
-    public EditRecord take(ServerWorld world, UUID owner) {
+    public EditRecord take(ServerLevel world, UUID owner) {
         WorldTrails w = worlds.get(world);
         if (w == null) return null;
         Trail trail = w.trails.remove(owner);
@@ -482,7 +482,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * trail stays, counting what was folded against its cap.
      */
     @Override
-    public EditRecord drain(ServerWorld world, UUID owner) {
+    public EditRecord drain(ServerLevel world, UUID owner) {
         WorldTrails w = worlds.get(world);
         Trail trail = w == null ? null : w.trails.get(owner);
         if (trail == null) return null;
@@ -503,10 +503,10 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * @return the players whose entries were folded into
      */
     @Override
-    public Set<UUID> drainColumn(ServerWorld world, int cx, int cz, BiFunction<UUID, EditRecord, UUID> fold) {
+    public Set<UUID> drainColumn(ServerLevel world, int cx, int cz, BiFunction<UUID, EditRecord, UUID> fold) {
         WorldTrails w = worlds.get(world);
         if (w == null || w.trails.isEmpty()) return Set.of();
-        long column = ChunkPos.toLong(cx, cz);
+        long column = ChunkPos.asLong(cx, cz);
         Set<UUID> players = new LinkedHashSet<>();
         RuntimeException failure = null;
         for (Map.Entry<UUID, Trail> e : w.trails.entrySet()) {
@@ -540,7 +540,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * into the entry before the take. Does nothing for {@code null}.
      */
     @Override
-    public void giveBack(ServerWorld world, UUID owner, EditRecord taken) {
+    public void giveBack(ServerLevel world, UUID owner, EditRecord taken) {
         if (taken == null || taken.before().isEmpty()) return;
         WorldTrails w = worlds.computeIfAbsent(world, k -> new WorldTrails());
         Trail since = w.trails.remove(owner);
@@ -608,8 +608,8 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * expired.
      */
     public void sweep() {
-        for (Map.Entry<ServerWorld, WorldTrails> e : worlds.entrySet()) {
-            long now = e.getKey().getTime();
+        for (Map.Entry<ServerLevel, WorldTrails> e : worlds.entrySet()) {
+            long now = e.getKey().getGameTime();
             e.getValue().woken.values().removeIf(cause -> cause.until() < now);
         }
         Set<UUID> live = new HashSet<>();
@@ -628,7 +628,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
         if (!any) return;
         frozen.retainAll(live);
         trailCaps.keySet().retainAll(live);
-        for (Map.Entry<ServerWorld, WorldTrails> e : worlds.entrySet()) {
+        for (Map.Entry<ServerLevel, WorldTrails> e : worlds.entrySet()) {
             WorldTrails w = e.getValue();
             for (UUID owner : new ArrayList<>(w.sectionsOf.keySet())) {
                 if (!live.contains(owner) && !frozen.contains(owner)) forgetMarks(e.getKey(), w, owner);
@@ -654,12 +654,12 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
     }
 
     /** Whether (x, y, z) is marked with {@code owner} (tests). */
-    public boolean markedBy(ServerWorld world, BlockPos pos, UUID owner) {
+    public boolean markedBy(ServerLevel world, BlockPos pos, UUID owner) {
         return owner.equals(ownerAt(world, pos));
     }
 
     /** The number of cells {@code owner}'s trail holds in {@code world}, not yet taken or folded (tests); 0 without one. */
-    public long trailCells(ServerWorld world, UUID owner) {
+    public long trailCells(ServerLevel world, UUID owner) {
         WorldTrails w = worlds.get(world);
         Trail trail = w == null ? null : w.trails.get(owner);
         EditRecord record = trail == null ? null : trail.buildAll();
@@ -668,7 +668,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
 
     // ============================================================================================ internals
 
-    private void changing(ServerWorld world, BlockPos pos, BlockState state) {
+    private void changing(ServerLevel world, BlockPos pos, BlockState state) {
         Recording r = recording;
         if (r != null) {
             if (world != r.world) return;
@@ -676,7 +676,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
             if (r.touched.containsKey(key)) return;
             BlockState old = world.getBlockState(pos);
             if (old == state) return;
-            r.touched.put(key, new Before(Block.getRawIdFromState(old), old.hasBlockEntity() ? capture(world, pos) : null));
+            r.touched.put(key, new Before(Block.getId(old), old.hasBlockEntity() ? capture(world, pos) : null));
             return;
         }
         if (markedSections == 0) return;
@@ -686,12 +686,12 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
         unmark(w, pos.getX(), pos.getY(), pos.getZ());
     }
 
-    private UUID ownerAt(ServerWorld world, BlockPos pos) {
+    private UUID ownerAt(ServerLevel world, BlockPos pos) {
         WorldTrails w = worlds.get(world);
         return w == null ? null : w.ownerAt(pos.getX(), pos.getY(), pos.getZ());
     }
 
-    private Recording start(ServerWorld world, UUID owner) {
+    private Recording start(ServerLevel world, UUID owner) {
         Recording r = new Recording(this, world, worlds.get(world), owner);
         recording = r;
         return r;
@@ -706,14 +706,14 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
             trail = new Trail();
             w.trails.put(r.owner, trail);
         }
-        long wakeUntil = r.world.getTime() + WAKE_TICKS;
-        BlockPos.Mutable pos = new BlockPos.Mutable();
-        BlockPos.Mutable next = new BlockPos.Mutable();
+        long wakeUntil = r.world.getGameTime() + WAKE_TICKS;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        BlockPos.MutableBlockPos next = new BlockPos.MutableBlockPos();
         for (Long2ObjectMap.Entry<Before> entry : r.touched.long2ObjectEntrySet()) {
             pos.set(entry.getLongKey());
             Before before = entry.getValue();
             BlockState now = r.world.getBlockState(pos);
-            int after = Block.getRawIdFromState(now);
+            int after = Block.getId(now);
             BlockEntityData tile = now.hasBlockEntity() ? capture(r.world, pos) : null;
             if (after == before.state() && sameTile(before.tile(), tile)) continue;
             if (trail.full) {
@@ -729,7 +729,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
             }
             // The change updated its neighbours: fluid there that was lying still may tick now, on this entry's account.
             for (Direction direction : Direction.values()) {
-                next.set(pos, direction);
+                next.setWithOffset(pos, direction);
                 if (r.world.getFluidState(next).isEmpty()) continue;
                 if (w.ownerAt(next.getX(), next.getY(), next.getZ()) != null) continue;
                 w.woken.put(next.asLong(), new Cause(r.owner, wakeUntil));
@@ -752,10 +752,10 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * The block entity at {@code pos}, captured, or {@code null}. Runs inside vanilla's ticks: a block entity that fails
      * to save (a broken mod) is logged once and taken as none, never thrown into the world tick.
      */
-    private BlockEntityData capture(ServerWorld world, BlockPos pos) {
+    private BlockEntityData capture(ServerLevel world, BlockPos pos) {
         try {
-            BlockEntity entity = world.getWorldChunk(pos).getBlockEntity(pos, WorldChunk.CreationType.CHECK);
-            return entity == null || entity.isRemoved() ? null : FabricTile.capture(entity, world.getRegistryManager());
+            BlockEntity entity = world.getChunkAt(pos).getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK);
+            return entity == null || entity.isRemoved() ? null : FabricTile.capture(entity, world.registryAccess());
         } catch (RuntimeException e) {
             if (!captureFailureLogged) {
                 captureFailureLogged = true;
@@ -779,7 +779,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
             w.sections.put(key, section);
             markedSections++;
             // Memory holds this column's marks from now on: what its chunk data says is older.
-            w.seen.add(ChunkPos.toLong(x >> 4, z >> 4));
+            w.seen.add(ChunkPos.asLong(x >> 4, z >> 4));
         }
         int i = SectionBuffer.index(x & 15, y & 15, z & 15);
         UUID dropped = section.clear(i);
@@ -812,7 +812,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * Drops every mark of {@code owner} in {@code world}. Their loaded chunks are due to be saved again, so the marks
      * saved with them go too (the game saves only chunks that changed; these did not).
      */
-    private void forgetMarks(ServerWorld world, WorldTrails w, UUID owner) {
+    private void forgetMarks(ServerLevel world, WorldTrails w, UUID owner) {
         LongOpenHashSet keys = w.sectionsOf.remove(owner);
         if (keys == null) return;
         LongOpenHashSet columns = new LongOpenHashSet();
@@ -824,12 +824,12 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
                 w.sections.remove(key);
                 markedSections--;
             }
-            columns.add(ChunkPos.toLong(BlockBuffer.keyX(key), BlockBuffer.keyZ(key)));
+            columns.add(ChunkPos.asLong(BlockBuffer.keyX(key), BlockBuffer.keyZ(key)));
         }
         for (long column : columns) {
-            WorldChunk chunk = world.getChunkManager().getWorldChunk(ChunkPos.getPackedX(column),
-                    ChunkPos.getPackedZ(column));
-            if (chunk != null) chunk.setNeedsSaving(true);
+            LevelChunk chunk = world.getChunkSource().getChunkNow(ChunkPos.getX(column),
+                    ChunkPos.getZ(column));
+            if (chunk != null) chunk.setUnsaved(true);
         }
     }
 
@@ -837,23 +837,23 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * Chunk column (cx, cz)'s marks as saved chunk data ({@value #NBT_KEY}), or {@code null} when it holds none. The
      * sections of the world's build height are looked up (a few map lookups a chunk save; nothing without marks).
      */
-    private NbtCompound saveMarks(ServerWorld world, int cx, int cz) {
+    private CompoundTag saveMarks(ServerLevel world, int cx, int cz) {
         WorldTrails w = worlds.get(world);
         if (w == null || w.sections.isEmpty()) return null;
-        NbtList list = new NbtList();
-        for (int sy = world.getBottomSectionCoord(); sy < world.getTopSectionCoord(); sy++) {
+        ListTag list = new ListTag();
+        for (int sy = world.getMinSection(); sy < world.getMaxSection(); sy++) {
             SectionMarks section = w.sections.get(BlockBuffer.key(cx, sy, cz));
             if (section == null) continue;
             for (int k = 0; k < section.size; k++) {
-                NbtCompound element = new NbtCompound();
-                element.putUuid("entry", section.owners[k]);
+                CompoundTag element = new CompoundTag();
+                element.putUUID("entry", section.owners[k]);
                 element.putInt("y", sy);
                 element.putLongArray("bits", section.bits[k].clone());
                 list.add(element);
             }
         }
         if (list.isEmpty()) return null;
-        NbtCompound marks = new NbtCompound();
+        CompoundTag marks = new CompoundTag();
         marks.putInt("version", NBT_VERSION);
         marks.put("marks", list);
         return marks;
@@ -864,27 +864,27 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
      * then holds its marks, newer than what the chunk was saved with). Elements that do not fit (another version, a
      * section outside the build height, a bit set of the wrong length) are skipped.
      */
-    private void loadMarks(ServerWorld world, int cx, int cz, NbtCompound marks) {
+    private void loadMarks(ServerLevel world, int cx, int cz, CompoundTag marks) {
         if (marks.getInt("version") != NBT_VERSION) {
             chunkDataProblem("version", "chunk " + cx + ", " + cz + " holds fluid marks of another version; they are "
                     + "ignored", null);
             return;
         }
-        NbtList list = marks.getList("marks", NbtElement.COMPOUND_TYPE);
+        ListTag list = marks.getList("marks", Tag.TAG_COMPOUND);
         if (list.isEmpty()) return;
         WorldTrails w = worlds.computeIfAbsent(world, k -> new WorldTrails());
-        if (!w.seen.add(ChunkPos.toLong(cx, cz))) return;
+        if (!w.seen.add(ChunkPos.asLong(cx, cz))) return;
         for (int n = 0; n < list.size(); n++) {
-            NbtCompound element = list.getCompound(n);
+            CompoundTag element = list.getCompound(n);
             int sy = element.getInt("y");
             long[] bits = element.getLongArray("bits");
-            if (!element.containsUuid("entry") || bits.length != SECTION_LONGS || sy < world.getBottomSectionCoord()
-                    || sy >= world.getTopSectionCoord()) {
+            if (!element.hasUUID("entry") || bits.length != SECTION_LONGS || sy < world.getMinSection()
+                    || sy >= world.getMaxSection()) {
                 chunkDataProblem("malformed", "chunk " + cx + ", " + cz + " holds fluid marks that do not fit; they "
                         + "are skipped", null);
                 continue;
             }
-            UUID owner = element.getUuid("entry");
+            UUID owner = element.getUUID("entry");
             int ox = cx << 4, oy = sy << 4, oz = cz << 4;
             for (int word = 0; word < SECTION_LONGS; word++) {
                 long set = bits[word];
@@ -940,7 +940,7 @@ public final class FluidTrails implements FluidTrailHook<ServerWorld> {
         boolean full;
 
         RecordBuilder column(int x, int z) {
-            long key = ChunkPos.toLong(x >> 4, z >> 4);
+            long key = ChunkPos.asLong(x >> 4, z >> 4);
             RecordBuilder builder = columns.get(key);
             if (builder == null) {
                 builder = new RecordBuilder();

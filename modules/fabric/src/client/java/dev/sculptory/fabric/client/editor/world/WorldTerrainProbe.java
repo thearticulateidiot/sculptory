@@ -1,8 +1,8 @@
 package dev.sculptory.fabric.client.editor.world;
 
-import net.minecraft.block.BlockState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.BlockView;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * {@link TerrainProbe} over a real world. A block is terrain when it has a collision shape and is not
@@ -13,15 +13,15 @@ import net.minecraft.world.BlockView;
  * Unloaded chunks read as air. Render thread only.
  */
 public final class WorldTerrainProbe implements TerrainProbe {
-    private final BlockView world;
+    private final BlockGetter world;
     private final int bottomY;
     private final int topY;
-    private final BlockPos.Mutable cursor = new BlockPos.Mutable();
+    private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
-    public WorldTerrainProbe(BlockView world) {
+    public WorldTerrainProbe(BlockGetter world) {
         this.world = world;
-        this.bottomY = world.getBottomY();
-        this.topY = world.getTopY();
+        this.bottomY = world.getMinBuildHeight();
+        this.topY = world.getMaxBuildHeight();
     }
 
     @Override
@@ -32,8 +32,8 @@ public final class WorldTerrainProbe implements TerrainProbe {
     }
 
     /** The terrain rule, usable from other client code. */
-    public static boolean isTerrainSolid(BlockView world, BlockPos pos, BlockState state) {
-        return !state.isAir() && !state.isReplaceable() && !state.getCollisionShape(world, pos).isEmpty();
+    public static boolean isTerrainSolid(BlockGetter world, BlockPos pos, BlockState state) {
+        return !state.isAir() && !state.canBeReplaced() && !state.getCollisionShape(world, pos).isEmpty();
     }
 
     @Override

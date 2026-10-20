@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.client.editor.wiki;
 
 import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.platform.NativeImage;
 import dev.sculptory.fabric.SculptoryMod;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,11 +13,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.resource.Resource;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.resources.Resource;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
@@ -30,20 +30,20 @@ public final class McWikiResources implements WikiSource, WikiPictures {
     private static final String NAMESPACE = "sculptory";
     private static final String FOLDER = "wiki";
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     /** Pictures asked for since they were last freed; empty for one that isn't there. */
     private final Map<String, Optional<Picture>> pictures = new HashMap<>();
 
-    public McWikiResources(MinecraftClient client) {
+    public McWikiResources(Minecraft client) {
         this.client = client;
     }
 
     @Override
     public List<String> pageIds() {
         List<String> ids = new ArrayList<>();
-        Map<Identifier, Resource> found = client.getResourceManager().findResources(FOLDER,
+        Map<ResourceLocation, Resource> found = client.getResourceManager().listResources(FOLDER,
                 id -> id.getNamespace().equals(NAMESPACE) && id.getPath().endsWith(".md"));
-        for (Identifier id : found.keySet()) {
+        for (ResourceLocation id : found.keySet()) {
             String name = id.getPath().substring(FOLDER.length() + 1, id.getPath().length() - ".md".length());
             if (!name.contains("/")) {
                 ids.add(name);
@@ -57,12 +57,12 @@ public final class McWikiResources implements WikiSource, WikiPictures {
         if (!WikiLink.PAGE_ID.matcher(id).matches()) {
             return Optional.empty();
         }
-        Optional<Resource> resource = client.getResourceManager().getResource(Identifier.of(NAMESPACE,
+        Optional<Resource> resource = client.getResourceManager().getResource(ResourceLocation.fromNamespaceAndPath(NAMESPACE,
                 FOLDER + "/" + id + ".md"));
         if (resource.isEmpty()) {
             return Optional.empty();
         }
-        try (InputStream in = resource.get().getInputStream()) {
+        try (InputStream in = resource.get().open()) {
             return Optional.of(new String(in.readAllBytes(), StandardCharsets.UTF_8));
         } catch (IOException e) {
             SculptoryMod.LOG.warn("Sculptory wiki: could not read page {}: {}", id, e.toString());
@@ -84,22 +84,22 @@ public final class McWikiResources implements WikiSource, WikiPictures {
     private Optional<Picture> load(String path) {
         String file = FOLDER + "/" + path;
         String texturePath = "wiki_picture/" + path;
-        if (!path.endsWith(".png") || !Identifier.isPathValid(file) || path.contains("..")) {
+        if (!path.endsWith(".png") || !ResourceLocation.isValidPath(file) || path.contains("..")) {
             SculptoryMod.LOG.warn("Sculptory wiki: not a picture path: {}", path);
             return Optional.empty();
         }
-        Optional<Resource> resource = client.getResourceManager().getResource(Identifier.of(NAMESPACE, file));
+        Optional<Resource> resource = client.getResourceManager().getResource(ResourceLocation.fromNamespaceAndPath(NAMESPACE, file));
         if (resource.isEmpty()) {
             SculptoryMod.LOG.warn("Sculptory wiki: picture not found: {}", path);
             return Optional.empty();
         }
-        try (InputStream in = resource.get().getInputStream()) {
+        try (InputStream in = resource.get().open()) {
             NativeImage image = NativeImage.read(in);
             int width = image.getWidth();
             int height = image.getHeight();
-            NativeImageBackedTexture texture = new NativeImageBackedTexture(image);
-            Identifier id = Identifier.of(NAMESPACE, texturePath);
-            client.getTextureManager().registerTexture(id, texture);
+            DynamicTexture texture = new DynamicTexture(image);
+            ResourceLocation id = ResourceLocation.fromNamespaceAndPath(NAMESPACE, texturePath);
+            client.getTextureManager().register(id, texture);
             // Shown scaled down to the page's width: smooth rather than nearest pixels, and no bleed from the far edge.
             texture.setFilter(true, false);
             GlStateManager._texParameter(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
@@ -117,7 +117,7 @@ public final class McWikiResources implements WikiSource, WikiPictures {
         while (entries.hasNext()) {
             Map.Entry<String, Optional<Picture>> entry = entries.next();
             if (!paths.contains(entry.getKey())) {
-                entry.getValue().ifPresent(picture -> client.getTextureManager().destroyTexture(picture.texture()));
+                entry.getValue().ifPresent(picture -> client.getTextureManager().release(picture.texture()));
                 entries.remove();
             }
         }

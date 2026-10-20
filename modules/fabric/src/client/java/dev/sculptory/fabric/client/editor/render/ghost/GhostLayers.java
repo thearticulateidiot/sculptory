@@ -1,9 +1,9 @@
 package dev.sculptory.fabric.client.editor.render.ghost;
 
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderPhase;
-import net.minecraft.client.render.VertexFormat;
-import net.minecraft.client.render.VertexFormats;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
+import net.minecraft.client.renderer.RenderStateShard;
+import net.minecraft.client.renderer.RenderType;
 
 /**
  * GL state for the two ghost passes. The layers are only used for {@code startDrawing}/{@code endDrawing} (which set
@@ -22,30 +22,30 @@ import net.minecraft.client.render.VertexFormats;
 final class GhostLayers {
     private GhostLayers() {}
 
-    static final RenderLayer DEPTH = layer(
-            "sculptory_ghost_depth", RenderPhase.CUTOUT_PROGRAM, RenderPhase.NO_TRANSPARENCY, RenderPhase.DEPTH_MASK);
+    static final RenderType DEPTH = layer(
+            "sculptory_ghost_depth", RenderStateShard.RENDERTYPE_CUTOUT_SHADER, RenderStateShard.NO_TRANSPARENCY, RenderStateShard.DEPTH_WRITE);
 
-    static final RenderLayer COLOUR = layer(
-            "sculptory_ghost_colour", RenderPhase.TRANSLUCENT_PROGRAM, RenderPhase.TRANSLUCENT_TRANSPARENCY, RenderPhase.COLOR_MASK);
+    static final RenderType COLOUR = layer(
+            "sculptory_ghost_colour", RenderStateShard.RENDERTYPE_TRANSLUCENT_SHADER, RenderStateShard.TRANSLUCENT_TRANSPARENCY, RenderStateShard.COLOR_WRITE);
 
-    private static RenderLayer layer(
-            String name, RenderPhase.ShaderProgram program, RenderPhase.Transparency transparency, RenderPhase.WriteMaskState writeMask) {
-        return RenderLayer.of(
+    private static RenderType layer(
+            String name, RenderStateShard.ShaderStateShard program, RenderStateShard.TransparencyStateShard transparency, RenderStateShard.WriteMaskStateShard writeMask) {
+        return RenderType.create(
                 name,
-                VertexFormats.POSITION_COLOR_TEXTURE_LIGHT_NORMAL,
-                VertexFormat.DrawMode.QUADS,
+                DefaultVertexFormat.BLOCK,
+                VertexFormat.Mode.QUADS,
                 256,
                 false,
                 false,
-                RenderLayer.MultiPhaseParameters.builder()
-                        .lightmap(RenderPhase.ENABLE_LIGHTMAP)
-                        .program(program)
-                        .texture(RenderPhase.MIPMAP_BLOCK_ATLAS_TEXTURE)
-                        .transparency(transparency)
-                        .target(RenderPhase.MAIN_TARGET)
-                        .writeMaskState(writeMask)
-                        .cull(RenderPhase.DISABLE_CULLING)
-                        .depthTest(RenderPhase.LEQUAL_DEPTH_TEST)
-                        .build(false));
+                RenderType.CompositeState.builder()
+                        .setLightmapState(RenderStateShard.LIGHTMAP)
+                        .setShaderState(program)
+                        .setTextureState(RenderStateShard.BLOCK_SHEET_MIPPED)
+                        .setTransparencyState(transparency)
+                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setWriteMaskState(writeMask)
+                        .setCullState(RenderStateShard.NO_CULL)
+                        .setDepthTestState(RenderStateShard.LEQUAL_DEPTH_TEST)
+                        .createCompositeState(false));
     }
 }

@@ -29,19 +29,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
-import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
-import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
-import net.minecraft.network.packet.s2c.play.PlayerActionResponseS2CPacket;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundBlockChangedAckPacket;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
 
 /**
  * Bulk edits reach watching players exactly as the server has them ({@link ClientSync}): a mock player on an embedded
@@ -65,7 +65,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
     /** 3 × 3 chunk columns of 16 × 40 × 16 = 10,240 cells each: every column crosses the resend threshold. */
-    private static Box heavyRegion(TestContext context, int slot) {
+    private static Box heavyRegion(GameTestHelper context, int slot) {
         int[] at = regionCorner(context, slot);
         return box(at[0], 100, at[1], at[0] + 47, 139, at[1] + 47);
     }
@@ -88,16 +88,16 @@ public final class ClientSyncGameTest implements FabricGameTest {
             BlockPos at = pos(region.min().x() + 5 + i * 16, region.max().y() - 2, region.min().z() + 7 + i * 16);
             writer.write(at.getX(), at.getY(), at.getZ(), sign, null);
             ((SignBlockEntity) h.world.getBlockEntity(at)).setText(
-                    new SignText().withMessage(0, Text.literal("sync " + i)).withMessage(1, Text.literal("Sculptory")), true);
+                    new SignText().setMessage(0, Component.literal("sync " + i)).setMessage(1, Component.literal("Sculptory")), true);
             signs.add(at);
         }
         return signs;
     }
 
     /** The edited columns of {@code region}, grown by {@code chunks} columns, over the whole world height. */
-    private static Box columns(ServerWorld world, Box region, int chunks) {
-        return box(((region.min().x() >> 4) - chunks) << 4, world.getBottomY(), ((region.min().z() >> 4) - chunks) << 4,
-                (((region.max().x() >> 4) + chunks) << 4) + 15, world.getTopY() - 1, (((region.max().z() >> 4) + chunks) << 4) + 15);
+    private static Box columns(ServerLevel world, Box region, int chunks) {
+        return box(((region.min().x() >> 4) - chunks) << 4, world.getMinBuildHeight(), ((region.min().z() >> 4) - chunks) << 4,
+                (((region.max().x() >> 4) + chunks) << 4) + 15, world.getMaxBuildHeight() - 1, (((region.max().z() >> 4) + chunks) << 4) + 15);
     }
 
     private static Box grow(Box box, int by) {
@@ -105,13 +105,13 @@ public final class ClientSyncGameTest implements FabricGameTest {
                 box.max().z() + by);
     }
 
-    private static Watcher watch(ServerWorld world, Box region, ClientView view) {
+    private static Watcher watch(ServerLevel world, Box region, ClientView view) {
         int cx = (region.min().x() + region.max().x()) / 2, cz = (region.min().z() + region.max().z()) / 2;
         return Watcher.join(world, cx, region.max().y() + 8, cz, 5).observe(view);
     }
 
     /** The view must match the world over the full height of the edited columns. */
-    private static void checkView(ServerWorld world, ClientView view, Watcher watcher, Box region, String what) {
+    private static void checkView(ServerLevel world, ClientView view, Watcher watcher, Box region, String what) {
         watcher.drain();
         String difference = view.differenceFrom(columns(world, region, 0));
         check(difference == null, what + ": the client view differs from the world: " + difference);
@@ -142,23 +142,23 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * An executor of the test's own, ticked (and flushed) by the test ({@link #tick}). It writes {@code maxBlocksPerTick}
      * cells a tick (0: a whole job in one tick) however loaded the machine is.
      */
-    private static EditExecutor<ServerWorld> privateExecutor(EngineRuntime runtime, ServerWorld world,
+    private static EditExecutor<ServerLevel> privateExecutor(EngineRuntime runtime, ServerLevel world,
                                                              long maxBlocksPerTick) {
         return new EditExecutor<>(runtime, new EditExecutor.Settings(NO_TIME_LIMIT_NANOS,
                 maxBlocksPerTick, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
     }
 
     /** One tick of a private executor: its work (as at {@code START_SERVER_TICK}), then its flush (as at the end). */
-    private static void tick(EditExecutor<ServerWorld> executor) {
+    private static void tick(EditExecutor<ServerLevel> executor) {
         executor.tick();
         executor.endTick();
     }
 
-    private static void submit(EditExecutor<ServerWorld> executor, JobRequest<ServerWorld> request) {
+    private static void submit(EditExecutor<ServerLevel> executor, JobRequest<ServerLevel> request) {
         try {
             executor.submit(request);
         } catch (EditRejected e) {
-            throw new GameTestException("rejected: " + e.getMessage());
+            throw new GameTestAssertException("rejected: " + e.getMessage());
         }
     }
 
@@ -169,10 +169,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * its undo too; after each, the client view matches the world over the full height of the columns, signs restored
      * by the undo included.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_heavy", tickLimit = LIMIT)
-    public void heavyEditsResendWholeColumnsExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_heavy", timeoutTicks = LIMIT)
+    public void heavyEditsResendWholeColumnsExactly(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 320);
         loadAndForce(h.world, grow(region, 16));
@@ -183,9 +183,9 @@ public final class ClientSyncGameTest implements FabricGameTest {
         long[] resentBefore = new long[1];
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "before the fill");
                     view.resetCounts();
                     resentBefore[0] = sync.columnsResent();
@@ -198,11 +198,11 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(sync.isEmpty() && sync.columnsResent() - resentBefore[0] == 9,
                             (sync.columnsResent() - resentBefore[0]) + " columns resent for 9 heavily changed ones");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "after the fill");
                     check(view.chunkPackets >= 9, view.chunkPackets + " chunk packets for 9 heavily changed columns");
-                    for (BlockPos at : signs) check(h.world.getBlockState(at).isOf(Blocks.STONE), "sign left at " + at);
+                    for (BlockPos at : signs) check(h.world.getBlockState(at).is(Blocks.STONE), "sign left at " + at);
                     view.resetCounts();
                     resentBefore[0] = sync.columnsResent();
                     h.undo(undo);
@@ -211,8 +211,8 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(sync.isEmpty() && sync.columnsResent() - resentBefore[0] == 9,
                             (sync.columnsResent() - resentBefore[0]) + " columns resent for the undo");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "after the undo");
                     check(view.chunkPackets >= 9, view.chunkPackets + " chunk packets for the undo");
                     for (BlockPos at : signs) {
@@ -224,14 +224,14 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 16), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A light edit (512 cells in one column) keeps vanilla's block updates: no chunk packet. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_light", tickLimit = LIMIT)
-    public void lightEditsKeepVanillaBlockUpdates(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_light", timeoutTicks = LIMIT)
+    public void lightEditsKeepVanillaBlockUpdates(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 321);
         loadAndForce(h.world, grow(region, 16));
@@ -243,9 +243,9 @@ public final class ClientSyncGameTest implements FabricGameTest {
         ClientSync sync = (ClientSync) executor.clientSync(h.world);
         long[] before = new long[2];
         RecordingListener fill = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "before the fill");
                     view.resetCounts();
                     before[0] = sync.columnsResent();
@@ -260,8 +260,8 @@ public final class ClientSyncGameTest implements FabricGameTest {
                             + " cells marked for " + fill.result.changed() + " changed");
                 })
                 // Vanilla sends the marked cells in the next tick's world tick.
-                .createAndAdd(() -> check(view.deltaPackets > 0 || watcherDrained(watcher, view), "deltas pending"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(view.deltaPackets > 0 || watcherDrained(watcher, view), "deltas pending"))
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "after the fill");
                     check(view.chunkPackets == 0 && view.deltaPackets > 0, view.chunkPackets + " chunk packets, "
                             + view.deltaPackets + " delta packets");
@@ -270,7 +270,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 16), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     private static boolean watcherDrained(Watcher watcher, ClientView view) {
@@ -283,10 +283,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * hold predictions, so a heavy fill and its undo reach them as block updates (with sign data as block-entity
      * updates) while another watcher gets whole columns; both views match.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_predicting", tickLimit = LIMIT)
-    public void predictingPlayersGetBlockUpdates(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_predicting", timeoutTicks = LIMIT)
+    public void predictingPlayersGetBlockUpdates(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 322);
         loadAndForce(h.world, grow(region, 16));
@@ -300,23 +300,23 @@ public final class ClientSyncGameTest implements FabricGameTest {
         RecordingListener undo = new RecordingListener();
         Runnable sendDabs = () -> h.service.dabs(predicting.player, 99, 1,
                 List.of(dab(0, region.min().x(), region.max().y() + 2, region.min().z())));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(predicting.ready(region) & plain.ready(region), "the watchers are still loading chunks"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(predicting.ready(region) & plain.ready(region), "the watchers are still loading chunks"))
+                .thenExecute(() -> {
                     checkView(h.world, predictingView, predicting, region, "predicting, before");
                     checkView(h.world, plainView, plain, region, "plain, before");
                     predictingView.resetCounts();
                     plainView.resetCounts();
                     sendDabs.run();
-                    check(executor.mayHavePredictions(predicting.player.getUuid())
-                            && !executor.mayHavePredictions(plain.player.getUuid()), "prediction bookkeeping");
+                    check(executor.mayHavePredictions(predicting.player.getUUID())
+                            && !executor.mayHavePredictions(plain.player.getUUID()), "prediction bookkeeping");
                     h.fill(region, "minecraft:stone", fill);
                     tick(executor);
                     check(fill.result != null && fill.result.outcome() == JobOutcome.COMPLETED, "fill " + fill.result);
                     check(sync.isEmpty(), "cells left unsent after the fill");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(h.world, predictingView, predicting, region, "predicting, after the fill");
                     checkView(h.world, plainView, plain, region, "plain, after the fill");
                     check(predictingView.chunkPackets == 0 && predictingView.deltaPackets > 0,
@@ -330,8 +330,8 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(undo.result != null && undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     check(sync.isEmpty(), "cells left unsent after the undo");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(h.world, predictingView, predicting, region, "predicting, after the undo");
                     checkView(h.world, plainView, plain, region, "plain, after the undo");
                     check(predictingView.chunkPackets == 0 && predictingView.blockEntityPackets >= signs.size(),
@@ -344,19 +344,19 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 16), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Protection: a heavy fill that may not write one column at all and half of another. The columns written (the half
      * one included) are resent as the world has them, so the client shows the protected cells unchanged.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_protected", tickLimit = LIMIT)
-    public void protectedCellsReachTheClientUnchanged(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_protected", timeoutTicks = LIMIT)
+    public void protectedCellsReachTheClientUnchanged(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         Box region = heavyRegion(context, 323);
         loadAndForce(world, grow(region, 16));
         terrainWithSigns(h, region);
@@ -371,9 +371,9 @@ public final class ClientSyncGameTest implements FabricGameTest {
         ClientSync sync = (ClientSync) executor.clientSync(world);
         RecordingListener listener = new RecordingListener();
         long[] resentBefore = new long[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenExecute(() -> {
                     checkView(world, view, watcher, region, "before the fill");
                     view.resetCounts();
                     resentBefore[0] = sync.columnsResent();
@@ -393,10 +393,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(sync.columnsResent() - resentBefore[0] == 8, (sync.columnsResent() - resentBefore[0])
                             + " columns resent for 8 written ones");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(world, view, watcher, region, "after the protected fill");
-                    check(!world.getBlockState(pos(region.min().x() + 3, 120, region.min().z() + 3)).isOf(Blocks.SMOOTH_STONE),
+                    check(!world.getBlockState(pos(region.min().x() + 3, 120, region.min().z() + 3)).is(Blocks.SMOOTH_STONE),
                             "the denied column was written");
                     check(view.chunkPackets >= 8, view.chunkPackets + " chunk packets for 8 written columns");
                     watcher.close();
@@ -404,7 +404,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(world, grow(region, 16), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -413,10 +413,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * them reaches the client and matches the server's (a 48 × 40 × 48 stone block high in the air shades the ground
      * below; its undo lights it again).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_resent_light", tickLimit = LIMIT)
-    public void resentColumnsGetTheirLightAfterTheLightEngine(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_resent_light", timeoutTicks = LIMIT)
+    public void resentColumnsGetTheirLightAfterTheLightEngine(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 325);
         Box region = box(at[0], 100, at[1], at[0] + 47, 139, at[1] + 47);
@@ -428,11 +428,11 @@ public final class ClientSyncGameTest implements FabricGameTest {
         RecordingListener undo = new RecordingListener();
         LightWait[] light = new LightWait[1];
         java.util.List<java.util.Map<String, byte[]>> before = new ArrayList<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAdd(() -> light[0] = new LightWait(h.world, grow(region, 32)))
-                .createAndAdd(() -> check(light[0].settled(), "light still settling before the fill"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenWaitUntil(() -> light[0] = new LightWait(h.world, grow(region, 32)))
+                .thenWaitUntil(() -> check(light[0].settled(), "light still settling before the fill"))
+                .thenExecute(() -> {
                     watcher.drain();
                     view.resetCounts();
                     before.add(serverLight(view, region));
@@ -442,13 +442,13 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(sync.lightPending() == 9, sync.lightPending() + " light follow-ups for 9 resent columns");
                     light[0] = new LightWait(h.world, grow(region, 16));
                 })
-                .expectMinDuration(1)
-                .createAndAdd(() -> {
+                .thenIdle(1)
+                .thenWaitUntil(() -> {
                     executor.endTick();
                     check(light[0].settled() && sync.lightPending() == 0, "light still updating");
                 })
-                .expectMinDuration(1) // the light packets of the last flush reach the watcher at the tick's end
-                .createAndAddReported(() -> {
+                .thenIdle(1) // the light packets of the last flush reach the watcher at the tick's end
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "after the fill");
                     check(view.lightPackets >= 25, view.lightPackets + " light packets for 5 x 5 columns");
                     checkLight(view, watcher, region, before.get(0), "after the fill");
@@ -459,13 +459,13 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(undo.result != null && undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     light[0] = new LightWait(h.world, grow(region, 16));
                 })
-                .expectMinDuration(1)
-                .createAndAdd(() -> {
+                .thenIdle(1)
+                .thenWaitUntil(() -> {
                     executor.endTick();
                     check(light[0].settled() && sync.lightPending() == 0, "light still updating after the undo");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "after the undo");
                     check(view.lightPackets >= 25, view.lightPackets + " light packets for 5 x 5 columns after the undo");
                     checkLight(view, watcher, region, before.get(1), "after the undo");
@@ -474,7 +474,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 32), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -482,10 +482,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * at most once every {@value ClientSync#RESEND_INTERVAL_TICKS} ticks, and whole once the job ends; the client ends
      * up exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_throttle", tickLimit = LIMIT)
-    public void columnsWrittenOverManyTicksAreResentSparingly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_throttle", timeoutTicks = LIMIT)
+    public void columnsWrittenOverManyTicksAreResentSparingly(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 4096);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 4096);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 326);
         Box region = box(at[0], -48, at[1], at[0] + 15, 271, at[1] + 15); // one column, 20 sections of air
@@ -497,22 +497,22 @@ public final class ClientSyncGameTest implements FabricGameTest {
         int[] ticks = {0};
         long[] resent = new long[2];
         int midTick = ClientSync.RESEND_INTERVAL_TICKS + 2;
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenWaitUntil(() -> {
                     view.resetCounts();
                     resent[0] = sync.columnsResent();
                     h.fill(region, "minecraft:stone", fill);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     // One executor tick per server tick, until the fill ends (a wait: its checks come after).
                     tick(executor);
                     ticks[0]++;
                     if (ticks[0] == midTick) resent[1] = sync.columnsResent() - resent[0];
                     check(fill.result != null, "fill running (tick " + ticks[0] + ")");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     check(fill.result.outcome() == JobOutcome.COMPLETED && fill.result.changed() == region.volume(),
                             "fill " + fill.result);
                     check(ticks[0] >= 20, "the fill took only " + ticks[0] + " ticks");
@@ -526,7 +526,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 16), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -535,10 +535,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * them, so the light clients finally get includes them: the resent columns and their ring match the server's light
      * exactly once the light engine has caught up.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_light_tail", tickLimit = LIMIT)
-    public void writesNearAPendingResendAreLitBeforeTheLightIsSent(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_light_tail", timeoutTicks = LIMIT)
+    public void writesNearAPendingResendAreLitBeforeTheLightIsSent(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 328);
         Box region = box(at[0], 100, at[1], at[0] + 47, 139, at[1] + 47);
@@ -551,11 +551,11 @@ public final class ClientSyncGameTest implements FabricGameTest {
         RecordingListener lamp = new RecordingListener();
         LightWait[] light = new LightWait[1];
         java.util.List<java.util.Map<String, byte[]>> before = new ArrayList<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAdd(() -> light[0] = new LightWait(h.world, grow(region, 32)))
-                .createAndAdd(() -> check(light[0].settled(), "light still settling before the fill"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenWaitUntil(() -> light[0] = new LightWait(h.world, grow(region, 32)))
+                .thenWaitUntil(() -> check(light[0].settled(), "light still settling before the fill"))
+                .thenExecute(() -> {
                     watcher.drain();
                     view.resetCounts();
                     before.add(serverLight(view, region));
@@ -570,15 +570,15 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(sync.lightRearms() > rearms, "the lamps did not re-arm the pending light follow-up");
                     light[0] = new LightWait(h.world, grow(region, 16));
                 })
-                .expectMinDuration(1)
-                .createAndAdd(() -> {
+                .thenIdle(1)
+                .thenWaitUntil(() -> {
                     executor.endTick();
                     check(light[0].settled() && sync.lightPending() == 0, "light still updating");
                 })
                 // The light packets of the last flush, and the lamps' block updates (sent by vanilla in the tick after
                 // the lamps, at the earliest the one the wait ended in), reach the watcher at the tick's end.
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "after the fill and the lamps");
                     check(view.deltaPackets > 0 || view.blockPackets > 0, "the lamps did not go out as block updates");
                     checkLight(view, watcher, region, before.get(0), "after the fill and the lamps");
@@ -587,7 +587,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 32), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -595,10 +595,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * fill) goes out as block updates only, which clients relight themselves, so it re-arms the pending light
      * follow-up too; the light clients finally get matches the server exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_light_predicting", tickLimit = LIMIT)
-    public void predictedHeavyWritesNearAPendingResendAreLitBeforeTheLightIsSent(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_light_predicting", timeoutTicks = LIMIT)
+    public void predictedHeavyWritesNearAPendingResendAreLitBeforeTheLightIsSent(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, context.getWorld(), 0);
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, context.getLevel(), 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 330);
         Box region = box(at[0], 100, at[1], at[0] + 47, 139, at[1] + 47);
@@ -612,11 +612,11 @@ public final class ClientSyncGameTest implements FabricGameTest {
         LightWait[] light = new LightWait[1];
         java.util.List<java.util.Map<String, byte[]>> before = new ArrayList<>();
         long[] counts = new long[2];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAdd(() -> light[0] = new LightWait(h.world, grow(region, 32)))
-                .createAndAdd(() -> check(light[0].settled(), "light still settling before the fill"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenWaitUntil(() -> light[0] = new LightWait(h.world, grow(region, 32)))
+                .thenWaitUntil(() -> check(light[0].settled(), "light still settling before the fill"))
+                .thenExecute(() -> {
                     watcher.drain();
                     view.resetCounts();
                     before.add(serverLight(view, region));
@@ -625,7 +625,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(fill.result != null && fill.result.outcome() == JobOutcome.COMPLETED, "fill " + fill.result);
                     check(sync.lightPending() == 9, sync.lightPending() + " light follow-ups for 9 resent columns");
                     // From now on the watcher may hold predictions: heavy columns reach it as block updates.
-                    executor.predicted(watcher.player.getUuid());
+                    executor.predicted(watcher.player.getUUID());
                     counts[0] = sync.lightRearms();
                     counts[1] = sync.columnsResent();
                     h.fill(lamps, "minecraft:glowstone", lamp);
@@ -636,13 +636,13 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(sync.lightRearms() > counts[0], "the predicted heavy column did not re-arm the light follow-up");
                     light[0] = new LightWait(h.world, grow(region, 16));
                 })
-                .expectMinDuration(1)
-                .createAndAdd(() -> {
+                .thenIdle(1)
+                .thenWaitUntil(() -> {
                     executor.endTick();
                     check(light[0].settled() && sync.lightPending() == 0, "light still updating");
                 })
-                .expectMinDuration(1) // the light packets of the last flush reach the watcher at the tick's end
-                .createAndAddReported(() -> {
+                .thenIdle(1) // the light packets of the last flush reach the watcher at the tick's end
+                .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "after the fill and the lamps");
                     checkLight(view, watcher, region, before.get(0), "after the fill and the lamps");
                     watcher.close();
@@ -650,7 +650,7 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 32), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -664,8 +664,8 @@ public final class ClientSyncGameTest implements FabricGameTest {
      * {@link ClientSync} as a job's writer does, every column far over the resend threshold. That the cells a job
      * writes wait for its executor's flush is checked in {@link #heavyEditsResendWholeColumnsExactly}.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_order", tickLimit = LIMIT)
-    public void resentColumnsFollowTheTicksEarlierPackets(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_order", timeoutTicks = LIMIT)
+    public void resentColumnsFollowTheTicksEarlierPackets(GameTestHelper context) {
         Harness h = new Harness(context);
         Box region = heavyRegion(context, 329);
         loadAndForce(h.world, grow(region, 16));
@@ -680,9 +680,9 @@ public final class ClientSyncGameTest implements FabricGameTest {
         int stone = h.state("minecraft:stone");
         long[] resentBefore = new long[1];
         int[] sentinelAt = {-1};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(watcher.ready(region), "the watcher is still loading chunks"))
+                .thenExecute(() -> {
                     check(sync.isEmpty(), "the server's executor holds unsent cells");
                     watcher.drain();
                     order.clear();
@@ -696,10 +696,10 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     check(!sync.isEmpty() && sync.columnsResent() == resentBefore[0], "the cells went out at once");
                     watcher.drain();
                     sentinelAt[0] = order.size();
-                    watcher.player.networkHandler.sendPacket(new PlayerActionResponseS2CPacket(4242));
+                    watcher.player.connection.send(new ClientboundBlockChangedAckPacket(4242));
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     check(sync.isEmpty() && sync.columnsResent() - resentBefore[0] == 9, "the server's executor resent "
                             + (sync.columnsResent() - resentBefore[0]) + " of 9 heavily changed columns at the tick's end");
                     watcher.drain();
@@ -707,17 +707,17 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     int firstColumn = -1;
                     for (int i = 0; i < order.size(); i++) {
                         Object packet = order.get(i);
-                        if (sentinel < 0 && packet instanceof PlayerActionResponseS2CPacket ack && ack.sequence() == 4242) {
+                        if (sentinel < 0 && packet instanceof ClientboundBlockChangedAckPacket ack && ack.sequence() == 4242) {
                             sentinel = i;
                         }
-                        if (firstColumn < 0 && packet instanceof ChunkDataS2CPacket) firstColumn = i;
+                        if (firstColumn < 0 && packet instanceof ClientboundLevelChunkWithLightPacket) firstColumn = i;
                     }
                     // Unrelated packets may land between the drain and the ack; no block or column packet may.
                     check(sentinel >= sentinelAt[0], "the sentinel ack is at " + sentinel + ", sent at " + sentinelAt[0]);
                     for (int i = sentinelAt[0]; i < sentinel; i++) {
                         Object early = order.get(i);
-                        check(!(early instanceof ChunkDataS2CPacket || early instanceof ChunkDeltaUpdateS2CPacket
-                                || early instanceof BlockUpdateS2CPacket), "a block packet went out before the tick's ack: "
+                        check(!(early instanceof ClientboundLevelChunkWithLightPacket || early instanceof ClientboundSectionBlocksUpdatePacket
+                                || early instanceof ClientboundBlockUpdatePacket), "a block packet went out before the tick's ack: "
                                 + early.getClass().getSimpleName());
                     }
                     check(firstColumn > sentinel, "a column was sent at " + firstColumn + ", before the tick's ack at "
@@ -727,18 +727,18 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(h.world, grow(region, 16), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Partial jobs: one cancelled after a few ticks, one whose program fails in its third section. What each wrote
      * before it ended reaches the client exactly, and so does a watcher that joined while a job was half done.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_sync_partial", tickLimit = LIMIT)
-    public void cancelledAndFailedJobsAndLateWatchersStayExact(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_sync_partial", timeoutTicks = LIMIT)
+    public void cancelledAndFailedJobsAndLateWatchersStayExact(GameTestHelper context) {
         EngineRuntime runtime = EngineTestSupport.runtime(context);
-        ServerWorld world = context.getWorld();
-        EditExecutor<ServerWorld> executor = privateExecutor(runtime, world, 4096);
+        ServerLevel world = context.getLevel();
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, world, 4096);
         Harness h = new Harness(context, null, System::nanoTime, executor);
         Box region = heavyRegion(context, 327);
         loadAndForce(world, grow(region, 16));
@@ -751,9 +751,9 @@ public final class ClientSyncGameTest implements FabricGameTest {
         RecordingListener failed = new RecordingListener();
         UUID[] jobId = new UUID[1];
         Runnable tick = () -> tick(executor);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(first.ready(region), "the watcher is still loading chunks"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(first.ready(region), "the watcher is still loading chunks"))
+                .thenExecute(() -> {
                     jobId[0] = h.fill(region, "minecraft:stone", cancelled).jobId();
                     for (int i = 0; i < 5; i++) tick.run();
                     check(executor.cancel(jobId[0]), "cancel refused");
@@ -764,8 +764,8 @@ public final class ClientSyncGameTest implements FabricGameTest {
                             "changed " + cancelled.result.changed());
                     tick.run(); // any column the job's end left over
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(world, view, first, region, "after the cancelled job");
                     BoxFill program = new BoxFill("fails", region, handle(runtime.states(), "minecraft:gold_block"));
                     program.onCompute = key -> {
@@ -782,13 +782,13 @@ public final class ClientSyncGameTest implements FabricGameTest {
                             "changed " + failed.result.changed());
                     tick.run();
                 })
-                .expectMinDuration(1)
-                .createAndAdd(() -> {
+                .thenIdle(1)
+                .thenWaitUntil(() -> {
                     tick.run();
                     check(late[0].ready(region), "the late watcher is still loading chunks");
                 })
-                .expectMinDuration(1)
-                .createAndAddReported(() -> {
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkView(world, view, first, region, "after the failed job");
                     checkView(world, lateView, late[0], region, "late watcher, after the failed job");
                     first.close();
@@ -797,6 +797,6 @@ public final class ClientSyncGameTest implements FabricGameTest {
                     forceChunks(world, grow(region, 16), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

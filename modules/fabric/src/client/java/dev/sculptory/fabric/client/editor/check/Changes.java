@@ -2,7 +2,7 @@ package dev.sculptory.fabric.client.editor.check;
 
 import java.util.List;
 import java.util.function.Predicate;
-import net.minecraft.block.BlockState;
+import net.minecraft.world.level.block.state.BlockState;
 
 /** Questions about what an edit changed (the {@link Cells#diff} of before and after). */
 final class Changes {

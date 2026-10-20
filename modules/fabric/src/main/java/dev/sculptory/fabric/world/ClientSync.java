@@ -16,22 +16,22 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Predicate;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.network.packet.Packet;
-import net.minecraft.network.packet.s2c.play.BlockUpdateS2CPacket;
-import net.minecraft.network.packet.s2c.play.ChunkDataS2CPacket;
-import net.minecraft.network.packet.s2c.play.ChunkDeltaUpdateS2CPacket;
-import net.minecraft.network.packet.s2c.play.LightUpdateS2CPacket;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerChunkManager;
-import net.minecraft.server.world.ServerLightingProvider;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.util.math.ChunkSectionPos;
-import net.minecraft.world.chunk.ChunkSection;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundLightUpdatePacket;
+import net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket;
+import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.level.ThreadedLevelLightEngine;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,8 +79,8 @@ public final class ClientSync implements ClientUpdates {
     /** Ticks a batch of due light waits for outstanding follow-ups at most. */
     public static final int LIGHT_BATCH_TICKS = 20;
 
-    private final ServerWorld world;
-    private final Predicate<ServerPlayerEntity> predicting;
+    private final ServerLevel world;
+    private final Predicate<ServerPlayer> predicting;
     /** Section key → 4096-bit set of cells changed and not yet sent, in first-change order. */
     private final Long2ObjectLinkedOpenHashMap<long[]> sections = new Long2ObjectLinkedOpenHashMap<>();
     /** Column ({@code ChunkPos.toLong}) → the flush tick it was last resent in. */
@@ -128,12 +128,12 @@ public final class ClientSync implements ClientUpdates {
     /**
      * @param predicting players who may hold unacknowledged predicted block changes; they get per-block updates
      */
-    public ClientSync(ServerWorld world, Predicate<ServerPlayerEntity> predicting) {
+    public ClientSync(ServerLevel world, Predicate<ServerPlayer> predicting) {
         this.world = Objects.requireNonNull(world);
         this.predicting = Objects.requireNonNull(predicting);
     }
 
-    public ServerWorld world() {
+    public ServerLevel world() {
         return world;
     }
 
@@ -160,7 +160,7 @@ public final class ClientSync implements ClientUpdates {
      */
     @Override
     public void flushNext(long[] sectionKeys) {
-        for (long key : sectionKeys) flushNext.add(ChunkPos.toLong(BlockBuffer.keyX(key), BlockBuffer.keyZ(key)));
+        for (long key : sectionKeys) flushNext.add(ChunkPos.asLong(BlockBuffer.keyX(key), BlockBuffer.keyZ(key)));
     }
 
     /**
@@ -171,7 +171,7 @@ public final class ClientSync implements ClientUpdates {
      */
     public void vanillaWrite(int cx, int cz) {
         if (lightPending.isEmpty() && lightDue.isEmpty()) return;
-        vanillaWritten.add(ChunkPos.toLong(cx, cz));
+        vanillaWritten.add(ChunkPos.asLong(cx, cz));
     }
 
     /** Columns sent whole so far (to at least one player). */
@@ -212,11 +212,11 @@ public final class ClientSync implements ClientUpdates {
         LightBatch.flushAll();
         if (!lastResend.isEmpty()) lastResend.values().removeIf(at -> tick - at >= RESEND_INTERVAL_TICKS);
         sendLight(tick);
-        ServerChunkManager manager = world.getChunkManager();
+        ServerChunkCache manager = world.getChunkSource();
         if (!vanillaWritten.isEmpty()) {
             // After sendLight: the markers queued here sit behind every write made this tick.
             for (long column : vanillaWritten) {
-                rearmLightNear(manager, ChunkPos.getPackedX(column), ChunkPos.getPackedZ(column), tick);
+                rearmLightNear(manager, ChunkPos.getX(column), ChunkPos.getZ(column), tick);
             }
             vanillaWritten.clear();
         }
@@ -227,12 +227,12 @@ public final class ClientSync implements ClientUpdates {
         }
     }
 
-    private void flushSections(ServerChunkManager manager, long tick, boolean all) {
+    private void flushSections(ServerChunkCache manager, long tick, boolean all) {
         if (sections.isEmpty()) return;
         // Group the sections by column, keeping first-change order.
         Long2ObjectLinkedOpenHashMap<LongArrayList> columns = new Long2ObjectLinkedOpenHashMap<>();
         for (long key : sections.keySet()) {
-            long column = ChunkPos.toLong(BlockBuffer.keyX(key), BlockBuffer.keyZ(key));
+            long column = ChunkPos.asLong(BlockBuffer.keyX(key), BlockBuffer.keyZ(key));
             columns.computeIfAbsent(column, c -> new LongArrayList()).add(key);
         }
         for (Long2ObjectMap.Entry<LongArrayList> entry : columns.long2ObjectEntrySet()) {
@@ -244,11 +244,11 @@ public final class ClientSync implements ClientUpdates {
                 if (!loggedFailure) {
                     loggedFailure = true;
                     LOG.error("Sculptory could not send chunk {},{} as a whole; using block updates",
-                            ChunkPos.getPackedX(column), ChunkPos.getPackedZ(column), e);
+                            ChunkPos.getX(column), ChunkPos.getZ(column), e);
                 }
                 try {
                     markForVanilla(manager, keys);
-                    rearmLightNear(manager, ChunkPos.getPackedX(column), ChunkPos.getPackedZ(column), tick);
+                    rearmLightNear(manager, ChunkPos.getX(column), ChunkPos.getZ(column), tick);
                 } catch (RuntimeException again) {
                     LOG.error("Sculptory could not mark edited cells for block updates", again);
                 }
@@ -258,28 +258,28 @@ public final class ClientSync implements ClientUpdates {
     }
 
     /** @return false when the column is kept for a later flush (resent too recently) */
-    private boolean flushColumn(ServerChunkManager manager, long column, LongArrayList keys, long tick, boolean all) {
+    private boolean flushColumn(ServerChunkCache manager, long column, LongArrayList keys, long tick, boolean all) {
         int cells = 0;
         for (int k = 0; k < keys.size(); k++) cells += count(sections.get(keys.getLong(k)));
-        int cx = ChunkPos.getPackedX(column), cz = ChunkPos.getPackedZ(column);
-        WorldChunk chunk = cells < RESEND_COLUMN_CELLS ? null : manager.getWorldChunk(cx, cz);
+        int cx = ChunkPos.getX(column), cz = ChunkPos.getZ(column);
+        LevelChunk chunk = cells < RESEND_COLUMN_CELLS ? null : manager.getChunkNow(cx, cz);
         if (chunk == null) {
             markForVanilla(manager, keys);
             rearmLightNear(manager, cx, cz, tick);
             return true;
         }
         if (!all && !flushNext.contains(column) && lastResend.containsKey(column)) return false;
-        List<ServerPlayerEntity> watchers = manager.chunkLoadingManager.getPlayersWatchingChunk(new ChunkPos(cx, cz), false);
-        ChunkDataS2CPacket whole = null;
+        List<ServerPlayer> watchers = manager.chunkMap.getPlayers(new ChunkPos(cx, cz), false);
+        ClientboundLevelChunkWithLightPacket whole = null;
         boolean sentWhole = false;
         ShortSet[] positions = new ShortSet[keys.size()];
         try {
-            for (ServerPlayerEntity player : watchers) {
+            for (ServerPlayer player : watchers) {
                 if (predicting.test(player)) {
                     sendLikeVanilla(player, chunk, keys, positions);
                 } else {
-                    if (whole == null) whole = new ChunkDataS2CPacket(chunk, manager.getLightingProvider(), null, null);
-                    player.networkHandler.sendPacket(whole);
+                    if (whole == null) whole = new ClientboundLevelChunkWithLightPacket(chunk, manager.getLightEngine(), null, null);
+                    player.connection.send(whole);
                     sentWhole = true;
                 }
             }
@@ -307,8 +307,8 @@ public final class ClientSync implements ClientUpdates {
      * {@value #RESEND_INTERVAL_TICKS} ticks and the light engine lags) and is re-armed: fresh markers are queued once
      * it has run.
      */
-    private void scheduleLight(ServerChunkManager manager, int cx, int cz, long tick) {
-        long key = ChunkPos.toLong(cx, cz);
+    private void scheduleLight(ServerChunkCache manager, int cx, int cz, long tick) {
+        long key = ChunkPos.asLong(cx, cz);
         LightFollowUp existing = lightPending.get(key);
         if (existing != null) {
             existing.rearm = true;
@@ -317,12 +317,12 @@ public final class ClientSync implements ClientUpdates {
         lightPending.put(key, new LightFollowUp(markers(manager, cx, cz), tick));
     }
 
-    private static CompletableFuture<?>[] markers(ServerChunkManager manager, int cx, int cz) {
-        ServerLightingProvider light = manager.getLightingProvider();
+    private static CompletableFuture<?>[] markers(ServerChunkCache manager, int cx, int cz) {
+        ThreadedLevelLightEngine light = manager.getLightEngine();
         List<CompletableFuture<?>> markers = new ArrayList<>(9);
         for (int dx = -1; dx <= 1; dx++) {
             for (int dz = -1; dz <= 1; dz++) {
-                if (manager.getWorldChunk(cx + dx, cz + dz) != null) markers.add(light.enqueue(cx + dx, cz + dz));
+                if (manager.getChunkNow(cx + dx, cz + dz) != null) markers.add(light.waitForPendingTasks(cx + dx, cz + dz));
             }
         }
         return markers.toArray(new CompletableFuture<?>[0]);
@@ -335,17 +335,17 @@ public final class ClientSync implements ClientUpdates {
      * and would then overwrite the clients' own relight. So markers are queued behind these cells too, and the column's
      * neighbourhood is sent again once they have run.
      */
-    private void rearmLightNear(ServerChunkManager manager, int cx, int cz, long tick) {
+    private void rearmLightNear(ServerChunkCache manager, int cx, int cz, long tick) {
         if (lightPending.isEmpty() && lightDue.isEmpty()) return;
         boolean near = false;
         for (int dx = -2; dx <= 2 && !near; dx++) {
             for (int dz = -2; dz <= 2 && !near; dz++) {
-                long column = ChunkPos.toLong(cx + dx, cz + dz);
+                long column = ChunkPos.asLong(cx + dx, cz + dz);
                 near = lightPending.containsKey(column)
                         || (Math.abs(dx) <= 1 && Math.abs(dz) <= 1 && lightDue.contains(column));
             }
         }
-        if (near && manager.getWorldChunk(cx, cz) != null) {
+        if (near && manager.getChunkNow(cx, cz) != null) {
             lightRearms++;
             scheduleLight(manager, cx, cz, tick);
         }
@@ -373,17 +373,17 @@ public final class ClientSync implements ClientUpdates {
                 rearmed.add(column);
             }
             if (lightDue.isEmpty()) lightDueSince = tick;
-            int cx = ChunkPos.getPackedX(column), cz = ChunkPos.getPackedZ(column);
+            int cx = ChunkPos.getX(column), cz = ChunkPos.getZ(column);
             for (int dx = -1; dx <= 1; dx++) {
-                for (int dz = -1; dz <= 1; dz++) lightDue.add(ChunkPos.toLong(cx + dx, cz + dz));
+                for (int dz = -1; dz <= 1; dz++) lightDue.add(ChunkPos.asLong(cx + dx, cz + dz));
             }
         }
-        ServerChunkManager manager = world.getChunkManager();
+        ServerChunkCache manager = world.getChunkSource();
         if (rearmed != null) {
             for (int i = 0; i < rearmed.size(); i++) {
                 long column = rearmed.getLong(i);
-                int cx = ChunkPos.getPackedX(column), cz = ChunkPos.getPackedZ(column);
-                if (manager.getWorldChunk(cx, cz) != null) {
+                int cx = ChunkPos.getX(column), cz = ChunkPos.getZ(column);
+                if (manager.getChunkNow(cx, cz) != null) {
                     lightPending.put(column, new LightFollowUp(markers(manager, cx, cz), tick));
                 }
             }
@@ -394,11 +394,11 @@ public final class ClientSync implements ClientUpdates {
             long column = lightDue.removeFirstLong();
             try {
                 ChunkPos pos = new ChunkPos(column);
-                if (manager.getWorldChunk(pos.x, pos.z) == null) continue;
-                List<ServerPlayerEntity> watchers = manager.chunkLoadingManager.getPlayersWatchingChunk(pos, false);
+                if (manager.getChunkNow(pos.x, pos.z) == null) continue;
+                List<ServerPlayer> watchers = manager.chunkMap.getPlayers(pos, false);
                 if (watchers.isEmpty()) continue;
-                LightUpdateS2CPacket packet = new LightUpdateS2CPacket(pos, manager.getLightingProvider(), null, null);
-                for (ServerPlayerEntity player : watchers) player.networkHandler.sendPacket(packet);
+                ClientboundLightUpdatePacket packet = new ClientboundLightUpdatePacket(pos, manager.getLightEngine(), null, null);
+                for (ServerPlayer player : watchers) player.connection.send(packet);
                 lightColumnsSent++;
                 sent++;
             } catch (RuntimeException e) {
@@ -410,12 +410,12 @@ public final class ClientSync implements ClientUpdates {
         }
     }
 
-    private void markForVanilla(ServerChunkManager manager, LongArrayList keys) {
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+    private void markForVanilla(ServerChunkCache manager, LongArrayList keys) {
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int k = 0; k < keys.size(); k++) {
             long key = keys.getLong(k);
             forEachCell(key, sections.get(key), (x, y, z) -> {
-                manager.markForUpdate(pos.set(x, y, z));
+                manager.blockChanged(pos.set(x, y, z));
                 cellsMarked++;
             });
         }
@@ -426,23 +426,23 @@ public final class ClientSync implements ClientUpdates {
      * section, then the block entity update of each changed cell that has one. {@code positions} caches each section's
      * packed positions for the column's other players.
      */
-    private void sendLikeVanilla(ServerPlayerEntity player, WorldChunk chunk, LongArrayList keys, ShortSet[] positions) {
+    private void sendLikeVanilla(ServerPlayer player, LevelChunk chunk, LongArrayList keys, ShortSet[] positions) {
         for (int k = 0; k < keys.size(); k++) {
             long key = keys.getLong(k);
             int sy = BlockBuffer.keyY(key);
-            ChunkSectionPos sectionPos = ChunkSectionPos.from(BlockBuffer.keyX(key), sy, BlockBuffer.keyZ(key));
+            SectionPos sectionPos = SectionPos.of(BlockBuffer.keyX(key), sy, BlockBuffer.keyZ(key));
             if (positions[k] == null) positions[k] = packedPositions(sections.get(key));
             ShortSet cells = positions[k];
             if (cells.size() == 1) {
-                BlockPos pos = sectionPos.unpackBlockPos(cells.iterator().nextShort());
+                BlockPos pos = sectionPos.relativeToBlockPos(cells.iterator().nextShort());
                 BlockState state = world.getBlockState(pos);
-                player.networkHandler.sendPacket(new BlockUpdateS2CPacket(pos, state));
+                player.connection.send(new ClientboundBlockUpdatePacket(pos, state));
                 sendBlockEntity(player, pos, state);
             } else {
-                ChunkSection section = chunk.getSection(world.sectionCoordToIndex(sy));
-                ChunkDeltaUpdateS2CPacket delta = new ChunkDeltaUpdateS2CPacket(sectionPos, cells, section);
-                player.networkHandler.sendPacket(delta);
-                delta.visitUpdates((pos, state) -> sendBlockEntity(player, pos, state));
+                LevelChunkSection section = chunk.getSection(world.getSectionIndexFromSectionY(sy));
+                ClientboundSectionBlocksUpdatePacket delta = new ClientboundSectionBlocksUpdatePacket(sectionPos, cells, section);
+                player.connection.send(delta);
+                delta.runUpdates((pos, state) -> sendBlockEntity(player, pos, state));
             }
         }
     }
@@ -461,12 +461,12 @@ public final class ClientSync implements ClientUpdates {
         return set;
     }
 
-    private void sendBlockEntity(ServerPlayerEntity player, BlockPos pos, BlockState state) {
+    private void sendBlockEntity(ServerPlayer player, BlockPos pos, BlockState state) {
         if (!state.hasBlockEntity()) return;
         BlockEntity entity = world.getBlockEntity(pos);
         if (entity == null) return;
-        Packet<?> update = entity.toUpdatePacket();
-        if (update != null) player.networkHandler.sendPacket(update);
+        Packet<?> update = entity.getUpdatePacket();
+        if (update != null) player.connection.send(update);
     }
 
     @FunctionalInterface

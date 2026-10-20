@@ -10,8 +10,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.network.ClientPlayerEntity;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -53,12 +53,12 @@ final class TwoPlayerChecks {
     private static void playerA(CheckRun run) {
         CheckDriver d = run.driver();
         Sync sync = sync(run);
-        boolean joined = d.until(JOIN_TIMEOUT_MS, () -> d.client().getNetworkHandler() != null
-                && d.client().getNetworkHandler().getPlayerListEntry(GUEST) != null);
+        boolean joined = d.until(JOIN_TIMEOUT_MS, () -> d.client().getConnection() != null
+                && d.client().getConnection().getPlayerInfo(GUEST) != null);
         run.require("player B (" + GUEST + ") joins the server", joined, "not in the player list after "
                 + JOIN_TIMEOUT_MS / 1000 + " s");
         int[] spawn = d.onClient(() -> {
-            var pos = d.client().world.getSpawnPos();
+            var pos = d.client().level.getSharedSpawnPos();
             return new int[] {pos.getX(), pos.getZ()};
         });
         int x0 = ((spawn[0] + 64) >> 4) << 4;
@@ -79,8 +79,8 @@ final class TwoPlayerChecks {
         d.command(String.format(Locale.ROOT, "tp %s %.1f %d %.1f 0 55", GUEST, x0 + 16.5, Y0 + 16, z0 + 28.5));
         Box floor = Box.of(new dev.sculptory.core.BlockPos(x0, Y0 - 1, z0),
                 new dev.sculptory.core.BlockPos(x0 + SIZE - 1, Y0 - 1, z0 + SIZE - 1));
-        boolean built = d.until(20_000, () -> Cells.of(d.client().world, floor).count(state -> !state.isOf(
-                net.minecraft.block.Blocks.STONE)) == 0);
+        boolean built = d.until(20_000, () -> Cells.of(d.client().level, floor).count(state -> !state.is(
+                net.minecraft.world.level.block.Blocks.STONE)) == 0);
         run.require("the floor built with /fill shows", built, "");
         sync.signal("a-ready", x0 + " " + z0);
         run.require("B is ready", sync.await("b-ready", STEP_TIMEOUT_MS).isPresent(), "no b-ready");
@@ -145,9 +145,9 @@ final class TwoPlayerChecks {
         run.undo("A's undo");
         Cells.Editor expected = d.clientCells(both).edit();
         for (Box b : List.of(boxA)) {
-            forEach(b, (x, y, z) -> expected.set(x, y, z, net.minecraft.block.Blocks.AIR.getDefaultState()));
+            forEach(b, (x, y, z) -> expected.set(x, y, z, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
         }
-        forEach(boxB, (x, y, z) -> expected.set(x, y, z, net.minecraft.block.Blocks.COBBLESTONE.getDefaultState()));
+        forEach(boxB, (x, y, z) -> expected.set(x, y, z, net.minecraft.world.level.block.Blocks.COBBLESTONE.defaultBlockState()));
         List<Cells.Change> left = d.awaitClient(expected.done());
         run.check("A's undo takes back A's planks and keeps all of B's cobblestone", left.isEmpty(),
                 Cells.summary(left, 4));
@@ -178,9 +178,9 @@ final class TwoPlayerChecks {
         int x0 = Integer.parseInt(parts[0]);
         int z0 = Integer.parseInt(parts[1]);
         d.onClient(() -> {
-            ClientPlayerEntity player = d.client().player;
+            LocalPlayer player = d.client().player;
             player.getAbilities().flying = true;
-            player.sendAbilitiesUpdate();
+            player.onUpdateAbilities();
         });
         d.until(10_000, () -> Math.abs(d.client().player.getY() - (Y0 + 16)) < 0.5);
         d.turn(x0 + 16.5, Y0 + 16 + 1.62, z0 + 28.5, x0 + 14.5, Y0, z0 + 12.5);
@@ -259,8 +259,8 @@ final class TwoPlayerChecks {
         // A's undo keeps B's cobblestone.
         run.require("A undid", awaitA(sync, "a-undone"), "no a-undone");
         Cells.Editor expected = d.clientCells(both).edit();
-        forEach(box(x0, z0, BOX_A), (x, y, z) -> expected.set(x, y, z, net.minecraft.block.Blocks.AIR.getDefaultState()));
-        forEach(boxB, (x, y, z) -> expected.set(x, y, z, net.minecraft.block.Blocks.COBBLESTONE.getDefaultState()));
+        forEach(box(x0, z0, BOX_A), (x, y, z) -> expected.set(x, y, z, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState()));
+        forEach(boxB, (x, y, z) -> expected.set(x, y, z, net.minecraft.world.level.block.Blocks.COBBLESTONE.defaultBlockState()));
         List<Cells.Change> left = d.awaitClient(expected.done());
         sync.signal("b-saw-undo", left.isEmpty() ? "PASS" : "FAIL " + Cells.summary(left, 4));
         run.check("B's client shows A's undo keeping B's cobblestone", left.isEmpty(), Cells.summary(left, 4));
@@ -313,7 +313,7 @@ final class TwoPlayerChecks {
             boolean overlap = boxA.contains(x, y, z) && boxB.contains(x, y, z);
             boolean bSecond = Cells.describe(afterFills.at(x, y, z)).equals("minecraft:cobblestone");
             expected.set(x, y, z, overlap && bSecond ? Fixtures.Build.state("minecraft:oak_planks")
-                    : net.minecraft.block.Blocks.AIR.getDefaultState());
+                    : net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
         });
         return expected.done();
     }

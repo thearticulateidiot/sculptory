@@ -1,9 +1,9 @@
 package dev.sculptory.fabric.client.editor.world;
 
+import com.mojang.blaze3d.platform.Window;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.util.Window;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.Minecraft;
+import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.joml.Vector4f;
@@ -66,16 +66,16 @@ public final class CameraSnapshot {
      * @param frame a counter the caller increments once per frame
      */
     public static CameraSnapshot capture(WorldRenderContext context, long frame) {
-        Vec3d camera = context.camera().getPos();
-        Window window = MinecraftClient.getInstance().getWindow();
+        Vec3 camera = context.camera().getPosition();
+        Window window = Minecraft.getInstance().getWindow();
         return new CameraSnapshot(
                 context.projectionMatrix(),
                 context.positionMatrix(),
                 camera.x,
                 camera.y,
                 camera.z,
-                window.getFramebufferWidth(),
-                window.getFramebufferHeight(),
+                window.getWidth(),
+                window.getHeight(),
                 frame);
     }
 

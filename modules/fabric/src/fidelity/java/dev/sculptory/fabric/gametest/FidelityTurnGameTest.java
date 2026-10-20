@@ -48,21 +48,19 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.Properties;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
-import net.minecraft.util.BlockMirror;
-import net.minecraft.util.BlockRotation;
-import net.minecraft.util.math.Direction;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
 import vectorwing.farmersdelight.common.block.entity.CookingPotBlockEntity;
 import vectorwing.farmersdelight.common.block.entity.SkilletBlockEntity;
 
@@ -106,10 +104,10 @@ public final class FidelityTurnGameTest implements FabricGameTest {
      * furnace does), block entities keep their contents, the client's baked ghost equals each result, and undoing the
      * twelve pastes restores the world exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_turn_paste", tickLimit = LIMIT)
-    public void nonRotatingModdedBlocksTurnWithEveryPasteTransform(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_turn_paste", timeoutTicks = LIMIT)
+    public void nonRotatingModdedBlocksTurnWithEveryPasteTransform(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 240);
         int x0 = at[0] + 8, y0 = 100, z0 = at[1] + 8;
         Box source = buildBox(x0, y0, z0);
@@ -127,34 +125,34 @@ public final class FidelityTurnGameTest implements FabricGameTest {
         Captured<ClipboardService.Outbound> preview = new Captured<>();
         List<RecordingListener> pastes = new ArrayList<>();
         List<BlockPos> origins = new ArrayList<>();
-        TimedTaskRunner runner = context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> {
+        GameTestSequence runner = context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, source);
                     before[1] = capture(world, all);
                     checkPremise(before[0]);
                     copied.add(copy(clips, h.player, source, source.min()));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get(0).get("copy");
                     try {
                         clips.preview(h.player, new SourceRef.Clipboard(info.clipboardId()), preview);
                     } catch (EditRejected e) {
-                        throw new GameTestException("preview refused: " + e.getMessage());
+                        throw new GameTestAssertException("preview refused: " + e.getMessage());
                     }
                     // Two rounds: at most 8 of a player's jobs may wait to start (executor.maxQueuedJobsPerPlayer).
                     FidelityEditGameTest.pasteRange(h, info, transforms, 0, transforms.size() / 2, x0, y0, z0, spacing,
                             pastes, origins);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "first round running");
                     FidelityEditGameTest.pasteRange(h, copied.get(0).get("copy"), transforms, transforms.size() / 2,
                             transforms.size(), x0, y0, z0, spacing, pastes, origins);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardCache.Preview decoded = decode(preview.get("preview").payload(), client);
                     for (int k = 0; k < transforms.size(); k++) {
                         Transform t = transforms.get(k);
@@ -168,13 +166,13 @@ public final class FidelityTurnGameTest implements FabricGameTest {
                     }
                 });
         FidelityEditGameTest.undoRedo(runner, h, transforms.size(), true);
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(before[1], capture(world, all), "after undoing every paste");
             check(FidelitySupport.itemEntities(world, all) == 0, "a paste or undo dropped items");
             forceChunks(world, all, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
@@ -182,10 +180,10 @@ public final class FidelityTurnGameTest implements FabricGameTest {
      * moved blocks face as {@link FidelitySupport#expectedTurn} says with their contents, the source is left empty,
      * and one undo restores both exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_turn_move", tickLimit = LIMIT)
-    public void aTurnedMoveTurnsNonRotatingModdedBlocksAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_turn_move", timeoutTicks = LIMIT)
+    public void aTurnedMoveTurnsNonRotatingModdedBlocksAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 241);
         int x0 = at[0] + 8, y0 = 100, z0 = at[1] + 8;
         Box source = buildBox(x0, y0, z0);
@@ -200,9 +198,9 @@ public final class FidelityTurnGameTest implements FabricGameTest {
         WorldSnapshot[] before = new WorldSnapshot[2];
         RecordingListener move = new RecordingListener();
         RecordingListener undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, source);
                     before[1] = capture(world, all);
                     checkPremise(before[0]);
@@ -210,11 +208,11 @@ public final class FidelityTurnGameTest implements FabricGameTest {
                         h.service.run(h.player, new OpSpec.Move(source, offset, t,
                                 new Pattern.Single(h.state("minecraft:air"))), RunOptions.DEFAULT, move);
                     } catch (EditRejected e) {
-                        throw new GameTestException("move refused: " + e.getMessage());
+                        throw new GameTestAssertException("move refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED && move.result.strippedNbt() == 0,
                             "move " + move.result);
                     FidelitySupport.checkTransformed(world, before[0], anchorAt, t, "move");
@@ -223,12 +221,12 @@ public final class FidelityTurnGameTest implements FabricGameTest {
                     checkContents(world, target, t);
                     WorldSnapshot vacated = capture(world, source);
                     for (int state : vacated.states) {
-                        check(Block.getStateFromRawId(state).isAir(), "the move left " + Block.getStateFromRawId(state));
+                        check(Block.stateById(state).isAir(), "the move left " + Block.stateById(state));
                     }
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                             "undo " + undo.result);
                     checkSame(before[1], capture(world, all), "after undoing the move");
@@ -236,7 +234,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -244,8 +242,8 @@ public final class FidelityTurnGameTest implements FabricGameTest {
      * non-rotating blocks only as vanilla does, offers no fallback in the handshake, and the client following it bakes
      * ghosts that match; with it on, both turn them. Either way the client's ghost is the server's result.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_turn_config", tickLimit = LIMIT)
-    public void theClientFollowsTheServersFallbackSetting(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_turn_config", timeoutTicks = LIMIT)
+    public void theClientFollowsTheServersFallbackSetting(GameTestHelper context) {
         FabricStateSpace on = EngineTestSupport.runtime(context).states();
         SculptoryConfig offConfig = SculptoryConfig.defaults();
         offConfig.transform.moddedFacingFallback = false;
@@ -266,9 +264,9 @@ public final class FidelityTurnGameTest implements FabricGameTest {
             int h = EngineTestSupport.handle(on, cell[1]);
             BlockState state = on.state(h);
             for (Transform t : FidelityEditGameTest.everyTransform()) {
-                int vanilla = Block.getRawIdFromState(state.mirror(ClipboardGameTest.vanilla(t.mirror()))
+                int vanilla = Block.getId(state.mirror(ClipboardGameTest.vanilla(t.mirror()))
                         .rotate(ClipboardGameTest.vanilla(t.quarterTurnsCw())));
-                int expected = Block.getRawIdFromState(FidelitySupport.expectedTurn(state, t));
+                int expected = Block.getId(FidelitySupport.expectedTurn(state, t));
                 int withFallback = t.applyToState(on, h);
                 int without = t.applyToState(off, h);
                 check(withFallback == expected && without == vanilla, cell[1] + " " + t + ": on "
@@ -277,12 +275,12 @@ public final class FidelityTurnGameTest implements FabricGameTest {
                         "a ghost differs from the server for " + cell[1] + " " + t);
                 if (expected != vanilla) fellBack++;
             }
-            if (FidelitySupport.NON_ROTATING.contains(Registries.BLOCK.getId(state.getBlock()).toString())) {
+            if (FidelitySupport.NON_ROTATING.contains(BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString())) {
                 check(on.rotate(h, 1) != h && off.rotate(h, 1) == h, cell[1] + ": the setting is not applied");
             }
         }
         check(fellBack > 0, "nothing in the build needed the fallback");
-        context.complete();
+        context.succeed();
     }
 
     // ------------------------------------------------------------------ helpers
@@ -292,7 +290,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
     }
 
     /** Writes {@link #TURN_BUILD} with its minimum corner at (x, y, z) and fills the pot and the skillet. */
-    static void build(Harness h, ServerWorld world, int x, int y, int z) {
+    static void build(Harness h, ServerLevel world, int x, int y, int z) {
         BlockWriter writer = h.runtime.writer(world, new WriteOptions(false, true));
         for (String[] cell : TURN_BUILD) {
             String[] xz = cell[0].split(",");
@@ -313,59 +311,59 @@ public final class FidelityTurnGameTest implements FabricGameTest {
     private static void checkPremise(WorldSnapshot source) {
         int nonRotating = 0;
         for (int state : source.states) {
-            BlockState s = Block.getStateFromRawId(state);
-            String id = Registries.BLOCK.getId(s.getBlock()).toString();
+            BlockState s = Block.stateById(state);
+            String id = BuiltInRegistries.BLOCK.getKey(s.getBlock()).toString();
             if (FidelitySupport.NON_ROTATING.contains(id)) {
-                check(s.rotate(BlockRotation.CLOCKWISE_90) == s && s.mirror(BlockMirror.FRONT_BACK) == s
-                        && s.mirror(BlockMirror.LEFT_RIGHT) == s, id + " turns itself now: update the fidelity premise");
+                check(s.rotate(Rotation.CLOCKWISE_90) == s && s.mirror(net.minecraft.world.level.block.Mirror.FRONT_BACK) == s
+                        && s.mirror(net.minecraft.world.level.block.Mirror.LEFT_RIGHT) == s, id + " turns itself now: update the fidelity premise");
                 nonRotating++;
             } else if (!s.isAir()) {
-                check(s.rotate(BlockRotation.CLOCKWISE_90) != s, id + " was meant to turn itself");
+                check(s.rotate(Rotation.CLOCKWISE_90) != s, id + " was meant to turn itself");
             }
         }
         check(nonRotating == 10, "the build has " + nonRotating + " non-rotating blocks");
     }
 
     /** Each non-rotating block faces vanilla's mirror-then-turn of its own facing; the lantern faces as the furnace. */
-    private static void checkFacings(ServerWorld world, WorldSnapshot source, Box target, Transform t) {
-        BlockMirror mirror = ClipboardGameTest.vanilla(t.mirror());
-        BlockRotation rotation = ClipboardGameTest.vanilla(t.quarterTurnsCw());
+    private static void checkFacings(ServerLevel world, WorldSnapshot source, Box target, Transform t) {
+        net.minecraft.world.level.block.Mirror mirror = ClipboardGameTest.vanilla(t.mirror());
+        Rotation rotation = ClipboardGameTest.vanilla(t.quarterTurnsCw());
         for (String[] cell : TURN_BUILD) {
             String[] xz = cell[0].split(",");
             int x = Integer.parseInt(xz[0]), z = Integer.parseInt(xz[1]);
-            BlockState from = Block.getStateFromRawId(source.get(source.box.min().x() + x, source.box.min().y(),
+            BlockState from = Block.stateById(source.get(source.box.min().x() + x, source.box.min().y(),
                     source.box.min().z() + z));
             BlockState got = world.getBlockState(targetPos(target, t, x, z));
-            Direction facing = from.get(Properties.HORIZONTAL_FACING);
-            Direction want = rotation.rotate(mirror.apply(facing));
-            check(got.getBlock() == from.getBlock() && got.get(Properties.HORIZONTAL_FACING) == want,
+            Direction facing = from.getValue(BlockStateProperties.HORIZONTAL_FACING);
+            Direction want = rotation.rotate(mirror.mirror(facing));
+            check(got.getBlock() == from.getBlock() && got.getValue(BlockStateProperties.HORIZONTAL_FACING) == want,
                     cell[1] + " " + t + " faces " + got + ", expected " + want);
             if ((t.quarterTurnsCw() & 1) == 1) check(want != facing, "a quarter turn kept " + cell[1] + " facing");
         }
         Direction lantern = world.getBlockState(targetPos(target, t, LANTERN[0], LANTERN[1]))
-                .get(Properties.HORIZONTAL_FACING);
+                .getValue(BlockStateProperties.HORIZONTAL_FACING);
         Direction furnace = world.getBlockState(targetPos(target, t, FURNACE[0], FURNACE[1]))
-                .get(Properties.HORIZONTAL_FACING);
+                .getValue(BlockStateProperties.HORIZONTAL_FACING);
         check(lantern == furnace, t + ": the lantern faces " + lantern + ", the furnace " + furnace);
     }
 
     /** The turned pot still holds its carrots and bowls, the skillet its chicken. */
-    private static void checkContents(ServerWorld world, Box target, Transform t) {
-        net.minecraft.util.math.BlockPos potAt = targetPos(target, t, POT[0], POT[1]);
+    private static void checkContents(ServerLevel world, Box target, Transform t) {
+        net.minecraft.core.BlockPos potAt = targetPos(target, t, POT[0], POT[1]);
         CookingPotBlockEntity pot = FidelitySupport.entity(world, potAt.getX(), potAt.getY(), potAt.getZ(),
                 CookingPotBlockEntity.class);
-        check(pot.getInventory().getStackInSlot(0).isOf(Items.CARROT) && pot.getInventory().getStackInSlot(0).getCount() == 2
-                && pot.getInventory().getStackInSlot(7).isOf(Items.BOWL)
+        check(pot.getInventory().getStackInSlot(0).is(Items.CARROT) && pot.getInventory().getStackInSlot(0).getCount() == 2
+                && pot.getInventory().getStackInSlot(7).is(Items.BOWL)
                 && pot.getInventory().getStackInSlot(7).getCount() == 4, t + ": the pot lost its contents");
-        net.minecraft.util.math.BlockPos skilletAt = targetPos(target, t, SKILLET[0], SKILLET[1]);
+        net.minecraft.core.BlockPos skilletAt = targetPos(target, t, SKILLET[0], SKILLET[1]);
         SkilletBlockEntity skillet = FidelitySupport.entity(world, skilletAt.getX(), skilletAt.getY(), skilletAt.getZ(),
                 SkilletBlockEntity.class);
-        check(skillet.getInventory().getStackInSlot(0).isOf(Items.CHICKEN)
+        check(skillet.getInventory().getStackInSlot(0).is(Items.CHICKEN)
                 && skillet.getInventory().getStackInSlot(0).getCount() == 2, t + ": the skillet lost its chicken");
     }
 
     /** Where the source cell (x, z) of the build lands in {@code target}. */
-    private static net.minecraft.util.math.BlockPos targetPos(Box target, Transform t, int x, int z) {
+    private static net.minecraft.core.BlockPos targetPos(Box target, Transform t, int x, int z) {
         return pos(target.min().x() + t.mapX(x, z, SIZE_X, SIZE_Z), target.min().y(),
                 target.min().z() + t.mapZ(x, z, SIZE_X, SIZE_Z));
     }
@@ -375,7 +373,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
      * baked with the transform ({@link GhostBaker#bake}); every cell equals the world after the server's paste. With
      * the fallback off, the same ghost would differ at the non-rotating blocks for a quarter turn.
      */
-    private static void checkGhost(ServerWorld world, ClipboardCache.Preview preview, Box target, Transform t,
+    private static void checkGhost(ServerLevel world, ClipboardCache.Preview preview, Box target, Transform t,
                                    FabricStateSpace client, String what) {
         GhostVolume source = preview.volume();
         GhostVolume ghost = GhostBaker.bake(source.frame(), source.sections(), t, client);
@@ -388,9 +386,9 @@ public final class FidelityTurnGameTest implements FabricGameTest {
                     int lx = x - target.min().x(), ly = y - target.min().y(), lz = z - target.min().z();
                     int cell = ghost.handle(lx, ly, lz);
                     BlockState actual = world.getBlockState(pos(x, y, z));
-                    boolean same = cell < 0 ? actual.isAir() : cell == Block.getRawIdFromState(actual);
+                    boolean same = cell < 0 ? actual.isAir() : cell == Block.getId(actual);
                     if (!same) {
-                        throw new GameTestException(what + ": the ghost shows " + (cell < 0 ? "nothing"
+                        throw new GameTestAssertException(what + ": the ghost shows " + (cell < 0 ? "nothing"
                                 : client.format(cell)) + " at " + x + "," + y + "," + z + ", the server placed " + actual);
                     }
                     if (vanillaOnly.handle(lx, ly, lz) != cell) differing++;
@@ -426,7 +424,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
         try {
             return PreviewDecoder.decode("fidelity", payload, client);
         } catch (IOException e) {
-            throw new GameTestException("undecodable preview: " + e);
+            throw new GameTestAssertException("undecodable preview: " + e);
         }
     }
 }

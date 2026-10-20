@@ -47,12 +47,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
 
 /**
  * Opt-in benchmarks: a 1,000,000-block fill with undo and redo, a 1M-cell paste, radius-32
@@ -79,15 +78,15 @@ public final class BenchGameTest implements FabricGameTest {
     // ---------------------------------------------------------------- 1M fill, undo, redo
 
     /** A 100³ fill of stone into air, its undo and its redo, with no player watching (engine and light only). */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_bench_fill", tickLimit = LIMIT)
-    public void bench1MFill(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_bench_fill", timeoutTicks = LIMIT)
+    public void bench1MFill(GameTestHelper context) {
         if (BenchSupport.skipped(context, "bench1MFill")) return;
         fillBench(context, "bench1MFill", 30, false, "minecraft:stone");
     }
 
     /** The same fill and undo with a player watching the area: packets and bytes it is sent, tick times. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_bench_fill_watched", tickLimit = LIMIT)
-    public void bench1MFillWatched(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_bench_fill_watched", timeoutTicks = LIMIT)
+    public void bench1MFillWatched(GameTestHelper context) {
         if (BenchSupport.skipped(context, "bench1MFillWatched")) return;
         fillBench(context, "bench1MFillWatched", 31, true, "minecraft:stone");
     }
@@ -96,15 +95,15 @@ public final class BenchGameTest implements FabricGameTest {
      * A 100³ fill of water into air, its undo and its redo: every cell is marked as the entry's fluid (FluidTrails), and
      * undo and redo fold its (empty) trail. Compare with {@link #bench1MFill}.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_bench_fill_water", tickLimit = LIMIT)
-    public void bench1MWaterFill(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_bench_fill_water", timeoutTicks = LIMIT)
+    public void bench1MWaterFill(GameTestHelper context) {
         if (BenchSupport.skipped(context, "bench1MWaterFill")) return;
         fillBench(context, "bench1MWaterFill", 938, false, "minecraft:water");
     }
 
-    private static void fillBench(TestContext context, String name, int slot, boolean watched, String block) {
+    private static void fillBench(GameTestHelper context, String name, int slot, boolean watched, String block) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, slot);
         Box region = box(at[0], 100, at[1], at[0] + 99, 199, at[1] + 99); // 1,000,000 cells
         long loadStart = System.nanoTime();
@@ -136,12 +135,12 @@ public final class BenchGameTest implements FabricGameTest {
      * A 128 × 64 × 128 (1,048,576-cell) mixed source (stone, andesite, dirt, planks, glass and air) copied, its preview
      * payload encoded, pasted elsewhere with a player watching, and undone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_bench_paste", tickLimit = LIMIT)
-    public void benchPaste1M(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_bench_paste", timeoutTicks = LIMIT)
+    public void benchPaste1M(GameTestHelper context) {
         if (BenchSupport.skipped(context, "benchPaste1M")) return;
         String name = "benchPaste1M";
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 32);
         Box source = box(at[0], 100, at[1], at[0] + 127, 163, at[1] + 127);
         Box target = source.offset(160, 0, 0);
@@ -185,8 +184,8 @@ public final class BenchGameTest implements FabricGameTest {
             log("%s: copy finished after %.0f ms (clipboard built off-thread); %,d cells", name,
                     ms(System.nanoTime() - copyStart[0]), info.cells());
             clipboardId[0] = info.clipboardId();
-            Clipboard clipboard = h.service.clipboards().find(h.player.getUuid(), info.clipboardId())
-                    .orElseThrow(() -> new GameTestException("clipboard not held")).clipboard();
+            Clipboard clipboard = h.service.clipboards().find(h.player.getUUID(), info.clipboardId())
+                    .orElseThrow(() -> new GameTestAssertException("clipboard not held")).clipboard();
             long encodeStart = System.nanoTime();
             byte[] payload = PreviewPayload.encode(clipboard);
             log("%s: preview payload (bspv1) %,d bytes for %,d cells (%.2f bytes/cell), encoded in %.0f ms (off-thread "
@@ -205,7 +204,7 @@ public final class BenchGameTest implements FabricGameTest {
     }
 
     private static UUID clipboardIdOrThrow(UUID[] holder) {
-        if (holder[0] == null) throw new GameTestException("no clipboard");
+        if (holder[0] == null) throw new GameTestAssertException("no clipboard");
         return holder[0];
     }
 
@@ -215,12 +214,12 @@ public final class BenchGameTest implements FabricGameTest {
      * Radius-32 strokes over hilly terrain with a player watching: a Raise stroke of 16 dabs (spacing 8, the client's
      * 0.25 × radius) and a Smooth stroke of 8 dabs, each ended and undone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_bench_brush", tickLimit = LIMIT)
-    public void benchBrushR32(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_bench_brush", timeoutTicks = LIMIT)
+    public void benchBrushR32(GameTestHelper context) {
         if (BenchSupport.skipped(context, "benchBrushR32")) return;
         String name = "benchBrushR32";
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 33);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 223, 180, z0 + 111);
@@ -249,7 +248,7 @@ public final class BenchGameTest implements FabricGameTest {
             try {
                 h.service.beginStroke(h.player, strokeId, spec);
             } catch (EditRejected e) {
-                throw new GameTestException("stroke refused: " + e.getMessage());
+                throw new GameTestAssertException("stroke refused: " + e.getMessage());
             }
             List<Dab> list = new ArrayList<>();
             for (int i = 0; i < dabs; i++) list.add(dab(i, x + i * spacing, 110, z));
@@ -260,9 +259,9 @@ public final class BenchGameTest implements FabricGameTest {
         });
         bench.then(() -> {
             check(h.acks.seqs.size() > acksBefore[0], what + " not acknowledged yet");
-            bench.stopTimer(System.nanoTime(), h.world.getServer().getTicks());
+            bench.stopTimer(System.nanoTime(), h.world.getServer().getTickCount());
             h.service.endStroke(h.player, strokeId);
-            cells[0] = h.service.historyService().undoEntries(h.player.getUuid()).get(0).record().before().cellCount();
+            cells[0] = h.service.historyService().undoEntries(h.player.getUUID()).get(0).record().before().cellCount();
         });
         bench.logTimer(what, cells, " (" + dabs + " dabs)");
         bench.settle(what);
@@ -271,8 +270,8 @@ public final class BenchGameTest implements FabricGameTest {
     // ---------------------------------------------------------------- scatter
 
     /** A scatter of small trees (13 blocks each) over a 192 × 192 floor at spacing 4: planning, commit, undo. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_bench_scatter", tickLimit = LIMIT)
-    public void benchScatterCommit(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_bench_scatter", timeoutTicks = LIMIT)
+    public void benchScatterCommit(GameTestHelper context) {
         if (BenchSupport.skipped(context, "benchScatterCommit")) return;
         String name = "benchScatterCommit";
         Harness h = new Harness(context);
@@ -285,7 +284,7 @@ public final class BenchGameTest implements FabricGameTest {
         for (int x = 0; x < 3; x++) {
             for (int z = 0; z < 3; z++) tree.set(x, 3, z, h.state("minecraft:oak_leaves[distance=1,persistent=true,waterlogged=false]"));
         }
-        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUuid(), tree.build()).id());
+        SourceRef source = new SourceRef.Clipboard(h.service.clipboards().install(h.player.getUUID(), tree.build()).id());
         Box area = box(x0 - 4, ScatterGameTest.FLOOR_Y - 1, z0 - 4, x0 + 195, ScatterGameTest.FLOOR_Y + 8, z0 + 195);
         Bench bench = new Bench(context, h, name, area, watcherOver(h.world, area));
         WorldSnapshot[] before = new WorldSnapshot[1];
@@ -320,13 +319,13 @@ public final class BenchGameTest implements FabricGameTest {
     }
 
     private static UUID planIdOrThrow(UUID[] holder) {
-        if (holder[0] == null) throw new GameTestException("no plan");
+        if (holder[0] == null) throw new GameTestAssertException("no plan");
         return holder[0];
     }
 
     // ---------------------------------------------------------------- plumbing
 
-    private static Watcher watcherOver(ServerWorld world, Box box) {
+    private static Watcher watcherOver(ServerLevel world, Box box) {
         int cx = (box.min().x() + box.max().x()) / 2, cz = (box.min().z() + box.max().z()) / 2;
         int radius = Math.max(box.sizeX(), box.sizeZ()) / 32 + 2;
         return Watcher.join(world, cx, box.max().y() + 8, cz, radius);
@@ -336,7 +335,7 @@ public final class BenchGameTest implements FabricGameTest {
         try {
             h.service.run(h.player, spec, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(spec.getClass().getSimpleName() + " refused: " + e.getMessage());
+            throw new GameTestAssertException(spec.getClass().getSimpleName() + " refused: " + e.getMessage());
         }
     }
 
@@ -346,35 +345,35 @@ public final class BenchGameTest implements FabricGameTest {
     }
 
     /**
-     * A sequence of timed steps on one {@link TimedTaskRunner}: jobs (timed from submission to {@code finished}, then
+     * A sequence of timed steps on one {@link GameTestSequence}: jobs (timed from submission to {@code finished}, then
      * until the light engine has caught up over {@link #area}), plain steps, and a closing step that removes the
      * watcher and players.
      */
     private static final class Bench {
-        final TestContext context;
+        final GameTestHelper context;
         final Harness h;
         final String name;
         final Box area;
         final Watcher watcher;
-        final TimedTaskRunner runner;
+        final GameTestSequence runner;
         final TickTimes ticks = new TickTimes();
         long timerStart;
         int timerTick;
         long timerNanos;
         int timerTicks;
 
-        Bench(TestContext context, Harness h, String name, Box area, Watcher watcher) {
+        Bench(GameTestHelper context, Harness h, String name, Box area, Watcher watcher) {
             this.context = context;
             this.h = h;
             this.name = name;
             this.area = area;
             this.watcher = watcher;
-            this.runner = context.createTimedTaskRunner();
-            if (watcher != null) runner.createAndAdd(() -> check(watcher.ready(area), "the watcher is still loading chunks"));
+            this.runner = context.startSequence();
+            if (watcher != null) runner.thenWaitUntil(() -> check(watcher.ready(area), "the watcher is still loading chunks"));
         }
 
         void then(Runnable step) {
-            runner.createAndAdd(step);
+            runner.thenWaitUntil(step);
         }
 
         /** Starts timing work submitted now: wall time, ticks, tick times from the next tick, the watcher's packets. */
@@ -382,7 +381,7 @@ public final class BenchGameTest implements FabricGameTest {
             if (watcher != null) watcher.record();
             ticks.startNextTick();
             timerStart = System.nanoTime();
-            timerTick = h.world.getServer().getTicks();
+            timerTick = h.world.getServer().getTickCount();
         }
 
         /** Ends the timed work at {@code endNanos} (tick {@code endTick}); tick times include the current tick. */
@@ -394,7 +393,7 @@ public final class BenchGameTest implements FabricGameTest {
 
         /** A step that waits for the tick times to close, then logs the timed work. */
         void logTimer(String what, long[] cells, String detail) {
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 check(ticks.stopped(), "waiting for the tick to end");
                 log("%s: %s of %,d cells%s: %.0f ms wall, %d ticks, %.2f us/cell; tick times: %s", name, what, cells[0],
                         detail, ms(timerNanos), timerTicks, ms(timerNanos) * 1000.0 / Math.max(1, cells[0]),
@@ -405,15 +404,15 @@ public final class BenchGameTest implements FabricGameTest {
         /** Waits for the light engine over {@link #area}, then logs the wait and the watcher's packets. */
         void settle(String what) {
             LightWait[] light = new LightWait[1];
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 light[0] = new LightWait(h.world, area);
                 ticks.startNextTick();
             });
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 check(light[0].settled(), "light still updating");
                 ticks.stopAtTickEnd();
             });
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 check(ticks.stopped(), "waiting for the tick to end");
                 log("%s: %s: light caught up %.0f ms after the edit; tick times meanwhile: %s", name, what,
                         ms(light[0].nanos()), ticks.summary());
@@ -428,12 +427,12 @@ public final class BenchGameTest implements FabricGameTest {
         void run(String what, Submit submit, long expectChanged) {
             Timing timing = new Timing();
             long[] cells = new long[1];
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 startTimer();
                 submit.submit(timing);
             });
-            runner.createAndAdd(() -> check(timing.result != null, what + " running"));
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> check(timing.result != null, what + " running"));
+            runner.thenWaitUntil(() -> {
                 JobResult r = timing.result;
                 check(r.outcome() == JobOutcome.COMPLETED, what + " " + r);
                 check(expectChanged < 0 || r.changed() == expectChanged, what + " changed " + r.changed());
@@ -447,19 +446,19 @@ public final class BenchGameTest implements FabricGameTest {
         /** A job run for set-up: waited for and required to complete, not reported. */
         void runQuiet(String what, Submit submit) {
             Timing timing = new Timing();
-            runner.createAndAdd(() -> submit.submit(timing));
-            runner.createAndAdd(() -> check(timing.result != null, what + " running"));
-            runner.createAndAdd(() -> check(timing.result.outcome() == JobOutcome.COMPLETED, what + " " + timing.result));
+            runner.thenWaitUntil(() -> submit.submit(timing));
+            runner.thenWaitUntil(() -> check(timing.result != null, what + " running"));
+            runner.thenWaitUntil(() -> check(timing.result.outcome() == JobOutcome.COMPLETED, what + " " + timing.result));
         }
 
         void finish(Runnable cleanup) {
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 ticks.close();
                 if (watcher != null) watcher.close();
                 cleanup.run();
                 h.close();
             });
-            runner.completeIfSuccessful();
+            runner.thenSucceed();
         }
 
         /** {@code finished} time and tick of one job. */
@@ -477,7 +476,7 @@ public final class BenchGameTest implements FabricGameTest {
             @Override
             public void finished(JobResult r) {
                 endNanos = System.nanoTime();
-                endTick = h.world.getServer().getTicks();
+                endTick = h.world.getServer().getTickCount();
                 result = r;
             }
         }

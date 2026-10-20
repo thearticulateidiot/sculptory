@@ -40,11 +40,11 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Per-asset access through the engine's guarded payload paths, with real players and permissions: a restricted
@@ -76,12 +76,12 @@ public final class LibraryAccessGameTest implements FabricGameTest {
         try {
             request.run();
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.reason() + " " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.reason() + " " + e.getMessage());
         }
     }
 
     /** A load whose refusal, at admission or later, lands in {@code reply} either way. */
-    private static void load(ServerClipboards<ServerPlayerEntity, ServerWorld> clips, ServerPlayerEntity player,
+    private static void load(ServerClipboards<ServerPlayer, ServerLevel> clips, ServerPlayer player,
                              String path, Captured<ClipboardService.ClipboardInfo> reply) {
         try {
             clips.load(player, path, reply);
@@ -90,8 +90,8 @@ public final class LibraryAccessGameTest implements FabricGameTest {
         }
     }
 
-    private static AssetAccess only(ServerPlayerEntity player) {
-        return AssetAccess.listed(List.of(new AssetAccess.Grantee(player.getUuid(), player.getGameProfile().getName())));
+    private static AssetAccess only(ServerPlayer player) {
+        return AssetAccess.listed(List.of(new AssetAccess.Grantee(player.getUUID(), player.getGameProfile().getName())));
     }
 
     private static List<String> paths(ClipboardService.Listing listing) {
@@ -99,17 +99,17 @@ public final class LibraryAccessGameTest implements FabricGameTest {
     }
 
     /** A paste of the asset {@code hash} by {@code player}, expected to be refused. */
-    private static EditRejected pasteRefusal(Harness h, ServerPlayerEntity player, String hash, int x, int z) {
+    private static EditRejected pasteRefusal(Harness h, ServerPlayer player, String hash, int x, int z) {
         return refusal(() -> h.service.run(player, new OpSpec.Paste(new SourceRef.Asset(hash),
                 new BlockPos(x, 102, z), Transform.IDENTITY, PasteOptions.DEFAULT), RunOptions.DEFAULT, null));
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_access", tickLimit = LIMIT)
-    public void restrictedAssetsAreNeverServedToUngrantedPlayers(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_access", timeoutTicks = LIMIT)
+    public void restrictedAssetsAreNeverServedToUngrantedPlayers(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerPlayerEntity writer = h.player; // op: library.write and admin
-        ServerPlayerEntity bob = h.addPlayer(false);
-        ServerPlayerEntity carol = h.addPlayer(false);
+        ServerPlayer writer = h.player; // op: library.write and admin
+        ServerPlayer bob = h.addPlayer(false);
+        ServerPlayer carol = h.addPlayer(false);
         EditTestSupport.grant(bob, Perm.USE, Perm.CLIPBOARD, Perm.SCATTER);
         EditTestSupport.grant(carol, Perm.USE, Perm.CLIPBOARD, Perm.SCATTER);
         int[] at = regionCorner(context, 800);
@@ -119,12 +119,12 @@ public final class LibraryAccessGameTest implements FabricGameTest {
         Path root = ClipTestSupport.libraryRoot(context);
         byte[] gold = schem(h, "minecraft:gold_block");
         String hash = Sha256.digest(gold).hex();
-        String hut = "_players/" + writer.getUuid() + "/hut.schem";
+        String hut = "_players/" + writer.getUUID() + "/hut.schem";
         put(root, "trees/oak.schem", gold);
         put(root, hut, schem(h, "minecraft:dirt"));
         var clips = ClipTestSupport.clipboards(h, root);
         var scatter = new ServerScatter<>(h.service);
-        UUID bobId = bob.getUuid();
+        UUID bobId = bob.getUUID();
 
         Captured<ClipboardService.Listing> indexed = new Captured<>();
         Captured<AccessChange> grantOak = new Captured<>();
@@ -151,35 +151,35 @@ public final class LibraryAccessGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> bobLoadRenamed = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> bobLoadOld = new Captured<>();
         run(() -> clips.list(writer, "trees", indexed)); // indexes the file, as a player's listing does
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     check(indexed.get("index").entries().get(0).contentHash().equals(hash), "listing " + indexed.value);
                     run(() -> clips.setAccess(writer, "trees/oak.schem", only(bob), grantOak));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(grantOak.get("grant oak").after().names(bobId), "grant " + grantOak.value);
                     run(() -> clips.setAccess(writer, hut, only(bob), grantHut));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     grantHut.get("grant hut");
                     run(() -> clips.list(carol, "trees", carolTrees));
                     run(() -> clips.list(bob, "trees", bobTrees));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(paths(carolTrees.get("carol trees")).isEmpty(), "carol sees a restricted entry: " + carolTrees.value);
                     check(paths(bobTrees.get("bob trees")).equals(List.of("trees/oak.schem"))
                             && bobTrees.value.entries().get(0).restricted(), "bob's listing: " + bobTrees.value);
                     run(() -> clips.preview(bob, new SourceRef.Asset(hash), bobPreview));
                     run(() -> clips.preview(carol, new SourceRef.Asset(hash), carolPreview));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check("trees/oak.schem".equals(bobPreview.get("bob preview").meta().get("path")), "bob's preview");
                     carolPreview.failedWith(RejectReason.INVALID, "carol's preview by hash");
                     check(carolPreview.value == null, "a payload was built for carol");
                     run(() -> clips.list(bob, "_shared", bobShared));
                     run(() -> clips.list(carol, "_shared", carolShared));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(paths(bobShared.get("bob shared")).equals(List.of(hut)), "Shared with me: " + bobShared.value);
                     check(!bobShared.value.writable() && bobShared.value.entries().get(0).restricted(), "shared flags");
                     check(paths(carolShared.get("carol shared")).isEmpty(), "carol's Shared with me: " + carolShared.value);
@@ -187,19 +187,19 @@ public final class LibraryAccessGameTest implements FabricGameTest {
                     load(clips, carol, "trees/oak.schem", carolLoad);
                     load(clips, bob, "Trees/oak.schem", bobSpelt);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     carolLoad.failedWith(RejectReason.INVALID, "carol's load by path");
                     check(carolLoad.detail.contains("not found, or not shared"), "carol's refusal says " + carolLoad.detail);
                     bobSpelt.failedWith(RejectReason.INVALID, "even a grantee must spell the entry as it is");
                     load(clips, carol, "trees/gone.schem", carolMissing);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     carolMissing.failedWith(RejectReason.INVALID, "carol's load of a missing entry");
                     check(carolLoad.detail.replace("oak", "gone").equals(carolMissing.detail),
                             "a restricted and a missing entry answer alike: " + carolLoad.detail + " / " + carolMissing.detail);
                     load(clips, carol, "trees/OAK.schem", carolSpelt);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     carolSpelt.failedWith(RejectReason.INVALID, "carol's load by another spelling");
                     // The asset is cached (bob's preview): carol still cannot paste or scatter it by hash.
                     check(h.service.assets().get(hash).isPresent(), "the asset is not cached");
@@ -212,7 +212,7 @@ public final class LibraryAccessGameTest implements FabricGameTest {
                     // Revoked: bob's plan ends, and nothing of the asset reaches him any more.
                     run(() -> clips.setAccess(writer, "trees/oak.schem", only(writer), revoke));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     revoke.get("revoke");
                     check(h.service.scatterPlans().get(bobId).isEmpty(), "the revoked player's plan survived");
                     check(refusal(() -> h.service.run(bob, new OpSpec.ScatterCommit(plan[0].plan.planId()), RunOptions.DEFAULT,
@@ -222,21 +222,21 @@ public final class LibraryAccessGameTest implements FabricGameTest {
                             new ScatterGameTest.Reply())).reason() == RejectReason.ASSET_NOT_LOADED, "bob scattered after the revocation");
                     run(() -> clips.preview(bob, new SourceRef.Asset(hash), bobPreviewAfter));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     bobPreviewAfter.failedWith(RejectReason.INVALID, "bob's preview by hash after the revocation");
                     check(bobPreviewAfter.value == null, "a payload was built for bob after the revocation");
                     load(clips, bob, "trees/oak.schem", bobLoadAfter);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     bobLoadAfter.failedWith(RejectReason.INVALID, "bob's load after the revocation");
                     // Granted again, previewed and planned; then the entry is renamed while restricted.
                     run(() -> clips.setAccess(writer, "trees/oak.schem", only(bob), regrant));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     regrant.get("grant again");
                     run(() -> clips.preview(bob, new SourceRef.Asset(hash), bobPreviewAgain));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     bobPreviewAgain.get("bob's preview again");
                     plan[1] = preview(scatter, bob, request(area, 4, 2L, new SourceRef.Asset(hash)));
                     planNow(scatter, plan[1]);
@@ -248,27 +248,27 @@ public final class LibraryAccessGameTest implements FabricGameTest {
                     check(h.service.assets().get(hash).isEmpty(), "the restricted asset stayed cached through the rename");
                     check(h.service.scatterPlans().get(bobId).isEmpty(), "the plan on a restricted asset outlived its rename");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     renamed.get("rename");
                     check(refusal(() -> h.service.run(bob, new OpSpec.ScatterCommit(plan[1].plan.planId()), RunOptions.DEFAULT,
                             null)).reason() == RejectReason.INVALID, "the renamed asset's plan committed");
                     run(() -> clips.setAccess(writer, "trees/oak2.schem", only(writer), revokeRenamed));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     revokeRenamed.get("revoke after the rename");
                     check(pasteRefusal(h, bob, hash, x0 + 4, z0 + 4).reason() == RejectReason.ASSET_NOT_LOADED, "bob pasted the renamed asset");
                     run(() -> clips.preview(bob, new SourceRef.Asset(hash), bobPreviewRenamed));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     bobPreviewRenamed.failedWith(RejectReason.INVALID, "bob's preview of the renamed asset");
                     check(bobPreviewRenamed.value == null, "a payload was built after the rename and revocation");
                     load(clips, bob, "trees/oak2.schem", bobLoadRenamed);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     bobLoadRenamed.failedWith(RejectReason.INVALID, "bob's load of the renamed asset");
                     load(clips, bob, "trees/oak.schem", bobLoadOld);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     bobLoadOld.failedWith(RejectReason.INVALID, "bob's load of the old name");
                     check(bobLoadRenamed.detail.equals(bobLoadOld.detail.replace("oak.schem", "oak2.schem")),
                             "a restricted and a missing entry answer alike: " + bobLoadRenamed.detail + " / " + bobLoadOld.detail);
@@ -278,6 +278,6 @@ public final class LibraryAccessGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

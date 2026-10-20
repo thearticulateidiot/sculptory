@@ -26,17 +26,17 @@ import dev.sculptory.server.engine.RunOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.Property;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.Property;
 import vectorwing.farmersdelight.common.block.entity.CookingPotBlockEntity;
 
 /**
@@ -52,12 +52,12 @@ public final class FidelityTinkerGameTest implements FabricGameTest {
         try {
             h.service.block(h.player, new BlockPos(x, y, z), h.state(expected), h.state(target), sign);
         } catch (EditRejected e) {
-            throw new GameTestException("Tinker refused " + expected + ": " + e.getMessage());
+            throw new GameTestAssertException("Tinker refused " + expected + ": " + e.getMessage());
         }
     }
 
     private static void checkState(Harness h, int x, int y, int z, String spec) {
-        int got = Block.getRawIdFromState(h.world.getBlockState(pos(x, y, z)));
+        int got = Block.getId(h.world.getBlockState(pos(x, y, z)));
         check(got == h.state(spec), x + "," + y + "," + z + ": " + h.world.getBlockState(pos(x, y, z))
                 + " instead of " + spec);
     }
@@ -80,13 +80,13 @@ public final class FidelityTinkerGameTest implements FabricGameTest {
     }
 
     private static <T extends Comparable<T>> void values(Property<T> property, List<String> into) {
-        for (T value : property.getValues()) into.add(property.name(value));
+        for (T value : property.getPossibleValues()) into.add(property.getName(value));
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_tinker", tickLimit = LIMIT)
-    public void tinkerOnModdedBlocksUndoesAndRedoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_tinker", timeoutTicks = LIMIT)
+    public void tinkerOnModdedBlocksUndoesAndRedoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1027);
         int x0 = at[0] + 4, y0 = 100, z0 = at[1] + 4;
         Box all = EngineTestSupport.box(x0 - 2, y0, z0 - 2, x0 + 9, y0 + 5, z0 + 9);
@@ -104,9 +104,9 @@ public final class FidelityTinkerGameTest implements FabricGameTest {
         WorldSnapshot[] snapshots = new WorldSnapshot[2];
         RecordingListener fill = new RecordingListener();
         List<RecordingListener> steps = new ArrayList<>();
-        TimedTaskRunner runner = context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        GameTestSequence runner = context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     snapshots[0] = capture(world, all);
                     tinker(h, x0, y0 + 1, z0 + 2, doorLower,
                             "chipped:barred_birch_door[facing=east,half=lower,hinge=left,open=true,powered=false]", null);
@@ -117,7 +117,7 @@ public final class FidelityTinkerGameTest implements FabricGameTest {
                     CookingPotBlockEntity cooking = FidelitySupport.entity(world, x0 + 1, y0 + 1, z0,
                             CookingPotBlockEntity.class);
                     ItemStack carrots = cooking.getInventory().getStackInSlot(0);
-                    check(carrots.isOf(Items.CARROT) && carrots.getCount() == 2, "the pot keeps its carrots: " + carrots);
+                    check(carrots.is(Items.CARROT) && carrots.getCount() == 2, "the pot keeps its carrots: " + carrots);
                     tinker(h, x0 + 1, y0 + 1, z0 + 2, trapdoor,
                             "chipped:airy_birch_trapdoor[facing=south,half=top,open=true,powered=false,waterlogged=false]",
                             null);
@@ -133,32 +133,32 @@ public final class FidelityTinkerGameTest implements FabricGameTest {
                                 h.state("chipped:bundled_acacia_log[axis=y]"), "axis"), CellMask.ANY), RunOptions.DEFAULT,
                                 fill);
                     } catch (EditRejected e) {
-                        throw new GameTestException("apply to all refused: " + e.getMessage());
+                        throw new GameTestAssertException("apply to all refused: " + e.getMessage());
                     }
                 }))
-                .createAndAdd(() -> check(fill.result != null, "the fill finished"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(fill.result != null, "the fill finished"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(fill.result.outcome() == JobOutcome.COMPLETED && fill.result.changed() == 2, "fill " + fill.result);
                     checkState(h, x0 + 2, y0 + 1, z0 + 2, "chipped:bundled_acacia_log[axis=y]");
                     checkState(h, x0 + 3, y0 + 1, z0 + 2, "chipped:bundled_acacia_log[axis=y]");
-                    check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 5, "five steps");
+                    check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 5, "five steps");
                     snapshots[1] = capture(world, all);
                 }));
         for (int i = 0; i < 5; i++) step(runner, h, steps, true);
-        runner.createAndAdd(() -> checkSame(snapshots[0], capture(world, all), "after five undos"));
+        runner.thenWaitUntil(() -> checkSame(snapshots[0], capture(world, all), "after five undos"));
         for (int i = 0; i < 5; i++) step(runner, h, steps, false);
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(snapshots[1], capture(world, all), "after five redos");
             check(FidelitySupport.itemEntities(world, all) == 0, "nothing dropped");
             forceChunks(world, all, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /** One undo (or redo) and its end: completed, nothing kept. */
-    private static void step(TimedTaskRunner runner, Harness h, List<RecordingListener> steps, boolean undo) {
-        runner.createAndAdd(EntitiesGameTest.once(() -> {
+    private static void step(GameTestSequence runner, Harness h, List<RecordingListener> steps, boolean undo) {
+        runner.thenWaitUntil(EntitiesGameTest.once(() -> {
             RecordingListener listener = new RecordingListener();
             steps.add(listener);
             try {
@@ -168,10 +168,10 @@ public final class FidelityTinkerGameTest implements FabricGameTest {
                     h.service.redo(h.player, ConflictPolicy.SKIP_CONFLICTS, listener);
                 }
             } catch (EditRejected e) {
-                throw new GameTestException((undo ? "undo" : "redo") + " refused: " + e.getMessage());
+                throw new GameTestAssertException((undo ? "undo" : "redo") + " refused: " + e.getMessage());
             }
         }));
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             RecordingListener last = steps.get(steps.size() - 1);
             check(last.result != null, "the step is running");
             check(last.result.outcome() == JobOutcome.COMPLETED && last.result.skippedConflicts() == 0,

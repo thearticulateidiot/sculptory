@@ -1,15 +1,15 @@
 package dev.sculptory.fabric.client.editor.heightmap;
 
+import com.mojang.blaze3d.platform.NativeImage;
 import dev.sculptory.core.brush.HeightImage;
 import dev.sculptory.fabric.config.FolderMigration;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.texture.NativeImage;
-import net.minecraft.client.texture.NativeImageBackedTexture;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.Util;
+import net.minecraft.Util;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.texture.DynamicTexture;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * The game's height images: one {@link HeightmapLibrary} over {@code <game dir>/sculptory/heightmaps/} shared by the
@@ -23,14 +23,14 @@ public final class GameHeightmaps implements HeightmapView {
 
     private static GameHeightmaps instance;
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final HeightmapLibrary library;
     private final Map<String, Made> thumbnails = new HashMap<>();
     private int textures;
 
     private record Made(long version, Thumbnail thumbnail) {}
 
-    private GameHeightmaps(MinecraftClient client, HeightmapLibrary library) {
+    private GameHeightmaps(Minecraft client, HeightmapLibrary library) {
         this.client = client;
         this.library = library;
     }
@@ -38,9 +38,9 @@ public final class GameHeightmaps implements HeightmapView {
     /** The game's instance. */
     public static synchronized GameHeightmaps get() {
         if (instance == null) {
-            instance = new GameHeightmaps(MinecraftClient.getInstance(), new HeightmapLibrary(
+            instance = new GameHeightmaps(Minecraft.getInstance(), new HeightmapLibrary(
                     FolderMigration.gameDir().resolve("heightmaps"), HeightmapLibrary.BuiltIns.CLASS_PATH,
-                    Util.getMainWorkerExecutor()));
+                    Util.backgroundExecutor()));
         }
         return instance;
     }
@@ -58,13 +58,13 @@ public final class GameHeightmaps implements HeightmapView {
         Made made = thumbnails.get(key);
         if (entry.isEmpty()) {
             if (made != null) {
-                client.getTextureManager().destroyTexture(made.thumbnail().texture());
+                client.getTextureManager().release(made.thumbnail().texture());
                 thumbnails.remove(key);
             }
             return Optional.empty();
         }
         if (made != null && made.version() == entry.get().version()) return Optional.of(made.thumbnail());
-        if (made != null) client.getTextureManager().destroyTexture(made.thumbnail().texture());
+        if (made != null) client.getTextureManager().release(made.thumbnail().texture());
         Thumbnail thumbnail = upload(entry.get().image());
         thumbnails.put(key, new Made(entry.get().version(), thumbnail));
         return Optional.of(thumbnail);
@@ -77,12 +77,12 @@ public final class GameHeightmaps implements HeightmapView {
         for (int y = 0; y < THUMB; y++) {
             for (int x = 0; x < THUMB; x++) {
                 int v = values[y * THUMB + x] & 0xFF;
-                pixels.setColor(x, y, 0xFF000000 | v << 16 | v << 8 | v);
+                pixels.setPixelRGBA(x, y, 0xFF000000 | v << 16 | v << 8 | v);
             }
         }
-        NativeImageBackedTexture texture = new NativeImageBackedTexture(pixels);
-        Identifier id = Identifier.of("sculptory", "heightmap_thumb/" + textures++);
-        client.getTextureManager().registerTexture(id, texture);
+        DynamicTexture texture = new DynamicTexture(pixels);
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "heightmap_thumb/" + textures++);
+        client.getTextureManager().register(id, texture);
         texture.setFilter(true, false);
         return new Thumbnail(id, THUMB, THUMB);
     }

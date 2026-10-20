@@ -4,11 +4,11 @@ import dev.sculptory.core.entity.EntityNbt;
 import dev.sculptory.server.platform.EntityRules;
 import java.util.Set;
 import java.util.TreeSet;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.decoration.BlockAttachedEntity;
-import net.minecraft.registry.Registries;
-import net.minecraft.world.World;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.decoration.BlockAttachedEntity;
+import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,7 +54,7 @@ public final class EntityTypeRules implements EntityRules {
     /**
      * The rules, scanning the registry once with {@code world} (server thread). Later calls return the same rules.
      */
-    public static EntityTypeRules scan(World world) {
+    public static EntityTypeRules scan(Level world) {
         EntityTypeRules known = scanned;
         if (known != null) return known;
         synchronized (EntityTypeRules.class) {
@@ -63,8 +63,8 @@ public final class EntityTypeRules implements EntityRules {
             TreeSet<String> never = new TreeSet<>();
             TreeSet<String> hanging = new TreeSet<>();
             int failed = 0;
-            for (EntityType<?> type : Registries.ENTITY_TYPE) {
-                String id = EntityType.getId(type).toString();
+            for (EntityType<?> type : BuiltInRegistries.ENTITY_TYPE) {
+                String id = EntityType.getKey(type).toString();
                 Entity entity;
                 try {
                     entity = type.create(world);
@@ -82,8 +82,8 @@ public final class EntityTypeRules implements EntityRules {
                     continue;
                 }
                 try {
-                    if (entity.entityDataRequiresOperator()) operator.add(id);
-                    if (!type.isSummonable() || FabricEntities.kind(entity) == FabricEntities.Kind.NEVER) never.add(id);
+                    if (entity.onlyOpCanSetNbt()) operator.add(id);
+                    if (!type.canSummon() || FabricEntities.kind(entity) == FabricEntities.Kind.NEVER) never.add(id);
                     if (entity instanceof BlockAttachedEntity) hanging.add(id);
                 } catch (Throwable e) {
                     if (failed++ == 0) LOG.warn("Sculptory could not learn what a {} is", id, e);

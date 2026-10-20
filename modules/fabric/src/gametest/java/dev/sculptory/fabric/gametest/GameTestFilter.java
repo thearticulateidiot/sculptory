@@ -4,7 +4,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
-import net.minecraft.test.TestFunction;
+import net.minecraft.gametest.framework.TestFunction;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -39,8 +39,8 @@ public final class GameTestFilter {
     }
 
     private static boolean matches(TestFunction test, List<String> entries) {
-        String name = test.templatePath().toLowerCase(Locale.ROOT);
-        String batch = test.batchId().toLowerCase(Locale.ROOT);
+        String name = test.testName().toLowerCase(Locale.ROOT);
+        String batch = test.batchName().toLowerCase(Locale.ROOT);
         for (String entry : entries) {
             if (name.contains(entry) || batch.contains(entry)) return true;
         }

@@ -49,25 +49,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.entity.decoration.painting.PaintingEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.registry.Registries;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.shape.VoxelShape;
-import net.minecraft.world.EmptyBlockView;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.entity.decoration.Painting;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * Free rotation against a real server: pastes and moves turned by any angle on any axis resample exactly as the
@@ -86,7 +86,7 @@ public final class FreeRotationGameTest implements FabricGameTest {
      * resample it ({@link ResampledCopy}: the orientation's method, two-cell blocks whole, smooth slopes); the rest
      * of the box holds what {@code around} says (null: air).
      */
-    static void checkResampled(ServerWorld world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
+    static void checkResampled(ServerLevel world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
                                Orientation orientation, WorldSnapshot around, String what) {
         checkResampled(world, states, before, targetMin, orientation, around, null, false, what);
     }
@@ -95,7 +95,7 @@ public final class FreeRotationGameTest implements FabricGameTest {
      * {@link #checkResampled}; with {@code move}, the result is a move's (two-cell blocks keep to its landing cells),
      * and a cell of {@code vacated} the result does not land on must be air.
      */
-    static void checkResampled(ServerWorld world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
+    static void checkResampled(ServerLevel world, StateSpace states, WorldSnapshot before, BlockPos targetMin,
                                Orientation orientation, WorldSnapshot around, Box vacated, boolean move, String what) {
         ResampledCopy copy = model(states, before, orientation, move);
         Box source = before.box;
@@ -117,12 +117,12 @@ public final class FreeRotationGameTest implements FabricGameTest {
                     return -1;
                 }
                 int state = before.get(source.min().x() + x, source.min().y() + y, source.min().z() + z);
-                return !air && Block.getStateFromRawId(state).isAir() ? -1 : state;
+                return !air && Block.stateById(state).isAir() ? -1 : state;
             }
 
             @Override
             public boolean solid(int state) {
-                return !Block.getStateFromRawId(state).isAir();
+                return !Block.stateById(state).isAir();
             }
         };
     }
@@ -148,7 +148,7 @@ public final class FreeRotationGameTest implements FabricGameTest {
         return 2 * model(states, before, orientation, move).droppedPairs();
     }
 
-    private static void modelCheck(ServerWorld world, WorldSnapshot before, BlockPos targetMin, Orientation orientation,
+    private static void modelCheck(ServerLevel world, WorldSnapshot before, BlockPos targetMin, Orientation orientation,
                                    WorldSnapshot around, Box vacated, String what, ResampledCopy copy,
                                    CellResampler base, CellResampler.SourceCells cells) {
         CellResampler sampler = copy.cells();
@@ -159,12 +159,12 @@ public final class FreeRotationGameTest implements FabricGameTest {
             for (int z = 0; z < size.z(); z++) {
                 for (int x = 0; x < size.x(); x++) {
                     int wx = targetMin.x() + x, wy = targetMin.y() + y, wz = targetMin.z() + z;
-                    int got = Block.getRawIdFromState(world.getBlockState(pos(wx, wy, wz)));
+                    int got = Block.getId(world.getBlockState(pos(wx, wy, wz)));
                     int want = -1;
-                    int air = Block.getRawIdFromState(net.minecraft.block.Blocks.AIR.getDefaultState());
+                    int air = Block.getId(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
                     if (sampler.source(x, y, z, cells, cell)) {
                         int from = cells.state(cell[0], cell[1], cell[2]);
-                        if (from >= 0 && !Block.getStateFromRawId(from).isAir()) want = copy.state(x, y, z, from);
+                        if (from >= 0 && !Block.stateById(from).isAir()) want = copy.state(x, y, z, from);
                     } else if (vacated != null && base.source(x, y, z, cells, baseCell)) {
                         // A move's landing cell whose block a kept-whole door or bed took is left as air.
                         want = air;
@@ -174,15 +174,15 @@ public final class FreeRotationGameTest implements FabricGameTest {
                                 : around.get(wx, wy, wz);
                     }
                     if (got != want) {
-                        throw new GameTestException(what + " " + orientation + ": at " + wx + "," + wy + "," + wz
-                                + " expected " + Block.getStateFromRawId(want) + ", got " + Block.getStateFromRawId(got));
+                        throw new GameTestAssertException(what + " " + orientation + ": at " + wx + "," + wy + "," + wz
+                                + " expected " + Block.stateById(want) + ", got " + Block.stateById(got));
                     }
                 }
             }
         }
     }
 
-    private static int nonAir(ServerWorld world, Box box) {
+    private static int nonAir(ServerLevel world, Box box) {
         int n = 0;
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
@@ -198,7 +198,7 @@ public final class FreeRotationGameTest implements FabricGameTest {
         try {
             h.service.run(h.player, op, options, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
         }
     }
 
@@ -212,10 +212,10 @@ public final class FreeRotationGameTest implements FabricGameTest {
      * mirror: each result cell is its nearest source cell turned to the nearest facing; the quarter pitch keeps every
      * block (an exact permutation); all of it undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_free_paste", tickLimit = LIMIT)
-    public void freePastesResampleTheShowcaseAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_free_paste", timeoutTicks = LIMIT)
+    public void freePastesResampleTheShowcaseAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1200);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 5, y0 + 3, z0 + 5);
@@ -236,8 +236,8 @@ public final class FreeRotationGameTest implements FabricGameTest {
         List<RecordingListener> pastes = new ArrayList<>();
         List<BlockPos> origins = new ArrayList<>();
         for (int k = 0; k < orientations.size(); k++) origins.add(new BlockPos(x0 + spacing * (k + 1), y0 + 5, z0 + 2));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     UUID clipboard = copied.get("copy").clipboardId();
                     for (int k = 0; k < orientations.size(); k++) {
                         RecordingListener listener = new RecordingListener();
@@ -246,10 +246,10 @@ public final class FreeRotationGameTest implements FabricGameTest {
                         pastes.add(listener);
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     for (RecordingListener listener : pastes) check(listener.result != null, "pastes running");
                 })
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     for (int k = 0; k < orientations.size(); k++) {
                         Orientation o = orientations.get(k);
                         check(pastes.get(k).result.outcome() == JobOutcome.COMPLETED, "paste " + o + " " + pastes.get(k).result);
@@ -266,23 +266,23 @@ public final class FreeRotationGameTest implements FabricGameTest {
                     }
                     check(h.history().undoLabel().startsWith("Paste"), "history " + h.history().undoLabel());
                 }))
-                .createAndAdd(undoAll(h, orientations.size()))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, orientations.size()))
+                .thenWaitUntil(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the free pastes");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A free move takes the showcase away turned (the source vacated, the result resampled), then Rotate turns it in
      * place as one step labelled "Rotate"; both undo exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_free_move", tickLimit = LIMIT)
-    public void aFreeMoveAndARotateInPlaceUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_free_move", timeoutTicks = LIMIT)
+    public void aFreeMoveAndARotateInPlaceUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1201);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0 + 4, y0, z0 + 4, x0 + 9, y0 + 3, z0 + 9);
@@ -297,11 +297,11 @@ public final class FreeRotationGameTest implements FabricGameTest {
         BlockPos offset = new BlockPos(18, 2, 1);
         RecordingListener moved = new RecordingListener();
         RecordingListener rotated = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(EntitiesGameTest.once(() -> run(h, new OpSpec.Move(new Region.Cuboid(source), offset, away,
+        context.startSequence()
+                .thenWaitUntil(EntitiesGameTest.once(() -> run(h, new OpSpec.Move(new Region.Cuboid(source), offset, away,
                         air, EntityFilter.NONE, Symmetry.NONE, PasteOptions.Into.EVERYTHING), RunOptions.DEFAULT, moved)))
-                .createAndAdd(() -> check(moved.result != null, "move running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(moved.result != null, "move running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(moved.result.outcome() == JobOutcome.COMPLETED, "move " + moved.result);
                     Orientation.Bounds bounds = away.bounds(6, 4, 6);
                     BlockPos targetMin = source.min().add(bounds.offset()).add(offset);
@@ -315,15 +315,15 @@ public final class FreeRotationGameTest implements FabricGameTest {
                     }
                     check(h.history().undoLabel().startsWith("Move"), "history " + h.history().undoLabel());
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the free move");
                     run(h, new OpSpec.Move(new Region.Cuboid(source), BlockPos.ORIGIN, inPlace, air, EntityFilter.NONE,
                             Symmetry.NONE, PasteOptions.Into.EVERYTHING),
                             new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.ROTATE), rotated);
                 }))
-                .createAndAdd(() -> check(rotated.result != null, "rotate running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(rotated.result != null, "rotate running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(rotated.result.outcome() == JobOutcome.COMPLETED, "rotate " + rotated.result);
                     Orientation.Bounds bounds = inPlace.bounds(6, 4, 6);
                     // The source box's cells the turned blocks do not land on are air; the rest is the model.
@@ -333,13 +333,13 @@ public final class FreeRotationGameTest implements FabricGameTest {
                             + h.history().undoLabel());
                     check(h.history().undoLabels().size() == 1, "one step: " + h.history().undoLabels());
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the rotate");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -348,10 +348,10 @@ public final class FreeRotationGameTest implements FabricGameTest {
      * the move undoes exactly. A quarter pitch pasting the same entities lays the item frame on the floor and leaves the
      * painting out (it cannot hang there).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_free_entities", tickLimit = LIMIT)
-    public void entitiesTurnWithAFreeMoveAndPaste(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_free_entities", timeoutTicks = LIMIT)
+    public void entitiesTurnWithAFreeMoveAndPaste(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1202);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 3, y0 + 2, z0 + 3);
@@ -368,34 +368,34 @@ public final class FreeRotationGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         BlockPos pasteOrigin = new BlockPos(x0 + 40, y0 + 4, z0 + 8);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(world, all))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(world, all))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     made.addAll(EntitiesGameTest.decorate(h, x0, y0, z0));
                     before.add(EntitiesGameTest.comparable(EntitiesGameTest.entitiesIn(world, source)));
                     EntitiesGameTest.copyInto(copied, clips, h.player, source, source.min(), EntityFilter.ALL);
                     run(h, new OpSpec.Move(new Region.Cuboid(source), offset, yaw, air, EntityFilter.ALL, Symmetry.NONE,
                             PasteOptions.Into.EVERYTHING), RunOptions.DEFAULT, move);
                 }))
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED, "move " + move.result);
                     BlockPos destination = source.min().add(yaw.bounds(4, 3, 4).offset()).add(offset);
                     // The armor stand (x0 + 1.5, y0 + 1, z0 + 3.5, yaw 30): its feet mapped exactly, yaw 60.
                     double[] stand = yaw.mapPoint(1.5, 1, 3.5, 4, 3, 4);
                     Entity movedStand = EntitiesGameTest.checkPlaced(world, new EntitiesGameTest.Expected(
-                            EntityType.ARMOR_STAND, new net.minecraft.util.math.Vec3d(destination.x() + stand[0],
+                            EntityType.ARMOR_STAND, new net.minecraft.world.phys.Vec3(destination.x() + stand[0],
                             destination.y() + stand[1], destination.z() + stand[2]), null, 60f), "the armor stand");
-                    check(((ArmorStandEntity) movedStand).getEquippedStack(net.minecraft.entity.EquipmentSlot.HEAD)
-                            .isOf(net.minecraft.item.Items.IRON_HELMET), "the helmet came along");
+                    check(((ArmorStand) movedStand).getItemBySlot(net.minecraft.world.entity.EquipmentSlot.HEAD)
+                            .is(net.minecraft.world.item.Items.IRON_HELMET), "the helmet came along");
                     // The block display (x0 + 3.5, y0 + 1, z0 + 3.25, yaw 45): its own rotation took the turn, a
                     // half-angle quaternion of -15 degrees about y (the game's axes); its heading stays.
                     double[] display = yaw.mapPoint(3.5, 1, 3.25, 4, 3, 4);
                     Entity movedDisplay = EntitiesGameTest.checkPlaced(world, new EntitiesGameTest.Expected(
-                            EntityType.BLOCK_DISPLAY, new net.minecraft.util.math.Vec3d(destination.x() + display[0],
+                            EntityType.BLOCK_DISPLAY, new net.minecraft.world.phys.Vec3(destination.x() + display[0],
                             destination.y() + display[1], destination.z() + display[2]), null, 45f), "the display");
-                    NbtList left = movedDisplay.writeNbt(new NbtCompound()).getCompound("transformation")
-                            .getList("left_rotation", NbtElement.FLOAT_TYPE);
+                    ListTag left = movedDisplay.saveWithoutId(new CompoundTag()).getCompound("transformation")
+                            .getList("left_rotation", Tag.TAG_FLOAT);
                     check(left.size() == 4 && Math.abs(left.getFloat(1) + (float) Math.sin(Math.toRadians(15))) < 1e-4
                             && Math.abs(left.getFloat(3) - (float) Math.cos(Math.toRadians(15))) < 1e-4
                             && Math.abs(left.getFloat(0)) < 1e-4 && Math.abs(left.getFloat(2)) < 1e-4,
@@ -405,21 +405,21 @@ public final class FreeRotationGameTest implements FabricGameTest {
                     Box landed = box(destination.x() - 2, destination.y() - 2, destination.z() - 2, destination.x() + 8,
                             destination.y() + 6, destination.z() + 8);
                     List<Entity> there = EntitiesGameTest.entitiesIn(world, landed);
-                    long frames = there.stream().filter(e -> e instanceof ItemFrameEntity f
-                            && f.getHorizontalFacing() == Direction.SOUTH).count();
-                    long paintings = there.stream().filter(e -> e instanceof PaintingEntity p
-                            && p.getHorizontalFacing() == Direction.SOUTH).count();
+                    long frames = there.stream().filter(e -> e instanceof ItemFrame f
+                            && f.getDirection() == Direction.SOUTH).count();
+                    long paintings = there.stream().filter(e -> e instanceof Painting p
+                            && p.getDirection() == Direction.SOUTH).count();
                     check(frames <= 1 && paintings <= 1 && frames + paintings >= 1, "frames " + frames + ", paintings "
                             + paintings + " in " + there);
                     for (Entity e : there) {
-                        if (e instanceof net.minecraft.entity.decoration.AbstractDecorationEntity d) {
-                            check(d.canStayAttached(), "hung on nothing: " + d);
+                        if (e instanceof net.minecraft.world.entity.decoration.HangingEntity d) {
+                            check(d.survives(), "hung on nothing: " + d);
                         }
                     }
                     for (Entity entity : made) check(entity.isRemoved(), "left behind: " + entity);
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(EntitiesGameTest.comparable(EntitiesGameTest.entitiesIn(world, source)).equals(before.get(0)),
                             "the same entities are back: " + EntitiesGameTest.changedSince(before.get(0),
                                     EntitiesGameTest.comparable(EntitiesGameTest.entitiesIn(world, source))));
@@ -427,32 +427,32 @@ public final class FreeRotationGameTest implements FabricGameTest {
                         h.service.run(h.player, new OpSpec.Paste(new SourceRef.Clipboard(copied.get("copy").clipboardId()),
                                 pasteOrigin, pitch, new PasteOptions(false, false, true)), RunOptions.DEFAULT, paste);
                     } catch (EditRejected e) {
-                        throw new GameTestException("paste refused: " + e.getMessage());
+                        throw new GameTestAssertException("paste refused: " + e.getMessage());
                     }
                 }))
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED, "paste " + paste.result);
                     Box target = PasteGeometry.pasteTarget(new BlockPos(4, 3, 4), BlockPos.ORIGIN, pitch, pasteOrigin);
                     Box around = box(target.min().x() - 2, target.min().y() - 2, target.min().z() - 2,
                             target.max().x() + 2, target.max().y() + 2, target.max().z() + 2);
                     List<Entity> there = EntitiesGameTest.entitiesIn(world, around);
-                    long frames = there.stream().filter(e -> e instanceof ItemFrameEntity f
-                            && f.getHorizontalFacing() == Direction.DOWN).count();
-                    long paintings = there.stream().filter(e -> e instanceof PaintingEntity).count();
+                    long frames = there.stream().filter(e -> e instanceof ItemFrame f
+                            && f.getDirection() == Direction.DOWN).count();
+                    long paintings = there.stream().filter(e -> e instanceof Painting).count();
                     check(frames == 1, "the frame lies face down: " + there);
                     check(paintings == 0, "the painting cannot hang on a ceiling: " + there);
-                    check(there.stream().anyMatch(e -> e instanceof ArmorStandEntity), "the armor stand: " + there);
+                    check(there.stream().anyMatch(e -> e instanceof ArmorStand), "the armor stand: " + there);
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     check(EntitiesGameTest.entitiesIn(world, box(pasteOrigin.x() - 8, pasteOrigin.y() - 8,
                             pasteOrigin.z() - 8, pasteOrigin.x() + 8, pasteOrigin.y() + 8, pasteOrigin.z() + 8)).isEmpty(),
                             "the pasted entities are gone");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -461,10 +461,10 @@ public final class FreeRotationGameTest implements FabricGameTest {
      * item lies on the ground, every frame still hangs, and undo brings back exactly the frames there were (no item
      * twice).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_free_frames", tickLimit = LIMIT)
-    public void turnedFramesHangOnlyOnAWallAndDropNothing(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_free_frames", timeoutTicks = LIMIT)
+    public void turnedFramesHangOnlyOnAWallAndDropNothing(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1205);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box wall = box(x0, y0, z0, x0 + 7, y0 + 3, z0 + 1);
@@ -472,64 +472,64 @@ public final class FreeRotationGameTest implements FabricGameTest {
         loadAndForce(world, all);
         RecordingListener move = new RecordingListener();
         int[] waited = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(world, all))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(world, all))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     var writer = h.runtime.writer(world, dev.sculptory.server.platform.WriteOptions.DEFAULT);
                     for (int x = x0; x <= x0 + 7; x++) {
                         for (int y = y0; y <= y0 + 3; y++) writer.write(x, y, z0, h.state("minecraft:stone"), null);
                     }
                     for (int x = x0; x <= x0 + 7; x++) {
                         for (int y = y0; y <= y0 + 2; y += 2) {
-                            ItemFrameEntity frame = new ItemFrameEntity(world, pos(x, y, z0 + 1), Direction.SOUTH);
-                            frame.setHeldItemStack(new net.minecraft.item.ItemStack(net.minecraft.item.Items.DIAMOND), false);
-                            check(world.spawnEntity(frame), "a frame spawned");
+                            ItemFrame frame = new ItemFrame(world, pos(x, y, z0 + 1), Direction.SOUTH);
+                            frame.setItem(new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.DIAMOND), false);
+                            check(world.addFreshEntity(frame), "a frame spawned");
                         }
                     }
                     run(h, new OpSpec.Move(new Region.Cuboid(wall), new BlockPos(20, 0, 4),
                             Orientation.free(Transform.IDENTITY, 2_000, 0, 0), new Pattern.Single(h.state("minecraft:air")),
                             EntityFilter.DECORATIONS, Symmetry.NONE, PasteOptions.Into.EVERYTHING), RunOptions.DEFAULT, move);
                 }))
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(() -> {
                     waited[0]++;
                     check(waited[0] > 140, "letting the game check the frames: " + waited[0]);
                 })
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED, "move " + move.result);
                     List<Entity> there = EntitiesGameTest.entitiesIn(world, all);
-                    long dropped = world.getEntitiesByClass(net.minecraft.entity.ItemEntity.class,
-                            new net.minecraft.util.math.Box(x0 - 8, y0 - 6, z0 - 8, x0 + 40, y0 + 12, z0 + 20),
+                    long dropped = world.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class,
+                            new net.minecraft.world.phys.AABB(x0 - 8, y0 - 6, z0 - 8, x0 + 40, y0 + 12, z0 + 20),
                             e -> true).size();
                     check(dropped == 0, "items on the ground: " + dropped);
                     for (Entity e : there) {
-                        if (e instanceof ItemFrameEntity f) check(f.canStayAttached(), "a frame hangs on nothing: " + f);
+                        if (e instanceof ItemFrame f) check(f.survives(), "a frame hangs on nothing: " + f);
                     }
-                    check(there.stream().anyMatch(e -> e instanceof ItemFrameEntity), "some frames hang: " + there);
+                    check(there.stream().anyMatch(e -> e instanceof ItemFrame), "some frames hang: " + there);
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     List<Entity> back = EntitiesGameTest.entitiesIn(world, all);
-                    long frames = back.stream().filter(e -> e instanceof ItemFrameEntity f
-                            && f.getHeldItemStack().isOf(net.minecraft.item.Items.DIAMOND)).count();
-                    long items = world.getEntitiesByClass(net.minecraft.entity.ItemEntity.class,
-                            new net.minecraft.util.math.Box(x0 - 8, y0 - 6, z0 - 8, x0 + 40, y0 + 12, z0 + 20),
+                    long frames = back.stream().filter(e -> e instanceof ItemFrame f
+                            && f.getItem().is(net.minecraft.world.item.Items.DIAMOND)).count();
+                    long items = world.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class,
+                            new net.minecraft.world.phys.AABB(x0 - 8, y0 - 6, z0 - 8, x0 + 40, y0 + 12, z0 + 20),
                             e -> true).size();
                     check(frames == 16 && items == 0, "after undo: " + frames + " frames, " + items + " items");
                     forceChunks(world, all, false);
                     h.close();
                 }))
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A free paste and a free move with mirror symmetry: each copy is exactly the mirror image of what the original
      * wrote (even sizes included), one step that undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_free_symmetry", tickLimit = LIMIT)
-    public void symmetricCopiesOfFreeEditsAreExactImages(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_free_symmetry", timeoutTicks = LIMIT)
+    public void symmetricCopiesOfFreeEditsAreExactImages(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1203);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box source = box(x0, y0, z0, x0 + 5, y0 + 3, z0 + 5);
@@ -545,11 +545,11 @@ public final class FreeRotationGameTest implements FabricGameTest {
         BlockPos origin = new BlockPos(x0 + 16, y0 + 4, z0 + 14);
         RecordingListener paste = new RecordingListener();
         StateSpace states = h.runtime.states();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> run(h, new OpSpec.Paste(new SourceRef.Clipboard(copied.get("copy").clipboardId()),
+        context.startSequence()
+                .thenWaitUntil(() -> run(h, new OpSpec.Paste(new SourceRef.Clipboard(copied.get("copy").clipboardId()),
                         origin, o, PasteOptions.DEFAULT, mirror), RunOptions.DEFAULT, paste))
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED, "paste " + paste.result);
                     Box target = PasteGeometry.pasteTarget(new BlockPos(6, 4, 6), BlockPos.ORIGIN, o, origin);
                     Transform image = Symmetry.Image.MIRROR_X.transform();
@@ -560,8 +560,8 @@ public final class FreeRotationGameTest implements FabricGameTest {
                                 BlockState state = world.getBlockState(pos(x, y, z));
                                 int ix = (int) mirror.cellX(Symmetry.Image.MIRROR_X, x, z);
                                 BlockState copy = world.getBlockState(pos(ix, y, z));
-                                int want = image.applyToState(states, Block.getRawIdFromState(state));
-                                check(Block.getRawIdFromState(copy) == want, "the copy at " + ix + "," + y + "," + z
+                                int want = image.applyToState(states, Block.getId(state));
+                                check(Block.getId(copy) == want, "the copy at " + ix + "," + y + "," + z
                                         + " is " + copy + ", the image of " + state);
                                 if (!state.isAir()) written++;
                             }
@@ -570,13 +570,13 @@ public final class FreeRotationGameTest implements FabricGameTest {
                     check(written > 20, "the original wrote " + written);
                     check(h.history().undoLabels().size() == 1, "one step: " + h.history().undoLabels());
                 }))
-                .createAndAdd(undoAll(h, 1))
-                .createAndAdd(() -> {
+                .thenWaitUntil(undoAll(h, 1))
+                .thenWaitUntil(() -> {
                     checkSame(settled(allBefore), settled(capture(world, all)), "after undoing the symmetric paste");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -584,10 +584,10 @@ public final class FreeRotationGameTest implements FabricGameTest {
      * clipboard node, a move without the region node, a move over the volume limit, a move into protected columns, a
      * move into chunks nobody loaded (for a player who may not load them), and a turn that would leave the build height.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_free_refusals", tickLimit = LIMIT)
-    public void freeEditsAreRefusedLikeOthers(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_free_refusals", timeoutTicks = LIMIT)
+    public void freeEditsAreRefusedLikeOthers(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1204);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box area = box(x0, y0 - 1, z0, x0 + 31, y0 + 8, z0 + 31);
@@ -600,18 +600,18 @@ public final class FreeRotationGameTest implements FabricGameTest {
         OpSpec.Move move = new OpSpec.Move(region, new BlockPos(12, 0, 12), o, air, EntityFilter.NONE, Symmetry.NONE,
                 PasteOptions.Into.EVERYTHING);
 
-        ServerPlayerEntity noClipboard = h.addPlayer(false);
+        ServerPlayer noClipboard = h.addPlayer(false);
         EditTestSupport.grant(noClipboard, Perm.USE, Perm.REGION);
         EditRejected paste = refusal(() -> h.service.run(noClipboard, new OpSpec.Paste(new SourceRef.Clipboard(
                 new UUID(3, 3)), new BlockPos(x0 + 20, y0, z0 + 20), o, PasteOptions.DEFAULT), RunOptions.DEFAULT, null));
         check(paste.reason() == RejectReason.NO_PERMISSION, "a free paste without the clipboard node: " + paste.reason());
-        ServerPlayerEntity noRegion = h.addPlayer(false);
+        ServerPlayer noRegion = h.addPlayer(false);
         EditTestSupport.grant(noRegion, Perm.USE, Perm.CLIPBOARD);
         EditRejected noNode = refusal(() -> h.service.run(noRegion, move, RunOptions.DEFAULT, null));
         check(noNode.reason() == RejectReason.NO_PERMISSION, "a free move without the region node: " + noNode.reason());
 
         // Without limit.bypass (an operator has it).
-        ServerPlayerEntity limited = h.addPlayer(false);
+        ServerPlayer limited = h.addPlayer(false);
         EditTestSupport.grant(limited, Perm.USE, Perm.REGION);
         EditRejected large = refusal(() -> h.service.run(limited, new OpSpec.Move(new Region.Cuboid(box(x0, y0, z0,
                 x0 + 199, y0 + 59, z0 + 199)), BlockPos.ORIGIN, o, air, EntityFilter.NONE, Symmetry.NONE,
@@ -626,26 +626,26 @@ public final class FreeRotationGameTest implements FabricGameTest {
             ProtectionHook.clear(h.player);
         }
 
-        ServerPlayerEntity grounded = h.addPlayer();
+        ServerPlayer grounded = h.addPlayer();
         deny(grounded, Perm.EDIT_UNLOADED);
         EditRejected unloaded = refusal(() -> h.service.run(grounded, new OpSpec.Move(region, new BlockPos(5000, 0, 0), o,
                 air, EntityFilter.NONE, Symmetry.NONE, PasteOptions.Into.EVERYTHING), RunOptions.DEFAULT, null));
         check(unloaded.reason() == RejectReason.UNLOADED, "a free move into unloaded chunks: " + unloaded.reason());
 
         // Rolled a quarter turn, a 32-wide box stands 32 tall about its middle at y0 + 1: through the world's top.
-        int top = world.getTopY();
+        int top = world.getMaxBuildHeight();
         Region high = new Region.Cuboid(box(x0, top - 8, z0, x0 + 31, top - 6, z0 + 1));
         EditRejected leaves = refusal(() -> h.service.run(h.player, new OpSpec.Move(high, BlockPos.ORIGIN,
                 Orientation.free(Transform.IDENTITY, 0, 0, Orientation.QUARTER_TURN), air, EntityFilter.NONE,
                 Symmetry.NONE, PasteOptions.Into.EVERYTHING), RunOptions.DEFAULT, null));
         check(leaves.reason() == RejectReason.INVALID, "a turn out of the build height: " + leaves.reason());
 
-        check(h.service.jobs(h.player.getUuid()).isEmpty(), "a refusal left a job");
+        check(h.service.jobs(h.player.getUUID()).isEmpty(), "a refusal left a job");
         check(h.history().undoLabels().isEmpty(), "a refusal pushed history: " + h.history().undoLabels());
         checkSame(original, capture(world, area), "after the refusals");
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -653,21 +653,21 @@ public final class FreeRotationGameTest implements FabricGameTest {
      * rods, chains, lightning rods and amethyst clusters that a tip turns (not kept) has the outline of the original
      * turned the same way, sampled at the centres of the cell's 8×8×8 sub-cells.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_free_outlines", tickLimit = LIMIT)
-    public void tippedStatesKeepVanillasOutlines(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_free_outlines", timeoutTicks = LIMIT)
+    public void tippedStatesKeepVanillasOutlines(GameTestHelper context) {
         StateSpace states = EngineTestSupport.runtime(context).states();
         List<String> families = List.of("_stairs", "_trapdoor", "_button", "lever", "end_rod", "chain", "lightning_rod",
                 "amethyst_cluster", "observer", "piston");
         List<String> wrong = new ArrayList<>();
         int checked = 0;
         for (int h = 0; h < states.size(); h++) {
-            BlockState state = Block.getStateFromRawId(h);
+            BlockState state = Block.stateById(h);
             if (state == null || state.isAir()) continue;
-            String id = Registries.BLOCK.getId(state.getBlock()).toString();
+            String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
             if (!id.startsWith("minecraft:") || families.stream().noneMatch(id::endsWith)) continue;
             for (CubeTurn.Tip tip : List.of(CubeTurn.Tip.PITCH, CubeTurn.Tip.ROLL)) {
                 if (states.tipKind(h, tip) != StateTips.TURNS) continue;
-                BlockState tipped = Block.getStateFromRawId(states.tip(h, tip));
+                BlockState tipped = Block.stateById(states.tip(h, tip));
                 checked++;
                 boolean[] want = turned(occupancy(state), tip);
                 boolean[] got = occupancy(tipped);
@@ -676,12 +676,12 @@ public final class FreeRotationGameTest implements FabricGameTest {
         }
         check(checked > 500, "checked " + checked);
         check(wrong.isEmpty(), "tipped outlines differ: " + wrong);
-        context.complete();
+        context.succeed();
     }
 
     /** Which of the 8×8×8 sub-cell centres the outline holds, index (x · 8 + y) · 8 + z. */
     private static boolean[] occupancy(BlockState state) {
-        VoxelShape shape = state.getOutlineShape(EmptyBlockView.INSTANCE, net.minecraft.util.math.BlockPos.ORIGIN);
+        VoxelShape shape = state.getShape(EmptyBlockGetter.INSTANCE, net.minecraft.core.BlockPos.ZERO);
         boolean[] out = new boolean[512];
         for (int x = 0; x < 8; x++) {
             for (int y = 0; y < 8; y++) {
@@ -711,7 +711,7 @@ public final class FreeRotationGameTest implements FabricGameTest {
 
     private static boolean inside(VoxelShape shape, int x, int y, int z) {
         double px = (x + 0.5) / 8, py = (y + 0.5) / 8, pz = (z + 0.5) / 8;
-        for (net.minecraft.util.math.Box b : shape.getBoundingBoxes()) {
+        for (net.minecraft.world.phys.AABB b : shape.toAabbs()) {
             if (px > b.minX && px < b.maxX && py > b.minY && py < b.maxY && pz > b.minZ && pz < b.maxZ) return true;
         }
         return false;

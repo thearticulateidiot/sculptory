@@ -23,9 +23,9 @@ import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.level.block.Block;
 
 /**
  * Extend to Ground's ground rule on a real world: a Line over a small oak fills down through the oak's leaves and
@@ -48,8 +48,8 @@ public final class ExtendToGroundGameTest implements FabricGameTest {
         for (int y = 100; y <= 103; y++) writer.write(x, y, z, log, null);
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_ground_rule_tree", tickLimit = LIMIT)
-    public void aLineOverATreeFillsThroughItToTheGroundAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_ground_rule_tree", timeoutTicks = LIMIT)
+    public void aLineOverATreeFillsThroughItToTheGroundAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2400);
         int x0 = at[0], z0 = at[1];
@@ -62,7 +62,7 @@ public final class ExtendToGroundGameTest implements FabricGameTest {
         GeneratedSource line = LineKernel.generate(new LineKernel.Spec(new PathSpec(List.of(new BlockPos(x0, 108, z0),
                 new BlockPos(x0 + 8, 108, z0)), PathKind.STRAIGHT), 3, LineKernel.Profile.SQUARE,
                 new Pattern.Single(h.state("minecraft:stone_bricks"))), h.runtime.states(), 1 << 16,
-                h.world.getBottomY(), h.world.getTopY());
+                h.world.getMinBuildHeight(), h.world.getMaxBuildHeight());
         // As the client does it: each column's lowest cell, the ground read under it within the budget, the fill.
         Long2IntMap lowest = GroundFill.lowest(line);
         FabricWorldReader reader = new FabricWorldReader(h.world, h.runtime.states());
@@ -73,7 +73,7 @@ public final class ExtendToGroundGameTest implements FabricGameTest {
         GroundMap ground = GroundFill.groundUnder(lowest, reader, (1 << 16) - line.cells());
         check(ground != null, "the fill fits the budget");
         GeneratedSource wall = GroundFill.extend(line, lowest, ground, (x, y, z, low) -> stone, 1 << 16,
-                h.world.getBottomY());
+                h.world.getMinBuildHeight());
         for (Long2IntMap.Entry column : lowest.long2IntEntrySet()) {
             int x = GroundMap.columnX(column.getLongKey()), z = GroundMap.columnZ(column.getLongKey());
             check(ground.ground(x, z) == 99, "the ground under " + x + "," + z + ": " + ground.ground(x, z));
@@ -85,7 +85,7 @@ public final class ExtendToGroundGameTest implements FabricGameTest {
         check(wall.get(x0 + 3, 104, z0 + 1) == stone, "the leaves in the way are filled over");
         check(!wall.contains(x0 + 4, 104, z0 + 2), "the leaves beside the line are not touched");
         ExtrudePathsGameTest.buildAndUndo(context, h, area, wall, OpLabel.LINE, undone -> {
-            int now = Block.getRawIdFromState(h.world.getBlockState(pos(x0 + 4, 101, z0)));
+            int now = Block.getId(h.world.getBlockState(pos(x0 + 4, 101, z0)));
             check(undone ? now == h.state("minecraft:oak_log[axis=y]") : now == stone,
                     (undone ? "the trunk is back" : "the trunk is built over") + ": " + now);
         });

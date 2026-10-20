@@ -28,7 +28,7 @@ import java.util.List;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
-import net.minecraft.text.Text;
+import net.minecraft.network.chat.Component;
 
 /**
  * {@code /bsclient rotation compare [slopes]}: the free-rotation comparison, for a playtest world. It uploads the
@@ -70,37 +70,37 @@ public final class RotationCompare {
             space = null;
         }
         if (session == null || space == null) {
-            source.sendError(Text.literal("Sculptory is not connected to this server"));
+            source.sendError(Component.literal("Sculptory is not connected to this server"));
             return 0;
         }
         try {
             if (!session.permissions().has(Perm.CLIPBOARD) || !session.permissions().has(Perm.REGION)) {
-                source.sendError(Text.literal("The comparison needs the clipboard and region permissions"));
+                source.sendError(Component.literal("The comparison needs the clipboard and region permissions"));
                 return 0;
             }
         } catch (IllegalStateException noSession) {
-            source.sendError(Text.literal("Sculptory is not connected to this server"));
+            source.sendError(Component.literal("Sculptory is not connected to this server"));
             return 0;
         }
         GeneratedSource build;
         try {
             build = showcase(space, playerCorner(source));
         } catch (IllegalArgumentException unknown) {
-            source.sendError(Text.literal("The comparison build has a block this game does not know: "
+            source.sendError(Component.literal("The comparison build has a block this game does not know: "
                     + unknown.getMessage()));
             return 0;
         }
         Box bounds = build.bounds();
         byte[] bytes = SparseUpload.encode(build, space);
-        source.sendFeedback(Text.literal("Rotation comparison: uploading the test build (it replaces your clipboard)"));
+        source.sendFeedback(Component.literal("Rotation comparison: uploading the test build (it replaces your clipboard)"));
         session.uploadGenerated(bounds, build.cells(), bytes).result().thenAccept(reply -> {
             if (!(reply instanceof Reply.Ok<ClipboardCache.Entry> ok)) return; // the session toasts a refusal
             OpSpec.PasteMany stamp = stamp(ok.value(), bounds.min(), slopes);
             session.send(new ToolAction.RunOp(stamp, false)).thenAccept(result -> {
                 if (result instanceof ToolResult.Rejected rejected) {
-                    source.sendError(Text.literal("Rotation comparison refused: " + rejected.reason()));
+                    source.sendError(Component.literal("Rotation comparison refused: " + rejected.reason()));
                 } else if (result instanceof ToolResult.Accepted) {
-                    source.sendFeedback(Text.literal("Rotation comparison: " + stamp.placements().size()
+                    source.sendFeedback(Component.literal("Rotation comparison: " + stamp.placements().size()
                             + " copies from " + bounds.min().x() + " " + bounds.min().y() + " " + bounds.min().z()
                             + ". Columns going east: unturned, " + String.join(", ", RotationShowcase.WAYS)
                             + (slopes ? " (with smooth slopes)" : "") + ". Rows going south: yaw 30, yaw 45 + pitch 20,"
@@ -113,7 +113,7 @@ public final class RotationCompare {
 
     /** Two blocks south-east of the player's feet. */
     private static BlockPos playerCorner(FabricClientCommandSource source) {
-        net.minecraft.util.math.BlockPos feet = source.getPlayer().getBlockPos();
+        net.minecraft.core.BlockPos feet = source.getPlayer().blockPosition();
         return new BlockPos(feet.getX() + 2, feet.getY(), feet.getZ() + 2);
     }
 

@@ -5,19 +5,19 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.ShapeContext;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.entity.Entity;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.BlockView;
-import net.minecraft.world.RaycastContext;
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -46,8 +46,8 @@ public final class WorldRaycaster {
         /** Block tools: outline shapes, so every targetable block is hit. */
         BLOCK;
 
-        RaycastContext.ShapeType shapeType() {
-            return this == TERRAIN ? RaycastContext.ShapeType.COLLIDER : RaycastContext.ShapeType.OUTLINE;
+        ClipContext.Block shapeType() {
+            return this == TERRAIN ? ClipContext.Block.COLLIDER : ClipContext.Block.OUTLINE;
         }
     }
 
@@ -67,8 +67,8 @@ public final class WorldRaycaster {
             return aimAtFluids ? ANY : NONE;
         }
 
-        RaycastContext.FluidHandling handling() {
-            return this == NONE ? RaycastContext.FluidHandling.NONE : RaycastContext.FluidHandling.ANY;
+        ClipContext.Fluid handling() {
+            return this == NONE ? ClipContext.Fluid.NONE : ClipContext.Fluid.ANY;
         }
     }
 
@@ -83,7 +83,7 @@ public final class WorldRaycaster {
      * @param pos the exact hit point (for a miss, the end of the ray)
      * @param distance distance from the ray origin to {@code pos}
      */
-    public record Hit(Kind kind, BlockPos blockPos, Direction face, Vec3d pos, double distance) {
+    public record Hit(Kind kind, BlockPos blockPos, Direction face, Vec3 pos, double distance) {
         public enum Kind { BLOCK, PLANE, MISS }
 
         /** True unless a real block was hit. */
@@ -92,7 +92,7 @@ public final class WorldRaycaster {
         }
     }
 
-    private record Key(BlockView world, @Nullable Entity entity, Ray ray, Mode mode, Fluids fluids, double maxDistance) {
+    private record Key(BlockGetter world, @Nullable Entity entity, Ray ray, Mode mode, Fluids fluids, double maxDistance) {
         @Override
         public boolean equals(Object other) {
             return other instanceof Key key
@@ -128,20 +128,20 @@ public final class WorldRaycaster {
      * world is loaded.
      */
     public Hit pick(CameraSnapshot camera, Ray ray, Mode mode, Fluids fluids, @Nullable RayOverlay overlay) {
-        MinecraftClient client = MinecraftClient.getInstance();
-        double range = maxDistance(client.options.getClampedViewDistance());
-        if (client.world == null) {
+        Minecraft client = Minecraft.getInstance();
+        double range = maxDistance(client.options.getEffectiveRenderDistance());
+        if (client.level == null) {
             return miss(ray, range);
         }
         Entity entity = client.getCameraEntity() != null ? client.getCameraEntity() : client.player;
-        return raycast(view(client.world, overlay), entity, ray, mode, fluids, range, camera.frame());
+        return raycast(view(client.level, overlay), entity, ray, mode, fluids, range, camera.frame());
     }
 
     /**
      * {@code world} as {@code overlay} shows it: the same view while both stay the same (one press), so picks of one
      * frame share the cache.
      */
-    private BlockView view(BlockView world, @Nullable RayOverlay overlay) {
+    private BlockGetter view(BlockGetter world, @Nullable RayOverlay overlay) {
         if (overlay == null) {
             overlaid = null;
             return world;
@@ -159,7 +159,7 @@ public final class WorldRaycaster {
      * @param frame the current frame counter; the cache is cleared when it changes
      */
     public Hit raycast(
-            BlockView world, @Nullable Entity entity, Ray ray, Mode mode, Fluids fluids, double maxDistance, long frame) {
+            BlockGetter world, @Nullable Entity entity, Ray ray, Mode mode, Fluids fluids, double maxDistance, long frame) {
         if (frame != cacheFrame) {
             invalidate();
             cacheFrame = frame;
@@ -184,21 +184,21 @@ public final class WorldRaycaster {
         nextSlot = 0;
     }
 
-    private static Hit cast(BlockView world, @Nullable Entity entity, Ray ray, Mode mode, Fluids fluids, double maxDistance) {
-        Vec3d start = new Vec3d(ray.originX(), ray.originY(), ray.originZ());
-        Vec3d end = new Vec3d(ray.pointX(maxDistance), ray.pointY(maxDistance), ray.pointZ(maxDistance));
-        RaycastContext context = entity != null
-                ? new RaycastContext(start, end, mode.shapeType(), fluids.handling(), entity)
-                : new RaycastContext(start, end, mode.shapeType(), fluids.handling(), ShapeContext.absent());
-        BlockHitResult result = fluids == Fluids.NONE ? world.raycast(context) : raycastEnteringFluids(world, context);
+    private static Hit cast(BlockGetter world, @Nullable Entity entity, Ray ray, Mode mode, Fluids fluids, double maxDistance) {
+        Vec3 start = new Vec3(ray.originX(), ray.originY(), ray.originZ());
+        Vec3 end = new Vec3(ray.pointX(maxDistance), ray.pointY(maxDistance), ray.pointZ(maxDistance));
+        ClipContext context = entity != null
+                ? new ClipContext(start, end, mode.shapeType(), fluids.handling(), entity)
+                : new ClipContext(start, end, mode.shapeType(), fluids.handling(), CollisionContext.empty());
+        BlockHitResult result = fluids == Fluids.NONE ? world.clip(context) : raycastEnteringFluids(world, context);
         if (result.getType() == HitResult.Type.MISS) {
-            return new Hit(Hit.Kind.MISS, result.getBlockPos(), result.getSide(), result.getPos(), maxDistance);
+            return new Hit(Hit.Kind.MISS, result.getBlockPos(), result.getDirection(), result.getLocation(), maxDistance);
         }
-        return new Hit(Hit.Kind.BLOCK, result.getBlockPos(), result.getSide(), result.getPos(), start.distanceTo(result.getPos()));
+        return new Hit(Hit.Kind.BLOCK, result.getBlockPos(), result.getDirection(), result.getLocation(), start.distanceTo(result.getLocation()));
     }
 
     /**
-     * {@link BlockView#raycast(RaycastContext)} that also stops where the ray enters a fluid from outside (the
+     * {@link BlockGetter#clip(ClipContext)} that also stops where the ray enters a fluid from outside (the
      * context's own fluid handling is not used). Per block, as in vanilla, the nearer of the block shape hit and the
      * fluid surface hit wins, and block shapes are hit exactly as vanilla hits them.
      *
@@ -208,20 +208,20 @@ public final class WorldRaycaster {
      * reads as 8/9 or a whole block high depending on which block asked first). Here the ray passes through the
      * fluid around the camera until it leaves it, and stops at the next surface it enters, at that block's height.
      */
-    static BlockHitResult raycastEnteringFluids(BlockView world, RaycastContext context) {
-        Vec3d start = context.getStart();
-        Vec3d end = context.getEnd();
-        return BlockView.raycast(start, end, context, (ctx, pos) -> {
+    static BlockHitResult raycastEnteringFluids(BlockGetter world, ClipContext context) {
+        Vec3 start = context.getFrom();
+        Vec3 end = context.getTo();
+        return BlockGetter.traverseBlocks(start, end, context, (ctx, pos) -> {
             BlockState state = world.getBlockState(pos);
-            BlockHitResult block = world.raycastBlock(start, end, pos, ctx.getBlockShape(state, world, pos), state);
+            BlockHitResult block = world.clipWithInteractionOverride(start, end, pos, ctx.getBlockShape(state, world, pos), state);
             BlockHitResult fluid = fluidEntry(world, pos, start, end);
-            double blockDistance = block == null ? Double.MAX_VALUE : start.squaredDistanceTo(block.getPos());
-            double fluidDistance = fluid == null ? Double.MAX_VALUE : start.squaredDistanceTo(fluid.getPos());
+            double blockDistance = block == null ? Double.MAX_VALUE : start.distanceToSqr(block.getLocation());
+            double fluidDistance = fluid == null ? Double.MAX_VALUE : start.distanceToSqr(fluid.getLocation());
             return blockDistance <= fluidDistance ? block : fluid;
         }, ctx -> {
-            Vec3d back = ctx.getStart().subtract(ctx.getEnd());
-            return BlockHitResult.createMissed(ctx.getEnd(), Direction.getFacing(back.x, back.y, back.z),
-                    BlockPos.ofFloored(ctx.getEnd()));
+            Vec3 back = ctx.getFrom().subtract(ctx.getTo());
+            return BlockHitResult.miss(ctx.getTo(), Direction.getNearest(back.x, back.y, back.z),
+                    BlockPos.containing(ctx.getTo()));
         });
     }
 
@@ -232,24 +232,24 @@ public final class WorldRaycaster {
      * blocks is no surface, and neither is the fluid the ray starts in (the ray only leaves it).
      */
     @Nullable
-    private static BlockHitResult fluidEntry(BlockView world, BlockPos pos, Vec3d start, Vec3d end) {
+    private static BlockHitResult fluidEntry(BlockGetter world, BlockPos pos, Vec3 start, Vec3 end) {
         FluidState fluid = world.getFluidState(pos);
         if (fluid.isEmpty()) {
             return null;
         }
         // Box.raycast finds only faces the ray enters from outside the box, never a start inside it.
-        Box body = new Box(0, 0, 0, 1, fluid.getHeight(world, pos), 1);
-        BlockHitResult hit = Box.raycast(List.of(body), start, end, pos.toImmutable());
+        AABB body = new AABB(0, 0, 0, 1, fluid.getHeight(world, pos), 1);
+        BlockHitResult hit = AABB.clip(List.of(body), start, end, pos.immutable());
         if (hit == null) {
             return null;
         }
-        Vec3d before = hit.getPos().subtract(end.subtract(start).normalize().multiply(SURFACE_EPSILON));
+        Vec3 before = hit.getLocation().subtract(end.subtract(start).normalize().scale(SURFACE_EPSILON));
         return inFluid(world, before) ? null : hit;
     }
 
     /** Whether a point lies in the fluid of its block, below that fluid's surface. */
-    static boolean inFluid(BlockView world, Vec3d point) {
-        BlockPos pos = BlockPos.ofFloored(point);
+    static boolean inFluid(BlockGetter world, Vec3 point) {
+        BlockPos pos = BlockPos.containing(point);
         FluidState fluid = world.getFluidState(pos);
         return !fluid.isEmpty() && point.y - pos.getY() < fluid.getHeight(world, pos);
     }
@@ -280,12 +280,12 @@ public final class WorldRaycaster {
         boolean fromAbove = ray.dirY() < 0;
         int blockY = fromAbove ? (int) Math.ceil(planeY) - 1 : (int) Math.floor(planeY);
         BlockPos pos = new BlockPos((int) Math.floor(x), blockY, (int) Math.floor(z));
-        return Optional.of(new Hit(Hit.Kind.PLANE, pos, fromAbove ? Direction.UP : Direction.DOWN, new Vec3d(x, planeY, z), t));
+        return Optional.of(new Hit(Hit.Kind.PLANE, pos, fromAbove ? Direction.UP : Direction.DOWN, new Vec3(x, planeY, z), t));
     }
 
     private static Hit miss(Ray ray, double maxDistance) {
-        Vec3d end = new Vec3d(ray.pointX(maxDistance), ray.pointY(maxDistance), ray.pointZ(maxDistance));
-        Direction entered = Direction.getFacing(-ray.dirX(), -ray.dirY(), -ray.dirZ());
-        return new Hit(Hit.Kind.MISS, BlockPos.ofFloored(end), entered, end, maxDistance);
+        Vec3 end = new Vec3(ray.pointX(maxDistance), ray.pointY(maxDistance), ray.pointZ(maxDistance));
+        Direction entered = Direction.getNearest(-ray.dirX(), -ray.dirY(), -ray.dirZ());
+        return new Hit(Hit.Kind.MISS, BlockPos.containing(end), entered, end, maxDistance);
     }
 }

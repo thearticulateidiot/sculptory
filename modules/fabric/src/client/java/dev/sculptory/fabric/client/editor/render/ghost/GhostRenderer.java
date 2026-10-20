@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.client.editor.render.ghost;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.VertexBuffer;
 import dev.sculptory.fabric.SculptoryMod;
 import dev.sculptory.fabric.client.editor.render.LineBatch;
 import dev.sculptory.fabric.client.editor.render.OverlayColors;
@@ -19,13 +20,12 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.InvalidateRenderStateCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.client.gl.ShaderProgram;
-import net.minecraft.client.gl.VertexBuffer;
-import net.minecraft.client.render.Frustum;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.util.math.Box;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 
@@ -140,7 +140,7 @@ public final class GhostRenderer implements AutoCloseable {
     public GhostStatus render(WorldRenderContext context, GhostPlacement placement) {
         RenderSystem.assertOnRenderThread();
         Objects.requireNonNull(placement, "placement");
-        ClientWorld world = context.world();
+        ClientLevel world = context.world();
         GhostMapping mapping = placement.mapping();
         if (closed || world == null || mapping == null) {
             status = GhostStatus.EMPTY;
@@ -152,7 +152,7 @@ public final class GhostRenderer implements AutoCloseable {
         cache.sync();
         upload(cache);
 
-        Vec3d camera = context.camera().getPos();
+        Vec3 camera = context.camera().getPosition();
         List<GhostMeshCache.Entry> entries = cache.entries();
         List<GhostBudget.Candidate> candidates = new ArrayList<>(entries.size());
         Aabb[] placed = new Aabb[entries.size()];
@@ -197,7 +197,7 @@ public final class GhostRenderer implements AutoCloseable {
             GhostBudget.Plan plan,
             GhostPlacement placement,
             GhostMapping mapping,
-            ClientWorld world,
+            ClientLevel world,
             long now,
             long frame) {
         long lightKey = placement.lightMode() == GhostPlacement.LightMode.WORLD ? mapping.lightKey() : 0L;
@@ -228,7 +228,7 @@ public final class GhostRenderer implements AutoCloseable {
             List<GhostMeshCache.Entry> entries,
             GhostBudget.Plan plan,
             Aabb[] placed,
-            Vec3d camera) {
+            Vec3 camera) {
         Frustum frustum = context.frustum();
         Matrix4f view = context.positionMatrix();
         List<MeshDraw> meshes = new ArrayList<>();
@@ -239,7 +239,7 @@ public final class GhostRenderer implements AutoCloseable {
                 GhostMeshCache.Entry entry = entries.get(i);
                 GhostSection section = entry.section;
                 Aabb box = placed[i];
-                if (frustum != null && !frustum.isVisible(new Box(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
+                if (frustum != null && !frustum.isVisible(new AABB(box.minX(), box.minY(), box.minZ(), box.maxX(), box.maxY(), box.maxZ()))) {
                     continue;
                 }
                 GhostBudget.Draw draw = plan.draw(i);
@@ -301,24 +301,24 @@ public final class GhostRenderer implements AutoCloseable {
         }
     }
 
-    private static void pass(RenderLayer layer, Matrix4f projection, List<MeshDraw> meshes) {
-        layer.startDrawing();
+    private static void pass(RenderType layer, Matrix4f projection, List<MeshDraw> meshes) {
+        layer.setupRenderState();
         try {
-            ShaderProgram shader = RenderSystem.getShader();
+            ShaderInstance shader = RenderSystem.getShader();
             if (shader == null) {
                 return;
             }
             // Vertices are section-relative and the model-view matrix places them; no chunk offset.
-            if (shader.chunkOffset != null) {
-                shader.chunkOffset.set(0f, 0f, 0f);
+            if (shader.CHUNK_OFFSET != null) {
+                shader.CHUNK_OFFSET.set(0f, 0f, 0f);
             }
             for (MeshDraw mesh : meshes) {
                 mesh.buffer().bind();
-                mesh.buffer().draw(mesh.modelView(), projection, shader);
+                mesh.buffer().drawWithShader(mesh.modelView(), projection, shader);
             }
             VertexBuffer.unbind();
         } finally {
-            layer.endDrawing();
+            layer.clearRenderState();
         }
     }
 

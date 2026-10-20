@@ -1,5 +1,7 @@
 package dev.sculptory.fabric.client.editor;
 
+import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.blaze3d.platform.Window;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
@@ -116,20 +118,18 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.ChatScreen;
-import net.minecraft.client.gui.screen.ConfirmLinkScreen;
-import net.minecraft.client.gui.screen.DeathScreen;
-import net.minecraft.client.gui.screen.ingame.InventoryScreen;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.render.RenderTickCounter;
-import net.minecraft.client.sound.PositionedSoundInstance;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.client.util.Window;
-import net.minecraft.sound.SoundEvents;
-import net.minecraft.util.Util;
-import net.minecraft.util.math.Vec3d;
+import net.minecraft.Util;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.ChatScreen;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
+import net.minecraft.client.gui.screens.DeathScreen;
+import net.minecraft.client.gui.screens.inventory.InventoryScreen;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -148,13 +148,13 @@ public final class EditorClient implements EditorMode.Host {
 
     private static EditorClient instance;
 
-    private final MinecraftClient client;
-    private final KeyBinding toggleKey;
+    private final Minecraft client;
+    private final KeyMapping toggleKey;
     private final OverlayRenderer overlay = new OverlayRenderer();
     private final McWorldDraw worldDraw = new McWorldDraw();
     private final McBlockCatalog blocks = new McBlockCatalog();
     private final Translator translator = new McTranslator();
-    private final ToastStack toasts = new ToastStack(Util::getMeasuringTimeMs);
+    private final ToastStack toasts = new ToastStack(Util::getMillis);
     private final EditorMode mode = new EditorMode(this);
     private final UiScale uiScale = new UiScale();
     /** View > Opacity…: loaded with the UI size and saved with it. */
@@ -189,7 +189,7 @@ public final class EditorClient implements EditorMode.Host {
     /** A website a wiki link asked to open: Minecraft's "open this link?" screen shows it at the next tick. */
     private String pendingLink;
 
-    private EditorClient(MinecraftClient client, KeyBinding toggleKey) {
+    private EditorClient(Minecraft client, KeyMapping toggleKey) {
         this.client = client;
         this.toggleKey = toggleKey;
         this.flight = McFlight.create(client, flySpeed, mode::isEditing);
@@ -200,9 +200,9 @@ public final class EditorClient implements EditorMode.Host {
         if (instance != null) {
             return instance;
         }
-        KeyBinding toggle = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(TOGGLE_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_B, CATEGORY));
-        instance = new EditorClient(MinecraftClient.getInstance(), toggle);
+        KeyMapping toggle = KeyBindingHelper.registerKeyBinding(
+                new KeyMapping(TOGGLE_KEY, InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_B, CATEGORY));
+        instance = new EditorClient(Minecraft.getInstance(), toggle);
         instance.registerEvents();
         JumpKey.init(instance);
         return instance;
@@ -330,7 +330,7 @@ public final class EditorClient implements EditorMode.Host {
 
         Parts() {
             platform = new McEditorPlatform(client, overlay, toggleKey, blocks, flight);
-            cursors = new GlfwCursors(client.getWindow().getHandle());
+            cursors = new GlfwCursors(client.getWindow().getWindow());
             Path config = configDirectory();
             AtomicFileStore store = new AtomicFileStore();
             // The keymap may already be loaded: builder mode reads its undo and redo chords outside the editor.
@@ -372,7 +372,7 @@ public final class EditorClient implements EditorMode.Host {
                     .ifPresent(shape -> shape.setLineServices(generateServices()));
             clipboard = new ClipboardActions(clipboardHost());
             controller.setClipboard(clipboard);
-            ui = new EditorUi(ctx, controller, platform, actions, new MinecraftTextMeasure(client.textRenderer), toasts,
+            ui = new EditorUi(ctx, controller, platform, actions, new MinecraftTextMeasure(client.font), toasts,
                     new EditorUi.Services(translator, blocks, McEditorPlatform::itemIcon, platform::vanillaKeys,
                             "config/sculptory/editor-keys.json", keymapStore::save, uiScale(), uiOpacity));
             controller.setUi(ui);
@@ -402,7 +402,7 @@ public final class EditorClient implements EditorMode.Host {
                     EditorClient.this::configProblem), ctx, translator, this::blockAvailable);
             toolSettings.addExtra(ToolId.SCATTER, ScatterMixPreset.KEY, new ScatterMixPreset(scatter));
             toolSettings.load();
-            ctx.onSettingsChanged(id -> toolSettings.changed(Util.getMeasuringTimeMs()));
+            ctx.onSettingsChanged(id -> toolSettings.changed(Util.getMillis()));
             if (System.getProperty(TOUR_PROPERTY) != null) {
                 // The screenshot tour changes settings on its way; they aren't kept (the constant is inlined).
                 toolSettings.keepForSessionOnly();
@@ -418,7 +418,7 @@ public final class EditorClient implements EditorMode.Host {
             ui.tutorial().setStore(TutorialStore.of(new ConfigFile(config.resolve(TutorialStore.FILE_NAME), store,
                     EditorClient.this::configProblem)));
             ui.tutorial().setStepSound(() -> client.getSoundManager()
-                    .play(PositionedSoundInstance.master(SoundEvents.UI_BUTTON_CLICK.value(), 1.6f, 0.35f)));
+                    .play(SimpleSoundInstance.forUI(SoundEvents.UI_BUTTON_CLICK.value(), 1.6f, 0.35f)));
             ui.tutorial().setBuilderMode(() -> builderPowerOn.getAsBoolean(), () -> builderRingKey.get());
             ScatterMixPanel mixPanel = new ScatterMixPanel(scatter, ctx::session,
                     () -> clipboard.source().isEmpty() ? translator.translate("sculptory.scatter.clipboard")
@@ -551,7 +551,7 @@ public final class EditorClient implements EditorMode.Host {
 
                 @Override
                 public Executor background() {
-                    return Util.getMainWorkerExecutor();
+                    return Util.backgroundExecutor();
                 }
 
                 @Override
@@ -598,7 +598,7 @@ public final class EditorClient implements EditorMode.Host {
 
                 @Override
                 public boolean windowFocused() {
-                    return client.isWindowFocused();
+                    return client.isWindowActive();
                 }
 
                 @Override
@@ -658,7 +658,7 @@ public final class EditorClient implements EditorMode.Host {
 
                 @Override
                 public Executor background() {
-                    return Util.getMainWorkerExecutor();
+                    return Util.backgroundExecutor();
                 }
             };
         }
@@ -695,7 +695,7 @@ public final class EditorClient implements EditorMode.Host {
                         double dz = cursor.hitZ() - r.originZ();
                         reach = Math.sqrt(dx * dx + dy * dy + dz * dz);
                     }
-                    return McTinker.entityAt(client.world, ray.get(), reach);
+                    return McTinker.entityAt(client.level, ray.get(), reach);
                 }
 
                 @Override
@@ -705,7 +705,7 @@ public final class EditorClient implements EditorMode.Host {
 
                 @Override
                 public Optional<SignText> signText(BlockPos pos) {
-                    return McTinker.signText(client.world, pos);
+                    return McTinker.signText(client.level, pos);
                 }
 
                 @Override
@@ -739,7 +739,7 @@ public final class EditorClient implements EditorMode.Host {
 
                 @Override
                 public Executor background() {
-                    return Util.getMainWorkerExecutor();
+                    return Util.backgroundExecutor();
                 }
 
                 @Override
@@ -844,7 +844,7 @@ public final class EditorClient implements EditorMode.Host {
 
                 @Override
                 public Executor background() {
-                    return Util.getMainWorkerExecutor();
+                    return Util.backgroundExecutor();
                 }
 
                 @Override
@@ -919,7 +919,7 @@ public final class EditorClient implements EditorMode.Host {
 
                 @Override
                 public Executor io() {
-                    return Util.getIoWorkerExecutor();
+                    return Util.ioPool();
                 }
 
                 @Override
@@ -1022,11 +1022,11 @@ public final class EditorClient implements EditorMode.Host {
             uiSizeStore = new UiSizeStore(new ConfigFile(configDirectory().resolve("editor-ui.json"),
                     new AtomicFileStore(), this::configProblem));
             uiScale.set(uiSizeStore.load());
-            uiScale.addListener(percent -> uiSizeStore.changed(percent, Util.getMeasuringTimeMs()));
+            uiScale.addListener(percent -> uiSizeStore.changed(percent, Util.getMillis()));
             uiOpacity.set(uiSizeStore.opacity());
-            uiOpacity.addListener(values -> uiSizeStore.opacityChanged(values, Util.getMeasuringTimeMs()));
+            uiOpacity.addListener(values -> uiSizeStore.opacityChanged(values, Util.getMillis()));
             flySpeed.set(uiSizeStore.flySpeed());
-            flySpeed.addListener(multiplier -> uiSizeStore.flySpeedChanged(multiplier, Util.getMeasuringTimeMs()));
+            flySpeed.addListener(multiplier -> uiSizeStore.flySpeedChanged(multiplier, Util.getMillis()));
             // The tools' world overlays follow the Tool outlines setting.
             OverlayOpacity.follow(uiOpacity);
         }
@@ -1043,7 +1043,7 @@ public final class EditorClient implements EditorMode.Host {
         parts().ui.layout(width, height);
     }
 
-    void renderScreen(DrawContext context, int mouseX, int mouseY) {
+    void renderScreen(GuiGraphics context, int mouseX, int mouseY) {
         Parts p = parts();
         p.look.frame();
         liveModifiers();
@@ -1052,18 +1052,18 @@ public final class EditorClient implements EditorMode.Host {
         // disagree, and a frame's cursor ray is the press's while the mouse is still (up to a GUI pixel off, about
         // 0.3° at a large GUI scale, would make the Shape brush take a click held still for a drag).
         Window window = client.getWindow();
-        double pointerX = window.getWidth() > 0 ? client.mouse.getX() * window.getScaledWidth() / window.getWidth()
+        double pointerX = window.getScreenWidth() > 0 ? client.mouseHandler.xpos() * window.getGuiScaledWidth() / window.getScreenWidth()
                 : mouseX;
-        double pointerY = window.getHeight() > 0 ? client.mouse.getY() * window.getScaledHeight() / window.getHeight()
+        double pointerY = window.getScreenHeight() > 0 ? client.mouseHandler.ypos() * window.getGuiScaledHeight() / window.getScreenHeight()
                 : mouseY;
         if (pinnedPointer != null) {
             pointerX = pinnedPointer[0];
             pointerY = pinnedPointer[1];
         }
         // World picking uses the GUI-scaled screen position; the UI maps it to its own units.
-        p.controller.frame(pointerX, pointerY, System.nanoTime(), client.getRenderTickCounter().getTickDelta(true));
-        p.ui.render(new DrawContextGraphics(context, client.textRenderer), pointerX, pointerY,
-                Util.getMeasuringTimeMs(), p.look.isLooking());
+        p.controller.frame(pointerX, pointerY, System.nanoTime(), client.getTimer().getGameTimeDeltaPartialTick(true));
+        p.ui.render(new DrawContextGraphics(context, client.font), pointerX, pointerY,
+                Util.getMillis(), p.look.isLooking());
         boolean worldOwnsPointer = p.look.isLooking() || p.router.isToolDragging();
         p.cursors.set(worldOwnsPointer ? UiCursor.DEFAULT : p.ui.cursor());
     }
@@ -1104,14 +1104,14 @@ public final class EditorClient implements EditorMode.Host {
         // Loads the saved fly speed (with the UI size) at the first tick, so it applies before the editor ever opens.
         uiScale();
         if (uiSizeStore != null) {
-            uiSizeStore.saveIfSettled(Util.getMeasuringTimeMs());
+            uiSizeStore.saveIfSettled(Util.getMillis());
         }
         if (parts != null) {
-            parts.toolSettings.saveIfSettled(Util.getMeasuringTimeMs());
+            parts.toolSettings.saveIfSettled(Util.getMillis());
         }
         syncNotices();
-        while (toggleKey.wasPressed()) {
-            if (client.currentScreen == null && client.player != null) {
+        while (toggleKey.consumeClick()) {
+            if (client.screen == null && client.player != null) {
                 mode.toggle();
             }
         }
@@ -1125,12 +1125,12 @@ public final class EditorClient implements EditorMode.Host {
     }
 
     private EditorMode.Observation observe() {
-        boolean inWorld = client.world != null && client.player != null;
-        boolean dead = client.player != null && (client.player.isDead() || client.currentScreen instanceof DeathScreen);
-        EditorMode.ScreenState screen = client.currentScreen == null ? EditorMode.ScreenState.NONE
-                : parts != null && client.currentScreen == parts.screen ? EditorMode.ScreenState.EDITOR
+        boolean inWorld = client.level != null && client.player != null;
+        boolean dead = client.player != null && (client.player.isDeadOrDying() || client.screen instanceof DeathScreen);
+        EditorMode.ScreenState screen = client.screen == null ? EditorMode.ScreenState.NONE
+                : parts != null && client.screen == parts.screen ? EditorMode.ScreenState.EDITOR
                 : EditorMode.ScreenState.OTHER;
-        return new EditorMode.Observation(inWorld, dead, client.world, screen);
+        return new EditorMode.Observation(inWorld, dead, client.level, screen);
     }
 
     private void syncNotices() {
@@ -1158,8 +1158,8 @@ public final class EditorClient implements EditorMode.Host {
             }
             // Biome view (protocol 6): taken again when biomes or chunks arrived or the camera moved.
             dev.sculptory.fabric.client.editor.biomes.BiomeView biomes = parts.ui.biomeView();
-            Vec3d eye = context.camera().getPos();
-            biomes.update(client.world, eye.x, eye.z, parts.ui.biomeCatalog());
+            Vec3 eye = context.camera().getPosition();
+            biomes.update(client.level, eye.x, eye.z, parts.ui.biomeCatalog());
             overlay.setBiomeTint(biomes.tint().orElse(null));
         } else {
             overlay.clearAll();
@@ -1167,7 +1167,7 @@ public final class EditorClient implements EditorMode.Host {
         overlay.render(context);
         if (mode.isActive() && parts != null) {
             parts.ctx.tools().active().ifPresent(tool -> {
-                Vec3d camera = context.camera().getPos();
+                Vec3 camera = context.camera().getPosition();
                 worldDraw.begin(camera.x, camera.y, camera.z, context.positionMatrix(), context.projectionMatrix());
                 try {
                     tool.renderWorld(parts.ctx.contextFor(tool.descriptor().id()), worldDraw);
@@ -1221,19 +1221,19 @@ public final class EditorClient implements EditorMode.Host {
         }
     }
 
-    private void renderHud(DrawContext context, RenderTickCounter tickCounter) {
-        if (mode.isActive() || client.options.hudHidden) {
+    private void renderHud(GuiGraphics context, DeltaTracker tickCounter) {
+        if (mode.isActive() || client.options.hideGui) {
             return;
         }
         Window window = client.getWindow();
-        DrawContextGraphics graphics = new DrawContextGraphics(context, client.textRenderer);
+        DrawContextGraphics graphics = new DrawContextGraphics(context, client.font);
         if (parts != null) {
-            parts.ui.renderPassive(graphics, window.getScaledWidth(), window.getScaledHeight(), Util.getMeasuringTimeMs());
+            parts.ui.renderPassive(graphics, window.getGuiScaledWidth(), window.getGuiScaledHeight(), Util.getMillis());
         } else {
             UiScale scale = uiScale();
             UiGraphics faded = FadedGraphics.of(graphics, Theme.DARK, uiOpacity.values().panelAlpha());
-            scale.draw(graphics, () -> toasts.render(faded, new MinecraftTextMeasure(client.textRenderer), Theme.DARK,
-                    scale.uiLength(window.getScaledWidth()) - 4, 4));
+            scale.draw(graphics, () -> toasts.render(faded, new MinecraftTextMeasure(client.font), Theme.DARK,
+                    scale.uiLength(window.getGuiScaledWidth()) - 4, 4));
         }
     }
 
@@ -1268,7 +1268,7 @@ public final class EditorClient implements EditorMode.Host {
 
     @Override
     public Object currentWorld() {
-        return client.world;
+        return client.level;
     }
 
     @Override
@@ -1280,7 +1280,7 @@ public final class EditorClient implements EditorMode.Host {
 
     @Override
     public void hideEditorScreen() {
-        if (parts != null && client.currentScreen == parts.screen) {
+        if (parts != null && client.screen == parts.screen) {
             client.setScreen(null);
         }
     }
@@ -1291,11 +1291,11 @@ public final class EditorClient implements EditorMode.Host {
             case CHAT -> client.setScreen(new ChatScreen(""));
             case COMMAND -> client.setScreen(new ChatScreen("/"));
             case INVENTORY -> {
-                if (client.player == null || client.interactionManager == null) {
+                if (client.player == null || client.gameMode == null) {
                     return;
                 }
-                if (client.interactionManager.hasRidingInventory()) {
-                    client.player.openRidingInventory();
+                if (client.gameMode.isServerControlledInventory()) {
+                    client.player.sendOpenInventory();
                 } else {
                     client.setScreen(new InventoryScreen(client.player));
                 }
@@ -1307,7 +1307,7 @@ public final class EditorClient implements EditorMode.Host {
                     // No screen afterwards: the editor then comes back, as after chat.
                     client.setScreen(new ConfirmLinkScreen(open -> {
                         if (open) {
-                            Util.getOperatingSystem().open(url);
+                            Util.getPlatform().openUri(url);
                         }
                         client.setScreen(null);
                     }, url, true));

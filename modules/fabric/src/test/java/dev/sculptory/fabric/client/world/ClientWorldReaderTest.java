@@ -11,12 +11,12 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.transform.Mirror;
 import java.util.List;
 import java.util.Random;
-import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.world.chunk.PalettedContainer;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.PalettedContainer;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -26,13 +26,13 @@ class ClientWorldReaderTest {
 
     @BeforeAll
     static void bootstrap() {
-        SharedConstants.createGameVersion();
-        Bootstrap.initialize();
-        space = new RawIdSpace(Block.STATE_IDS.size());
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
+        space = new RawIdSpace(Block.BLOCK_STATE_REGISTRY.size());
     }
 
     private static PalettedContainer<BlockState> container() {
-        return new PalettedContainer<>(Block.STATE_IDS, Blocks.AIR.getDefaultState(), PalettedContainer.PaletteProvider.BLOCK_STATE);
+        return new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, Blocks.AIR.defaultBlockState(), PalettedContainer.Strategy.SECTION_STATES);
     }
 
     private static SectionBuffer copy(PalettedContainer<BlockState> container, StateSpace states) {
@@ -46,7 +46,7 @@ class ClientWorldReaderTest {
         for (int y = 0; y < 16; y++) {
             for (int z = 0; z < 16; z++) {
                 for (int x = 0; x < 16; x++) {
-                    assertEquals(Block.getRawIdFromState(container.get(x, y, z)), copied.get(SectionBuffer.index(x, y, z)),
+                    assertEquals(Block.getId(container.get(x, y, z)), copied.get(SectionBuffer.index(x, y, z)),
                             "cell " + x + "," + y + "," + z);
                 }
             }
@@ -61,16 +61,16 @@ class ClientWorldReaderTest {
         assertMatches(air, copied);
 
         // An all-cave-air section counts as "empty" in vanilla, but it is not plain air.
-        PalettedContainer<BlockState> caveAir = new PalettedContainer<>(Block.STATE_IDS, Blocks.CAVE_AIR.getDefaultState(),
-                PalettedContainer.PaletteProvider.BLOCK_STATE);
-        assertEquals(Block.getRawIdFromState(Blocks.CAVE_AIR.getDefaultState()), copy(caveAir, space).get(0));
+        PalettedContainer<BlockState> caveAir = new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, Blocks.CAVE_AIR.defaultBlockState(),
+                PalettedContainer.Strategy.SECTION_STATES);
+        assertEquals(Block.getId(Blocks.CAVE_AIR.defaultBlockState()), copy(caveAir, space).get(0));
     }
 
     @Test
     void mixedSectionsAreCopiedCellByCell() {
-        List<BlockState> blocks = List.of(Blocks.STONE.getDefaultState(), Blocks.DIRT.getDefaultState(),
-                Blocks.GRASS_BLOCK.getDefaultState(), Blocks.WATER.getDefaultState(), Blocks.OAK_STAIRS.getDefaultState(),
-                Blocks.CHEST.getDefaultState());
+        List<BlockState> blocks = List.of(Blocks.STONE.defaultBlockState(), Blocks.DIRT.defaultBlockState(),
+                Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.WATER.defaultBlockState(), Blocks.OAK_STAIRS.defaultBlockState(),
+                Blocks.CHEST.defaultBlockState());
         PalettedContainer<BlockState> mixed = container();
         Random random = new Random(7);
         for (int i = 0; i < 3_000; i++) {
@@ -82,39 +82,39 @@ class ClientWorldReaderTest {
     @Test
     void stalePaletteEntriesDoNotConfuseTheUniformCheck() {
         PalettedContainer<BlockState> container = container();
-        container.set(3, 4, 5, Blocks.DIRT.getDefaultState());
+        container.set(3, 4, 5, Blocks.DIRT.defaultBlockState());
         for (int y = 0; y < 16; y++) {
             for (int z = 0; z < 16; z++) {
-                for (int x = 0; x < 16; x++) container.set(x, y, z, Blocks.STONE.getDefaultState());
+                for (int x = 0; x < 16; x++) container.set(x, y, z, Blocks.STONE.defaultBlockState());
             }
         }
         SectionBuffer copied = copy(container, space);
         assertMatches(container, copied);
-        assertEquals(Block.getRawIdFromState(Blocks.STONE.getDefaultState()), copied.get(SectionBuffer.index(3, 4, 5)));
+        assertEquals(Block.getId(Blocks.STONE.defaultBlockState()), copied.get(SectionBuffer.index(3, 4, 5)));
     }
 
     @Test
     void statesOutsideTheSpaceReadAsAir() {
-        int stone = Block.getRawIdFromState(Blocks.STONE.getDefaultState());
+        int stone = Block.getId(Blocks.STONE.defaultBlockState());
         StateSpace small = new RawIdSpace(stone); // stone and everything after it are outside
         PalettedContainer<BlockState> container = container();
-        container.set(0, 0, 0, Blocks.STONE.getDefaultState());
+        container.set(0, 0, 0, Blocks.STONE.defaultBlockState());
         SectionBuffer copied = copy(container, small);
         assertEquals(small.air(), copied.get(SectionBuffer.index(0, 0, 0)));
     }
 
     @Test
     void handlesAreRawStateIds() {
-        BlockState stairs = Blocks.OAK_STAIRS.getDefaultState();
+        BlockState stairs = Blocks.OAK_STAIRS.defaultBlockState();
         assertSame(stairs, ClientWorldReader.blockState(ClientWorldReader.handle(stairs)));
-        assertEquals(Block.getRawIdFromState(stairs), ClientWorldReader.handle(stairs));
+        assertEquals(Block.getId(stairs), ClientWorldReader.handle(stairs));
     }
 
     /** Raw-id handles, like the client's FabricStateSpace; only size and air are needed here. */
     private record RawIdSpace(int size) implements StateSpace {
         @Override
         public int air() {
-            return Block.getRawIdFromState(Blocks.AIR.getDefaultState());
+            return Block.getId(Blocks.AIR.defaultBlockState());
         }
 
         @Override

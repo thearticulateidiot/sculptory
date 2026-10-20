@@ -4,19 +4,19 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.fabric.client.editor.check.Fixtures;
 import java.util.UUID;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.tag.BlockTags;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.world.Heightmap;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * The demo's stage: a {@value #SIZE} x {@value #SIZE} grass field cut into the tour world's forest at ground level
@@ -34,7 +34,7 @@ public final class DemoStage {
     private static final int DEPTH = 6;
     /** How far around the field the cut trees are cleared. */
     private static final int EDGE = 6;
-    private static final int FLAGS = Block.NOTIFY_LISTENERS | Block.FORCE_STATE;
+    private static final int FLAGS = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE;
 
     // ---- What is where (relative; the floor's top is y -1) ----
 
@@ -197,8 +197,8 @@ public final class DemoStage {
      * builder mode places.
      */
     public static DemoStage build(MinecraftServer server, UUID playerId) {
-        ServerWorld world = server.getOverworld();
-        net.minecraft.util.math.BlockPos spawn = world.getSpawnPos();
+        ServerLevel world = server.overworld();
+        net.minecraft.core.BlockPos spawn = world.getSharedSpawnPos();
         int x0 = ((spawn.getX() - SIZE / 2) >> 4) << 4;
         int z0 = ((spawn.getZ() - SIZE / 2) >> 4) << 4;
         for (int cx = (x0 - EDGE) >> 4; cx <= (x0 + SIZE - 1 + EDGE) >> 4; cx++) {
@@ -212,46 +212,46 @@ public final class DemoStage {
         stage.buildField(world);
         stage.buildFixtures(world);
         stage.placeArmorStand(world);
-        ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerId);
+        ServerPlayer player = server.getPlayerList().getPlayer(playerId);
         if (player != null) {
-            player.getInventory().setStack(0, new ItemStack(Items.OAK_PLANKS, 64));
-            player.getInventory().markDirty();
+            player.getInventory().setItem(0, new ItemStack(Items.OAK_PLANKS, 64));
+            player.getInventory().setChanged();
         }
         return stage;
     }
 
     /** The top solid ground block's y at a column: under the trees and their crowns. */
-    private static int groundAt(ServerWorld world, int x, int z) {
-        int y = world.getTopY(Heightmap.Type.MOTION_BLOCKING, x, z) - 1;
-        net.minecraft.util.math.BlockPos.Mutable at = new net.minecraft.util.math.BlockPos.Mutable();
+    private static int groundAt(ServerLevel world, int x, int z) {
+        int y = world.getHeight(Heightmap.Types.MOTION_BLOCKING, x, z) - 1;
+        net.minecraft.core.BlockPos.MutableBlockPos at = new net.minecraft.core.BlockPos.MutableBlockPos();
         for (int down = 0; down < 48; down++, y--) {
             BlockState state = world.getBlockState(at.set(x, y, z));
-            if (!state.isAir() && !state.isIn(BlockTags.LEAVES) && !state.isIn(BlockTags.LOGS)
-                    && state.getFluidState().isEmpty() && state.isOpaqueFullCube(world, at)) {
+            if (!state.isAir() && !state.is(BlockTags.LEAVES) && !state.is(BlockTags.LOGS)
+                    && state.getFluidState().isEmpty() && state.isSolidRender(world, at)) {
                 return y;
             }
         }
         return world.getSeaLevel();
     }
 
-    private void buildField(ServerWorld world) {
-        BlockState air = Blocks.AIR.getDefaultState();
-        BlockState grass = Blocks.GRASS_BLOCK.getDefaultState();
-        BlockState dirt = Blocks.DIRT.getDefaultState();
-        net.minecraft.util.math.BlockPos.Mutable at = new net.minecraft.util.math.BlockPos.Mutable();
+    private void buildField(ServerLevel world) {
+        BlockState air = Blocks.AIR.defaultBlockState();
+        BlockState grass = Blocks.GRASS_BLOCK.defaultBlockState();
+        BlockState dirt = Blocks.DIRT.defaultBlockState();
+        net.minecraft.core.BlockPos.MutableBlockPos at = new net.minecraft.core.BlockPos.MutableBlockPos();
         for (int dx = 0; dx < SIZE; dx++) {
             for (int dz = 0; dz < SIZE; dz++) {
                 for (int dy = HEIGHT - 1; dy >= 0; dy--) {
                     at.set(x(dx), y(dy), z(dz));
                     if (!world.getBlockState(at).isAir()) {
-                        world.setBlockState(at, air, FLAGS);
+                        world.setBlock(at, air, FLAGS);
                     }
                 }
-                world.setBlockState(at.set(x(dx), y(-1), z(dz)), grass, FLAGS);
+                world.setBlock(at.set(x(dx), y(-1), z(dz)), grass, FLAGS);
                 for (int dy = -2; dy >= -DEPTH; dy--) {
                     at.set(x(dx), y(dy), z(dz));
-                    if (!world.getBlockState(at).isOpaqueFullCube(world, at)) {
-                        world.setBlockState(at, dirt, FLAGS);
+                    if (!world.getBlockState(at).isSolidRender(world, at)) {
+                        world.setBlock(at, dirt, FLAGS);
                     }
                 }
             }
@@ -264,21 +264,21 @@ public final class DemoStage {
                 }
                 for (int dy = 0; dy < HEIGHT; dy++) {
                     BlockState state = world.getBlockState(at.set(x(dx), y(dy), z(dz)));
-                    if (state.isIn(BlockTags.LEAVES) || state.isIn(BlockTags.LOGS)) {
-                        world.setBlockState(at, air, FLAGS);
+                    if (state.is(BlockTags.LEAVES) || state.is(BlockTags.LOGS)) {
+                        world.setBlock(at, air, FLAGS);
                     }
                 }
             }
         }
-        for (Entity entity : world.getOtherEntities(null, new net.minecraft.util.math.Box(x(0), y(-DEPTH), z(0),
+        for (Entity entity : world.getEntities(null, new net.minecraft.world.phys.AABB(x(0), y(-DEPTH), z(0),
                 x(SIZE), y(HEIGHT), z(SIZE)))) {
-            if (!entity.isPlayer()) {
+            if (!entity.isAlwaysTicking()) {
                 entity.discard();
             }
         }
     }
 
-    private void buildFixtures(ServerWorld world) {
+    private void buildFixtures(ServerLevel world) {
         Writer w = new Writer(world);
         // select: the post.
         w.fill(POST_X, 0, POST_Z, POST_X, POST_TOP, POST_Z, "minecraft:stone_bricks");
@@ -362,26 +362,26 @@ public final class DemoStage {
         }
     }
 
-    private void placeArmorStand(ServerWorld world) {
-        ArmorStandEntity stand = EntityType.ARMOR_STAND.create(world);
+    private void placeArmorStand(ServerLevel world) {
+        ArmorStand stand = EntityType.ARMOR_STAND.create(world);
         if (stand == null) {
             return;
         }
-        stand.refreshPositionAndAngles(x(STAND_X) + 0.5, y(0), z(STAND_Z) + 0.5, 180f, 0f);
-        world.spawnEntity(stand);
+        stand.moveTo(x(STAND_X) + 0.5, y(0), z(STAND_Z) + 0.5, 180f, 0f);
+        world.addFreshEntity(stand);
     }
 
     /** Relative writes into the server world. */
     private final class Writer {
-        private final ServerWorld world;
-        private final net.minecraft.util.math.BlockPos.Mutable at = new net.minecraft.util.math.BlockPos.Mutable();
+        private final ServerLevel world;
+        private final net.minecraft.core.BlockPos.MutableBlockPos at = new net.minecraft.core.BlockPos.MutableBlockPos();
 
-        Writer(ServerWorld world) {
+        Writer(ServerLevel world) {
             this.world = world;
         }
 
         void set(int dx, int dy, int dz, String state) {
-            world.setBlockState(at.set(x(dx), y(dy), z(dz)), Fixtures.Build.state(state), FLAGS);
+            world.setBlock(at.set(x(dx), y(dy), z(dz)), Fixtures.Build.state(state), FLAGS);
         }
 
         void fill(int ax, int ay, int az, int bx, int by, int bz, String state) {
@@ -389,7 +389,7 @@ public final class DemoStage {
             for (int dy = Math.min(ay, by); dy <= Math.max(ay, by); dy++) {
                 for (int dz = Math.min(az, bz); dz <= Math.max(az, bz); dz++) {
                     for (int dx = Math.min(ax, bx); dx <= Math.max(ax, bx); dx++) {
-                        world.setBlockState(at.set(x(dx), y(dy), z(dz)), parsed, FLAGS);
+                        world.setBlock(at.set(x(dx), y(dy), z(dz)), parsed, FLAGS);
                     }
                 }
             }

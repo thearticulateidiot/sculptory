@@ -19,11 +19,11 @@ import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderEvents;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -89,8 +89,8 @@ public final class GhostDebug {
     // ---- Commands ----
 
     private int on(FabricClientCommandSource source, int newSize) {
-        ClientWorld world = source.getWorld();
-        BlockPos centre = source.getPlayer().getBlockPos();
+        ClientLevel world = source.getWorld();
+        BlockPos centre = source.getPlayer().blockPosition();
         size = newSize;
         int half = size / 2;
         int minX = centre.getX() - half;
@@ -100,7 +100,7 @@ public final class GhostDebug {
         int offsetX = Math.max(MIN_OFFSET_X, size + 4);
         replace(new GhostPlacement(volume, minX + offsetX, minY, minZ, TRANSFORMS.get(transformIndex),
                 GhostPlacement.DEFAULT_ALPHA, lightMode));
-        source.sendFeedback(Text.literal("Ghost preview on: " + size + "³ around you, shown " + offsetX + " blocks east ("
+        source.sendFeedback(Component.literal("Ghost preview on: " + size + "³ around you, shown " + offsetX + " blocks east ("
                 + volume.blockCount() + " blocks, " + volume.eraseCount() + " erase cells, " + volume.sectionCount()
                 + " sections). Also: rotate, light, erase, off."));
         return 1;
@@ -109,7 +109,7 @@ public final class GhostDebug {
     private int off(FabricClientCommandSource source) {
         boolean wasOn = placement != null;
         stop();
-        source.sendFeedback(Text.literal(wasOn ? "Ghost preview off." : "Ghost preview was not on."));
+        source.sendFeedback(Component.literal(wasOn ? "Ghost preview off." : "Ghost preview was not on."));
         return 1;
     }
 
@@ -119,7 +119,7 @@ public final class GhostDebug {
         if (placement != null) {
             placement = placement.withTransform(transform);
         }
-        source.sendFeedback(Text.literal("Ghost transform: " + describe(transform)
+        source.sendFeedback(Component.literal("Ghost transform: " + describe(transform)
                 + (placement == null ? " (applies at the next 'on')" : "")));
         return 1;
     }
@@ -129,22 +129,22 @@ public final class GhostDebug {
         if (placement != null) {
             placement = placement.withLightMode(lightMode);
         }
-        source.sendFeedback(Text.literal("Ghost light: " + (lightMode == GhostPlacement.LightMode.FLAT ? "full-bright" : "world light")));
+        source.sendFeedback(Component.literal("Ghost light: " + (lightMode == GhostPlacement.LightMode.FLAT ? "full-bright" : "world light")));
         return 1;
     }
 
     private int erase(FabricClientCommandSource source) {
         includeAir = !includeAir;
-        source.sendFeedback(Text.literal("Ghost erase cells: " + (includeAir ? "air cells are captured as erase outlines" : "off")));
+        source.sendFeedback(Component.literal("Ghost erase cells: " + (includeAir ? "air cells are captured as erase outlines" : "off")));
         return placement != null ? on(source, size) : 1;
     }
 
     // ---- Capture and drawing ----
 
     /** Copies a cube of the client world into a volume in cube-local coordinates 0..size-1. */
-    private static GhostVolume capture(ClientWorld world, int minX, int minY, int minZ, int size, boolean includeAir) {
+    private static GhostVolume capture(ClientLevel world, int minX, int minY, int minZ, int size, boolean includeAir) {
         BlockBuffer buffer = new BlockBuffer();
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int y = 0; y < size; y++) {
             for (int z = 0; z < size; z++) {
                 for (int x = 0; x < size; x++) {
@@ -169,7 +169,7 @@ public final class GhostDebug {
         if (!text.equals(lastHudText)) {
             lastHudText = text;
             if (!text.isEmpty()) {
-                MinecraftClient.getInstance().inGameHud.setOverlayMessage(Text.literal(text), false);
+                Minecraft.getInstance().gui.setOverlayMessage(Component.literal(text), false);
             }
         }
     }

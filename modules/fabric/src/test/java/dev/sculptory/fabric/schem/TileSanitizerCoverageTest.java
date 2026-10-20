@@ -16,13 +16,13 @@ import dev.sculptory.server.schem.SanitizedTile;
 import dev.sculptory.server.schem.TileSanitizer;
 import java.util.Set;
 import java.util.TreeSet;
-import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
-import net.minecraft.block.BlockEntityProvider;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockState;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -40,8 +40,8 @@ class TileSanitizerCoverageTest {
 
     @BeforeAll
     static void bootstrap() {
-        SharedConstants.createGameVersion();
-        Bootstrap.initialize();
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
         states = FabricStateSpace.build();
     }
 
@@ -52,10 +52,10 @@ class TileSanitizerCoverageTest {
         for (int h = 0; h < states.size(); h++) {
             if (!StateFlags.has(states.flags(h), StateFlags.OPERATOR_NBT)) continue;
             BlockState state = states.state(h);
-            if (!(state.getBlock() instanceof BlockEntityProvider provider)) continue;
-            BlockEntity entity = provider.createBlockEntity(net.minecraft.util.math.BlockPos.ORIGIN, state);
+            if (!(state.getBlock() instanceof EntityBlock provider)) continue;
+            BlockEntity entity = provider.newBlockEntity(net.minecraft.core.BlockPos.ZERO, state);
             if (entity == null) continue;
-            Identifier id = BlockEntityType.getId(entity.getType());
+            ResourceLocation id = BlockEntityType.getKey(entity.getType());
             String type = id.toString();
             seen.add(type);
             Clipboard.Builder builder = Clipboard.builder(states, new BlockPos(1, 1, 1));

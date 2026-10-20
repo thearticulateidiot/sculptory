@@ -77,9 +77,21 @@ fabricApi {
     }
 }
 
+// Mojang's official names (the names NeoForge, Paper and Minecraft 26.1+ use), with Parchment's parameter names and
+// javadoc on top. The jar is still remapped to intermediary for Fabric Loader.
+repositories {
+    exclusiveContent {
+        forRepository { maven { name = 'ParchmentMC'; url = 'https://maven.parchmentmc.org' } }
+        filter { includeGroup 'org.parchmentmc.data' }
+    }
+}
+
 dependencies {
     minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
-    mappings "net.fabricmc:yarn:${rootProject.yarn_mappings}:v2"
+    mappings loom.layered {
+        officialMojangMappings()
+        parchment("org.parchmentmc.data:parchment-${rootProject.minecraft_version}:${rootProject.parchment_version}@zip")
+    }
     modImplementation "net.fabricmc:fabric-loader:${rootProject.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_version}"
 

@@ -1,5 +1,6 @@
 package dev.sculptory.fabric.client.editor.demo;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import dev.sculptory.core.BlockDescriptor;
 import dev.sculptory.core.NamespacedId;
 import dev.sculptory.fabric.SculptoryMod;
@@ -38,12 +39,11 @@ import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.function.Predicate;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.util.math.MathHelper;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.util.Mth;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -62,14 +62,14 @@ public final class Demo {
     /** What ends a chosen block's button in the block-set picker (a click takes it out). */
     private static final String CHOSEN_MARK = "×";
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final EditorClient editor;
     private final CheckDriver driver;
     private final CaptionOverlay overlay;
     private final DemoStage stage;
     private final DemoPacing pacing;
 
-    Demo(MinecraftClient client, EditorClient editor, CheckDriver driver, CaptionOverlay overlay, DemoStage stage,
+    Demo(Minecraft client, EditorClient editor, CheckDriver driver, CaptionOverlay overlay, DemoStage stage,
             DemoPacing pacing) {
         this.client = client;
         this.editor = editor;
@@ -103,7 +103,7 @@ public final class Demo {
         return driver.ctx();
     }
 
-    public MinecraftClient client() {
+    public Minecraft client() {
         return client;
     }
 
@@ -167,16 +167,16 @@ public final class Demo {
      */
     public void glide(double ex, double ey, double ez, double tx, double ty, double tz, long ms) {
         double[] from = onClient(() -> {
-            ClientPlayerEntity player = client.player;
-            return new double[] {player.getX(), player.getY() + EYE_HEIGHT, player.getZ(), player.getYaw(),
-                    player.getPitch()};
+            LocalPlayer player = client.player;
+            return new double[] {player.getX(), player.getY() + EYE_HEIGHT, player.getZ(), player.getYRot(),
+                    player.getXRot()};
         });
         double dx = tx - ex;
         double dy = ty - ey;
         double dz = tz - ez;
-        float yaw = (float) (MathHelper.atan2(dz, dx) * MathHelper.DEGREES_PER_RADIAN) - 90f;
-        float pitch = (float) -(MathHelper.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * MathHelper.DEGREES_PER_RADIAN);
-        double yawTurn = MathHelper.wrapDegrees(yaw - from[3]);
+        float yaw = (float) (Mth.atan2(dz, dx) * Mth.RAD_TO_DEG) - 90f;
+        float pitch = (float) -(Mth.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * Mth.RAD_TO_DEG);
+        double yawTurn = Mth.wrapDegrees(yaw - from[3]);
         long started = System.currentTimeMillis();
         double t = 0;
         while (t < 1) {
@@ -217,32 +217,32 @@ public final class Demo {
     /** The eye's position now. */
     public double[] eye() {
         return onClient(() -> {
-            ClientPlayerEntity player = client.player;
+            LocalPlayer player = client.player;
             return new double[] {player.getX(), player.getY() + EYE_HEIGHT, player.getZ()};
         });
     }
 
     private void place(double x, double y, double z, float yaw, float pitch) {
-        ClientPlayerEntity player = client.player;
+        LocalPlayer player = client.player;
         if (player == null) {
             return;
         }
         player.getAbilities().flying = true;
-        player.setVelocity(0, 0, 0);
-        player.setPosition(x, y, z);
-        player.prevX = x;
-        player.prevY = y;
-        player.prevZ = z;
-        player.lastRenderX = x;
-        player.lastRenderY = y;
-        player.lastRenderZ = z;
-        player.setYaw(yaw);
-        player.setPitch(pitch);
-        player.prevYaw = yaw;
-        player.prevPitch = pitch;
-        player.setHeadYaw(yaw);
-        player.prevHeadYaw = yaw;
-        player.setBodyYaw(yaw);
+        player.setDeltaMovement(0, 0, 0);
+        player.setPos(x, y, z);
+        player.xo = x;
+        player.yo = y;
+        player.zo = z;
+        player.xOld = x;
+        player.yOld = y;
+        player.zOld = z;
+        player.setYRot(yaw);
+        player.setXRot(pitch);
+        player.yRotO = yaw;
+        player.xRotO = pitch;
+        player.setYHeadRot(yaw);
+        player.yHeadRotO = yaw;
+        player.setYBodyRot(yaw);
     }
 
     // ---- Pointer ----
@@ -318,11 +318,11 @@ public final class Demo {
     }
 
     private void moveOsCursor(double x, double y) {
-        if (client.mouse.isCursorLocked()) {
+        if (client.mouseHandler.isMouseGrabbed()) {
             return;
         }
-        double factor = client.getWindow().getScaleFactor();
-        GLFW.glfwSetCursorPos(client.getWindow().getHandle(), x * factor, y * factor);
+        double factor = client.getWindow().getGuiScale();
+        GLFW.glfwSetCursorPos(client.getWindow().getWindow(), x * factor, y * factor);
     }
 
     // ---- Mouse ----
@@ -746,7 +746,7 @@ public final class Demo {
         if (!onClient(() -> editor.mode().isActive())) {
             keyCode(GLFW.GLFW_KEY_B, 0);
         }
-        if (!driver.until(10_000, () -> editor.mode().isActive() && client.currentScreen != null)) {
+        if (!driver.until(10_000, () -> editor.mode().isActive() && client.screen != null)) {
             driver.enterEditor();
         }
         onClient(() -> ui().quickStart().hide());
@@ -760,7 +760,7 @@ public final class Demo {
         if (onClient(() -> editor.mode().isActive())) {
             keyCode(GLFW.GLFW_KEY_B, 0);
         }
-        if (!driver.until(5_000, () -> !editor.mode().isEditing() && client.currentScreen == null)) {
+        if (!driver.until(5_000, () -> !editor.mode().isEditing() && client.screen == null)) {
             onClient(() -> {
                 editor.mode().exit(ExitReason.TOGGLED);
                 client.setScreen(null);
@@ -802,11 +802,11 @@ public final class Demo {
     public void openRing() {
         onClient(() -> builder().pinRingKey(true));
         driver.keyDown(GLFW.GLFW_KEY_G);
-        if (!driver.until(5_000, () -> client.currentScreen instanceof RingScreen)) {
+        if (!driver.until(5_000, () -> client.screen instanceof RingScreen)) {
             throw new CheckDriver.Failed("the ring of powers did not open");
         }
         overlay.setPointerShown(pacing.showsPointerRing());
-        RingScreen ring = (RingScreen) client.currentScreen;
+        RingScreen ring = (RingScreen) client.screen;
         double[] centre = onClient(() -> new double[] {ring.menuCentreX(), ring.menuCentreY()});
         driver.pointScreen(centre[0], centre[1]);
         ringPointer(centre[0], centre[1]);
@@ -815,7 +815,7 @@ public final class Demo {
 
     /** Glides the pointer to a power's chip on the open ring and clicks it (the ring stays open). */
     public void clickPower(BuilderPower power) {
-        if (!(client.currentScreen instanceof RingScreen ring)) {
+        if (!(client.screen instanceof RingScreen ring)) {
             throw new CheckDriver.Failed("the ring of powers is not open");
         }
         double[] at = onClient(() -> ring.chipCentre(power));
@@ -842,7 +842,7 @@ public final class Demo {
 
     private void ringPointer(double x, double y) {
         onClient(() -> {
-            if (client.currentScreen instanceof RingScreen ring) {
+            if (client.screen instanceof RingScreen ring) {
                 ring.mouseMoved(x, y);
             }
         });
@@ -850,7 +850,7 @@ public final class Demo {
 
     /** Lets go of G with the pointer in the ring's middle, so nothing is toggled by the release. */
     public void closeRing() {
-        if (client.currentScreen instanceof RingScreen ring) {
+        if (client.screen instanceof RingScreen ring) {
             double[] centre = onClient(() -> new double[] {ring.menuCentreX(), ring.menuCentreY()});
             double fromX = driver.pointerX();
             double fromY = driver.pointerY();
@@ -869,7 +869,7 @@ public final class Demo {
         }
         onClient(() -> builder().pinRingKey(false));
         driver.keyUp(GLFW.GLFW_KEY_G);
-        driver.until(5_000, () -> !(client.currentScreen instanceof RingScreen));
+        driver.until(5_000, () -> !(client.screen instanceof RingScreen));
         overlay.setPointerShown(false);
         frames(2);
     }
@@ -883,7 +883,7 @@ public final class Demo {
     /** One right click, as the player using the item in hand. */
     public void useItem() {
         onClient(() -> {
-            KeyBinding.onKeyPressed(KeyBindingHelper.getBoundKeyOf(client.options.useKey));
+            KeyMapping.click(KeyBindingHelper.getBoundKeyOf(client.options.keyUse));
         });
         frames(3);
     }
@@ -891,10 +891,10 @@ public final class Demo {
     /** Holds or lets go of the attack button (left click) outside the editor. */
     public void holdAttack(boolean held) {
         onClient(() -> {
-            InputUtil.Key key = KeyBindingHelper.getBoundKeyOf(client.options.attackKey);
-            KeyBinding.setKeyPressed(key, held);
+            InputConstants.Key key = KeyBindingHelper.getBoundKeyOf(client.options.keyAttack);
+            KeyMapping.set(key, held);
             if (held) {
-                KeyBinding.onKeyPressed(key);
+                KeyMapping.click(key);
             }
         });
         frames(2);
@@ -904,7 +904,7 @@ public final class Demo {
     public void selectHotbar(int slot) {
         onClient(() -> {
             if (client.player != null) {
-                client.player.getInventory().selectedSlot = slot;
+                client.player.getInventory().selected = slot;
             }
         });
         frames(2);
@@ -912,6 +912,6 @@ public final class Demo {
 
     /** Whether the game shows a screen of this type now. */
     public boolean screenIs(Class<? extends Screen> type) {
-        return onClient(() -> type.isInstance(client.currentScreen));
+        return onClient(() -> type.isInstance(client.screen));
     }
 }

@@ -1,20 +1,20 @@
 package dev.sculptory.fabric.client.editor.ui.render;
 
+import com.mojang.blaze3d.platform.Window;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.sculptory.fabric.client.editor.ui.Rect;
 import dev.sculptory.fabric.client.editor.ui.UiGraphics;
 import java.util.ArrayDeque;
 import java.util.Deque;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.client.util.Window;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 
 /**
- * {@link UiGraphics} backed by a vanilla {@link DrawContext}. Create one per frame.
+ * {@link UiGraphics} backed by a vanilla {@link GuiGraphics}. Create one per frame.
  *
  * <p><b>Clipping under a scale.</b> In 1.21.1 {@code DrawContext.enableScissor} ignores the matrix
  * stack (checked with javap: it multiplies the rectangle by the window's GUI scale only). Unscaled
@@ -25,8 +25,8 @@ import net.minecraft.util.Identifier;
  * coordinate at any size. Don't nest a scaled clip inside an unscaled one; the editor never does.
  */
 public final class DrawContextGraphics implements UiGraphics {
-    private final DrawContext context;
-    private final TextRenderer textRenderer;
+    private final GuiGraphics context;
+    private final Font textRenderer;
     /** The transforms pushed before, each as {scale, originX, originY}. */
     private final Deque<double[]> scales = new ArrayDeque<>();
     /** The pushed transforms together: a unit is drawn at {@code unit * scale + origin} GUI pixels. */
@@ -38,7 +38,7 @@ public final class DrawContextGraphics implements UiGraphics {
     /** Per pushed clip, innermost first: true if it is on {@link #pixelClips}, false if on vanilla's stack. */
     private final Deque<Boolean> clipKinds = new ArrayDeque<>();
 
-    public DrawContextGraphics(DrawContext context, TextRenderer textRenderer) {
+    public DrawContextGraphics(GuiGraphics context, Font textRenderer) {
         this.context = context;
         this.textRenderer = textRenderer;
     }
@@ -53,13 +53,13 @@ public final class DrawContextGraphics implements UiGraphics {
     @Override
     public void outline(int x, int y, int width, int height, int argb) {
         if (width > 0 && height > 0) {
-            context.drawBorder(x, y, width, height, argb);
+            context.renderOutline(x, y, width, height, argb);
         }
     }
 
     @Override
     public void text(String text, int x, int y, int argb, boolean shadow) {
-        context.drawText(textRenderer, text, x, y, argb, shadow);
+        context.drawString(textRenderer, text, x, y, argb, shadow);
     }
 
     @Override
@@ -70,8 +70,8 @@ public final class DrawContextGraphics implements UiGraphics {
             clipKinds.push(false);
             return;
         }
-        Window window = MinecraftClient.getInstance().getWindow();
-        double gui = window.getScaleFactor();
+        Window window = Minecraft.getInstance().getWindow();
+        double gui = window.getGuiScale();
         int[] edges = pixelEdges(clip, scale * gui, originX * gui, originY * gui, pixelClips.peek());
         pixelClips.push(edges);
         clipKinds.push(true);
@@ -85,21 +85,21 @@ public final class DrawContextGraphics implements UiGraphics {
             return;
         }
         pixelClips.pop();
-        context.draw();
+        context.flush();
         int[] outer = pixelClips.peek();
         if (outer == null) {
             RenderSystem.disableScissor();
         } else {
-            applyPixelClip(outer, MinecraftClient.getInstance().getWindow());
+            applyPixelClip(outer, Minecraft.getInstance().getWindow());
         }
     }
 
     /** Flushes what was drawn under the previous clip, then clips to the pixel edges (GL's origin is bottom-left). */
     private void applyPixelClip(int[] edges, Window window) {
-        context.draw();
+        context.flush();
         int width = Math.max(0, edges[2] - edges[0]);
         int height = Math.max(0, edges[3] - edges[1]);
-        RenderSystem.enableScissor(edges[0], window.getFramebufferHeight() - edges[1] - height, width, height);
+        RenderSystem.enableScissor(edges[0], window.getHeight() - edges[1] - height, width, height);
     }
 
     /**
@@ -133,28 +133,28 @@ public final class DrawContextGraphics implements UiGraphics {
 
     @Override
     public void pushLayer(int z) {
-        context.getMatrices().push();
-        context.getMatrices().translate(0.0F, 0.0F, (float) z);
+        context.pose().pushPose();
+        context.pose().translate(0.0F, 0.0F, (float) z);
     }
 
     @Override
     public void popLayer() {
-        context.getMatrices().pop();
+        context.pose().popPose();
     }
 
     @Override
     public void pushScale(float factor) {
-        context.getMatrices().push();
-        context.getMatrices().scale(factor, factor, 1.0F);
+        context.pose().pushPose();
+        context.pose().scale(factor, factor, 1.0F);
         scales.push(new double[] {scale, originX, originY});
         scale *= factor;
     }
 
     @Override
     public void pushScale(int x, int y, float factor) {
-        context.getMatrices().push();
-        context.getMatrices().translate((float) x, (float) y, 0.0F);
-        context.getMatrices().scale(factor, factor, 1.0F);
+        context.pose().pushPose();
+        context.pose().translate((float) x, (float) y, 0.0F);
+        context.pose().scale(factor, factor, 1.0F);
         scales.push(new double[] {scale, originX, originY});
         originX += x * scale;
         originY += y * scale;
@@ -163,7 +163,7 @@ public final class DrawContextGraphics implements UiGraphics {
 
     @Override
     public void popScale() {
-        context.getMatrices().pop();
+        context.pose().popPose();
         double[] before = scales.pop();
         scale = before[0];
         originX = before[1];
@@ -172,25 +172,25 @@ public final class DrawContextGraphics implements UiGraphics {
 
     @Override
     public double pixelScale() {
-        return scale * MinecraftClient.getInstance().getWindow().getScaleFactor();
+        return scale * Minecraft.getInstance().getWindow().getGuiScale();
     }
 
     @Override
     public void item(ItemStack stack, int x, int y) {
-        context.drawItem(stack, x, y);
+        context.renderItem(stack, x, y);
     }
 
     @Override
-    public void widget(ClickableWidget widget, int mouseX, int mouseY, float delta) {
+    public void widget(AbstractWidget widget, int mouseX, int mouseY, float delta) {
         widget.render(context, mouseX, mouseY, delta);
     }
 
     @Override
-    public void texture(Identifier texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
+    public void texture(ResourceLocation texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
         if (width > 0 && height > 0 && textureWidth > 0 && textureHeight > 0) {
             // drawTexture draws at once (javap: Tessellator, drawWithGlobalProgram); anything still batched goes first.
-            context.draw();
-            context.drawTexture(texture, x, y, width, height, 0.0F, 0.0F, textureWidth, textureHeight, textureWidth,
+            context.flush();
+            context.blit(texture, x, y, width, height, 0.0F, 0.0F, textureWidth, textureHeight, textureWidth,
                     textureHeight);
         }
     }

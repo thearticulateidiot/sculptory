@@ -47,13 +47,13 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 
 /**
  * {@code .schem} export and import of Chipped and Farmer's Delight builds: states and
@@ -68,11 +68,11 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
      * Export (op and non-op), read back, upload and paste of the modded build: the file holds every state and block
      * entity, the upload reports nothing lost or removed, and the paste equals the source, canvas-sign text included.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_schem", tickLimit = LIMIT)
-    public void moddedSchemRoundTrip(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_schem", timeoutTicks = LIMIT)
+    public void moddedSchemRoundTrip(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.SCHEMATIC_EXPORT);
         int[] at = regionCorner(context, 220);
         int x0 = at[0] + 4, y0 = 100, z0 = at[1] + 4;
@@ -89,28 +89,28 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         BlockPos target = new BlockPos(x0 + 16 + 1, y0, z0 + 2);
-        context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, source);
                     copies.add(copy(clips, h.player, source, source.min().offset(1, 0, 2)));
                     copies.add(copy(clips, builder, source, source.min()));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     copies.get(0).get("copy");
                     copies.get(1).get("builder copy");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     run(() -> clips.export(h.player, copies.get(0).get("copy").clipboardId(), exported));
                     run(() -> clips.export(builder, copies.get(1).get("builder copy").clipboardId(), builderExported));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Outbound out = exported.get("export");
                     check(out.notices().isEmpty(), "export notices " + out.notices());
                     Schematic read = read(h, out.payload());
                     check(read.report().isLossless() && read.report().blockEntities() == FidelitySupport.TILES.size(),
                             "report " + read.report());
-                    Clipboard original = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                    Clipboard original = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     String difference = difference(original, read.clipboard());
                     check(difference == null, "read back differently: " + difference);
                     check(read.clipboard().contentHash().equals(original.contentHash()), "content hash differs");
@@ -123,13 +123,13 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                             "a non-op export lost the canvas sign text");
                     ClipTestSupport.upload(clips, h.player, "kitchen.schem", out.payload(), uploaded);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("upload");
                     check(info.notices().isEmpty(), "upload notices " + info.notices());
                     paste(h, h.player, info.clipboardId(), target, Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED && paste.result.strippedNbt() == 0,
                             "paste " + paste.result);
                     ClipTestSupport.checkShifted(world, before[0], pos(x0 + 16, y0, z0), "the file pasted back");
@@ -137,24 +137,24 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** The modded build exported as a Litematica file, read back identically, uploaded, pasted and undone exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_litematic", tickLimit = LIMIT)
-    public void moddedLitematicRoundTrip(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_litematic", timeoutTicks = LIMIT)
+    public void moddedLitematicRoundTrip(GameTestHelper context) {
         moddedFormatRoundTrip(context, 1017, SchematicFormat.LITEMATIC);
     }
 
     /** The modded build exported as a structure file, read back identically, uploaded, pasted and undone exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_structure", tickLimit = LIMIT)
-    public void moddedStructureRoundTrip(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_structure", timeoutTicks = LIMIT)
+    public void moddedStructureRoundTrip(GameTestHelper context) {
         moddedFormatRoundTrip(context, 1018, SchematicFormat.STRUCTURE);
     }
 
-    private static void moddedFormatRoundTrip(TestContext context, int slot, SchematicFormat format) {
+    private static void moddedFormatRoundTrip(GameTestHelper context, int slot, SchematicFormat format) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, slot);
         int x0 = at[0] + 4, y0 = 100, z0 = at[1] + 4;
         Box source = FidelitySupport.buildBox(x0, y0, z0);
@@ -170,16 +170,16 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         RecordingListener undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, source);
                     before[1] = capture(world, target);
                     copies.add(copy(clips, h.player, source, source.min().offset(1, 0, 2)));
                 })
-                .createAndAdd(() -> run(() -> clips.export(h.player, copies.get(0).get("copy").clipboardId(), format,
+                .thenWaitUntil(() -> run(() -> clips.export(h.player, copies.get(0).get("copy").clipboardId(), format,
                         exported)))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Outbound out = exported.get("export");
                     // The copy carries its biomes, which this format does not keep (protocol 6).
                     check(out.notices().equals(List.of(new S2C.Notice(S2C.Notice.Level.INFO,
@@ -190,11 +190,11 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                         read = SchematicFiles.read(new ByteArrayInputStream(out.payload()), h.runtime.states(),
                                 SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
                     } catch (IOException e) {
-                        throw new GameTestException("unreadable " + format + " file: " + e);
+                        throw new GameTestAssertException("unreadable " + format + " file: " + e);
                     }
                     check(read.format() == format && read.report().isLossless()
                             && read.report().blockEntities() == FidelitySupport.TILES.size(), "report " + read.report());
-                    Clipboard original = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                    Clipboard original = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     String difference = difference(original, read.clipboard());
                     check(difference == null, format + " read back differently: " + difference);
                     // Litematica and structure files hold no biomes (protocol 6): compared without the copy's.
@@ -202,21 +202,21 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                             "content hash differs");
                     ClipTestSupport.upload(clips, h.player, "kitchen" + format.extension(), out.payload(), uploaded);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("upload");
                     check(info.notices().isEmpty(), "upload notices " + info.notices());
                     paste(h, h.player, info.clipboardId(), new BlockPos(x0 + 16 + 1, y0, z0 + 2), Transform.IDENTITY,
                             paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED && paste.result.strippedNbt() == 0,
                             "paste " + paste.result);
                     ClipTestSupport.checkShifted(world, before[0], pos(x0 + 16, y0, z0), "the " + format + " file pasted");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before[1], capture(world, target), "the pasted area after undo");
                     checkSame(before[0], capture(world, source), "the source");
@@ -224,7 +224,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A sign message with a {@code run_command} click event. */
@@ -234,11 +234,11 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
      * A file whose Farmer's Delight canvas signs (standing and hanging) carry a click event: an upload sanitizes them
      * for everyone, ops included, so they keep their text and lose the click event, and a non-op may place them.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_schem_signs", tickLimit = LIMIT)
-    public void moddedSignsFromFilesKeepTextAndLoseClickEvents(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_schem_signs", timeoutTicks = LIMIT)
+    public void moddedSignsFromFilesKeepTextAndLoseClickEvents(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.SCHEMATIC_IMPORT);
         int[] at = regionCorner(context, 221);
         Box region = box(at[0], 100, at[1], at[0] + 15, 103, at[1] + 7);
@@ -260,8 +260,8 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         RecordingListener builderPaste = new RecordingListener();
         ClipTestSupport.upload(clips, h.player, "signs.schem", file.toByteArray(), fromOp);
         ClipTestSupport.upload(clips, builder, "signs.schem", file.toByteArray(), fromBuilder);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo op = fromOp.get("op upload");
                     ClipboardService.ClipboardInfo mine = fromBuilder.get("builder upload");
                     S2C.Notice cleaned = new S2C.Notice(S2C.Notice.Level.WARN, ServerClipboards.NOTICE_IMPORT_OPERATOR_NBT,
@@ -273,15 +273,15 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     paste(h, builder, mine.clipboardId(), new BlockPos(at[0] + 2, 100, at[1] + 5), Transform.IDENTITY,
                             builderPaste);
                 })
-                .createAndAdd(() -> check(opPaste.result != null && builderPaste.result != null, "pastes running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(opPaste.result != null && builderPaste.result != null, "pastes running"))
+                .thenWaitUntil(() -> {
                     check(opPaste.result.strippedNbt() == 0 && builderPaste.result.strippedNbt() == 0,
                             "pastes " + opPaste.result + " / " + builderPaste.result);
                     for (int row : new int[] {2, 5}) {
                         for (int dx = 0; dx < 3; dx++) {
                             SignBlockEntity sign = FidelitySupport.entity(world, at[0] + 2 + dx, 100, at[1] + row,
                                     SignBlockEntity.class);
-                            Text first = sign.getFrontText().getMessage(0, false);
+                            Component first = sign.getFrontText().getMessage(0, false);
                             check(first.getString().equals("Eat") && first.getStyle().getClickEvent() == null,
                                     "sign " + dx + " in row " + row + ": '" + first.getString() + "', click "
                                             + first.getStyle().getClickEvent());
@@ -293,7 +293,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -302,10 +302,10 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
      * becomes air, the block entities on those cells are reported as skipped, and everything else (the pot, cabinet
      * and basket contents included) pastes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_schem_unknown", tickLimit = LIMIT)
-    public void unknownModdedStatesAreReportedNotReplaced(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_schem_unknown", timeoutTicks = LIMIT)
+    public void unknownModdedStatesAreReportedNotReplaced(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 222);
         int x0 = at[0] + 4, y0 = 100, z0 = at[1] + 4;
         Box row = box(x0, y0, z0, x0 + 7, y0 + 1, z0);
@@ -326,15 +326,15 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         byte[][] file = new byte[1][];
-        context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, all))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, all))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, row);
                     copied.add(copy(clips, h.player, row, row.min()));
                 })
-                .createAndAdd(() -> copied.get(0).get("copy"))
-                .createAndAdd(() -> run(() -> clips.export(h.player, copied.get(0).value.clipboardId(), exported)))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> copied.get(0).get("copy"))
+                .thenWaitUntil(() -> run(() -> clips.export(h.player, copied.get(0).value.clipboardId(), exported)))
+                .thenWaitUntil(() -> {
                     file[0] = renamePalette(exported.get("export").payload(), renames);
                     Schematic read = read(h, file[0]);
                     check(read.report().unknownStates().keySet().equals(new java.util.TreeSet<>(renames.values()))
@@ -348,7 +348,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     }
                     ClipTestSupport.upload(clips, h.player, "unknown.schem", file[0], uploaded);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("upload");
                     List<String> keys = info.notices().stream().map(S2C.Notice::key).toList();
                     check(keys.equals(List.of(ServerClipboards.NOTICE_PREFIX + "import_unknown_states",
@@ -357,8 +357,8 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                             "unknown-state notice " + info.notices().get(0));
                     paste(h, h.player, info.clipboardId(), new BlockPos(x0 + 16, y0, z0), Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED, "paste " + paste.result);
                     Box pasted = row.offset(16, 0, 0);
                     WorldSnapshot now = capture(world, pasted);
@@ -376,7 +376,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -385,8 +385,8 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
      * each command block keeps a default block entity, nothing is stripped, and undo is exact
      * ({@link SchematicLibraryGameTest#refuseSignTilesOnCommandBlocks}).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_schem_forged", tickLimit = LIMIT)
-    public void moddedSignTilesOnCommandBlocksAreRefused(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_schem_forged", timeoutTicks = LIMIT)
+    public void moddedSignTilesOnCommandBlocksAreRefused(GameTestHelper context) throws IOException {
         SchematicLibraryGameTest.refuseSignTilesOnCommandBlocks(context, 223,
                 List.of("farmersdelight:canvas_sign", "farmersdelight:hanging_canvas_sign", "minecraft:sign"));
     }
@@ -421,7 +421,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
             return SchematicCodec.read(new ByteArrayInputStream(bytes), h.runtime.states(), SchematicCodec.Limits.DEFAULT,
                     FabricDataFixHook.get());
         } catch (IOException e) {
-            throw new GameTestException("unreadable file: " + e);
+            throw new GameTestAssertException("unreadable file: " + e);
         }
     }
 
@@ -445,7 +445,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
             NbtIo.writeGzip(bytes, root.name(), out);
             return bytes.toByteArray();
         } catch (IOException e) {
-            throw new GameTestException("cannot rewrite the file: " + e);
+            throw new GameTestAssertException("cannot rewrite the file: " + e);
         }
     }
 
@@ -473,7 +473,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         try {
             request.run();
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.getMessage());
         }
     }
 }

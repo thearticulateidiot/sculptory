@@ -8,13 +8,13 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.Objects;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
-import net.minecraft.nbt.NbtSizeTracker;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
 
 /**
  * Block-entity content: the {@code createNbtWithId} compound (with {@code id}, without x/y/z). The compound is
@@ -33,11 +33,11 @@ public final class FabricTile implements BlockEntityData {
     public static final long MAX_DECODE_BYTES = 8L << 20;
 
     private final String typeId;
-    private final NbtCompound nbt;
+    private final CompoundTag nbt;
     private final boolean serverCaptured;
     private volatile byte[] bytes;
 
-    private FabricTile(String typeId, NbtCompound nbt, boolean serverCaptured) {
+    private FabricTile(String typeId, CompoundTag nbt, boolean serverCaptured) {
         this.typeId = Objects.requireNonNull(typeId);
         this.nbt = Objects.requireNonNull(nbt);
         this.serverCaptured = serverCaptured;
@@ -45,16 +45,16 @@ public final class FabricTile implements BlockEntityData {
     }
 
     /** Captures a live block entity; the result is {@link #serverCaptured() server-captured}. */
-    public static FabricTile capture(BlockEntity entity, RegistryWrapper.WrapperLookup registries) {
-        Identifier type = BlockEntityType.getId(entity.getType());
-        NbtCompound nbt = entity.createNbtWithId(registries);
+    public static FabricTile capture(BlockEntity entity, HolderLookup.Provider registries) {
+        ResourceLocation type = BlockEntityType.getKey(entity.getType());
+        CompoundTag nbt = entity.saveWithId(registries);
         String typeId = type != null ? type.toString() : nbt.getString("id");
         return new FabricTile(typeId, nbt, true);
     }
 
     /** Wraps a compound (copied) as untrusted content. Its {@code id} is set to {@code typeId} if missing. */
-    public static FabricTile of(String typeId, NbtCompound nbt) {
-        NbtCompound copy = nbt.copy();
+    public static FabricTile of(String typeId, CompoundTag nbt) {
+        CompoundTag copy = nbt.copy();
         if (!copy.contains("id")) copy.putString("id", typeId);
         return new FabricTile(typeId, copy, false);
     }
@@ -67,9 +67,9 @@ public final class FabricTile implements BlockEntityData {
      * @throws IOException if the bytes are not a valid NBT compound within {@code maxBytes}
      */
     public static FabricTile restoreCaptured(String typeId, byte[] nbtBytes, long maxBytes) throws IOException {
-        NbtCompound nbt;
+        CompoundTag nbt;
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(nbtBytes))) {
-            nbt = NbtIo.readCompound(in, NbtSizeTracker.of(maxBytes));
+            nbt = NbtIo.read(in, NbtAccounter.create(maxBytes));
         } catch (RuntimeException e) {
             throw new IOException("Invalid block-entity NBT", e);
         }
@@ -99,12 +99,12 @@ public final class FabricTile implements BlockEntityData {
     }
 
     /** A fresh, mutable copy of the compound (with {@code id}). */
-    public NbtCompound copyNbt() {
+    public CompoundTag copyNbt() {
         return nbt.copy();
     }
 
     /** The compound itself, for reading only (comparisons that must not copy it); never change it. */
-    NbtCompound compound() {
+    CompoundTag compound() {
         return nbt;
     }
 
@@ -121,7 +121,7 @@ public final class FabricTile implements BlockEntityData {
     @Override
     public int estimatedBytes() {
         byte[] encoded = bytes;
-        int payload = encoded != null ? encoded.length : nbt.getSizeInBytes();
+        int payload = encoded != null ? encoded.length : nbt.sizeInBytes();
         return 64 + 2 * typeId.length() + payload;
     }
 
@@ -130,7 +130,7 @@ public final class FabricTile implements BlockEntityData {
         if (o == null || !typeId.equals(o.typeId())) return false;
         if (o instanceof FabricTile other) return nbt.equals(other.nbt);
         try {
-            NbtCompound decoded = decode(o.nbtBytes());
+            CompoundTag decoded = decode(o.nbtBytes());
             if (!decoded.contains("id")) decoded.putString("id", typeId);
             return nbt.equals(decoded);
         } catch (IOException e) {
@@ -158,7 +158,7 @@ public final class FabricTile implements BlockEntityData {
         if (encoded == null) {
             ByteArrayOutputStream out = new ByteArrayOutputStream(256);
             try (DataOutputStream data = new DataOutputStream(out)) {
-                NbtIo.writeCompound(nbt, data);
+                NbtIo.write(nbt, data);
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
@@ -168,9 +168,9 @@ public final class FabricTile implements BlockEntityData {
         return encoded;
     }
 
-    private static NbtCompound decode(byte[] bytes) throws IOException {
+    private static CompoundTag decode(byte[] bytes) throws IOException {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(bytes))) {
-            return NbtIo.readCompound(in, NbtSizeTracker.of(MAX_DECODE_BYTES));
+            return NbtIo.read(in, NbtAccounter.create(MAX_DECODE_BYTES));
         } catch (RuntimeException e) {
             throw new IOException("Invalid block-entity NBT", e);
         }

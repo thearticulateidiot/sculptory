@@ -8,25 +8,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Random;
-import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.FluidBlock;
-import net.minecraft.block.ShapeContext;
-import net.minecraft.block.SlabBlock;
-import net.minecraft.block.StairsBlock;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.enums.SlabType;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.fluid.Fluids;
-import net.minecraft.state.property.Properties;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.BlockView;
-import net.minecraft.world.RaycastContext;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.SlabType;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.CollisionContext;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -45,12 +45,12 @@ class WorldRaycasterFluidsTest {
 
     @BeforeAll
     static void bootstrap() {
-        SharedConstants.createGameVersion();
-        Bootstrap.initialize();
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
     }
 
     /** Block states by position, air elsewhere; no block entities. */
-    private static final class TestWorld implements BlockView {
+    private static final class TestWorld implements BlockGetter {
         private final Map<BlockPos, BlockState> blocks = new HashMap<>();
 
         TestWorld set(int x, int y, int z, BlockState state) {
@@ -76,7 +76,7 @@ class WorldRaycasterFluidsTest {
 
         @Override
         public BlockState getBlockState(BlockPos pos) {
-            return blocks.getOrDefault(pos, Blocks.AIR.getDefaultState());
+            return blocks.getOrDefault(pos, Blocks.AIR.defaultBlockState());
         }
 
         @Override
@@ -90,13 +90,13 @@ class WorldRaycasterFluidsTest {
         }
 
         @Override
-        public int getBottomY() {
+        public int getMinBuildHeight() {
             return -64;
         }
     }
 
     /** The same blocks with every fluid removed, to compare the fluid path's block hits with vanilla's. */
-    private record NoFluids(TestWorld blocks) implements BlockView {
+    private record NoFluids(TestWorld blocks) implements BlockGetter {
         @Override
         public BlockEntity getBlockEntity(BlockPos pos) {
             return null;
@@ -109,7 +109,7 @@ class WorldRaycasterFluidsTest {
 
         @Override
         public FluidState getFluidState(BlockPos pos) {
-            return Fluids.EMPTY.getDefaultState();
+            return Fluids.EMPTY.defaultFluidState();
         }
 
         @Override
@@ -118,22 +118,22 @@ class WorldRaycasterFluidsTest {
         }
 
         @Override
-        public int getBottomY() {
-            return blocks.getBottomY();
+        public int getMinBuildHeight() {
+            return blocks.getMinBuildHeight();
         }
     }
 
     private static BlockState stone() {
-        return Blocks.STONE.getDefaultState();
+        return Blocks.STONE.defaultBlockState();
     }
 
     private static BlockState water() {
-        return Blocks.WATER.getDefaultState();
+        return Blocks.WATER.defaultBlockState();
     }
 
     /** Flowing water of block level 1-7: fluid level {@code 8 - blockLevel}, {@code (8 - blockLevel) / 9} high. */
     private static BlockState flowingWater(int blockLevel) {
-        return Blocks.WATER.getDefaultState().with(FluidBlock.LEVEL, blockLevel);
+        return Blocks.WATER.defaultBlockState().setValue(LiquidBlock.LEVEL, blockLevel);
     }
 
     /** A stone floor at y 60 and a pool of still water on it, y 61-63, over x and z -8..8. */
@@ -141,7 +141,7 @@ class WorldRaycasterFluidsTest {
         return new TestWorld().fill(-8, 60, -8, 8, 60, 8, stone()).fill(-8, 61, -8, 8, 63, 8, water());
     }
 
-    private static WorldRaycaster.Hit cast(BlockView world, Ray ray, WorldRaycaster.Mode mode, WorldRaycaster.Fluids fluids) {
+    private static WorldRaycaster.Hit cast(BlockGetter world, Ray ray, WorldRaycaster.Mode mode, WorldRaycaster.Fluids fluids) {
         return new WorldRaycaster().raycast(world, null, ray, mode, fluids, 100, 0);
     }
 
@@ -172,7 +172,7 @@ class WorldRaycasterFluidsTest {
         for (WorldRaycaster.Mode mode : WorldRaycaster.Mode.values()) {
             WorldRaycaster.Hit hit = cast(pool(), down, mode, ON);
             assertHit(hit, 3, 63, 2, Direction.UP, 63 + SOURCE_HEIGHT);
-            assertEquals(new Vec3d(0.5, 80, 0.5).distanceTo(hit.pos()), hit.distance(), EPS);
+            assertEquals(new Vec3(0.5, 80, 0.5).distanceTo(hit.pos()), hit.distance(), EPS);
         }
     }
 
@@ -207,22 +207,22 @@ class WorldRaycasterFluidsTest {
     @Test
     void lavaStopsTheRayToo() {
         TestWorld world = new TestWorld().fill(-2, 60, -2, 2, 60, 2, stone())
-                .fill(-2, 61, -2, 2, 61, 2, Blocks.LAVA.getDefaultState());
+                .fill(-2, 61, -2, 2, 61, 2, Blocks.LAVA.defaultBlockState());
         Ray down = new Ray(0.5, 75, 0.5, 0.05, -1, 0.05);
         assertHit(cast(world, down, TERRAIN, ON), 1, 61, 1, Direction.UP, 61 + SOURCE_HEIGHT);
         assertHit(cast(world, down, TERRAIN, OFF), 1, 60, 1, Direction.UP, 61);
 
         // Block level 2 is fluid level 6: 6/9 of a block.
-        TestWorld flowing = new TestWorld().set(0, 61, 0, Blocks.LAVA.getDefaultState().with(FluidBlock.LEVEL, 2));
+        TestWorld flowing = new TestWorld().set(0, 61, 0, Blocks.LAVA.defaultBlockState().setValue(LiquidBlock.LEVEL, 2));
         assertHit(cast(flowing, new Ray(0.5, 70, 0.5, 0.001, -1, 0), BLOCK, ON), 0, 61, 0, Direction.UP, 61 + 6 / 9.0);
     }
 
     /** Vanilla's own raycast with {@code FluidHandling.ANY}, for contrast. */
-    private static BlockHitResult vanillaAny(BlockView world, Ray ray) {
-        Vec3d start = new Vec3d(ray.originX(), ray.originY(), ray.originZ());
-        Vec3d end = new Vec3d(ray.pointX(100), ray.pointY(100), ray.pointZ(100));
-        return world.raycast(new RaycastContext(start, end, RaycastContext.ShapeType.COLLIDER,
-                RaycastContext.FluidHandling.ANY, ShapeContext.absent()));
+    private static BlockHitResult vanillaAny(BlockGetter world, Ray ray) {
+        Vec3 start = new Vec3(ray.originX(), ray.originY(), ray.originZ());
+        Vec3 end = new Vec3(ray.pointX(100), ray.pointY(100), ray.pointZ(100));
+        return world.clip(new ClipContext(start, end, ClipContext.Block.COLLIDER,
+                ClipContext.Fluid.ANY, CollisionContext.empty()));
     }
 
     @Test
@@ -230,7 +230,7 @@ class WorldRaycasterFluidsTest {
         TestWorld world = pool().set(2, 70, 0, stone()).fill(8, 61, -8, 8, 63, 8, stone());
         Ray down = new Ray(0.5, 62.5, 0.5, 0.1, -1, 0);
         assertHit(cast(world, down, TERRAIN, ON), 0, 60, 0, Direction.UP, 61);
-        assertTrue(vanillaAny(world, down).isInsideBlock(), "vanilla stops in the water around the camera");
+        assertTrue(vanillaAny(world, down).isInside(), "vanilla stops in the water around the camera");
         // Up through the surface: leaving the water is no hit, the block above is.
         assertHit(cast(world, new Ray(0.5, 62.5, 0.5, 0.25, 1, 0), BLOCK, ON), 2, 70, 0, Direction.DOWN, 70);
         // Sideways to the pool's wall: the faces between water blocks are no surfaces.
@@ -253,21 +253,21 @@ class WorldRaycasterFluidsTest {
         Ray down = new Ray(0.5, 63.93, 0.5, 0.01, -1, 0);
         assertHit(cast(pool(), down, TERRAIN, ON), 0, 63, 0, Direction.UP, 63 + SOURCE_HEIGHT);
         BlockHitResult vanilla = vanillaAny(pool(), down);
-        assertTrue(vanilla.isInsideBlock() && vanilla.getPos().y < 63.85, "vanilla: " + vanilla.getPos());
+        assertTrue(vanilla.isInside() && vanilla.getLocation().y < 63.85, "vanilla: " + vanilla.getLocation());
     }
 
     @Test
     void waterloggedBlocksShowTheirWaterWhereItIsNearer() {
-        BlockState slab = Blocks.OAK_SLAB.getDefaultState().with(SlabBlock.TYPE, SlabType.BOTTOM)
-                .with(Properties.WATERLOGGED, true);
+        BlockState slab = Blocks.OAK_SLAB.defaultBlockState().setValue(SlabBlock.TYPE, SlabType.BOTTOM)
+                .setValue(BlockStateProperties.WATERLOGGED, true);
         TestWorld world = new TestWorld().set(0, 61, 0, slab);
         Ray down = new Ray(0.5, 70, 0.5, 0.001, -1, 0);
         assertHit(cast(world, down, BLOCK, ON), 0, 61, 0, Direction.UP, 61 + SOURCE_HEIGHT);
         assertHit(cast(world, down, BLOCK, OFF), 0, 61, 0, Direction.UP, 61.5);
 
         // Where the block reaches above its water (a stair's upper step, on its north half), the block is hit.
-        BlockState stair = Blocks.OAK_STAIRS.getDefaultState().with(StairsBlock.FACING, Direction.NORTH)
-                .with(Properties.WATERLOGGED, true);
+        BlockState stair = Blocks.OAK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, Direction.NORTH)
+                .setValue(BlockStateProperties.WATERLOGGED, true);
         TestWorld stairs = new TestWorld().set(0, 61, 0, stair);
         assertHit(cast(stairs, new Ray(0.5, 70, 0.2, 0.001, -1, 0), BLOCK, ON), 0, 61, 0, Direction.UP, 62);
         assertHit(cast(stairs, new Ray(0.5, 70, 0.8, 0.001, -1, 0), BLOCK, ON), 0, 61, 0, Direction.UP, 61 + SOURCE_HEIGHT);
@@ -275,7 +275,7 @@ class WorldRaycasterFluidsTest {
 
     @Test
     void plantsUnderWaterAreBehindTheSurface() {
-        TestWorld world = pool().set(0, 61, 0, Blocks.SEAGRASS.getDefaultState());
+        TestWorld world = pool().set(0, 61, 0, Blocks.SEAGRASS.defaultBlockState());
         Ray down = new Ray(0.5, 70, 0.5, 0.001, -1, 0);
         assertHit(cast(world, down, BLOCK, ON), 0, 63, 0, Direction.UP, 63 + SOURCE_HEIGHT);
         assertHit(cast(world, down, BLOCK, OFF), 0, 61, 0, Direction.UP, 61.75);
@@ -286,34 +286,34 @@ class WorldRaycasterFluidsTest {
         // A mixed scene: terrain, a pool, waterlogged stairs and slabs, plants, a fence.
         TestWorld world = pool()
                 .fill(-8, 64, 4, 8, 66, 8, stone())
-                .set(1, 62, 1, Blocks.OAK_STAIRS.getDefaultState().with(Properties.WATERLOGGED, true))
-                .set(-2, 63, 2, Blocks.OAK_SLAB.getDefaultState().with(Properties.WATERLOGGED, true))
-                .set(3, 61, -3, Blocks.SEAGRASS.getDefaultState())
-                .set(2, 67, 5, Blocks.POPPY.getDefaultState())
-                .set(-4, 64, -4, Blocks.OAK_FENCE.getDefaultState());
+                .set(1, 62, 1, Blocks.OAK_STAIRS.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true))
+                .set(-2, 63, 2, Blocks.OAK_SLAB.defaultBlockState().setValue(BlockStateProperties.WATERLOGGED, true))
+                .set(3, 61, -3, Blocks.SEAGRASS.defaultBlockState())
+                .set(2, 67, 5, Blocks.POPPY.defaultBlockState())
+                .set(-4, 64, -4, Blocks.OAK_FENCE.defaultBlockState());
         Random random = new Random(42);
         for (int i = 0; i < 2_000; i++) {
-            Vec3d start = new Vec3d(random.nextDouble() * 24 - 12, 58 + random.nextDouble() * 16, random.nextDouble() * 24 - 12);
-            Vec3d end = start.add(random.nextGaussian() * 20, random.nextGaussian() * 20, random.nextGaussian() * 20);
+            Vec3 start = new Vec3(random.nextDouble() * 24 - 12, 58 + random.nextDouble() * 16, random.nextDouble() * 24 - 12);
+            Vec3 end = start.add(random.nextGaussian() * 20, random.nextGaussian() * 20, random.nextGaussian() * 20);
             for (WorldRaycaster.Mode mode : WorldRaycaster.Mode.values()) {
-                RaycastContext.ShapeType shape = mode == TERRAIN ? RaycastContext.ShapeType.COLLIDER : RaycastContext.ShapeType.OUTLINE;
-                RaycastContext none = new RaycastContext(start, end, shape, RaycastContext.FluidHandling.NONE, ShapeContext.absent());
-                BlockHitResult vanilla = world.raycast(none);
+                ClipContext.Block shape = mode == TERRAIN ? ClipContext.Block.COLLIDER : ClipContext.Block.OUTLINE;
+                ClipContext none = new ClipContext(start, end, shape, ClipContext.Fluid.NONE, CollisionContext.empty());
+                BlockHitResult vanilla = world.clip(none);
                 String what = mode + " ray " + start + " -> " + end;
 
                 // Off: the raycaster's pick is vanilla's.
-                Vec3d delta = end.subtract(start);
+                Vec3 delta = end.subtract(start);
                 WorldRaycaster.Hit off = new WorldRaycaster().raycast(world, null,
                         new Ray(start.x, start.y, start.z, delta.x, delta.y, delta.z), mode, OFF, delta.length(), 0);
                 assertEquals(vanilla.getBlockPos(), off.blockPos(), what);
-                assertEquals(vanilla.getSide(), off.face(), what);
+                assertEquals(vanilla.getDirection(), off.face(), what);
 
                 // The fluid path hits the same blocks, the same way, when there is no fluid to stop at.
                 BlockHitResult ours = WorldRaycaster.raycastEnteringFluids(new NoFluids(world), none);
                 assertEquals(vanilla.getType(), ours.getType(), what);
                 assertEquals(vanilla.getBlockPos(), ours.getBlockPos(), what);
-                assertEquals(vanilla.getSide(), ours.getSide(), what);
-                assertEquals(vanilla.getPos(), ours.getPos(), what);
+                assertEquals(vanilla.getDirection(), ours.getDirection(), what);
+                assertEquals(vanilla.getLocation(), ours.getLocation(), what);
             }
         }
     }
@@ -330,7 +330,7 @@ class WorldRaycasterFluidsTest {
             WorldRaycaster.Hit on = cast(world, ray, TERRAIN, ON);
             WorldRaycaster.Hit off = cast(world, ray, TERRAIN, OFF);
             assertTrue(on.distance() <= off.distance() + EPS, "on " + on + " vs off " + off);
-            if (on.missed() || !world.getBlockState(on.blockPos()).isOf(Blocks.WATER)) {
+            if (on.missed() || !world.getBlockState(on.blockPos()).is(Blocks.WATER)) {
                 continue;
             }
             surfaces++;

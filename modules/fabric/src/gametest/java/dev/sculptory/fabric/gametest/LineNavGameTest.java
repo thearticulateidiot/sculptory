@@ -47,17 +47,17 @@ import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.network.ClientConnection;
-import net.minecraft.network.NetworkSide;
-import net.minecraft.server.OperatorEntry;
-import net.minecraft.server.network.ConnectedClientData;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.world.GameMode;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.Connection;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.server.players.ServerOpListEntry;
+import net.minecraft.world.level.GameType;
+import net.minecraft.world.level.block.Block;
 
 /**
  * Jump and Through, Generate's Line and the Shape brush's Line: a
@@ -80,7 +80,7 @@ public final class LineNavGameTest implements FabricGameTest {
     }
 
     /** Every cell of {@code area} holds its source cell, else what {@code before} held. */
-    private static void checkPasted(ServerWorld world, Box area, GeneratedSource source, WorldSnapshot before, String what) {
+    private static void checkPasted(ServerLevel world, Box area, GeneratedSource source, WorldSnapshot before, String what) {
         WorldSnapshot now = capture(world, area);
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
@@ -89,8 +89,8 @@ public final class LineNavGameTest implements FabricGameTest {
                     int want = generated >= 0 ? generated : before.get(x, y, z);
                     int got = now.get(x, y, z);
                     if (want != got) {
-                        throw new GameTestException(what + " at " + x + "," + y + "," + z + ": "
-                                + Block.getStateFromRawId(got) + " instead of " + Block.getStateFromRawId(want));
+                        throw new GameTestAssertException(what + " at " + x + "," + y + "," + z + ": "
+                                + Block.stateById(got) + " instead of " + Block.stateById(want));
                     }
                 }
             }
@@ -112,7 +112,7 @@ public final class LineNavGameTest implements FabricGameTest {
      * wrote exactly the source's cells as one history step named {@code labelPrefix}, then that undo restores every
      * cell.
      */
-    private static void pasteAndUndo(TestContext context, Harness h, Box area, GeneratedSource source, PasteOptions options,
+    private static void pasteAndUndo(GameTestHelper context, Harness h, Box area, GeneratedSource source, PasteOptions options,
                                      OpLabel label, String labelPrefix) {
         WorldSnapshot before = capture(h.world, area);
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
@@ -121,46 +121,46 @@ public final class LineNavGameTest implements FabricGameTest {
         try {
             clips.beginGeneratedUpload(h.player, source.bounds(), source.cells(), payload.length).completed(payload, uploaded);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
         RecordingListener pasted = new RecordingListener(), undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("the upload");
                     check(info.cells() == source.cells(), "uploaded " + info);
                     try {
                         h.service.run(h.player, paste(info.clipboardId(), source.bounds(), options),
                                 new RunOptions(false, ConflictPolicy.SKIP_CONFLICTS, label), pasted);
                     } catch (EditRejected e) {
-                        throw new GameTestException("paste refused: " + e.getMessage());
+                        throw new GameTestAssertException("paste refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(pasted.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(pasted.result.outcome() == JobOutcome.COMPLETED, "paste " + pasted.result);
                     checkPasted(h.world, area, source, before, "the " + labelPrefix);
                     String undoLabel = h.history().undoLabel();
                     check(undoLabel.startsWith(labelPrefix + " · "), "history " + h.history());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                             "undo " + undo.result);
                     checkSame(before, capture(h.world, area), "after the undo");
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Generate's Line: a curved round line of stone bricks, thickness 3, through the stone ground and the air above it,
      * pasted as "Line", writes exactly its cells and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_line_build", tickLimit = LIMIT)
-    public void aLineIsBuiltAndUndoneExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_line_build", timeoutTicks = LIMIT)
+    public void aLineIsBuiltAndUndoneExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1160);
         int x0 = at[0], z0 = at[1];
@@ -179,8 +179,8 @@ public final class LineNavGameTest implements FabricGameTest {
      * The Shape brush's Line in Carve: a sphere of radius 2 swept along a hanging line inside solid stone writes air in
      * exactly the tunnel's cells (the paste includes air), labelled "Shape line", and undo refills it exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_shape_line_carve", tickLimit = LIMIT)
-    public void aShapeLineCarvesATunnelAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_line_carve", timeoutTicks = LIMIT)
+    public void aShapeLineCarvesATunnelAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1162);
         int x0 = at[0], z0 = at[1];
@@ -207,37 +207,37 @@ public final class LineNavGameTest implements FabricGameTest {
         }
     }
 
-    private static void stand(ServerPlayerEntity p, double x, double y, double z) {
-        p.refreshPositionAndAngles(x, y, z, 0f, 0f);
+    private static void stand(ServerPlayer p, double x, double y, double z) {
+        p.moveTo(x, y, z, 0f, 0f);
     }
 
-    private static void checkAt(ServerPlayerEntity p, double x, double y, double z, String what) {
+    private static void checkAt(ServerPlayer p, double x, double y, double z, String what) {
         check(Math.abs(p.getX() - x) < 1e-6 && Math.abs(p.getY() - y) < 1e-6 && Math.abs(p.getZ() - z) < 1e-6,
-                what + ": the player is at " + p.getPos());
+                what + ": the player is at " + p.position());
     }
 
     /**
      * Jump stands the player on top of the pillar looked at; Through walks the look direction through the wall and
      * stands them on the floor behind it; a Spectator may jump too. The result names the feet, and the facing stays.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_navigate_land", tickLimit = LIMIT)
-    public void jumpAndThroughLandWhereLandingSays(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_navigate_land", timeoutTicks = LIMIT)
+    public void jumpAndThroughLandWhereLandingSays(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1164);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 96, z0, x0 + 31, 112, z0 + 31);
         loadAndForce(h.world, area);
         course(h, area, x0, z0);
-        ServerPlayerEntity p = h.player;
+        ServerPlayer p = h.player;
         stand(p, x0 + 2.5, 101, z0 + 2.5);
-        p.setYaw(37f);
-        p.setPitch(12f);
+        p.setYRot(37f);
+        p.setXRot(12f);
         S2C.NavigateResult jump = h.service.navigate(p, new C2S.Navigate(1, NavigateMode.JUMP,
                 new BlockPos(x0 + 8, 102, z0 + 8), Facing.WEST, 1f, 0f, 1f));
         check(jump.reqId() == 1 && jump.reason() == null && new BlockPos(x0 + 8, 105, z0 + 8).equals(jump.feet()),
                 "jump " + jump);
         checkAt(p, x0 + 8.5, 105, z0 + 8.5, "after the jump");
-        check(p.getYaw() == 37f && p.getPitch() == 12f, "the facing changed: " + p.getYaw() + ", " + p.getPitch());
+        check(p.getYRot() == 37f && p.getXRot() == 12f, "the facing changed: " + p.getYRot() + ", " + p.getXRot());
         // Through: looking level (east) at the wall's block at eye height.
         stand(p, x0 + 15.5, 101, z0 + 12.5);
         S2C.NavigateResult through = h.service.navigate(p, new C2S.Navigate(2, NavigateMode.THROUGH,
@@ -245,7 +245,7 @@ public final class LineNavGameTest implements FabricGameTest {
         check(new BlockPos(x0 + 21, 101, z0 + 12).equals(through.feet()), "through " + through);
         checkAt(p, x0 + 21.5, 101, z0 + 12.5, "after going through");
         // Down through the floor (y 99-100) into the air under it: hanging under the floor, and set flying.
-        p.getAbilities().allowFlying = true;
+        p.getAbilities().mayfly = true;
         p.getAbilities().flying = false;
         S2C.NavigateResult down = h.service.navigate(p, new C2S.Navigate(4, NavigateMode.THROUGH,
                 new BlockPos(x0 + 4, 100, z0 + 4), Facing.UP, 0f, -1f, 0f));
@@ -253,7 +253,7 @@ public final class LineNavGameTest implements FabricGameTest {
         checkAt(p, x0 + 4.5, 97, z0 + 4.5, "under the floor");
         check(p.getAbilities().flying, "a Creative player left over nothing does not fly");
         // A Spectator jumps too.
-        ModePlayer spectator = ModePlayer.join(context, GameMode.SPECTATOR);
+        ModePlayer spectator = ModePlayer.join(context, GameType.SPECTATOR);
         stand(spectator, x0 + 21.5, 101, z0 + 12.5);
         S2C.NavigateResult watched = h.service.navigate(spectator, new C2S.Navigate(3, NavigateMode.JUMP,
                 new BlockPos(x0 + 20, 105, z0 + 20), Facing.EAST, -1f, 0f, 0f));
@@ -261,7 +261,7 @@ public final class LineNavGameTest implements FabricGameTest {
         spectator.leave();
         forceChunks(h.world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -269,8 +269,8 @@ public final class LineNavGameTest implements FabricGameTest {
      * which is missing), a block beyond {@code navigate.maxDistance} ({@code TOO_LARGE}), a pillar topped with lava and a
      * wall deeper than {@code maxThroughDepth} ({@code INVALID}, no spot).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_navigate_refusals", tickLimit = LIMIT)
-    public void refusalsLeaveThePlayerWhereTheyWere(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_navigate_refusals", timeoutTicks = LIMIT)
+    public void refusalsLeaveThePlayerWhereTheyWere(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1166);
         int x0 = at[0], z0 = at[1];
@@ -282,7 +282,7 @@ public final class LineNavGameTest implements FabricGameTest {
         C2S.Navigate ontoPillar = new C2S.Navigate(1, NavigateMode.JUMP, new BlockPos(x0 + 4, 100, z0 + 4), Facing.UP,
                 0f, -1f, 0f);
 
-        ServerPlayerEntity stranger = h.addPlayer(false);
+        ServerPlayer stranger = h.addPlayer(false);
         stand(stranger, x0 + 2.5, 101, z0 + 2.5);
         refused(h, stranger, ontoPillar, RejectReason.NO_PERMISSION, NavigateService.NEEDS_NODE, List.of("sculptory.use"));
         EditTestSupport.grant(stranger, Perm.USE);
@@ -293,13 +293,13 @@ public final class LineNavGameTest implements FabricGameTest {
         check(granted.feet() != null, "granted the node, the jump is still refused: " + granted);
 
         // An operator, but in Survival or Adventure.
-        for (GameMode mode : List.of(GameMode.SURVIVAL, GameMode.ADVENTURE)) {
+        for (GameType mode : List.of(GameType.SURVIVAL, GameType.ADVENTURE)) {
             ModePlayer walker = ModePlayer.join(context, mode);
             stand(walker, x0 + 2.5, 101, z0 + 2.5);
             refused(h, walker, ontoPillar, RejectReason.NO_PERMISSION, NavigateService.NEEDS_MODE, List.of());
             walker.leave();
         }
-        ServerPlayerEntity p = h.player;
+        ServerPlayer p = h.player;
         stand(p, x0 + 2.5, 101, z0 + 2.5);
 
         int max = h.runtime.config().navigate.maxDistance;
@@ -321,11 +321,11 @@ public final class LineNavGameTest implements FabricGameTest {
         }
         forceChunks(h.world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /** The request is refused with {@code reason} and a notice {@code key} (with {@code args}, unless null); nobody moved. */
-    private static S2C.NavigateResult refused(Harness h, ServerPlayerEntity p, C2S.Navigate request, RejectReason reason,
+    private static S2C.NavigateResult refused(Harness h, ServerPlayer p, C2S.Navigate request, RejectReason reason,
                                               String key, List<String> args) {
         double x = p.getX(), y = p.getY(), z = p.getZ();
         NavigateService.Decision decision = NavigateService.decide(h.runtime, p, request);
@@ -340,39 +340,39 @@ public final class LineNavGameTest implements FabricGameTest {
      * An operator (level 2) in a given game mode: vanilla's mock player is always in Creative, so the mode is this
      * player's own (as BuilderModeGameTest's). {@link #leave} removes it.
      */
-    private static final class ModePlayer extends ServerPlayerEntity {
-        private final GameMode mode;
+    private static final class ModePlayer extends ServerPlayer {
+        private final GameType mode;
 
-        private ModePlayer(ServerWorld world, GameProfile profile, ConnectedClientData data, GameMode mode) {
-            super(world.getServer(), world, profile, data.syncedOptions());
+        private ModePlayer(ServerLevel world, GameProfile profile, CommonListenerCookie data, GameType mode) {
+            super(world.getServer(), world, profile, data.clientInformation());
             this.mode = mode;
         }
 
-        static ModePlayer join(TestContext context, GameMode mode) {
-            ServerWorld world = context.getWorld();
-            GameProfile profile = new GameProfile(UUID.randomUUID(), "navigator-" + mode.asString());
-            ConnectedClientData data = ConnectedClientData.createDefault(profile, false);
+        static ModePlayer join(GameTestHelper context, GameType mode) {
+            ServerLevel world = context.getLevel();
+            GameProfile profile = new GameProfile(UUID.randomUUID(), "navigator-" + mode.getSerializedName());
+            CommonListenerCookie data = CommonListenerCookie.createInitial(profile, false);
             ModePlayer player = new ModePlayer(world, data.gameProfile(), data, mode);
-            ClientConnection connection = new ClientConnection(NetworkSide.SERVERBOUND);
+            Connection connection = new Connection(PacketFlow.SERVERBOUND);
             new EmbeddedChannel(connection);
-            world.getServer().getPlayerManager().onPlayerConnect(connection, player, data);
-            world.getServer().getPlayerManager().getOpList().add(new OperatorEntry(profile, 2, false));
+            world.getServer().getPlayerList().placeNewPlayer(connection, player, data);
+            world.getServer().getPlayerList().getOps().add(new ServerOpListEntry(profile, 2, false));
             return player;
         }
 
         void leave() {
-            getServer().getPlayerManager().getOpList().remove(getGameProfile());
-            getServer().getPlayerManager().remove(this);
+            getServer().getPlayerList().getOps().remove(getGameProfile());
+            getServer().getPlayerList().remove(this);
         }
 
         @Override
         public boolean isCreative() {
-            return mode == GameMode.CREATIVE;
+            return mode == GameType.CREATIVE;
         }
 
         @Override
         public boolean isSpectator() {
-            return mode == GameMode.SPECTATOR;
+            return mode == GameType.SPECTATOR;
         }
     }
 }

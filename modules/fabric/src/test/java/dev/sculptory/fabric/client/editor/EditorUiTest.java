@@ -38,8 +38,8 @@ import dev.sculptory.fabric.client.session.Notice;
 import dev.sculptory.fabric.client.session.ToolAction;
 import java.util.ArrayList;
 import java.util.List;
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.item.ItemStack;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.world.item.ItemStack;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.glfw.GLFW;
@@ -673,6 +673,6 @@ class EditorUiTest {
         public void item(ItemStack stack, int x, int y) {}
 
         @Override
-        public void widget(ClickableWidget widget, int mouseX, int mouseY, float delta) {}
+        public void widget(AbstractWidget widget, int mouseX, int mouseY, float delta) {}
     }
 }

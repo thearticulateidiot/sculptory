@@ -1,8 +1,8 @@
 package dev.sculptory.fabric.client.editor.ui;
 
-import net.minecraft.client.gui.widget.ClickableWidget;
-import net.minecraft.item.ItemStack;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.gui.components.AbstractWidget;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * The drawing surface nodes render into. The in-game implementation
@@ -54,13 +54,13 @@ public interface UiGraphics {
     void item(ItemStack stack, int x, int y);
 
     /** Renders a vanilla widget that a node wraps (used by {@code TextInput}). */
-    void widget(ClickableWidget widget, int mouseX, int mouseY, float delta);
+    void widget(AbstractWidget widget, int mouseX, int mouseY, float delta);
 
     /**
      * Draws the whole of a registered texture of {@code textureWidth} x {@code textureHeight} pixels scaled into the
      * rectangle (the wiki's pictures). Does nothing by default: test fakes that don't record textures leave it out.
      */
-    default void texture(Identifier texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
+    default void texture(ResourceLocation texture, int x, int y, int width, int height, int textureWidth, int textureHeight) {
     }
 
     default void fill(Rect rect, int argb) {

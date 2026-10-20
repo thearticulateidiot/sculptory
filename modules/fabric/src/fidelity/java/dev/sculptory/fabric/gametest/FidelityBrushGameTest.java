@@ -34,15 +34,15 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
 import vectorwing.farmersdelight.common.block.entity.CookingPotBlockEntity;
 
 /**
@@ -55,10 +55,10 @@ public final class FidelityBrushGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
     private static final int BASE = 100;
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fidelity_brush", tickLimit = LIMIT)
-    public void moddedTerrainBrushesMatchTheKernelAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_brush", timeoutTicks = LIMIT)
+    public void moddedTerrainBrushesMatchTheKernelAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 230);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
@@ -74,7 +74,7 @@ public final class FidelityBrushGameTest implements FabricGameTest {
         for (int dx = 4; dx < 44; dx += 3) {
             for (int dz = 4; dz < 44; dz += 2) {
                 int x = x0 + dx, z = z0 + dz, top = top(world, x, z);
-                int ground = Block.getRawIdFromState(world.getBlockState(pos(x, top, z)));
+                int ground = Block.getId(world.getBlockState(pos(x, top, z)));
                 if (ground == farmland) writer.write(x, top + 1, z, cabbages, null);
                 else if (ground == richSoil && (dx + dz) % 4 == 1) writer.write(x, top + 1, z, wildCabbages, null);
                 else if (ground == richSoil && (dx + dz) % 4 == 3) {
@@ -94,7 +94,7 @@ public final class FidelityBrushGameTest implements FabricGameTest {
                 h.state("chipped:big_lantern[facing=north,waterlogged=false]"), null);
         WorldSnapshot[] before = new WorldSnapshot[1];
         SnapshotWorld[] snapshot = new SnapshotWorld[1];
-        NbtCompound[] potNbt = new NbtCompound[1];
+        CompoundTag[] potNbt = new CompoundTag[1];
 
         int bricks = h.state("chipped:angry_mossy_stone_bricks");
         Pattern mix = new Pattern.Weighted(new int[] {h.state("chipped:boxed_oak_planks"), richSoil,
@@ -126,19 +126,19 @@ public final class FidelityBrushGameTest implements FabricGameTest {
         }
 
         int[] seq = {1};
-        TimedTaskRunner runner = context.createTimedTaskRunner()
-                .createAndAdd(FidelitySupport.settled(context, world, area))
-                .createAndAdd(() -> {
+        GameTestSequence runner = context.startSequence()
+                .thenWaitUntil(FidelitySupport.settled(context, world, area))
+                .thenWaitUntil(() -> {
                     before[0] = capture(world, area);
                     snapshot[0] = new SnapshotWorld(world, h.runtime.states(), area);
-                    potNbt[0] = pot.createNbtWithId(world.getRegistryManager());
+                    potNbt[0] = pot.saveWithId(world.registryAccess());
                 });
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
             List<DabOutcome> outcomes = new ArrayList<>();
             // Sends the stroke once (only a refused begin, before anything is sent, retries); the outcomes are
             // checked in the next step, so a rejected batch fails with its reason instead of being sent again.
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 begin(h, 60 + current, specs.get(current));
                 List<Dab> dabs = strokes.get(current);
                 for (int from = 0; from < dabs.size(); from += 8) {
@@ -146,17 +146,17 @@ public final class FidelityBrushGameTest implements FabricGameTest {
                             dabs.subList(from, Math.min(dabs.size(), from + 8))));
                 }
             });
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 for (int b = 0; b < outcomes.size(); b++) {
                     check(outcomes.get(b).accepted(), "stroke " + current + " batch " + b + ": " + outcomes.get(b));
                 }
             });
-            runner.createAndAdd(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
-            runner.createAndAdd(() -> h.service.endStroke(h.player, 60 + current));
+            runner.thenWaitUntil(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
+            runner.thenWaitUntil(() -> h.service.endStroke(h.player, 60 + current));
         }
         // The replay mutates the snapshot, so it runs once; a failed check is retried against the same verdict.
         String[] replay = {null};
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
             if (replay[0] == null) replay[0] = replay(specs, strokes, snapshot[0]);
             check(replay[0].isEmpty(), replay[0]);
@@ -165,29 +165,29 @@ public final class FidelityBrushGameTest implements FabricGameTest {
             for (int y = area.min().y(); y <= area.max().y(); y++) {
                 for (int z = area.min().z(); z <= area.max().z(); z++) {
                     for (int x = area.min().x(); x <= area.max().x(); x++) {
-                        int server = Block.getRawIdFromState(world.getBlockState(pos(x, y, z)));
+                        int server = Block.getId(world.getBlockState(pos(x, y, z)));
                         int kernel = snapshot[0].get(x, y, z);
                         if (server == kernel) continue;
                         mismatches++;
                         if (first == null) {
-                            first = x + "," + y + "," + z + ": server " + Block.getStateFromRawId(server) + ", kernel "
-                                    + Block.getStateFromRawId(kernel);
+                            first = x + "," + y + "," + z + ": server " + Block.stateById(server) + ", kernel "
+                                    + Block.stateById(kernel);
                         }
                     }
                 }
             }
             check(mismatches == 0, mismatches + " cells differ; first " + first);
             checkRicePairs(world, before[0], riceLower, riceUpper);
-            List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+            List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
             check(entries.size() == specs.size(), entries.size() + " history entries for " + specs.size() + " strokes");
             CookingPotBlockEntity after = FidelitySupport.entity(world, potX, potY, potZ, CookingPotBlockEntity.class);
-            check(potNbt[0].equals(after.createNbtWithId(world.getRegistryManager())),
+            check(potNbt[0].equals(after.saveWithId(world.registryAccess())),
                     "the brushes changed the cooking pot");
         });
         RecordingListener[] undo = {null};
         for (int s = 0; s < specs.size(); s++) {
             int step = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 if (undo[0] != null) check(undo[0].result != null, "undo " + (step - 1) + " running");
                 if (undo[0] != null) {
                     check(undo[0].result.outcome() == JobOutcome.COMPLETED && undo[0].result.skippedConflicts() == 0,
@@ -197,31 +197,31 @@ public final class FidelityBrushGameTest implements FabricGameTest {
                 h.undo(undo[0]);
             });
         }
-        runner.createAndAdd(() -> check(undo[0].result != null, "last undo running"));
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> check(undo[0].result != null, "last undo running"));
+        runner.thenWaitUntil(() -> {
             check(undo[0].result.outcome() == JobOutcome.COMPLETED && undo[0].result.skippedConflicts() == 0,
                     "last undo: " + undo[0].result);
             checkSame(before[0], capture(world, area), "after undoing every stroke");
             forceChunks(world, area, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
      * Every wild rice half has its other half (the brushes left no half plant behind), and the strokes did reach some
      * wild rice ({@code before} is the area before them).
      */
-    private static void checkRicePairs(ServerWorld world, WorldSnapshot before, int lower, int upper) {
+    private static void checkRicePairs(ServerLevel world, WorldSnapshot before, int lower, int upper) {
         Box area = before.box;
         int pairs = 0, gone = 0;
         for (int y = area.min().y(); y < area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
-                    int here = Block.getRawIdFromState(world.getBlockState(pos(x, y, z)));
-                    int above = Block.getRawIdFromState(world.getBlockState(pos(x, y + 1, z)));
+                    int here = Block.getId(world.getBlockState(pos(x, y, z)));
+                    int above = Block.getId(world.getBlockState(pos(x, y + 1, z)));
                     if ((here == lower) != (above == upper)) {
-                        throw new GameTestException("a half wild rice at " + x + "," + y + "," + z + ": "
+                        throw new GameTestAssertException("a half wild rice at " + x + "," + y + "," + z + ": "
                                 + world.getBlockState(pos(x, y, z)) + " under " + world.getBlockState(pos(x, y + 1, z)));
                     }
                     if (here == lower) pairs++;
@@ -275,7 +275,7 @@ public final class FidelityBrushGameTest implements FabricGameTest {
     }
 
     /** The topmost non-air y of a column (from y 140 down to the floor). */
-    private static int top(ServerWorld world, int x, int z) {
+    private static int top(ServerLevel world, int x, int z) {
         for (int y = 140; y >= BASE; y--) {
             if (!world.getBlockState(pos(x, y, z)).isAir()) return y;
         }
@@ -286,7 +286,7 @@ public final class FidelityBrushGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(h.player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 }

@@ -1,10 +1,10 @@
 package dev.sculptory.fabric.client.editor.render;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import java.util.OptionalDouble;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.RenderPhase;
-import net.minecraft.client.render.VertexFormat;
-import net.minecraft.client.render.VertexFormats;
+import net.minecraft.client.renderer.RenderStateShard;
+import net.minecraft.client.renderer.RenderType;
 
 /**
  * Render layers for editor overlays.
@@ -21,53 +21,53 @@ final class OverlayLayers {
     private OverlayLayers() {}
 
     /** Depth-tested lines (vertex format LINES: position, colour, normal = line direction). */
-    static final RenderLayer LINES = lines("sculptory_overlay_lines", RenderPhase.LEQUAL_DEPTH_TEST);
+    static final RenderType LINES = lines("sculptory_overlay_lines", RenderStateShard.LEQUAL_DEPTH_TEST);
 
     /** Lines that show through terrain. */
-    static final RenderLayer LINES_SEE_THROUGH = lines("sculptory_overlay_lines_see_through", RenderPhase.ALWAYS_DEPTH_TEST);
+    static final RenderType LINES_SEE_THROUGH = lines("sculptory_overlay_lines_see_through", RenderStateShard.NO_DEPTH_TEST);
 
     /** Depth-tested translucent quads (position, colour), pulled towards the camera to avoid z-fighting. */
-    static final RenderLayer QUADS = quads("sculptory_overlay_quads", RenderPhase.LEQUAL_DEPTH_TEST);
+    static final RenderType QUADS = quads("sculptory_overlay_quads", RenderStateShard.LEQUAL_DEPTH_TEST);
 
     /** Translucent quads that show through terrain. */
-    static final RenderLayer QUADS_SEE_THROUGH = quads("sculptory_overlay_quads_see_through", RenderPhase.ALWAYS_DEPTH_TEST);
+    static final RenderType QUADS_SEE_THROUGH = quads("sculptory_overlay_quads_see_through", RenderStateShard.NO_DEPTH_TEST);
 
-    private static RenderLayer lines(String name, RenderPhase.DepthTest depthTest) {
-        return RenderLayer.of(
+    private static RenderType lines(String name, RenderStateShard.DepthTestStateShard depthTest) {
+        return RenderType.create(
                 name,
-                VertexFormats.LINES,
-                VertexFormat.DrawMode.LINES,
+                DefaultVertexFormat.POSITION_COLOR_NORMAL,
+                VertexFormat.Mode.LINES,
                 1536,
                 false,
                 false,
-                RenderLayer.MultiPhaseParameters.builder()
-                        .program(RenderPhase.LINES_PROGRAM)
-                        .lineWidth(new RenderPhase.LineWidth(OptionalDouble.empty()))
-                        .layering(RenderPhase.VIEW_OFFSET_Z_LAYERING)
-                        .transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
-                        .target(RenderPhase.MAIN_TARGET)
-                        .writeMaskState(RenderPhase.COLOR_MASK)
-                        .cull(RenderPhase.DISABLE_CULLING)
-                        .depthTest(depthTest)
-                        .build(false));
+                RenderType.CompositeState.builder()
+                        .setShaderState(RenderStateShard.RENDERTYPE_LINES_SHADER)
+                        .setLineState(new RenderStateShard.LineStateShard(OptionalDouble.empty()))
+                        .setLayeringState(RenderStateShard.VIEW_OFFSET_Z_LAYERING)
+                        .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                        .setCullState(RenderStateShard.NO_CULL)
+                        .setDepthTestState(depthTest)
+                        .createCompositeState(false));
     }
 
-    private static RenderLayer quads(String name, RenderPhase.DepthTest depthTest) {
-        return RenderLayer.of(
+    private static RenderType quads(String name, RenderStateShard.DepthTestStateShard depthTest) {
+        return RenderType.create(
                 name,
-                VertexFormats.POSITION_COLOR,
-                VertexFormat.DrawMode.QUADS,
+                DefaultVertexFormat.POSITION_COLOR,
+                VertexFormat.Mode.QUADS,
                 1536,
                 false,
                 true,
-                RenderLayer.MultiPhaseParameters.builder()
-                        .program(RenderPhase.COLOR_PROGRAM)
-                        .layering(RenderPhase.POLYGON_OFFSET_LAYERING)
-                        .transparency(RenderPhase.TRANSLUCENT_TRANSPARENCY)
-                        .target(RenderPhase.MAIN_TARGET)
-                        .writeMaskState(RenderPhase.COLOR_MASK)
-                        .cull(RenderPhase.DISABLE_CULLING)
-                        .depthTest(depthTest)
-                        .build(false));
+                RenderType.CompositeState.builder()
+                        .setShaderState(RenderStateShard.POSITION_COLOR_SHADER)
+                        .setLayeringState(RenderStateShard.POLYGON_OFFSET_LAYERING)
+                        .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
+                        .setOutputState(RenderStateShard.MAIN_TARGET)
+                        .setWriteMaskState(RenderStateShard.COLOR_WRITE)
+                        .setCullState(RenderStateShard.NO_CULL)
+                        .setDepthTestState(depthTest)
+                        .createCompositeState(false));
     }
 }

@@ -39,13 +39,13 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
 
 /** Brush strokes through {@code EngineEditService}: the brush lane, acknowledgements, admission and history. */
 public final class StrokeGameTest implements FabricGameTest {
@@ -53,10 +53,10 @@ public final class StrokeGameTest implements FabricGameTest {
     private static final int BASE = 100;
 
     /** One stroke of several dab batches is one history entry, and undoing it restores the terrain exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_undo", tickLimit = LIMIT)
-    public void strokeCoalescesToOneUndo(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_stroke_undo", timeoutTicks = LIMIT)
+    public void strokeCoalescesToOneUndo(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 18);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
@@ -75,13 +75,13 @@ public final class StrokeGameTest implements FabricGameTest {
         }
         RecordingListener undo = new RecordingListener();
         int[] changedCells = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(h.acks.seqs.size() == 3, "acks " + h.acks.seqs))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(h.acks.seqs.size() == 3, "acks " + h.acks.seqs))
+                .thenWaitUntil(() -> {
                     check(h.acks.seqs.equals(List.of(100, 101, 102)), "ack order " + h.acks.seqs);
-                    check(h.service.historyService().undoEntries(h.player.getUuid()).isEmpty(), "entry before the end");
+                    check(h.service.historyService().undoEntries(h.player.getUUID()).isEmpty(), "entry before the end");
                     h.service.endStroke(h.player, 7);
-                    List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+                    List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
                     check(entries.size() == 1, "entries after the stroke: " + entries.size());
                     WorldSnapshot after = capture(world, area);
                     for (int i = 0; i < before.states.length; i++) {
@@ -95,8 +95,8 @@ public final class StrokeGameTest implements FabricGameTest {
                             "label " + label);
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                             "undo " + undo.result);
                     check(undo.result.changed() == changedCells[0], "undo changed " + undo.result.changed());
@@ -104,17 +104,17 @@ public final class StrokeGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Four strokes (raise, lower through a pond, smooth, paint) applied by the server's brush lane match the same
      * kernels run on a snapshot of the area (no height hints there), cell for cell.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_kernel", tickLimit = LIMIT)
-    public void brushServerMatchesSnapshotKernel(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_stroke_kernel", timeoutTicks = LIMIT)
+    public void brushServerMatchesSnapshotKernel(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 19);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
@@ -133,7 +133,7 @@ public final class StrokeGameTest implements FabricGameTest {
         for (int i = 0; i < 40; i++) {
             int x = x0 + 8 + (i * 7) % 32, z = z0 + 8 + (i * 11) % 32;
             int top = topSolid(world, x, z);
-            if (world.getBlockState(new BlockPos(x, top, z)).isOf(net.minecraft.block.Blocks.GRASS_BLOCK)) {
+            if (world.getBlockState(new BlockPos(x, top, z)).is(net.minecraft.world.level.block.Blocks.GRASS_BLOCK)) {
                 writer.write(x, top + 1, z, h.state("minecraft:short_grass"), null);
             }
         }
@@ -162,10 +162,10 @@ public final class StrokeGameTest implements FabricGameTest {
         }
 
         int[] seq = {1};
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 begin(h, 20 + current, specs.get(current));
                 List<Dab> dabs = strokes.get(current);
                 for (int from = 0; from < dabs.size(); from += 8) {
@@ -174,10 +174,10 @@ public final class StrokeGameTest implements FabricGameTest {
                     check(outcome.accepted(), "stroke " + current + " batch " + from + ": " + outcome);
                 }
             });
-            runner.createAndAdd(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
-            runner.createAndAdd(() -> h.service.endStroke(h.player, 20 + current));
+            runner.thenWaitUntil(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
+            runner.thenWaitUntil(() -> h.service.endStroke(h.player, 20 + current));
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(h.acks.seqs.equals(increasing(1, seq[0] - 1)), "ack order " + h.acks.seqs);
             check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
             int changed = 0;
@@ -196,27 +196,27 @@ public final class StrokeGameTest implements FabricGameTest {
             }
             int mismatches = 0;
             String first = null;
-            BlockPos.Mutable pos = new BlockPos.Mutable();
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             for (int y = area.min().y(); y <= area.max().y(); y++) {
                 for (int z = area.min().z(); z <= area.max().z(); z++) {
                     for (int x = area.min().x(); x <= area.max().x(); x++) {
-                        int server = Block.getRawIdFromState(world.getBlockState(pos.set(x, y, z)));
+                        int server = Block.getId(world.getBlockState(pos.set(x, y, z)));
                         int kernel = snapshot.get(x, y, z);
                         if (server == kernel) continue;
                         mismatches++;
                         if (first == null) {
-                            first = x + "," + y + "," + z + ": server " + Block.getStateFromRawId(server) + ", kernel "
-                                    + Block.getStateFromRawId(kernel);
+                            first = x + "," + y + "," + z + ": server " + Block.stateById(server) + ", kernel "
+                                    + Block.stateById(kernel);
                         }
                     }
                 }
             }
             check(mismatches == 0, mismatches + " cells differ (" + changed + " kernel writes); first " + first);
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
             forceChunks(world, area, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
@@ -224,12 +224,12 @@ public final class StrokeGameTest implements FabricGameTest {
      * admitted before a job locked its area is skipped when the lane reaches it, reported, and still acknowledged.
      * Uses a private executor ticked by hand, so the job cannot run (and unlock) before the lane reaches the dab.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_locked", tickLimit = LIMIT)
-    public void dabRefusedOnLockedSection(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_stroke_locked", timeoutTicks = LIMIT)
+    public void dabRefusedOnLockedSection(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(10_000_000_000L, 0, 1.0, 2, 8, 32, 64, UnloadedPolicy.REFUSE, 256, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 20);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 63, 170, z0 + 15);
@@ -271,7 +271,7 @@ public final class StrokeGameTest implements FabricGameTest {
         DabOutcome afterRejection = h.service.dabs(h.player, 3, 4, List.of(dab(4, x0 + 24, 107, z0 + 8)));
         check(!afterRejection.accepted() && afterRejection.reason() == RejectReason.AREA_BUSY, "after: " + afterRejection);
         h.service.endStroke(h.player, 3);
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "one stroke entry");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "one stroke entry");
         begin(h, 4, new BrushSpec(BrushTool.RAISE, 3, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0, 1L));
         check(h.service.dabs(h.player, 4, 5, List.of(dab(0, x0 + 24, 107, z0 + 8))).accepted(), "new stroke refused");
         executor.tick();
@@ -280,17 +280,17 @@ public final class StrokeGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * At most 32 dabs may wait in a player's lane; the next batch is refused with RATE_LIMITED. Admitted batches
      * are acknowledged once each, in order, after all their dabs ran.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_backlog", tickLimit = LIMIT)
-    public void strokeBacklogCapped(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_stroke_backlog", timeoutTicks = LIMIT)
+    public void strokeBacklogCapped(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 21);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 31, 170, z0 + 31);
@@ -303,37 +303,37 @@ public final class StrokeGameTest implements FabricGameTest {
             for (int i = 0; i < 16; i++, index++) dabs.add(dab(index, x0 + 8 + index % 16, 108, z0 + 8 + index / 16));
             check(h.service.dabs(h.player, 9, 11 + batch, dabs).accepted(), "batch " + batch);
         }
-        check(h.service.queuedDabs(h.player.getUuid()) == 32, "queued " + h.service.queuedDabs(h.player.getUuid()));
+        check(h.service.queuedDabs(h.player.getUUID()) == 32, "queued " + h.service.queuedDabs(h.player.getUUID()));
         DabOutcome over = h.service.dabs(h.player, 9, 13, List.of(dab(32, x0 + 20, 108, z0 + 20)));
         check(!over.accepted() && over.reason() == RejectReason.RATE_LIMITED, "over the cap: " + over);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(h.acks.seqs.size() == 2, "acks " + h.acks.seqs))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(h.acks.seqs.size() == 2, "acks " + h.acks.seqs))
+                .thenWaitUntil(() -> {
                     check(h.acks.seqs.equals(List.of(11, 12)), "acks " + h.acks.seqs);
                     check(h.acks.queuedAtAck.equals(List.of(16, 0)), "queued at each ack " + h.acks.queuedAtAck
                             + "; a batch must be acknowledged only after all its dabs ran");
                     DabOutcome next = h.service.dabs(h.player, 9, 14, List.of(dab(33, x0 + 20, 108, z0 + 20)));
                     check(next.accepted(), "after the lane drained: " + next);
                 })
-                .createAndAdd(() -> check(h.acks.seqs.size() == 3, "acks " + h.acks.seqs))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(h.acks.seqs.size() == 3, "acks " + h.acks.seqs))
+                .thenWaitUntil(() -> {
                     check(h.acks.seqs.equals(List.of(11, 12, 14)), "acks " + h.acks.seqs);
                     h.service.endStroke(h.player, 9);
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Five seconds without dab activity commits the stroke's record as an entry and keeps the stroke open; the
      * next dabs go into a new entry. Leaving drops the history.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_idle", tickLimit = LIMIT)
-    public void strokeIdleTimeoutCommits(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_stroke_idle", timeoutTicks = LIMIT)
+    public void strokeIdleTimeoutCommits(GameTestHelper context) {
         long[] now = {0};
         Harness h = new Harness(context, null, () -> now[0]);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 22);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 31, 170, z0 + 31);
@@ -341,40 +341,40 @@ public final class StrokeGameTest implements FabricGameTest {
         terrain(h, x0, z0, 32, 32);
         begin(h, 5, new BrushSpec(BrushTool.RAISE, 3, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0, 1L));
         check(h.service.dabs(h.player, 5, 1, List.of(dab(0, x0 + 10, 108, z0 + 10))).accepted(), "first dab");
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(h.acks.seqs.size() == 1, "first dab applying"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(h.acks.seqs.size() == 1, "first dab applying"))
+                .thenWaitUntil(() -> {
                     now[0] += EngineEditService.STROKE_IDLE_NANOS - 1;
                     h.service.tick();
-                    check(h.service.historyService().undoEntries(h.player.getUuid()).isEmpty(), "committed too early");
+                    check(h.service.historyService().undoEntries(h.player.getUUID()).isEmpty(), "committed too early");
                     now[0] += 1;
                     h.service.tick();
-                    check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 1, "not committed when idle");
-                    check(h.service.openStroke(h.player.getUuid()).orElse(-1) == 5, "the stroke was closed");
+                    check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 1, "not committed when idle");
+                    check(h.service.openStroke(h.player.getUUID()).orElse(-1) == 5, "the stroke was closed");
                     check(h.service.dabs(h.player, 5, 2, List.of(dab(1, x0 + 20, 108, z0 + 20))).accepted(), "later dab");
                 })
-                .createAndAdd(() -> check(h.acks.seqs.size() == 2, "later dab applying"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(h.acks.seqs.size() == 2, "later dab applying"))
+                .thenWaitUntil(() -> {
                     h.service.endStroke(h.player, 5);
-                    check(h.service.historyService().undoEntries(h.player.getUuid()).size() == 2, "second entry");
-                    check(h.service.openStroke(h.player.getUuid()).isEmpty(), "stroke still open");
-                    h.service.playerLeft(h.player.getUuid());
+                    check(h.service.historyService().undoEntries(h.player.getUUID()).size() == 2, "second entry");
+                    check(h.service.openStroke(h.player.getUUID()).isEmpty(), "stroke still open");
+                    h.service.playerLeft(h.player.getUUID());
                     check(h.history().equals(dev.sculptory.server.engine.impl.HistorySnapshot.EMPTY),
                             "history kept after leaving");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Review M2: a region op during an open stroke commits the stroke's record first, so the history follows the
      * real write order (the fill is undone first).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_then_fill", tickLimit = LIMIT)
-    public void regionOpCommitsOpenStrokeFirst(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_stroke_then_fill", timeoutTicks = LIMIT)
+    public void regionOpCommitsOpenStrokeFirst(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 28);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 31);
@@ -387,21 +387,21 @@ public final class StrokeGameTest implements FabricGameTest {
         // Before the lane ran: the fill applies the queued dabs and pushes the stroke's entry first.
         h.fill(box(x0 + 32, 140, z0, x0 + 39, 147, z0 + 7), "minecraft:gold_block", fill);
         check(h.acks.seqs.equals(List.of(1)), "queued dabs not applied before the fill: " + h.acks.seqs);
-        List<HistoryEntry> committed = h.service.historyService().undoEntries(h.player.getUuid());
+        List<HistoryEntry> committed = h.service.historyService().undoEntries(h.player.getUUID());
         check(committed.size() == 1 && committed.get(0).label().startsWith("Raise stroke · "), "entries " + committed.size());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
                     List<String> labels = h.history().undoLabels();
                     check(labels.size() == 2 && labels.get(0).equals("Fill · 512 blocks")
                             && labels.get(1).startsWith("Raise stroke · "), "undo order " + labels);
-                    check(h.service.openStroke(h.player.getUuid()).orElse(-1) == 6, "the stroke was closed");
+                    check(h.service.openStroke(h.player.getUUID()).orElse(-1) == 6, "the stroke was closed");
                     h.service.endStroke(h.player, 6);
                     check(h.history().undoLabels().size() == 2, "an empty stroke record was pushed");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -409,12 +409,12 @@ public final class StrokeGameTest implements FabricGameTest {
      * admitted after the executor stopped is dropped during admission and acknowledged on the next service tick
      * (never before the network layer records it as admitted).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_stroke_shutdown", tickLimit = LIMIT)
-    public void acksAtShutdown(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_stroke_shutdown", timeoutTicks = LIMIT)
+    public void acksAtShutdown(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(10_000_000_000L, 0, 1.0, 2, 8, 32, 64, UnloadedPolicy.REFUSE, 256, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 29);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 31, 170, z0 + 31);
@@ -426,7 +426,7 @@ public final class StrokeGameTest implements FabricGameTest {
         check(h.service.dabs(h.player, 8, 6, List.of(dab(2, x0 + 20, 108, z0 + 20))).accepted(), "6");
         executor.shutdown();
         check(h.acks.seqs.equals(List.of(5, 6)), "acks at executor shutdown " + h.acks.seqs);
-        check(h.service.queuedDabs(h.player.getUuid()) == 0, "dabs still queued");
+        check(h.service.queuedDabs(h.player.getUUID()) == 0, "dabs still queued");
         checkSame(before, capture(world, area), "dropped dabs wrote");
 
         check(h.service.dabs(h.player, 8, 7, List.of(dab(3, x0 + 8, 108, z0 + 20))).accepted(), "7 after shutdown");
@@ -439,7 +439,7 @@ public final class StrokeGameTest implements FabricGameTest {
         checkSame(before, capture(world, area), "dropped dabs wrote");
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // ------------------------------------------------------------------ helpers
@@ -456,7 +456,7 @@ public final class StrokeGameTest implements FabricGameTest {
         }
     }
 
-    private static int topSolid(ServerWorld world, int x, int z) {
+    private static int topSolid(ServerLevel world, int x, int z) {
         for (int y = 140; y >= BASE; y--) {
             if (!world.getBlockState(new BlockPos(x, y, z)).isAir()) return y;
         }
@@ -467,16 +467,16 @@ public final class StrokeGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(h.player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 
-    private static void submit(EditExecutor<ServerWorld> executor, ServerWorld world, BoxFill program,
+    private static void submit(EditExecutor<ServerLevel> executor, ServerLevel world, BoxFill program,
                                RecordingListener listener) {
         try {
             executor.submit(JobRequest.system(world, program, listener));
         } catch (EditRejected e) {
-            throw new GameTestException("job refused: " + e.getMessage());
+            throw new GameTestAssertException("job refused: " + e.getMessage());
         }
     }
 

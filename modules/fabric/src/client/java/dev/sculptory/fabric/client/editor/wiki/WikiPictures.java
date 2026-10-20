@@ -3,7 +3,7 @@ package dev.sculptory.fabric.client.editor.wiki;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import net.minecraft.util.Identifier;
+import net.minecraft.resources.ResourceLocation;
 
 /**
  * The wiki's pictures as textures the UI can draw ({@code UiGraphics.texture}). In game they are PNGs from the mod's
@@ -23,7 +23,7 @@ public interface WikiPictures {
     };
 
     /** A loaded picture: the texture to draw and its size in pixels. */
-    record Picture(Identifier texture, int width, int height) {
+    record Picture(ResourceLocation texture, int width, int height) {
         public Picture {
             Objects.requireNonNull(texture);
             if (width <= 0 || height <= 0) {

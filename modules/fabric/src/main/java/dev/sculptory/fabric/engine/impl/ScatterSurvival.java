@@ -8,7 +8,7 @@ import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import java.util.HashMap;
 import java.util.Map;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.server.level.ServerLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,7 +27,7 @@ final class ScatterSurvival {
      *
      * @param blockStates per source index, the block variant's lower state, or -1 for a clipboard or asset
      */
-    static ScatterPlanner.SurvivalCheck survivalCheck(FabricStateSpace states, ServerWorld world, int[] blockStates) {
+    static ScatterPlanner.SurvivalCheck survivalCheck(FabricStateSpace states, ServerLevel world, int[] blockStates) {
         boolean anyBlock = false;
         for (int state : blockStates) anyBlock |= state >= 0;
         if (!anyBlock) return ScatterPlanner.SurvivalCheck.ALWAYS;
@@ -43,7 +43,7 @@ final class ScatterSurvival {
         private final FabricStateSpace states;
         private final LoadedOnlyView view;
         private final int[] blockStates;
-        private final net.minecraft.util.math.BlockPos.Mutable pos = new net.minecraft.util.math.BlockPos.Mutable();
+        private final net.minecraft.core.BlockPos.MutableBlockPos pos = new net.minecraft.core.BlockPos.MutableBlockPos();
         /** A column plant's cell states, bottom first, by source and height. */
         private final Map<Long, int[]> columns = new HashMap<>();
 
@@ -91,7 +91,7 @@ final class ScatterSurvival {
         /** Vanilla's {@code canPlaceAt} of {@code placed} at (x, y, z); {@code variant} names the block in a warning. */
         private boolean stays(int variant, int placed, int x, int y, int z) {
             try {
-                return states.state(placed).canPlaceAt(view, pos.set(x, y, z));
+                return states.state(placed).canSurvive(view, pos.set(x, y, z));
             } catch (RuntimeException e) {
                 // A mod's rule that expects a real World, say; the preview still fails (INVALID) as any planner failure.
                 LOG.warn("Sculptory: the survival check (canPlaceAt) of {} failed in a scatter preview: {}",

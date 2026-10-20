@@ -39,15 +39,15 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.Locale;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
 
 /**
  * The fluid patterns on a real server (regionCorner slots
@@ -61,21 +61,21 @@ public final class FluidGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
     private static final int FLOOR = 100;
 
-    private static JobTicket run(Harness h, ServerPlayerEntity player, OpSpec op, RecordingListener listener) {
+    private static JobTicket run(Harness h, ServerPlayer player, OpSpec op, RecordingListener listener) {
         try {
             return h.service.run(player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
+            throw new GameTestAssertException(op.getClass().getSimpleName() + " refused: " + e.getMessage());
         }
     }
 
-    private static RejectReason refusal(Harness h, ServerPlayerEntity player, OpSpec op) {
+    private static RejectReason refusal(Harness h, ServerPlayer player, OpSpec op) {
         try {
             h.service.run(player, op, RunOptions.DEFAULT, null);
         } catch (EditRejected e) {
             return e.reason();
         }
-        throw new GameTestException(op.getClass().getSimpleName() + " was not refused");
+        throw new GameTestAssertException(op.getClass().getSimpleName() + " was not refused");
     }
 
     /** A stone basin: the floor at {@link #FLOOR}, walls up to FLOOR + 6 around an 18 × 18 interior of air. */
@@ -103,8 +103,8 @@ public final class FluidGameTest implements FabricGameTest {
                     int want = region.contains(x, y, z) ? pattern.apply(states, x, y, z, was) : was;
                     int got = now.get(x, y, z);
                     if (want != got) {
-                        throw new GameTestException(what + " at " + x + "," + y + "," + z + ": "
-                                + Block.getStateFromRawId(got) + " instead of " + Block.getStateFromRawId(want));
+                        throw new GameTestAssertException(what + " at " + x + "," + y + "," + z + ": "
+                                + Block.stateById(got) + " instead of " + Block.stateById(want));
                     }
                 }
             }
@@ -128,23 +128,23 @@ public final class FluidGameTest implements FabricGameTest {
     /** A standing oak sign at (x, y, z) in {@code state} reading "Hi" on its front. */
     private static void sign(Harness h, BlockWriter writer, int x, int y, int z, String state) {
         writer.write(x, y, z, h.state(state), null);
-        ((SignBlockEntity) h.world.getBlockEntity(pos(x, y, z))).setText(new SignText().withMessage(0, Text.literal("Hi")), true);
+        ((SignBlockEntity) h.world.getBlockEntity(pos(x, y, z))).setText(new SignText().setMessage(0, Component.literal("Hi")), true);
     }
 
     /** The sign at (x, y, z) holds {@code state} and still reads "Hi". */
     private static void checkSign(Harness h, int x, int y, int z, String state, String what) {
-        check(world(h).getBlockState(pos(x, y, z)).equals(Block.getStateFromRawId(h.state(state))), what + ": sign state");
+        check(world(h).getBlockState(pos(x, y, z)).equals(Block.stateById(h.state(state))), what + ": sign state");
         SignBlockEntity sign = (SignBlockEntity) world(h).getBlockEntity(pos(x, y, z));
         String text = sign == null ? null : sign.getFrontText().getMessage(0, false).getString();
         check("Hi".equals(text), what + ": the sign reads " + text + " instead of Hi");
     }
 
-    private static ServerWorld world(Harness h) {
+    private static ServerLevel world(Harness h) {
         return h.world;
     }
 
     private static void checkLabel(Harness h, String label) {
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
         check(entries.size() == 1, "one history entry, got " + entries.size());
         check(entries.get(0).label().equals(label), "label " + entries.get(0).label() + ", expected " + label);
     }
@@ -152,8 +152,8 @@ public final class FluidGameTest implements FabricGameTest {
     // =================================================================== the patterns
 
     /** Waterlog and Dry evaluated against the real state space (the unit tests use the fake). */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_patterns", tickLimit = LIMIT)
-    public void thePatternsWorkOnRealStates(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_patterns", timeoutTicks = LIMIT)
+    public void thePatternsWorkOnRealStates(GameTestHelper context) {
         FabricStateSpace states = EngineTestSupport.runtime(context).states();
         int air = states.air();
         int water = EngineTestSupport.handle(states, "minecraft:water[level=0]");
@@ -192,7 +192,7 @@ public final class FluidGameTest implements FabricGameTest {
                 "water plants and bubble columns go");
         check(dry.apply(states, 0, 0, 0, dryStairs) == dryStairs && dry.apply(states, 0, 0, 0, stone) == stone
                 && dry.apply(states, 0, 0, 0, air) == air, "the rest stays");
-        context.complete();
+        context.succeed();
     }
 
     // =================================================================== flood and drain
@@ -202,10 +202,10 @@ public final class FluidGameTest implements FabricGameTest {
      * waterlogged, the wet stairs, the stone and everything above the level are untouched (the region names some of
      * them, and they are not counted); one history entry "Fill · N blocks"; undone and redone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_flood", tickLimit = LIMIT)
-    public void floodFillsThePocketWaterlogsTheRimAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_flood", timeoutTicks = LIMIT)
+    public void floodFillsThePocketWaterlogsTheRimAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 900);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, FLOOR - 2, z0, x0 + 19, FLOOR + 8, z0 + 19);
@@ -235,9 +235,9 @@ public final class FluidGameTest implements FabricGameTest {
         RecordingListener fill = new RecordingListener(), undo = new RecordingListener(), redo = new RecordingListener();
         JobTicket ticket = run(h, h.player, new OpSpec.Fill(region, waterlog, CellMask.ANY), fill);
         check(ticket.estimatedCells() == region.cellCount(), "estimate " + ticket.estimatedCells());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "flood running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "flood running"))
+                .thenWaitUntil(() -> {
                     check(fill.result.outcome() == JobOutcome.COMPLETED, "flood " + fill.result);
                     check(fill.result.changed() == expected, "changed " + fill.result.changed() + ", expected " + expected);
                     checkPattern(h, area, before, region, waterlog, "flood");
@@ -247,30 +247,30 @@ public final class FluidGameTest implements FabricGameTest {
                     flooded[0] = capture(world, area);
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     checkSame(before, capture(world, area), "after the undo");
                     h.redo(redo);
                 })
-                .createAndAdd(() -> check(redo.result != null, "redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(redo.result != null, "redo running"))
+                .thenWaitUntil(() -> {
                     check(redo.result.outcome() == JobOutcome.COMPLETED, "redo " + redo.result);
                     checkSame(flooded[0], capture(world, area), "after the redo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A drain of the flooded basin: the water goes, the waterlogged stairs are dried, kelp and seagrass go with the
      * water, the dry stairs and the floor stay; one history entry; undone and redone exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_drain", tickLimit = LIMIT)
-    public void drainRemovesWaterWaterloggingAndWaterPlantsAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_drain", timeoutTicks = LIMIT)
+    public void drainRemovesWaterWaterloggingAndWaterPlantsAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 902);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, FLOOR - 2, z0, x0 + 19, FLOOR + 8, z0 + 19);
@@ -304,34 +304,34 @@ public final class FluidGameTest implements FabricGameTest {
         WorldSnapshot[] drained = new WorldSnapshot[1];
         RecordingListener fill = new RecordingListener(), undo = new RecordingListener(), redo = new RecordingListener();
         run(h, h.player, new OpSpec.Fill(region, dry, CellMask.ANY), fill);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "drain running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "drain running"))
+                .thenWaitUntil(() -> {
                     check(fill.result.outcome() == JobOutcome.COMPLETED, "drain " + fill.result);
                     check(fill.result.changed() == expected, "changed " + fill.result.changed() + ", expected " + expected);
                     checkPattern(h, area, before, region, dry, "drain");
                     check(world.getBlockState(pos(x0 + 8, FLOOR + 2, z0 + 8)).isAir(), "the kelp went with the water");
                     checkSign(h, x0 + 7, FLOOR + 1, z0 + 7, "minecraft:oak_sign[rotation=4]", "drained");
                     check(world.getBlockState(pos(x0 + 5, FLOOR + 2, z0 + 5)).equals(
-                            Block.getStateFromRawId(h.state("minecraft:oak_stairs[facing=north]"))), "the stairs are dry");
+                            Block.stateById(h.state("minecraft:oak_stairs[facing=north]"))), "the stairs are dry");
                     checkLabel(h, String.format(Locale.ROOT, "Fill · %,d blocks", expected));
                     drained[0] = capture(world, area);
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     checkSame(before, capture(world, area), "after the undo");
                     h.redo(redo);
                 })
-                .createAndAdd(() -> check(redo.result != null, "redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(redo.result != null, "redo running"))
+                .thenWaitUntil(() -> {
                     check(redo.result.outcome() == JobOutcome.COMPLETED, "redo " + redo.result);
                     checkSame(drained[0], capture(world, area), "after the redo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== the fluid ball
@@ -341,11 +341,11 @@ public final class FluidGameTest implements FabricGameTest {
      * water, its dry stairs are waterlogged, its stone and wet stairs are untouched; one entry "Shape · N blocks"; undone
      * exactly. A stroke whose Waterlog carries stone is refused INVALID.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_ball", tickLimit = LIMIT)
-    public void aFluidBallWaterlogsWhatItCanAndUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_ball", timeoutTicks = LIMIT)
+    public void aFluidBallWaterlogsWhatItCanAndUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 904);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, FLOOR - 2, z0, x0 + 31, FLOOR + 12, z0 + 31);
@@ -383,14 +383,14 @@ public final class FluidGameTest implements FabricGameTest {
                 new Pattern.Waterlog(stone), Symmetry.NONE);
         try {
             h.service.beginStroke(h.player, 11, bad);
-            throw new GameTestException("a Waterlog of stone began a stroke");
+            throw new GameTestAssertException("a Waterlog of stone began a stroke");
         } catch (EditRejected e) {
             check(e.reason() == RejectReason.INVALID, "refused " + e.reason());
         }
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     // =================================================================== refusals and protection
@@ -399,11 +399,11 @@ public final class FluidGameTest implements FabricGameTest {
      * A flood over {@code maxOpVolume} is refused TOO_LARGE, a Waterlog of stone INVALID; a flood across a protected
      * chunk skips the protected cells and writes the rest, and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_refusals", tickLimit = LIMIT)
-    public void refusalsAndProtectedCells(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_refusals", timeoutTicks = LIMIT)
+    public void refusalsAndProtectedCells(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         int[] at = regionCorner(context, 906);
         int x0 = at[0], z0 = at[1];
@@ -430,41 +430,41 @@ public final class FluidGameTest implements FabricGameTest {
         for (int x = x0 + 8; x <= x0 + 23; x++) cells.add(x, FLOOR + 1, z0 + 4);
         Region.Cells line = new Region.Cells(cells.build());
         ProtectionHook.protect(builder, world, x0 + 16, z0, x0 + 31, z0 + 31);
-        check(!world.canPlayerModifyAt(builder, pos(x0 + 20, FLOOR + 1, z0 + 4)), "the east chunk is protected");
-        check(world.canPlayerModifyAt(builder, pos(x0 + 10, FLOOR + 1, z0 + 4)), "the west chunk is not");
+        check(!world.mayInteract(builder, pos(x0 + 20, FLOOR + 1, z0 + 4)), "the east chunk is protected");
+        check(world.mayInteract(builder, pos(x0 + 10, FLOOR + 1, z0 + 4)), "the west chunk is not");
         WorldSnapshot before = capture(world, area);
         RecordingListener fill = new RecordingListener(), undo = new RecordingListener();
         try {
             h.service.run(builder, new OpSpec.Fill(line, waterlog, CellMask.ANY), RunOptions.DEFAULT, fill);
         } catch (EditRejected e) {
             ProtectionHook.clear(builder);
-            throw new GameTestException("flood refused: " + e.getMessage());
+            throw new GameTestAssertException("flood refused: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "flood running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "flood running"))
+                .thenWaitUntil(() -> {
                     ProtectionHook.clear(builder);
                     check(fill.result.outcome() == JobOutcome.COMPLETED, "flood " + fill.result);
                     check(fill.result.skippedProtected() == 8, "skipped " + fill.result.skippedProtected() + " protected cells");
                     check(fill.result.changed() == 8, "changed " + fill.result.changed());
                     for (int x = x0 + 8; x <= x0 + 23; x++) {
-                        int got = Block.getRawIdFromState(world.getBlockState(pos(x, FLOOR + 1, z0 + 4)));
+                        int got = Block.getId(world.getBlockState(pos(x, FLOOR + 1, z0 + 4)));
                         int want = x < x0 + 16 ? water : before.get(x, FLOOR + 1, z0 + 4);
                         check(got == want, "cell " + x + " after the protected flood");
                     }
                     try {
                         h.service.undo(builder, dev.sculptory.core.history.ConflictPolicy.SKIP_CONFLICTS, undo);
                     } catch (EditRejected e) {
-                        throw new GameTestException("undo refused: " + e.getMessage());
+                        throw new GameTestAssertException("undo refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before, capture(world, area), "after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

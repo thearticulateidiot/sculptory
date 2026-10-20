@@ -39,13 +39,13 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.entity.Entity;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.level.block.Blocks;
 
 /**
  * Entities with regions other than boxes: an entity belongs
@@ -56,31 +56,31 @@ import net.minecraft.test.TestContext;
 public final class EntityRegionGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
-    private static Entity stand(ServerWorld world, double x, int y, double z) {
+    private static Entity stand(ServerLevel world, double x, int y, double z) {
         Entity stand = load(world, "minecraft:armor_stand", x, y, z, 0f, nbt -> nbt.putBoolean("NoGravity", true));
-        check(world.spawnEntity(stand), "a stand at " + x + "," + y + "," + z);
+        check(world.addFreshEntity(stand), "a stand at " + x + "," + y + "," + z);
         return stand;
     }
 
     private static Set<UUID> ids(List<Entity> entities) {
-        return entities.stream().map(Entity::getUuid).collect(Collectors.toSet());
+        return entities.stream().map(Entity::getUUID).collect(Collectors.toSet());
     }
 
     private static void run(Harness h, OpSpec op, RecordingListener listener) {
         try {
             h.service.run(h.player, op, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.getMessage());
         }
     }
 
-    private static void copy(ServerClipboards<ServerPlayerEntity, ServerWorld> clips, Harness h, Region region,
+    private static void copy(ServerClipboards<ServerPlayer, ServerLevel> clips, Harness h, Region region,
                              boolean cut, CellMask mask, RecordingListener erase,
                              Captured<ClipboardService.ClipboardInfo> reply) {
         try {
             clips.copy(h.player, region, region.bounds().min(), cut, mask, EntityFilter.DECORATIONS, erase, reply);
         } catch (EditRejected e) {
-            throw new GameTestException("copy refused: " + e.getMessage());
+            throw new GameTestAssertException("copy refused: " + e.getMessage());
         }
     }
 
@@ -90,10 +90,10 @@ public final class EntityRegionGameTest implements FabricGameTest {
      * three; a copy masked to air only the two in air; a cut removes the three and undo brings them back; a stack
      * copies the three; a move takes the three and leaves the fourth.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_entities_region_cells", tickLimit = LIMIT)
-    public void cellSetsTakeOnlyTheirOwnEntities(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_entities_region_cells", timeoutTicks = LIMIT)
+    public void cellSetsTakeOnlyTheirOwnEntities(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 662);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 32, y0 + 8, z0 + 64);
@@ -117,9 +117,9 @@ public final class EntityRegionGameTest implements FabricGameTest {
         RecordingListener undo = new RecordingListener();
         RecordingListener stack = new RecordingListener();
         RecordingListener move = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> ready(world, all))
-                .createAndAdd(once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> ready(world, all))
+                .thenWaitUntil(once(() -> {
                     BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
                     for (int x = x0; x <= x0 + 11; x++) {
                         for (int z = z0; z <= z0 + 11; z++) writer.write(x, y0, z, h.state("minecraft:stone"), null);
@@ -131,37 +131,37 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     outside[0] = stand(world, x0 + 5.5, y0 + 1, z0 + 5.5);
                     copy(clips, h, set, false, CellMask.ANY, null, copyAll);
                 }))
-                .createAndAdd(() -> check(copyAll.finished(), "copy running"))
-                .createAndAdd(once(() -> {
+                .thenWaitUntil(() -> check(copyAll.finished(), "copy running"))
+                .thenWaitUntil(once(() -> {
                     check(copyAll.get("the copy").entities() == 3, "the set's three: " + copyAll.value.entities());
                     copy(clips, h, set, false, new CellMask.States(new int[] {h.state("minecraft:air")}), null, copyAir);
                 }))
-                .createAndAdd(() -> check(copyAir.finished(), "masked copy running"))
-                .createAndAdd(once(() -> {
+                .thenWaitUntil(() -> check(copyAir.finished(), "masked copy running"))
+                .thenWaitUntil(once(() -> {
                     check(copyAir.get("the masked copy").entities() == 2, "the two in air: " + copyAir.value.entities());
                     copy(clips, h, set, true, CellMask.ANY, erase, cut);
                 }))
-                .createAndAdd(() -> check(erase.result != null && cut.finished(), "cut running"))
-                .createAndAdd(once(() -> {
+                .thenWaitUntil(() -> check(erase.result != null && cut.finished(), "cut running"))
+                .thenWaitUntil(once(() -> {
                     check(cut.get("the cut").entities() == 3, "cut " + cut.value.entities());
                     check(erase.result.outcome() == JobOutcome.COMPLETED, "erase " + erase.result);
-                    check(ids(entitiesIn(world, between)).equals(Set.of(outside[0].getUuid())),
+                    check(ids(entitiesIn(world, between)).equals(Set.of(outside[0].getUUID())),
                             "only the stand outside the set stays: " + entitiesIn(world, between));
                     check(world.getBlockState(pos(x0 + 10, y0 + 1, z0 + 10)).isAir(), "the set's glass was cut");
-                    check(world.getBlockState(pos(x0 + 5, y0, z0 + 5)).isOf(Blocks.STONE), "the floor stays");
+                    check(world.getBlockState(pos(x0 + 5, y0, z0 + 5)).is(Blocks.STONE), "the floor stays");
                     h.undo(undo);
                 }))
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(once(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(once(() -> {
                     check(undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     Set<UUID> expected = ids(inSet);
-                    expected.add(outside[0].getUuid());
+                    expected.add(outside[0].getUUID());
                     check(ids(entitiesIn(world, between)).equals(expected), "the same four are back");
-                    check(world.getBlockState(pos(x0 + 10, y0 + 1, z0 + 10)).isOf(Blocks.GLASS), "the glass is back");
+                    check(world.getBlockState(pos(x0 + 10, y0 + 1, z0 + 10)).is(Blocks.GLASS), "the glass is back");
                     run(h, new OpSpec.Stack(set, 0, 0, 16, 1, EntityFilter.DECORATIONS), stack);
                 }))
-                .createAndAdd(() -> check(stack.result != null, "stack running"))
-                .createAndAdd(once(() -> {
+                .thenWaitUntil(() -> check(stack.result != null, "stack running"))
+                .thenWaitUntil(once(() -> {
                     check(stack.result.outcome() == JobOutcome.COMPLETED, "stack " + stack.result);
                     check(entitiesIn(world, between.offset(0, 0, 16)).size() == 3, "the set's three copied: "
                             + entitiesIn(world, between.offset(0, 0, 16)));
@@ -169,28 +169,28 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     run(h, new OpSpec.Move(set, new BlockPos(0, 0, 32), Transform.IDENTITY,
                             new Pattern.Single(h.state("minecraft:air")), EntityFilter.DECORATIONS), move);
                 }))
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED, "move " + move.result);
                     check(entitiesIn(world, between.offset(0, 0, 32)).size() == 3, "the set's three moved: "
                             + entitiesIn(world, between.offset(0, 0, 32)));
-                    check(ids(entitiesIn(world, between)).equals(Set.of(outside[0].getUuid())),
+                    check(ids(entitiesIn(world, between)).equals(Set.of(outside[0].getUUID())),
                             "the stand outside the set stays where it is");
                     entitiesIn(world, all).forEach(Entity::discard);
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A shape takes the entities on its own cells: 16 armor stands on a grid over the box of a flat ellipse. A copy takes
      * exactly those whose block the ellipse holds (some, not all), and a move takes them and leaves the others.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_entities_region_shape", tickLimit = LIMIT)
-    public void shapesTakeOnlyTheirOwnEntities(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_entities_region_shape", timeoutTicks = LIMIT)
+    public void shapesTakeOnlyTheirOwnEntities(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 663);
         int x0 = at[0], y0 = 100, z0 = at[1];
         Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 48, y0 + 8, z0 + 32);
@@ -203,9 +203,9 @@ public final class EntityRegionGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener move = new RecordingListener();
         int[] inside = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> ready(world, all))
-                .createAndAdd(once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> ready(world, all))
+                .thenWaitUntil(once(() -> {
                     for (int i = 0; i < 4; i++) {
                         for (int j = 0; j < 4; j++) {
                             int x = x0 + 3 * i, z = z0 + 3 * j;
@@ -216,15 +216,15 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     check(inside[0] > 0 && inside[0] < 16, "the ellipse holds some of the stands' blocks: " + inside[0]);
                     copy(clips, h, ellipse, false, CellMask.ANY, null, copied);
                 }))
-                .createAndAdd(() -> check(copied.finished(), "copy running"))
-                .createAndAdd(once(() -> {
+                .thenWaitUntil(() -> check(copied.finished(), "copy running"))
+                .thenWaitUntil(once(() -> {
                     check(copied.get("the copy").entities() == inside[0], "copied " + copied.value.entities()
                             + ", the ellipse holds " + inside[0]);
                     run(h, new OpSpec.Move(ellipse, new BlockPos(20, 0, 0), Transform.IDENTITY,
                             new Pattern.Single(h.state("minecraft:air")), EntityFilter.DECORATIONS), move);
                 }))
-                .createAndAdd(() -> check(move.result != null, "move running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(move.result != null, "move running"))
+                .thenWaitUntil(() -> {
                     check(move.result.outcome() == JobOutcome.COMPLETED, "move " + move.result);
                     check(entitiesIn(world, area.offset(20, 0, 0)).size() == inside[0], "moved "
                             + entitiesIn(world, area.offset(20, 0, 0)).size());
@@ -233,7 +233,7 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -241,10 +241,10 @@ public final class EntityRegionGameTest implements FabricGameTest {
      * chunks between, inside its bounds, are not). A copy and a stack taking entities are not refused and take the two
      * stands, as they would with every chunk loaded.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_entities_region_sparse", tickLimit = LIMIT)
-    public void sparseSelectionsNeedOnlyTheirOwnChunksLoaded(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_entities_region_sparse", timeoutTicks = LIMIT)
+    public void sparseSelectionsNeedOnlyTheirOwnChunksLoaded(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 664);
         int x0 = at[0], y0 = 100, z0 = at[1];
         int far = 20 * 16;
@@ -263,12 +263,12 @@ public final class EntityRegionGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
         RecordingListener stack = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ready(world, first);
                     ready(world, second);
                 })
-                .createAndAdd(once(() -> {
+                .thenWaitUntil(once(() -> {
                     check(!FabricEntities.loaded(world, (x0 >> 4) + 10, z0 >> 4), "a chunk between them is loaded");
                     check(FabricEntities.firstUnloaded(world, set.bounds()) != null, "the bounds are all loaded");
                     stand(world, x0 + 6.5, y0 + 1, z0 + 6.5);
@@ -276,8 +276,8 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     copy(clips, h, set, false, CellMask.ANY, null, copied);
                     run(h, new OpSpec.Stack(set, 0, 2, 0, 1, EntityFilter.DECORATIONS), stack);
                 }))
-                .createAndAdd(() -> check(copied.finished() && stack.result != null, "copy and stack running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(copied.finished() && stack.result != null, "copy and stack running"))
+                .thenWaitUntil(() -> {
                     check(copied.get("the copy").entities() == 2, "copied " + copied.value.entities());
                     check(stack.result.outcome() == JobOutcome.COMPLETED, "stack " + stack.result);
                     check(entitiesIn(world, first).size() == 2 && entitiesIn(world, second).size() == 2,
@@ -289,6 +289,6 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     forceChunks(world, second, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

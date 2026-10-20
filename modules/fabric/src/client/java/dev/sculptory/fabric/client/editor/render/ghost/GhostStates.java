@@ -1,7 +1,7 @@
 package dev.sculptory.fabric.client.editor.render.ghost;
 
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Handles of ghost volumes are client block-state handles: raw state ids ({@code Block.getRawIdFromState}), as in the
@@ -12,7 +12,7 @@ public final class GhostStates {
 
     /** The state of a handle; air for an unknown one. */
     public static BlockState state(int handle) {
-        return Block.getStateFromRawId(handle);
+        return Block.stateById(handle);
     }
 
     /**
@@ -25,6 +25,6 @@ public final class GhostStates {
 
     /** The handle of a state. */
     public static int handle(BlockState state) {
-        return Block.getRawIdFromState(state);
+        return Block.getId(state);
     }
 }

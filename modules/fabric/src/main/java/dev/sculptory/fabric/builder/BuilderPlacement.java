@@ -8,28 +8,28 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import net.minecraft.advancement.criterion.Criteria;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.FluidBlock;
-import net.minecraft.block.OperatorBlock;
-import net.minecraft.block.SlabBlock;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.ItemPlacementContext;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.OperatorOnlyBlockItem;
-import net.minecraft.item.VerticallyAttachableBlockItem;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.sound.BlockSoundGroup;
-import net.minecraft.sound.SoundCategory;
-import net.minecraft.state.property.Properties;
-import net.minecraft.state.property.Property;
-import net.minecraft.util.Hand;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-import net.minecraft.world.event.GameEvent;
+import net.minecraft.advancements.CriteriaTriggers;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.GameMasterBlockItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.StandingAndWallBlockItem;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.GameMasterBlock;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.SlabBlock;
+import net.minecraft.world.level.block.SoundType;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.Property;
+import net.minecraft.world.level.gameevent.GameEvent;
+import net.minecraft.world.phys.BlockHitResult;
 
 /**
  * How builder mode places and breaks one block, the same on the server (the
@@ -70,7 +70,7 @@ public final class BuilderPlacement {
     }
 
     /** A placement: the item, its context (the cell is {@code context.getBlockPos()}) and the state chosen. */
-    public record Decision(BlockItem item, ItemPlacementContext context, BlockState state) {
+    public record Decision(BlockItem item, BlockPlaceContext context, BlockState state) {
         public Decision {
             Objects.requireNonNull(item);
             Objects.requireNonNull(context);
@@ -78,7 +78,7 @@ public final class BuilderPlacement {
         }
 
         public BlockPos pos() {
-            return context.getBlockPos();
+            return context.getClickedPos();
         }
     }
 
@@ -94,23 +94,23 @@ public final class BuilderPlacement {
      * hit cell when it is replaceable (air aimed at by Place in air is), or with {@code replace} into the hit cell
      * whatever holds it.
      */
-    public static Outcome decide(World world, PlayerEntity player, Hand hand, BlockHitResult hit, boolean replace,
+    public static Outcome decide(Level world, Player player, InteractionHand hand, BlockHitResult hit, boolean replace,
                                  boolean force) {
-        ItemStack stack = player.getStackInHand(hand);
+        ItemStack stack = player.getItemInHand(hand);
         if (!(stack.getItem() instanceof BlockItem item)) return Outcome.refused(Refusal.NOT_A_BLOCK);
-        if (!item.getBlock().isEnabled(world.getEnabledFeatures())) return Outcome.refused(Refusal.DISABLED_BLOCK);
+        if (!item.getBlock().isEnabled(world.enabledFeatures())) return Outcome.refused(Refusal.DISABLED_BLOCK);
         // Operator blocks (command, structure, jigsaw) stay with level-2 creative ops, Force place or not.
-        if (item instanceof OperatorOnlyBlockItem && !player.isCreativeLevelTwoOp()) return Outcome.refused(Refusal.GAME_REFUSES);
-        ItemPlacementContext context = replace
+        if (item instanceof GameMasterBlockItem && !player.canUseGameMasterBlocks()) return Outcome.refused(Refusal.GAME_REFUSES);
+        BlockPlaceContext context = replace
                 ? new BuilderPlacementContext(world, player, hand, stack, hit)
-                : new ItemPlacementContext(world, player, hand, stack, hit);
+                : new BlockPlaceContext(world, player, hand, stack, hit);
         if (!context.canPlace()) return Outcome.refused(Refusal.OCCUPIED);
-        ItemPlacementContext placing = item.getPlacementContext(context);
+        BlockPlaceContext placing = item.updatePlacementContext(context);
         if (placing == null) return Outcome.refused(Refusal.GAME_REFUSES);
         BlockState state = ((BlockItemInvoker) item).sculptory$getPlacementState(placing);
         if (state == null && force) state = forcedState(item, placing);
         if (state == null) return Outcome.refused(Refusal.GAME_REFUSES);
-        if (replace) state = keepOrientation(world.getBlockState(placing.getBlockPos()), state);
+        if (replace) state = keepOrientation(world.getBlockState(placing.getClickedPos()), state);
         return new Outcome(new Decision(item, placing, state), null);
     }
 
@@ -123,23 +123,23 @@ public final class BuilderPlacement {
         for (Property<?> property : placed.getProperties()) {
             String name = property.getName();
             if (!ORIENTATION.contains(name)) continue;
-            Property<?> source = old.getBlock().getStateManager().getProperty(name);
+            Property<?> source = old.getBlock().getStateDefinition().getProperty(name);
             if (source == null) continue;
             result = withValueNamed(result, property, nameOf(old, source));
         }
         if (placed.getBlock() instanceof SlabBlock && old.getBlock() instanceof SlabBlock) {
-            result = result.with(Properties.SLAB_TYPE, old.get(Properties.SLAB_TYPE));
+            result = result.setValue(BlockStateProperties.SLAB_TYPE, old.getValue(BlockStateProperties.SLAB_TYPE));
         }
         return result;
     }
 
     private static <T extends Comparable<T>> String nameOf(BlockState state, Property<T> property) {
-        return property.name(state.get(property));
+        return property.getName(state.getValue(property));
     }
 
     private static <T extends Comparable<T>> BlockState withValueNamed(BlockState state, Property<T> property,
                                                                        String value) {
-        return property.parse(value).map(parsed -> state.with(property, parsed)).orElse(state);
+        return property.getValue(value).map(parsed -> state.setValue(property, parsed)).orElse(state);
     }
 
     /**
@@ -147,18 +147,18 @@ public final class BuilderPlacement {
      * wall block facing out of that side; otherwise the block's own placement state, without the item's checks, else its
      * default state.
      */
-    public static BlockState forcedState(BlockItem item, ItemPlacementContext context) {
-        if (item instanceof VerticallyAttachableBlockItem attachable && context.getSide().getAxis().isHorizontal()) {
-            BlockState wall = ((VerticallyAttachableBlockItemAccessor) attachable).sculptory$wallBlock().getDefaultState();
-            if (wall.contains(Properties.HORIZONTAL_FACING)) return wall.with(Properties.HORIZONTAL_FACING, context.getSide());
+    public static BlockState forcedState(BlockItem item, BlockPlaceContext context) {
+        if (item instanceof StandingAndWallBlockItem attachable && context.getClickedFace().getAxis().isHorizontal()) {
+            BlockState wall = ((VerticallyAttachableBlockItemAccessor) attachable).sculptory$wallBlock().defaultBlockState();
+            if (wall.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) return wall.setValue(BlockStateProperties.HORIZONTAL_FACING, context.getClickedFace());
         }
         BlockState state = null;
         try {
-            state = item.getBlock().getPlacementState(context);
+            state = item.getBlock().getStateForPlacement(context);
         } catch (RuntimeException ignored) {
             // A block whose placement logic cannot cope with the cell: its default state.
         }
-        return state != null ? state : item.getBlock().getDefaultState();
+        return state != null ? state : item.getBlock().defaultBlockState();
     }
 
     /**
@@ -166,49 +166,49 @@ public final class BuilderPlacement {
      * {@code copy} (a mirrored copy) the item's post-placement step is only its block-entity data (a sign's editor opens
      * for the placed original only). Returns whether the item placed it.
      */
-    public static boolean place(BlockItem item, ItemPlacementContext context, BlockState state, boolean copy) {
+    public static boolean place(BlockItem item, BlockPlaceContext context, BlockState state, boolean copy) {
         BlockItemInvoker invoker = (BlockItemInvoker) item;
         if (!invoker.sculptory$place(context, state)) return false;
-        BlockPos pos = context.getBlockPos();
-        World world = context.getWorld();
-        PlayerEntity player = context.getPlayer();
-        ItemStack stack = context.getStack();
+        BlockPos pos = context.getClickedPos();
+        Level world = context.getLevel();
+        Player player = context.getPlayer();
+        ItemStack stack = context.getItemInHand();
         BlockState placed = world.getBlockState(pos);
-        if (placed.isOf(state.getBlock())) {
+        if (placed.is(state.getBlock())) {
             placed = invoker.sculptory$placeFromNbt(pos, world, stack, placed);
             if (copy) {
-                BlockItem.writeNbtToBlockEntity(world, player, pos, stack);
+                BlockItem.updateCustomBlockEntityTag(world, player, pos, stack);
             } else {
                 invoker.sculptory$postPlacement(pos, world, player, stack, placed);
             }
             BlockItemInvoker.sculptory$copyComponentsToBlockEntity(world, pos, stack);
-            placed.getBlock().onPlaced(world, pos, placed, player, stack);
-            if (player instanceof ServerPlayerEntity serverPlayer) Criteria.PLACED_BLOCK.trigger(serverPlayer, pos, stack);
+            placed.getBlock().setPlacedBy(world, pos, placed, player, stack);
+            if (player instanceof ServerPlayer serverPlayer) CriteriaTriggers.PLACED_BLOCK.trigger(serverPlayer, pos, stack);
         }
-        BlockSoundGroup sounds = placed.getSoundGroup();
-        world.playSound(player, pos, invoker.sculptory$getPlaceSound(placed), SoundCategory.BLOCKS,
+        SoundType sounds = placed.getSoundType();
+        world.playSound(player, pos, invoker.sculptory$getPlaceSound(placed), SoundSource.BLOCKS,
                 (sounds.getVolume() + 1.0f) / 2.0f, sounds.getPitch() * 0.8f);
-        world.emitGameEvent(GameEvent.BLOCK_PLACE, pos, GameEvent.Emitter.of(player, placed));
+        world.gameEvent(GameEvent.BLOCK_PLACE, pos, GameEvent.Context.of(player, placed));
         return true;
     }
 
     /** Whether a builder break takes the block at {@code pos}: not air or a bare fluid, and operator blocks only for ops. */
-    public static boolean breakable(World world, PlayerEntity player, BlockPos pos) {
+    public static boolean breakable(Level world, Player player, BlockPos pos) {
         BlockState state = world.getBlockState(pos);
-        if (state.isAir() || state.getBlock() instanceof FluidBlock) return false;
-        return !(state.getBlock() instanceof OperatorBlock) || player.isCreativeLevelTwoOp();
+        if (state.isAir() || state.getBlock() instanceof LiquidBlock) return false;
+        return !(state.getBlock() instanceof GameMasterBlock) || player.canUseGameMasterBlocks();
     }
 
     /**
      * Breaks the block at {@code pos} as a creative player's break does. Returns whether it was removed. The caller
      * empties a container first (nothing may drop: its contents are in the history).
      */
-    public static boolean breakBlock(World world, PlayerEntity player, BlockPos pos) {
+    public static boolean breakBlock(Level world, Player player, BlockPos pos) {
         BlockState state = world.getBlockState(pos);
         Block block = state.getBlock();
-        BlockState broken = block.onBreak(world, pos, state, player);
+        BlockState broken = block.playerWillDestroy(world, pos, state, player);
         boolean removed = world.removeBlock(pos, false);
-        if (removed) block.onBroken(world, pos, broken);
+        if (removed) block.destroy(world, pos, broken);
         return removed;
     }
 
@@ -236,7 +236,7 @@ public final class BuilderPlacement {
     /** {@code state} turned and mirrored by {@code image}, as the editor's symmetric copies are. */
     public static BlockState imageState(StateSpace states, Symmetry.Image image, BlockState state) {
         if (image == Symmetry.Image.IDENTITY) return state;
-        int handle = image.transform().applyToState(states, Block.getRawIdFromState(state));
-        return handle < 0 ? state : Block.getStateFromRawId(handle);
+        int handle = image.transform().applyToState(states, Block.getId(state));
+        return handle < 0 ? state : Block.stateById(handle);
     }
 }

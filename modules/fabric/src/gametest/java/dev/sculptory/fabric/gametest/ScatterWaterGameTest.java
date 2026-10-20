@@ -34,17 +34,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.fluid.Fluids;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.Properties;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 
 /**
  * Water plants and column plants in a real server world: over a shore (a meadow beside a walled lake), seagrass, kelp
@@ -106,7 +104,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
     }
 
     static boolean stillWater(FluidState fluid) {
-        return fluid.isStill() && fluid.getFluid() == Fluids.WATER;
+        return fluid.isSource() && fluid.getType() == Fluids.WATER;
     }
 
     /** No cell of the lake between the seabed and the surface is without still water. */
@@ -127,7 +125,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
         for (int x = x0; x <= x1; x++) {
             for (int z = z0; z <= z1; z++) {
                 for (int y = y0; y <= y1; y++) {
-                    if (h.world.getBlockState(pos(x, y, z)).isOf(block)) n++;
+                    if (h.world.getBlockState(pos(x, y, z)).is(block)) n++;
                 }
             }
         }
@@ -139,8 +137,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
      * on the meadow or the rim; every lake cell keeps still water; kelp is kelp_plant under a kelp top, at most as tall
      * as the water; the fans stay alive; one undo restores the shore exactly, water included.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_lake", tickLimit = LIMIT)
-    public void scatterWaterPlantsGoUnderWaterOrOnIt(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_water_lake", timeoutTicks = LIMIT)
+    public void scatterWaterPlantsGoUnderWaterOrOnIt(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 150);
@@ -153,12 +151,12 @@ public final class ScatterWaterGameTest implements FabricGameTest {
         RecordingListener[] jobs = new RecordingListener[2];
         int[] planned = new int[4];
         int[] waited = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 100, "only " + plan.placements() + " placements: " + plan.rejectedCounts());
                     Integer water = plan.rejectedCounts().get("WATER");
@@ -176,8 +174,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     check(taller > 5, "only " + taller + " kelp columns over one block");
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     check(jobs[0].result.changed() == reply.plan.totalCells(), "changed " + jobs[0].result.changed()
                             + " of " + reply.plan.totalCells());
@@ -197,17 +195,17 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                                 BlockState state = h.world.getBlockState(pos(x, y, z));
                                 check(underwater.contains(state.getBlock()), "under water at " + x + "," + y + "," + z
                                         + ": " + state);
-                                if (state.isOf(Blocks.KELP_PLANT)) {
+                                if (state.is(Blocks.KELP_PLANT)) {
                                     BlockState up = h.world.getBlockState(pos(x, y + 1, z));
-                                    check(up.isOf(Blocks.KELP) || up.isOf(Blocks.KELP_PLANT), "kelp_plant without a top at "
+                                    check(up.is(Blocks.KELP) || up.is(Blocks.KELP_PLANT), "kelp_plant without a top at "
                                             + x + "," + y + "," + z + ": " + up);
                                 }
-                                if (state.isOf(Blocks.TUBE_CORAL_FAN)) {
-                                    check(state.get(Properties.WATERLOGGED), "a dry coral fan at " + x + "," + y + "," + z);
+                                if (state.is(Blocks.TUBE_CORAL_FAN)) {
+                                    check(state.getValue(BlockStateProperties.WATERLOGGED), "a dry coral fan at " + x + "," + y + "," + z);
                                 }
                             }
                             BlockState above = h.world.getBlockState(pos(x, SURFACE_Y + 1, z));
-                            check(above.isAir() || above.isOf(Blocks.LILY_PAD), "above the lake: " + above);
+                            check(above.isAir() || above.is(Blocks.LILY_PAD), "above the lake: " + above);
                         }
                     }
                     noDryCellUnderWater(h, x0, z0);
@@ -222,7 +220,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                             == planned[3], "lily pads for placements");
                     check(h.history().undoLabels().size() == 1, "one history entry: " + h.history().undoLabels());
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(++waited[0] >= 40, "waiting two seconds: coral dies out of water");
                     check(count(h, x0 + 17, z0 + 1, x0 + 30, z0 + 14, FLOOR_Y + 1, FLOOR_Y + 1, Blocks.DEAD_TUBE_CORAL_FAN)
                             == 0, "a coral fan died");
@@ -230,8 +228,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     jobs[1] = new RecordingListener();
                     h.undo(jobs[1]);
                 })
-                .createAndAdd(() -> check(jobs[1].result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[1].result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(jobs[1].result.outcome() == JobOutcome.COMPLETED && jobs[1].result.skippedConflicts() == 0,
                             "undo " + jobs[1].result);
                     checkSame(before, capture(h.world, area), "after undo");
@@ -239,7 +237,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -247,8 +245,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
      * the lake (its columns are collisions), and the lake is untouched. With fluids allowed too, a block variant still
      * stays out of the water (that setting is for assets and clipboards).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_land", tickLimit = LIMIT)
-    public void scatterLandPlantsWithSurvivalOffStayOnLand(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_water_land", timeoutTicks = LIMIT)
+    public void scatterLandPlantsWithSurvivalOffStayOnLand(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 151);
@@ -270,12 +268,12 @@ public final class ScatterWaterGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 0, 4L,
                 ScatterSettings.Fit.DEFAULT.withSurvive(false), ScatterSettings.ColumnHeight.ONE, POPPY));
         RecordingListener[] jobs = new RecordingListener[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     int rim = 2 * 16 + 2 * 14;
                     check(plan.placements() == 16 * 16 + rim, plan.placements() + " poppies: " + plan.rejectedCounts());
@@ -288,8 +286,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     }
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     check(count(h, x0, z0, x0 + 15, z0 + 15, FLOOR_Y + 1, FLOOR_Y + 1, Blocks.POPPY) == 16 * 16,
                             "poppies missing on the meadow");
@@ -300,15 +298,15 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A mix of land and water plants over the shore puts each on its side: poppies and tall grass on the meadow,
      * seagrass and wet sea pickles on the seabed, lily pads on the water; no dry cell under water; one undo is exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_mix", tickLimit = LIMIT)
-    public void scatterShorelineMixPutsEachPlantOnItsSide(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_water_mix", timeoutTicks = LIMIT)
+    public void scatterShorelineMixPutsEachPlantOnItsSide(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 152);
@@ -321,12 +319,12 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                 LILY));
         RecordingListener[] jobs = new RecordingListener[2];
         int[] planned = new int[5];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     for (ScatterPlan.Placement p : heldPlan(h, h.player).placements()) {
                         int x = p.anchor().x(), y = p.anchor().y(), z = p.anchor().z();
@@ -340,8 +338,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     for (int v = 0; v < 5; v++) check(planned[v] > 3, "variant " + v + " planned " + planned[v]);
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     int lake0 = x0 + 17, lake1 = x0 + 30;
                     check(count(h, x0, z0, x0 + 15, z0 + 15, FLOOR_Y + 1, FLOOR_Y + 1, Blocks.POPPY) == planned[0],
@@ -357,9 +355,9 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     for (int x = lake0; x <= lake1; x++) {
                         for (int z = z0 + 1; z <= z0 + 14; z++) {
                             BlockState bottom = h.world.getBlockState(pos(x, FLOOR_Y + 1, z));
-                            check(!bottom.isOf(Blocks.POPPY) && !bottom.isOf(Blocks.TALL_GRASS), "a land plant under water");
-                            if (bottom.isOf(Blocks.SEA_PICKLE)) {
-                                check(bottom.get(Properties.WATERLOGGED) && bottom.get(Properties.PICKLES) == 3,
+                            check(!bottom.is(Blocks.POPPY) && !bottom.is(Blocks.TALL_GRASS), "a land plant under water");
+                            if (bottom.is(Blocks.SEA_PICKLE)) {
+                                check(bottom.getValue(BlockStateProperties.WATERLOGGED) && bottom.getValue(BlockStateProperties.PICKLES) == 3,
                                         "sea pickles at " + x + "," + z + ": " + bottom);
                             }
                         }
@@ -368,8 +366,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     jobs[1] = new RecordingListener();
                     h.undo(jobs[1]);
                 })
-                .createAndAdd(() -> check(jobs[1].result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[1].result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(jobs[1].result.outcome() == JobOutcome.COMPLETED && jobs[1].result.skippedConflicts() == 0,
                             "undo " + jobs[1].result);
                     checkSame(before, capture(h.world, area), "after undo");
@@ -377,7 +375,7 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -386,8 +384,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
      * sand at some spots (a column whose second cell would touch one is refused), none under one (no room), every
      * placed cactus cell passes {@code canPlaceAt}; one undo is exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_water_cactus", tickLimit = LIMIT)
-    public void scatterCactusColumnsStandWhereEveryCellSurvives(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_water_cactus", timeoutTicks = LIMIT)
+    public void scatterCactusColumnsStandWhereEveryCellSurvives(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 153);
@@ -408,12 +406,12 @@ public final class ScatterWaterGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(columns, 2, 8L, ScatterSettings.Fit.DEFAULT,
                 new ScatterSettings.ColumnHeight(3, 3), new ScatterSource.Block("minecraft:cactus")));
         RecordingListener[] jobs = new RecordingListener[2];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 15, "only " + plan.placements() + " cacti: " + plan.rejectedCounts());
                     for (ScatterPlan.Placement p : heldPlan(h, h.player).placements()) {
@@ -423,8 +421,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     check(survival != null && survival > 0, "no column refused beside a stone: " + plan.rejectedCounts());
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     check(jobs[0].result.changed() == reply.plan.totalCells(), "changed " + jobs[0].result.changed());
                     int cells = 0;
@@ -433,9 +431,9 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                             for (int y = FLOOR_Y + 1; y <= FLOOR_Y + 3; y++) {
                                 BlockPos p = pos(x, y, z);
                                 BlockState state = h.world.getBlockState(p);
-                                if (!state.isOf(Blocks.CACTUS)) continue;
+                                if (!state.is(Blocks.CACTUS)) continue;
                                 cells++;
-                                check(state.canPlaceAt(h.world, p), "a cactus that would break at " + p.toShortString());
+                                check(state.canSurvive(h.world, p), "a cactus that would break at " + p.toShortString());
                             }
                         }
                     }
@@ -449,8 +447,8 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     jobs[1] = new RecordingListener();
                     h.undo(jobs[1]);
                 })
-                .createAndAdd(() -> check(jobs[1].result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[1].result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(jobs[1].result.outcome() == JobOutcome.COMPLETED && jobs[1].result.skippedConflicts() == 0,
                             "undo " + jobs[1].result);
                     checkSame(before, capture(h.world, area), "after undo");
@@ -458,6 +456,6 @@ public final class ScatterWaterGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

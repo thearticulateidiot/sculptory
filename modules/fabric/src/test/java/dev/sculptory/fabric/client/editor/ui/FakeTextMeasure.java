@@ -1,5 +1,6 @@
 package dev.sculptory.fabric.client.editor.ui;
 
+
 /** Fixed-width text metrics: every character is 6 px wide, lines are 9 px tall. */
 final class FakeTextMeasure implements TextMeasure {
     static final int CHAR_WIDTH = 6;

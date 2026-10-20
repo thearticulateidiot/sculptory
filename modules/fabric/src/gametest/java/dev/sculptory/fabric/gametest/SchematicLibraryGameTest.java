@@ -62,13 +62,13 @@ import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.entity.CommandBlockBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.entity.CommandBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -107,10 +107,10 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
     }
 
     /** Our v3 writer, our reader: the same blocks, block entities and anchor, and the file pastes back exactly. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_schem_v3", tickLimit = LIMIT)
-    public void schemV3RoundTrip(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_schem_v3", timeoutTicks = LIMIT)
+    public void schemV3RoundTrip(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 50);
         Box source = box(at[0], 100, at[1], at[0] + 7, 103, at[1] + 7);
         Box all = box(at[0], 100, at[1], at[0] + 31, 103, at[1] + 7);
@@ -124,16 +124,16 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         check(FabricDataFixHook.currentDataVersion() == 3955, "data version " + FabricDataFixHook.currentDataVersion());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     try {
                         clips.export(h.player, info.clipboardId(), exported);
                     } catch (EditRejected e) {
-                        throw new GameTestException("export refused: " + e.getMessage());
+                        throw new GameTestAssertException("export refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Outbound out = exported.get("export");
                     check(out.kind() == StreamKind.SCHEM_FILE && out.meta().get("dataVersion").equals("3955"), "meta " + out.meta());
                     byte[] bytes = out.payload();
@@ -146,41 +146,41 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                         Schematic read = SchematicCodec.read(new ByteArrayInputStream(bytes), h.runtime.states(),
                                 SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
                         check(read.report().isLossless() && read.report().blockEntities() == 4, "report " + read.report());
-                        Clipboard original = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                        Clipboard original = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                         String difference = difference(original, read.clipboard());
                         check(difference == null, "read back differently: " + difference);
                         check(read.clipboard().contentHash().equals(original.contentHash()), "content hash differs");
                     } catch (IOException e) {
-                        throw new GameTestException("cannot read our own file: " + e);
+                        throw new GameTestAssertException("cannot read our own file: " + e);
                     }
                     ClipTestSupport.upload(clips, h.player, "roundtrip.schem", bytes, uploaded);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("upload");
                     // The file's command block is sanitized even for an op; nothing else is lost.
                     check(info.notices().equals(List.of(operatorNotice(1, 0))), "notices " + info.notices());
                     paste(h, h.player, info.clipboardId(), new BlockPos(at[0] + 17, 100, at[1] + 2), Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED && paste.result.strippedNbt() == 0, "paste " + paste.result);
-                    net.minecraft.util.math.BlockPos command = pos(at[0] + 1, 103, at[1] + 6);
+                    net.minecraft.core.BlockPos command = pos(at[0] + 1, 103, at[1] + 6);
                     ClipTestSupport.checkShifted(world, before, pos(at[0] + 16, 100, at[1]), "the file pasted back",
                             p -> p.equals(command));
-                    CommandBlockBlockEntity pasted = (CommandBlockBlockEntity) world.getBlockEntity(command.add(16, 0, 0));
-                    check(pasted != null && pasted.getCommandExecutor().getCommand().isEmpty(), "the file's command survived");
+                    CommandBlockEntity pasted = (CommandBlockEntity) world.getBlockEntity(command.offset(16, 0, 0));
+                    check(pasted != null && pasted.getCommandBlock().getCommand().isEmpty(), "the file's command survived");
                     forceChunks(world, all, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A Sponge v2 file from 1.16.5 (DataVersion 2586): grass_path becomes dirt_path and the old sign text survives. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_schem_fix", tickLimit = LIMIT)
-    public void schemOldDataVersionFixed(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_schem_fix", timeoutTicks = LIMIT)
+    public void schemOldDataVersionFixed(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FabricStateSpace states = h.runtime.states();
         check("minecraft:dirt_path".equals(FabricDataFixHook.get().fixBlockState("minecraft:grass_path", 2586)),
                 "the hook did not rename grass_path");
@@ -231,14 +231,14 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         ClipTestSupport.upload(clips, h.player, "old.schem", bytes.toByteArray(), uploaded);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("upload");
                     paste(h, h.player, info.clipboardId(), new BlockPos(at[0] + 2, 100, at[1] + 2), Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
-                    check(world.getBlockState(pos(at[0] + 2, 100, at[1] + 2)).isOf(net.minecraft.block.Blocks.DIRT_PATH),
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
+                    check(world.getBlockState(pos(at[0] + 2, 100, at[1] + 2)).is(net.minecraft.world.level.block.Blocks.DIRT_PATH),
                             "no dirt path");
                     SignBlockEntity placed = (SignBlockEntity) world.getBlockEntity(pos(at[0] + 3, 100, at[1] + 2));
                     check(placed != null, "no sign block entity");
@@ -249,7 +249,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     static S2C.Notice operatorNotice(int dropped, int signs) {
@@ -281,13 +281,13 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
     }
 
     /** The pasted command block has no command and the sign (if any) no click event. */
-    private static void checkSanitized(ServerWorld world, net.minecraft.util.math.BlockPos command, boolean signText) {
-        CommandBlockBlockEntity block = (CommandBlockBlockEntity) world.getBlockEntity(command);
-        check(block != null && block.getCommandExecutor().getCommand().isEmpty(), "a file's command survived at "
+    private static void checkSanitized(ServerLevel world, net.minecraft.core.BlockPos command, boolean signText) {
+        CommandBlockEntity block = (CommandBlockEntity) world.getBlockEntity(command);
+        check(block != null && block.getCommandBlock().getCommand().isEmpty(), "a file's command survived at "
                 + command.toShortString());
         SignBlockEntity sign = (SignBlockEntity) world.getBlockEntity(command.east());
         check(sign != null, "no sign");
-        net.minecraft.text.Text first = sign.getFrontText().getMessage(0, false);
+        net.minecraft.network.chat.Component first = sign.getFrontText().getMessage(0, false);
         check(first.getStyle().getClickEvent() == null, "a click event survived");
         check(first.getString().equals(signText ? "Click" : ""), "sign text '" + first.getString() + "'");
     }
@@ -297,11 +297,11 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
      * sign its click event, but everyone, non-ops included, keeps the sign text (a sanitized sign is plain text).
      * Copies of world blocks stay trusted. The upload's clipboard slot is reserved at {@code UploadBegin}.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_schem_opnbt", tickLimit = LIMIT)
-    public void operatorNbtStrippedForNonOpUpload(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_schem_opnbt", timeoutTicks = LIMIT)
+    public void operatorNbtStrippedForNonOpUpload(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.SCHEMATIC_IMPORT);
         check(!h.runtime.permissions().mayWriteOperatorNbt(builder), "the builder may write operator NBT");
         byte[] file = operatorFile(h);
@@ -309,10 +309,10 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Box region = box(at[0], 100, at[1], at[0] + 15, 103, at[1] + 7);
         loadAndForce(world, region);
         // A command block in the world, which the builder may copy (no protection here): world copies stay trusted.
-        net.minecraft.util.math.BlockPos worldBlock = pos(at[0] + 10, 100, at[1] + 2);
+        net.minecraft.core.BlockPos worldBlock = pos(at[0] + 10, 100, at[1] + 2);
         h.runtime.writer(world, new dev.sculptory.server.platform.WriteOptions(false, true))
                 .write(worldBlock.getX(), worldBlock.getY(), worldBlock.getZ(), h.state("minecraft:command_block[facing=up]"), null);
-        ((CommandBlockBlockEntity) world.getBlockEntity(worldBlock)).getCommandExecutor().setCommand("say trusted");
+        ((CommandBlockEntity) world.getBlockEntity(worldBlock)).getCommandBlock().setCommand("say trusted");
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> fromBuilder = new Captured<>();
@@ -326,20 +326,20 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         try {
             opUpload = clips.beginUpload(h.player, "cmd.schem", file.length);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
         // Reserved at UploadBegin: while it transfers, the op starts no other clipboard or decode.
-        check(clips.building(h.player.getUuid()), "the upload reserved nothing");
+        check(clips.building(h.player.getUUID()), "the upload reserved nothing");
         check(refusal(() -> clips.beginUpload(h.player, "again.schem", 10)).reason() == RejectReason.QUEUE_FULL,
                 "a second upload while one is reserved");
         check(refusal(() -> clips.load(h.player, "x/any.schem", new Captured<>())).reason() == RejectReason.QUEUE_FULL,
                 "a library load while an upload is reserved");
         opUpload.completed(file, fromOp);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo b = fromBuilder.get("builder upload");
                     ClipboardService.ClipboardInfo o = fromOp.get("op upload");
-                    check(!clips.building(h.player.getUuid()) && clips.requests(h.player.getUuid()) == 0,
+                    check(!clips.building(h.player.getUUID()) && clips.requests(h.player.getUUID()) == 0,
                             "the upload slot was not released");
                     check(b.notices().equals(List.of(operatorNotice(1, 1))) && o.notices().equals(b.notices()),
                             "notices " + b.notices() + " / " + o.notices());
@@ -353,8 +353,8 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                     paste(h, builder, b.clipboardId(), new BlockPos(at[0] + 2, 100, at[1] + 2), Transform.IDENTITY, builderPaste);
                     paste(h, h.player, o.clipboardId(), new BlockPos(at[0] + 2, 100, at[1] + 5), Transform.IDENTITY, opPaste);
                 })
-                .createAndAdd(() -> check(builderPaste.result != null && opPaste.result != null, "pastes running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(builderPaste.result != null && opPaste.result != null, "pastes running"))
+                .thenWaitUntil(() -> {
                     // The sanitized sign is plain text: a non-op places it too, with its text and no click event.
                     check(builderPaste.result.strippedNbt() == 0, "builder paste " + builderPaste.result);
                     check(opPaste.result.strippedNbt() == 0, "op paste " + opPaste.result);
@@ -366,31 +366,31 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                                 new BlockPos(worldBlock.getX(), 100, worldBlock.getZ()), false,
                                 dev.sculptory.core.edit.CellMask.ANY, null, worldCopy);
                     } catch (EditRejected e) {
-                        throw new GameTestException("copy refused: " + e.getMessage());
+                        throw new GameTestAssertException("copy refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = worldCopy.get("world copy");
                     paste(h, builder, info.clipboardId(), new BlockPos(at[0] + 6, 100, at[1] + 2), Transform.IDENTITY, copyPaste);
                 })
-                .createAndAdd(() -> check(copyPaste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(copyPaste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(copyPaste.result.strippedNbt() == 0, "paste of a world copy " + copyPaste.result);
-                    CommandBlockBlockEntity copied = (CommandBlockBlockEntity) world.getBlockEntity(pos(at[0] + 6, 100, at[1] + 2));
-                    check(copied != null && copied.getCommandExecutor().getCommand().equals("say trusted"),
+                    CommandBlockEntity copied = (CommandBlockEntity) world.getBlockEntity(pos(at[0] + 6, 100, at[1] + 2));
+                    check(copied != null && copied.getCommandBlock().getCommand().equals("say trusted"),
                             "a world copy lost its trusted command");
                     forceChunks(world, region, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** An op loading a library file gets it sanitized too (a file anyone may have saved there). */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_opnbt", tickLimit = LIMIT)
-    public void libraryLoadSanitizesOperatorNbt(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_opnbt", timeoutTicks = LIMIT)
+    public void libraryLoadSanitizesOperatorNbt(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 54);
         Box region = box(at[0], 100, at[1], at[0] + 7, 101, at[1] + 7);
         loadAndForce(world, region);
@@ -401,24 +401,24 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Captured<ClipboardService.ClipboardInfo> loaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
         run(() -> clips.load(h.player, "planted/cmd.schem", loaded));
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = loaded.get("load");
                     check(info.notices().equals(List.of(operatorNotice(1, 1))), "notices " + info.notices());
                     paste(h, h.player, info.clipboardId(), new BlockPos(at[0] + 2, 100, at[1] + 2), Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     checkSanitized(world, pos(at[0] + 2, 100, at[1] + 2), true);
                     forceChunks(world, region, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_schem_forged_signs", tickLimit = LIMIT)
-    public void signTilesOnCommandBlocksAreRefused(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_schem_forged_signs", timeoutTicks = LIMIT)
+    public void signTilesOnCommandBlocksAreRefused(GameTestHelper context) throws IOException {
         refuseSignTilesOnCommandBlocks(context, 56, List.of("minecraft:sign", "minecraft:hanging_sign"));
     }
 
@@ -429,11 +429,11 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
      * command block with a default block entity (no command, no sign text), strip nothing, count one tile failure per
      * cell, and undo exactly. {@code signTypes} are the tiles' types (the fidelity GameTests add modded ones).
      */
-    static void refuseSignTilesOnCommandBlocks(TestContext context, int slot, List<String> signTypes)
+    static void refuseSignTilesOnCommandBlocks(GameTestHelper context, int slot, List<String> signTypes)
             throws IOException {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.SCHEMATIC_IMPORT);
         int[] at = regionCorner(context, slot);
         int n = signTypes.size();
@@ -450,7 +450,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Box target = box(at[0] + 2, 100, at[1] + 2, at[0] + 1 + n, 100, at[1] + 2);
         WorldSnapshot before = capture(world, target);
         // A command block with its default block entity, to compare against.
-        net.minecraft.util.math.BlockPos reference = pos(at[0] + 2, 100, at[1] + 5);
+        net.minecraft.core.BlockPos reference = pos(at[0] + 2, 100, at[1] + 5);
         h.runtime.writer(world, WriteOptions.DEFAULT).write(reference.getX(), reference.getY(), reference.getZ(),
                 command, null);
         Path root = ClipTestSupport.libraryRoot(context);
@@ -459,11 +459,11 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         RecordingListener paste = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         ClipTestSupport.upload(clips, builder, "forged.schem", file.toByteArray(), uploaded);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("upload");
                     check(info.notices().equals(List.of(operatorNotice(0, n))), "notices " + info.notices());
-                    Clipboard held = h.service.clipboards().get(builder.getUuid()).orElseThrow().clipboard();
+                    Clipboard held = h.service.clipboards().get(builder.getUUID()).orElseThrow().clipboard();
                     // The writer itself: each sanitized tile is refused by type, none is stripped.
                     BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
                     for (int i = 0; i < n; i++) {
@@ -477,31 +477,31 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                             + " failures, " + writer.strippedNbt() + " stripped, first " + writer.firstTileFailure());
                     paste(h, builder, info.clipboardId(), target.min(), Transform.IDENTITY, paste);
                 })
-                .createAndAdd(() -> check(paste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(paste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(paste.result.outcome() == JobOutcome.COMPLETED && paste.result.changed() == n
                             && paste.result.strippedNbt() == 0, "paste " + paste.result);
-                    net.minecraft.nbt.NbtCompound fresh = world.getBlockEntity(reference)
-                            .createNbtWithId(world.getRegistryManager());
+                    net.minecraft.nbt.CompoundTag fresh = world.getBlockEntity(reference)
+                            .saveWithId(world.registryAccess());
                     for (int i = 0; i < n; i++) {
-                        net.minecraft.util.math.BlockPos cell = pos(target.min().x() + i, 100, target.min().z());
-                        check(net.minecraft.block.Block.getRawIdFromState(world.getBlockState(cell)) == command,
+                        net.minecraft.core.BlockPos cell = pos(target.min().x() + i, 100, target.min().z());
+                        check(net.minecraft.world.level.block.Block.getId(world.getBlockState(cell)) == command,
                                 "cell " + i + " is " + world.getBlockState(cell));
-                        CommandBlockBlockEntity block = (CommandBlockBlockEntity) world.getBlockEntity(cell);
-                        check(block != null && block.getCommandExecutor().getCommand().isEmpty(),
+                        CommandBlockEntity block = (CommandBlockEntity) world.getBlockEntity(cell);
+                        check(block != null && block.getCommandBlock().getCommand().isEmpty(),
                                 "a forged " + signTypes.get(i) + " tile set a command");
-                        check(fresh.equals(block.createNbtWithId(world.getRegistryManager())),
+                        check(fresh.equals(block.saveWithId(world.registryAccess())),
                                 "command block " + i + " does not have a default block entity: "
-                                        + block.createNbtWithId(world.getRegistryManager()));
+                                        + block.saveWithId(world.registryAccess()));
                     }
                     try {
                         h.service.undo(builder, ConflictPolicy.SKIP_CONFLICTS, undo);
                     } catch (EditRejected e) {
-                        throw new GameTestException("undo refused: " + e.getMessage());
+                        throw new GameTestAssertException("undo refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                             "undo " + undo.result);
                     checkSame(before, capture(world, target), "after undoing the paste");
@@ -509,7 +509,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A tile of {@code type} with sign text on both sides and a command block's {@code Command} and {@code auto}. */
@@ -525,11 +525,11 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
      * Operator NBT does not leave the server with a player who may not handle it: a non-op's export and library save
      * of a (trusted) world copy hold the command block without its command; an op's keep it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_schem_export_opnbt", tickLimit = LIMIT)
-    public void exportAndSaveStripOperatorNbtForNonOps(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_schem_export_opnbt", timeoutTicks = LIMIT)
+    public void exportAndSaveStripOperatorNbtForNonOps(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.SCHEMATIC_EXPORT);
         int[] at = regionCorner(context, 55);
         Box source = box(at[0], 100, at[1], at[0] + 7, 103, at[1] + 7);
@@ -542,12 +542,12 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Captured<ClipboardService.Outbound> builderExport = new Captured<>();
         Captured<ClipboardService.Outbound> opExport = new Captured<>();
         Captured<ClipboardService.Saved> builderSave = new Captured<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     run(() -> clips.export(builder, builderCopy.get("builder copy").clipboardId(), builderExport));
                     run(() -> clips.export(h.player, opCopy.get("op copy").clipboardId(), opExport));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Outbound b = builderExport.get("builder export");
                     check(b.notices().equals(List.of(new S2C.Notice(S2C.Notice.Level.WARN,
                             ServerClipboards.NOTICE_EXPORT_OPERATOR_NBT, List.of("1", "0")))), "notices " + b.notices());
@@ -556,20 +556,20 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                     check(o.notices().isEmpty() && "say sculptory".equals(commandIn(h, o.payload())), "the op export");
                     run(() -> clips.save(builder, builderCopy.value.clipboardId(), "mine/copy.schem", builderSave));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Saved saved = builderSave.get("builder save");
                     check(saved.notices().size() == 1, "save notices " + saved.notices());
                     try {
                         check(commandIn(h, Files.readAllBytes(root.resolve(saved.path()))) == null,
                                 "a non-op save stored the command");
                     } catch (IOException e) {
-                        throw new GameTestException("the saved file is missing: " + e);
+                        throw new GameTestAssertException("the saved file is missing: " + e);
                     }
                     forceChunks(world, source, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** The command of the command block in a decorated file ({@code null} when it has no block entity). */
@@ -580,26 +580,26 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
             BlockEntityData tile = read.clipboard().tile(1, 3, 6);
             return tile == null ? null : BlockEntityNbt.decode(tile).getString("Command");
         } catch (IOException e) {
-            throw new GameTestException("unreadable file: " + e);
+            throw new GameTestAssertException("unreadable file: " + e);
         }
     }
 
     /** A clipboard for {@code player} made in memory: 2 x 2 x 2 stone. */
-    private static UUID giveClipboard(Harness h, ServerPlayerEntity player) {
+    private static UUID giveClipboard(Harness h, ServerPlayer player) {
         Clipboard.Builder content = Clipboard.builder(h.runtime.states(), new BlockPos(2, 2, 2));
         for (int y = 0; y < 2; y++) {
             for (int z = 0; z < 2; z++) {
                 for (int x = 0; x < 2; x++) content.set(x, y, z, h.state("minecraft:stone"));
             }
         }
-        return h.service.clipboards().install(player.getUuid(), content.build()).id();
+        return h.service.clipboards().install(player.getUUID(), content.build()).id();
     }
 
     /** Traversal, absolute paths, drive letters, other separators and device names never reach the file system. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_traversal", tickLimit = LIMIT)
-    public void libraryPathTraversalRefused(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_traversal", timeoutTicks = LIMIT)
+    public void libraryPathTraversalRefused(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD);
         Path root = ClipTestSupport.libraryRoot(context);
         Path sandbox = root.getParent();
@@ -628,15 +628,15 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                 == RejectReason.NO_PERMISSION, "load from another player's folder");
         check(refusal(() -> clips.list(builder, other, new Captured<>())).reason() == RejectReason.NO_PERMISSION,
                 "list another player's folder");
-        check(clips.requests(h.player.getUuid()) == 0 && !clips.building(h.player.getUuid()), "a refusal left state behind");
+        check(clips.requests(h.player.getUUID()) == 0 && !clips.building(h.player.getUUID()), "a refusal left state behind");
         Captured<ClipboardService.Saved> good = new Captured<>();
         try {
             clips.save(h.player, opClip, "ok/fine.schem", good);
         } catch (EditRejected e) {
-            throw new GameTestException("a valid save was refused: " + e.getMessage());
+            throw new GameTestAssertException("a valid save was refused: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     check(good.get("valid save").path().equals("ok/fine.schem"), "saved at " + good.value.path());
                     check(Files.isRegularFile(root.resolve("ok").resolve("fine.schem")), "the valid file is missing");
                     try (Stream<Path> files = Files.walk(sandbox)) {
@@ -644,17 +644,17 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                                 .filter(p -> !p.startsWith(root) || p.getFileName().toString().contains("evil")).toList();
                         check(stray.isEmpty(), "files outside the library: " + stray);
                     } catch (IOException e) {
-                        throw new GameTestException("cannot scan the sandbox: " + e);
+                        throw new GameTestAssertException("cannot scan the sandbox: " + e);
                     }
                     ClipTestSupport.deleteTree(sandbox);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A symbolic link inside the library that leads out of it is refused for listing, loading and saving. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_symlink", tickLimit = LIMIT)
-    public void libraryPathSymlinkRefused(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_symlink", timeoutTicks = LIMIT)
+    public void libraryPathSymlinkRefused(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
         Path root = ClipTestSupport.libraryRoot(context);
         Path sandbox = root.getParent();
@@ -670,7 +670,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                     + "junctions can be made here");
             ClipTestSupport.deleteTree(sandbox);
             h.close();
-            context.complete();
+            context.succeed();
             return;
         }
         var clips = ClipTestSupport.clipboards(h, root);
@@ -685,13 +685,13 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
             check(refusal(() -> clips.list(h.player, "escape", listed)).reason() == RejectReason.QUEUE_FULL,
                     "a third request in flight");
         } catch (EditRejected e) {
-            throw new GameTestException("refused before touching the file system: " + e.getMessage());
+            throw new GameTestAssertException("refused before touching the file system: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(saved.finished() && loaded.finished(), "requests running"))
-                .createAndAdd(() -> run(() -> clips.list(h.player, "escape", listed)))
-                .createAndAdd(() -> check(listed.finished(), "listing running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(saved.finished() && loaded.finished(), "requests running"))
+                .thenWaitUntil(() -> run(() -> clips.list(h.player, "escape", listed)))
+                .thenWaitUntil(() -> check(listed.finished(), "listing running"))
+                .thenWaitUntil(() -> {
                     saved.failedWith(RejectReason.INVALID, "save through the link");
                     loaded.failedWith(RejectReason.INVALID, "load through the link");
                     listed.failedWith(RejectReason.INVALID, "list through the link");
@@ -699,12 +699,12 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                         check(files.map(p -> p.getFileName().toString()).toList().equals(List.of("secret.schem")),
                                 "something was written outside the library");
                     } catch (IOException e) {
-                        throw new GameTestException("cannot list: " + e);
+                        throw new GameTestAssertException("cannot list: " + e);
                     }
                     ClipTestSupport.deleteTree(sandbox);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -712,11 +712,11 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
      * clipboard and paste that: both pastes equal the original. A player without {@code library.write} saves into
      * their own folder.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_lib_roundtrip", tickLimit = LIMIT)
-    public void saveAssetThenLoad(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_lib_roundtrip", timeoutTicks = LIMIT)
+    public void saveAssetThenLoad(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD);
         int[] at = regionCorner(context, 53);
         Box source = box(at[0], 100, at[1], at[0] + 7, 103, at[1] + 7);
@@ -735,13 +735,13 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         RecordingListener assetPaste = new RecordingListener();
         RecordingListener clipboardPaste = new RecordingListener();
         String[] hash = new String[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
                     run(() -> clips.save(h.player, info.clipboardId(), "tests/house.schem", saved));
                     run(() -> clips.save(builder, giveClipboard(h, builder), "tests/mine.schem", builderSaved));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Saved result = saved.get("save");
                     check(result.path().equals("tests/house.schem"), "saved at " + result.path());
                     hash[0] = result.contentHash();
@@ -749,21 +749,21 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                         byte[] bytes = Files.readAllBytes(root.resolve("tests").resolve("house.schem"));
                         check(Sha256.digest(bytes).hex().equals(hash[0]), "the hash is not the file's");
                     } catch (IOException e) {
-                        throw new GameTestException("the saved file is missing: " + e);
+                        throw new GameTestAssertException("the saved file is missing: " + e);
                     }
                     ClipboardService.Saved mine = builderSaved.get("builder save");
-                    String expected = "_players/" + builder.getUuid() + "/tests/mine.schem";
+                    String expected = "_players/" + builder.getUUID() + "/tests/mine.schem";
                     check(mine.path().equals(expected), "the builder's save went to " + mine.path());
                     check(Files.isRegularFile(root.resolve(expected)), "the builder's file is missing");
                     run(() -> clips.list(h.player, "tests", listed));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Listing listing = listed.get("list");
                     check(listing.entries().size() == 1 && listing.entries().get(0).path().equals("tests/house.schem")
                             && listing.entries().get(0).contentHash().equals(hash[0]), "listing " + listing.entries());
                     run(() -> clips.preview(h.player, new SourceRef.Asset(hash[0]), preview));
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ClipboardService.Outbound out = preview.get("asset preview");
                     check(out.kind() == StreamKind.ASSET_PREVIEW && hash[0].equals(out.meta().get("contentHash")), "meta " + out.meta());
                     try {
@@ -773,43 +773,43 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                         check("minecraft:chest[facing=east,type=single,waterlogged=false]".equals(decoded.get(3, 1, 3)),
                                 "preview cell " + decoded.get(3, 1, 3));
                     } catch (IOException e) {
-                        throw new GameTestException("undecodable preview: " + e);
+                        throw new GameTestAssertException("undecodable preview: " + e);
                     }
                     run(() -> h.service.run(h.player, new OpSpec.Paste(new SourceRef.Asset(hash[0]),
                             new BlockPos(at[0] + 16, 100, at[1]), Transform.IDENTITY, PasteOptions.DEFAULT),
                             RunOptions.DEFAULT, assetPaste));
                     run(() -> clips.load(h.player, "tests/house.schem", loaded));
                 })
-                .createAndAdd(() -> check(assetPaste.result != null && loaded.finished(), "asset paste and load running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(assetPaste.result != null && loaded.finished(), "asset paste and load running"))
+                .thenWaitUntil(() -> {
                     // Library files are sanitized for everyone: the command block comes back without its command.
-                    net.minecraft.util.math.BlockPos command = pos(at[0] + 1, 103, at[1] + 6);
+                    net.minecraft.core.BlockPos command = pos(at[0] + 1, 103, at[1] + 6);
                     ClipTestSupport.checkShifted(world, before, pos(at[0] + 16, 100, at[1]), "the asset pasted by hash",
                             p -> p.equals(command));
-                    check(((CommandBlockBlockEntity) world.getBlockEntity(command.add(16, 0, 0))).getCommandExecutor()
+                    check(((CommandBlockEntity) world.getBlockEntity(command.offset(16, 0, 0))).getCommandBlock()
                             .getCommand().isEmpty(), "the asset kept its command");
                     ClipboardService.ClipboardInfo info = loaded.get("load");
                     check(info.dims().equals(new BlockPos(8, 4, 8)), "loaded " + info);
                     paste(h, h.player, info.clipboardId(), new BlockPos(at[0] + 32, 100, at[1]), Transform.IDENTITY, clipboardPaste);
                 })
-                .createAndAdd(() -> check(clipboardPaste.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(clipboardPaste.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     ClipTestSupport.checkShifted(world, before, pos(at[0] + 32, 100, at[1]), "the loaded asset pasted",
                             p -> p.equals(pos(at[0] + 1, 103, at[1] + 6)));
-                    check(((CommandBlockBlockEntity) world.getBlockEntity(pos(at[0] + 33, 103, at[1] + 6))).getCommandExecutor()
+                    check(((CommandBlockEntity) world.getBlockEntity(pos(at[0] + 33, 103, at[1] + 6))).getCommandBlock()
                             .getCommand().isEmpty(), "the loaded asset kept its command");
                     forceChunks(world, all, false);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     private static void run(ClipboardGameTest.ThrowingRun request) {
         try {
             request.run();
         } catch (EditRejected e) {
-            throw new GameTestException("refused: " + e.getMessage());
+            throw new GameTestAssertException("refused: " + e.getMessage());
         }
     }
 }

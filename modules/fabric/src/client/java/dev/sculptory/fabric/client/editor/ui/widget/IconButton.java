@@ -4,7 +4,7 @@ import dev.sculptory.fabric.client.editor.ui.Size;
 import dev.sculptory.fabric.client.editor.ui.Theme;
 import dev.sculptory.fabric.client.editor.ui.UiContext;
 import dev.sculptory.fabric.client.editor.ui.UiGraphics;
-import net.minecraft.item.ItemStack;
+import net.minecraft.world.item.ItemStack;
 
 /**
  * A square button showing an item icon, with an optional selected state (palettes, tool bars).

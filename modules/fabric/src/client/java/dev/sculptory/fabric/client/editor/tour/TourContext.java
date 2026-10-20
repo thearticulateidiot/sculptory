@@ -39,18 +39,18 @@ import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.StairsBlock;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.registry.tag.BlockTags;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.StairBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -76,7 +76,7 @@ public final class TourContext {
     /** A widget taller than this (UI units: a list, a preview) may be cut by a crop's edge; a row is far shorter. */
     private static final int MAX_ROW_HEIGHT = 48;
 
-    private final MinecraftClient client;
+    private final Minecraft client;
     private final EditorClient editor;
     private SizedLayouts savedLayouts;
     private int savedUiPercent = UiScale.DEFAULT_PERCENT;
@@ -90,7 +90,7 @@ public final class TourContext {
     /** The view's pitch (degrees down). */
     private final float pitch;
 
-    TourContext(MinecraftClient client, EditorClient editor, int baseUiPercent, SizedLayouts baseLayouts,
+    TourContext(Minecraft client, EditorClient editor, int baseUiPercent, SizedLayouts baseLayouts,
             float pitch) {
         this.client = Objects.requireNonNull(client);
         this.editor = Objects.requireNonNull(editor);
@@ -99,7 +99,7 @@ public final class TourContext {
         this.pitch = pitch;
     }
 
-    public MinecraftClient client() {
+    public Minecraft client() {
         return client;
     }
 
@@ -163,24 +163,24 @@ public final class TourContext {
         if (uiPercent != TourStep.BASE_UI_SIZE && uiPercent != baseUiPercent) {
             setUiSize(uiPercent);
         }
-        client.getToastManager().clear();
+        client.getToasts().clear();
         look();
         pointAt(PARK_X, PARK_Y);
     }
 
     /** Turns the player to the tour's fixed view (no teleport), or to the view {@link #overlook} set. */
     void look() {
-        ClientPlayerEntity player = client.player;
+        LocalPlayer player = client.player;
         if (player == null) {
             return;
         }
         float yaw = overlookView == null ? YAW : overlookView[3];
         float lookPitch = overlookView == null ? pitch : overlookView[4];
-        player.setYaw(yaw);
-        player.setPitch(lookPitch);
-        player.prevYaw = yaw;
-        player.prevPitch = lookPitch;
-        player.setHeadYaw(yaw);
+        player.setYRot(yaw);
+        player.setXRot(lookPitch);
+        player.yRotO = yaw;
+        player.xRotO = lookPitch;
+        player.setYHeadRot(yaw);
     }
 
     /** The place and view {@link #overlook} put the player at (x, y, z, yaw, pitch), while it holds. */
@@ -195,14 +195,14 @@ public final class TourContext {
      * the world's own server, so the client follows a moment later.
      */
     public void overlook(Box box, double height) {
-        ClientPlayerEntity player = client.player;
-        MinecraftServer server = client.getServer();
+        LocalPlayer player = client.player;
+        MinecraftServer server = client.getSingleplayerServer();
         if (player == null || server == null) {
             throw new IllegalStateException("Not in a singleplayer world: the tour can't move the player");
         }
         if (homeView == null) {
             homeView = new float[] {(float) player.getX(), (float) player.getY(), (float) player.getZ(),
-                    player.getYaw(), player.getPitch()};
+                    player.getYRot(), player.getXRot()};
         }
         double tx = (box.min().x() + box.max().x()) / 2.0 + 0.5;
         double ty = box.min().y();
@@ -210,7 +210,7 @@ public final class TourContext {
         double ex = tx;
         double ey = ty + height;
         double ez = tz + height;
-        double eyeY = ey + player.getStandingEyeHeight();
+        double eyeY = ey + player.getEyeHeight();
         float yaw = (float) (Math.toDegrees(Math.atan2(tz - ez, tx - ex)) - 90);
         float lookPitch = (float) -Math.toDegrees(Math.atan2(ty - eyeY, Math.hypot(tx - ex, tz - ez)));
         teleport(ex, ey, ez, yaw, lookPitch);
@@ -219,18 +219,18 @@ public final class TourContext {
     }
 
     private void teleport(double x, double y, double z, float yaw, float lookPitch) {
-        MinecraftServer server = client.getServer();
-        ClientPlayerEntity player = client.player;
+        MinecraftServer server = client.getSingleplayerServer();
+        LocalPlayer player = client.player;
         if (server == null || player == null) {
             return;
         }
-        java.util.UUID id = player.getUuid();
+        java.util.UUID id = player.getUUID();
         server.execute(() -> {
-            net.minecraft.server.network.ServerPlayerEntity serverPlayer = server.getPlayerManager().getPlayer(id);
+            net.minecraft.server.level.ServerPlayer serverPlayer = server.getPlayerList().getPlayer(id);
             if (serverPlayer != null) {
                 serverPlayer.getAbilities().flying = true;
-                serverPlayer.sendAbilitiesUpdate();
-                serverPlayer.networkHandler.requestTeleport(x, y, z, yaw, lookPitch);
+                serverPlayer.onUpdateAbilities();
+                serverPlayer.connection.teleport(x, y, z, yaw, lookPitch);
             }
         });
     }
@@ -343,8 +343,8 @@ public final class TourContext {
     public void pointAt(double fractionX, double fractionY) {
         pointerFracX = fractionX;
         pointerFracY = fractionY;
-        editor.pinPointer(client.getWindow().getScaledWidth() * fractionX,
-                client.getWindow().getScaledHeight() * fractionY);
+        editor.pinPointer(client.getWindow().getGuiScaledWidth() * fractionX,
+                client.getWindow().getGuiScaledHeight() * fractionY);
     }
 
     /** Puts the pointer over the middle of a tool palette slot (its tooltip shows after the hover delay). */
@@ -530,7 +530,7 @@ public final class TourContext {
      */
     public void selectGroundBoxAtPointer(int sizeX, int sizeY, int sizeZ) {
         WorldCursor cursor = editorContext().cursor().cursor();
-        ClientWorld world = client.world;
+        ClientLevel world = client.level;
         if (cursor.missed() || world == null) {
             throw new IllegalStateException("The pointer is not over a block");
         }
@@ -596,8 +596,8 @@ public final class TourContext {
      */
     public Box placeStairsUnderPointer(int size) {
         WorldCursor cursor = editorContext().cursor().cursor();
-        MinecraftServer server = client.getServer();
-        ClientWorld world = client.world;
+        MinecraftServer server = client.getSingleplayerServer();
+        ClientLevel world = client.level;
         if (cursor.missed() || world == null) {
             throw new IllegalStateException("The pointer is not over a block");
         }
@@ -607,28 +607,28 @@ public final class TourContext {
         BlockPos top = groundUnder(cursor.pos(), world);
         BlockPos min = top.offset(-size / 2, 1, -size / 2);
         Box box = Box.of(min, min.offset(size - 1, 0, size - 1));
-        ServerWorld serverWorld = server.getWorld(world.getRegistryKey());
+        ServerLevel serverWorld = server.getLevel(world.dimension());
         if (serverWorld == null) {
             throw new IllegalStateException("The server has no world for the client's dimension");
         }
-        BlockState stairs = Blocks.OAK_STAIRS.getDefaultState().with(StairsBlock.FACING, Direction.SOUTH);
-        BlockState air = Blocks.AIR.getDefaultState();
+        BlockState stairs = Blocks.OAK_STAIRS.defaultBlockState().setValue(StairBlock.FACING, Direction.SOUTH);
+        BlockState air = Blocks.AIR.defaultBlockState();
         server.execute(() -> {
-            net.minecraft.util.math.BlockPos.Mutable at = new net.minecraft.util.math.BlockPos.Mutable();
+            net.minecraft.core.BlockPos.MutableBlockPos at = new net.minecraft.core.BlockPos.MutableBlockPos();
             for (int x = top.x() - CLEARING_RADIUS; x <= top.x() + CLEARING_RADIUS; x++) {
                 for (int z = top.z() - CLEARING_RADIUS; z <= top.z() + CLEARING_RADIUS; z++) {
                     for (int y = top.y() + 1; y <= top.y() + CLEARING_HEIGHT; y++) {
                         at.set(x, y, z);
                         if (!serverWorld.getBlockState(at).isAir()) {
-                            serverWorld.setBlockState(at, air, Block.NOTIFY_LISTENERS);
+                            serverWorld.setBlock(at, air, Block.UPDATE_CLIENTS);
                         }
                     }
                 }
             }
             for (int x = box.min().x(); x <= box.max().x(); x++) {
                 for (int z = box.min().z(); z <= box.max().z(); z++) {
-                    serverWorld.setBlockState(new net.minecraft.util.math.BlockPos(x, box.min().y(), z), stairs,
-                            Block.NOTIFY_LISTENERS);
+                    serverWorld.setBlock(new net.minecraft.core.BlockPos(x, box.min().y(), z), stairs,
+                            Block.UPDATE_CLIENTS);
                 }
             }
         });
@@ -636,13 +636,13 @@ public final class TourContext {
     }
 
     /** The topmost full solid block at or under {@code from} that isn't a leaf or a log (see {@link #selectGroundBoxAtPointer}). */
-    private static BlockPos groundUnder(BlockPos from, ClientWorld world) {
+    private static BlockPos groundUnder(BlockPos from, ClientLevel world) {
         for (int down = 0; down < 64; down++) {
             BlockPos top = from.offset(0, -down, 0);
-            net.minecraft.util.math.BlockPos at = new net.minecraft.util.math.BlockPos(top.x(), top.y(), top.z());
+            net.minecraft.core.BlockPos at = new net.minecraft.core.BlockPos(top.x(), top.y(), top.z());
             BlockState state = world.getBlockState(at);
-            if (!state.isAir() && state.isOpaqueFullCube(world, at) && !state.isIn(BlockTags.LEAVES)
-                    && !state.isIn(BlockTags.LOGS)) {
+            if (!state.isAir() && state.isSolidRender(world, at) && !state.is(BlockTags.LEAVES)
+                    && !state.is(BlockTags.LOGS)) {
                 return top;
             }
         }
@@ -672,10 +672,10 @@ public final class TourContext {
                 builder.pinRingKey(false);
                 ringKey(GLFW.GLFW_RELEASE);
                 builder.powers().clear();
-                client.inGameHud.setOverlayMessage(Text.empty(), false);
+                client.gui.setOverlayMessage(Component.empty(), false);
             }
         });
-        if (client.currentScreen instanceof RingScreen) {
+        if (client.screen instanceof RingScreen) {
             client.setScreen(null);
         }
         if (!editor.mode().isEditing() && !editor.mode().enter()) {
@@ -684,8 +684,8 @@ public final class TourContext {
     }
 
     private void ringKey(int glfwAction) {
-        long window = client.getWindow().getHandle();
-        client.keyboard.onKey(window, GLFW.GLFW_KEY_G, GLFW.glfwGetKeyScancode(GLFW.GLFW_KEY_G), glfwAction, 0);
+        long window = client.getWindow().getWindow();
+        client.keyboardHandler.keyPress(window, GLFW.GLFW_KEY_G, GLFW.glfwGetKeyScancode(GLFW.GLFW_KEY_G), glfwAction, 0);
     }
 
     /**
@@ -693,11 +693,11 @@ public final class TourContext {
      * {@code BuilderClient} opens it), with room for the chips' names around it.
      */
     public Rect ringArea() {
-        if (!(client.currentScreen instanceof RingScreen)) {
-            throw new IllegalStateException("The ring of powers is not open (screen: " + client.currentScreen + ")");
+        if (!(client.screen instanceof RingScreen)) {
+            throw new IllegalStateException("The ring of powers is not open (screen: " + client.screen + ")");
         }
-        double width = client.getWindow().getScaledWidth();
-        double height = client.getWindow().getScaledHeight();
+        double width = client.getWindow().getGuiScaledWidth();
+        double height = client.getWindow().getGuiScaledHeight();
         double radius = Math.max(40, Math.min(width, height) * 0.28);
         double halfWidth = radius * 1.3;
         double halfHeight = radius * 1.12;
@@ -929,7 +929,7 @@ public final class TourContext {
      * use positions right after changing the size.
      */
     private void relayout() {
-        ui().layout(client.getWindow().getScaledWidth(), client.getWindow().getScaledHeight());
+        ui().layout(client.getWindow().getGuiScaledWidth(), client.getWindow().getGuiScaledHeight());
     }
 
     private static <T extends Node> T ancestor(Node node, Class<T> type) {

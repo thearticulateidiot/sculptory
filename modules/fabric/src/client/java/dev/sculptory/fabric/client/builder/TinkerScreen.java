@@ -8,11 +8,11 @@ import dev.sculptory.fabric.client.editor.Translator;
 import dev.sculptory.fabric.client.tinker.TinkerController;
 import java.util.List;
 import java.util.Objects;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.gui.widget.CyclingButtonWidget;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 /**
  * Builder mode's Tinker panel ("Builder mode"): the editor's {@code TinkerWindow}
@@ -37,7 +37,7 @@ final class TinkerScreen extends Screen {
     private String heading = "";
 
     TinkerScreen(TinkerController controller, TinkerController.Target target, StateSpace states, Translator translator) {
-        super(Text.translatable(TITLE));
+        super(Component.translatable(TITLE));
         this.controller = Objects.requireNonNull(controller);
         this.target = Objects.requireNonNull(target);
         this.states = Objects.requireNonNull(states);
@@ -52,7 +52,7 @@ final class TinkerScreen extends Screen {
 
     /** Builds the controls again (the controller reported a change). */
     void refresh() {
-        clearAndInit();
+        rebuildWidgets();
     }
 
     @Override
@@ -63,8 +63,8 @@ final class TinkerScreen extends Screen {
             case TinkerController.BlockTarget block -> y = blockControls(block.pos(), x, y);
             case TinkerController.EntityTarget entity -> y = entityControls(entity, x, y);
         }
-        addDrawableChild(ButtonWidget.builder(Text.translatable("gui.done"), b -> close())
-                .dimensions(x, y + 6, WIDTH, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("gui.done"), b -> onClose())
+                .bounds(x, y + 6, WIDTH, 20).build());
     }
 
     private int blockControls(BlockPos pos, int x, int y) {
@@ -75,15 +75,15 @@ final class TinkerScreen extends Screen {
             String current = states.describe(state).get(property);
             List<String> values = states.propertyValues(state, property);
             if (current == null || values.size() < 2) continue;
-            addDrawableChild(CyclingButtonWidget.<String>builder(value -> Text.literal(TinkerProperties.shown(value)))
-                    .values(values).initially(current)
-                    .build(x, y, WIDTH, 20, Text.literal(TinkerProperties.shown(property)),
+            addRenderableWidget(CycleButton.<String>builder(value -> Component.literal(TinkerProperties.shown(value)))
+                    .withValues(values).withInitialValue(current)
+                    .create(x, y, WIDTH, 20, Component.literal(TinkerProperties.shown(property)),
                             (button, value) -> change(pos, property, value)));
             y += ROW;
         }
         if (states.describe(state).block().value().endsWith("sign")) {
-            addDrawableChild(ButtonWidget.builder(Text.literal(tr.translate(SIGN_HINT)), b -> { })
-                    .dimensions(x, y, WIDTH, 20).build()).active = false;
+            addRenderableWidget(Button.builder(Component.literal(tr.translate(SIGN_HINT)), b -> { })
+                    .bounds(x, y, WIDTH, 20).build()).active = false;
             y += ROW;
         }
         return y;
@@ -105,27 +105,27 @@ final class TinkerScreen extends Screen {
         for (int axis = 0; axis < 3; axis++) {
             int a = axis;
             String name = "xyz".substring(axis, axis + 1);
-            ButtonWidget minusOne = ButtonWidget.builder(Text.literal(name + " −1"), b -> move(entity, a, -1))
-                    .dimensions(x, y, quarter - 2, 20).build();
-            ButtonWidget minusSixteenth = ButtonWidget.builder(Text.literal(name + " −¹⁄₁₆"), b -> move(entity, a, -SIXTEENTH))
-                    .dimensions(x + quarter, y, quarter - 2, 20).build();
-            ButtonWidget plusSixteenth = ButtonWidget.builder(Text.literal(name + " +¹⁄₁₆"), b -> move(entity, a, SIXTEENTH))
-                    .dimensions(x + 2 * quarter, y, quarter - 2, 20).build();
-            ButtonWidget plusOne = ButtonWidget.builder(Text.literal(name + " +1"), b -> move(entity, a, 1))
-                    .dimensions(x + 3 * quarter, y, quarter - 2, 20).build();
+            Button minusOne = Button.builder(Component.literal(name + " −1"), b -> move(entity, a, -1))
+                    .bounds(x, y, quarter - 2, 20).build();
+            Button minusSixteenth = Button.builder(Component.literal(name + " −¹⁄₁₆"), b -> move(entity, a, -SIXTEENTH))
+                    .bounds(x + quarter, y, quarter - 2, 20).build();
+            Button plusSixteenth = Button.builder(Component.literal(name + " +¹⁄₁₆"), b -> move(entity, a, SIXTEENTH))
+                    .bounds(x + 2 * quarter, y, quarter - 2, 20).build();
+            Button plusOne = Button.builder(Component.literal(name + " +1"), b -> move(entity, a, 1))
+                    .bounds(x + 3 * quarter, y, quarter - 2, 20).build();
             minusSixteenth.active = !whole;
             plusSixteenth.active = !whole;
-            addDrawableChild(minusOne);
-            addDrawableChild(minusSixteenth);
-            addDrawableChild(plusSixteenth);
-            addDrawableChild(plusOne);
+            addRenderableWidget(minusOne);
+            addRenderableWidget(minusSixteenth);
+            addRenderableWidget(plusSixteenth);
+            addRenderableWidget(plusOne);
             y += ROW;
         }
         if (entity.kind().turns()) {
-            addDrawableChild(ButtonWidget.builder(Text.literal(tr.translate("sculptory.tinker.turn_left")),
-                    b -> turn(entity, -TURN)).dimensions(x, y, WIDTH / 2 - 2, 20).build());
-            addDrawableChild(ButtonWidget.builder(Text.literal(tr.translate("sculptory.tinker.turn_right")),
-                    b -> turn(entity, TURN)).dimensions(x + WIDTH / 2, y, WIDTH / 2 - 2, 20).build());
+            addRenderableWidget(Button.builder(Component.literal(tr.translate("sculptory.tinker.turn_left")),
+                    b -> turn(entity, -TURN)).bounds(x, y, WIDTH / 2 - 2, 20).build());
+            addRenderableWidget(Button.builder(Component.literal(tr.translate("sculptory.tinker.turn_right")),
+                    b -> turn(entity, TURN)).bounds(x + WIDTH / 2, y, WIDTH / 2 - 2, 20).build());
             y += ROW;
         }
         return y;
@@ -147,14 +147,14 @@ final class TinkerScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         super.render(context, mouseX, mouseY, delta);
-        context.drawCenteredTextWithShadow(textRenderer, tr.translate(TITLE), width / 2, 12, 0xFFFFFFFF);
-        context.drawCenteredTextWithShadow(textRenderer, heading, width / 2, 24, 0xFFD9DEE8);
+        context.drawCenteredString(font, tr.translate(TITLE), width / 2, 12, 0xFFFFFFFF);
+        context.drawCenteredString(font, heading, width / 2, 24, 0xFFD9DEE8);
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 }

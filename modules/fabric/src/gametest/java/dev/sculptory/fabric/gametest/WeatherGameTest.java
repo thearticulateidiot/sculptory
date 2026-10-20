@@ -39,13 +39,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.IntFunction;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.BlockState;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -67,10 +67,10 @@ public final class WeatherGameTest implements FabricGameTest {
      * The world then equals the kernel's replay on a snapshot cell for cell; each stroke made one entry; undoing them
      * all restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_weather_strokes", tickLimit = LIMIT)
-    public void everyModesStrokesMatchTheKernelAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_weather_strokes", timeoutTicks = LIMIT)
+    public void everyModesStrokesMatchTheKernelAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1140);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 200, z0 + 79);
@@ -126,19 +126,19 @@ public final class WeatherGameTest implements FabricGameTest {
         strokes.add(line(i -> new Dab(i, (x0 + 20) * 16 + 2, 106 * 16 + 8, (z0 + 18 + i / 2) * 16 + 8, 255)));
 
         int[] seq = {1};
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 begin(h, h.player, 200 + current, specs.get(current));
                 DabOutcome outcome = h.service.dabs(h.player, 200 + current, seq[0]++, strokes.get(current));
                 check(outcome.accepted(), "stroke " + current + ": " + outcome);
             });
-            runner.createAndAdd(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
-            runner.createAndAdd(() -> h.service.endStroke(h.player, 200 + current));
+            runner.thenWaitUntil(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
+            runner.thenWaitUntil(() -> h.service.endStroke(h.player, 200 + current));
         }
         String[] replay = {null};
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
             if (replay[0] == null) replay[0] = replay(specs, strokes, snapshot);
             check(replay[0].isEmpty(), replay[0]);
@@ -155,7 +155,7 @@ public final class WeatherGameTest implements FabricGameTest {
                 }
             }
             check(mismatches == 0, mismatches + " cells differ from the kernel; first " + first);
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
             // The mirrored Melt's copies (z0 + 51..55, which no other stroke reaches) did their share.
             int mirrored = 0;
             for (int y = area.min().y(); y <= area.max().y(); y++) {
@@ -170,26 +170,26 @@ public final class WeatherGameTest implements FabricGameTest {
         List<RecordingListener> undos = new ArrayList<>();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 if (undos.size() == current) {
                     RecordingListener undo = new RecordingListener();
                     undos.add(undo);
                     h.undo(undo);
                 }
             });
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 RecordingListener undo = undos.get(current);
                 check(undo.result != null, "undo " + current + " running");
                 check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0,
                         "undo " + current + ": " + undo.result);
             });
         }
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             checkSame(before, capture(world, area), "after undoing every Weather stroke");
             forceChunks(world, area, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     /**
@@ -197,11 +197,11 @@ public final class WeatherGameTest implements FabricGameTest {
      * player may not build on (spawn protection or a claim) is refused {@code PROTECTED} and writes nothing; one across
      * the protected area's edge writes only outside it and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_weather_refused", tickLimit = LIMIT)
-    public void refusedWithoutTheBrushNodeAndWhereProtected(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_weather_refused", timeoutTicks = LIMIT)
+    public void refusedWithoutTheBrushNodeAndWhereProtected(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1142);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 63, 160, z0 + 63);
@@ -211,12 +211,12 @@ public final class WeatherGameTest implements FabricGameTest {
         BrushSpec erode = weather(WeatherSpec.Mode.ERODE, 4, true);
         try {
             // No brush node: refused before anything is admitted.
-            ServerPlayerEntity user = h.addPlayer(false);
+            ServerPlayer user = h.addPlayer(false);
             EditTestSupport.grant(user, Perm.USE, Perm.REGION);
             EditRejected refused = ClipboardGameTest.refusal(() -> h.service.beginStroke(user, 40, erode));
             check(refused.reason() == RejectReason.NO_PERMISSION && refused.getMessage().contains(Perm.BRUSH.node()),
                     "without brush: " + refused.reason() + " " + refused.getMessage());
-            check(h.service.openStroke(user.getUuid()).isEmpty(), "a refused stroke is open");
+            check(h.service.openStroke(user.getUUID()).isEmpty(), "a refused stroke is open");
 
             // Wholly protected: nothing written, the lane refuses the dabs.
             ProtectionHook.protect(h.player, world, x0, z0, x0 + 63, z0 + 63);
@@ -229,8 +229,8 @@ public final class WeatherGameTest implements FabricGameTest {
                 check(outcome.reason() == RejectReason.PROTECTED, "protected: " + outcome);
             }
             h.service.endStroke(h.player, 41);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 40, "commit");
-            check(h.service.historyService().undoEntries(h.player.getUuid()).isEmpty(), "a protected stroke made an entry");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 40, "commit");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).isEmpty(), "a protected stroke made an entry");
             checkSame(before, capture(world, area), "after the protected stroke");
 
             // Across the edge (columns from x0 + 32 east protected): only the west side changes, and undoes exactly.
@@ -242,7 +242,7 @@ public final class WeatherGameTest implements FabricGameTest {
             check(across.accepted(), "across the edge: " + across);
             MultiplayerGameTest.tickUntil(executor, () -> h.acks.seqs.size() == acks + 1, 40, "the dabs across the edge");
             h.service.endStroke(h.player, 42);
-            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 40, "commit");
+            MultiplayerGameTest.tickUntil(executor, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 40, "commit");
             WorldSnapshot partial = capture(world, area);
             int changed = 0;
             for (int y = area.min().y(); y <= area.max().y(); y++) {
@@ -266,7 +266,7 @@ public final class WeatherGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -279,12 +279,12 @@ public final class WeatherGameTest implements FabricGameTest {
      * times or reaches {@link ShapeBrushLaneGameTest#STALL_MICROS}. Logged; the kernel's bound only catches a
      * pathological slowdown.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_weather_timing", tickLimit = LIMIT)
-    public void aRadius32DabComputesInMillisecondsAndFitsTheLane(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_weather_timing", timeoutTicks = LIMIT)
+    public void aRadius32DabComputesInMillisecondsAndFitsTheLane(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 EditExecutor.Settings.from(SculptoryConfig.defaults(), true));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 1144);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 60, z0, x0 + 79, 200, z0 + 79);
@@ -331,7 +331,7 @@ public final class WeatherGameTest implements FabricGameTest {
                 check(outcome.accepted(), mode + ": " + outcome);
                 long[] timing = timedTicks(executor, h, () -> h.acks.seqs.size() == acks + 1, 400, mode + " stroke");
                 h.service.endStroke(h.player, id);
-                timedTicks(executor, h, () -> h.service.queuedCommits(h.player.getUuid()) == 0, 400, mode + " commit");
+                timedTicks(executor, h, () -> h.service.queuedCommits(h.player.getUUID()) == 0, 400, mode + " commit");
                 lane.append(String.format(Locale.ROOT, " %s: %d ticks, longest %.1f ms, %d over %d ms, %.1f ms of GC left out;",
                         mode, timing[0], timing[1] / 1000.0, timing[2], ShapeBrushLaneGameTest.TICK_MICROS / 1000,
                         timing[3] / 1000.0));
@@ -344,7 +344,7 @@ public final class WeatherGameTest implements FabricGameTest {
             forceChunks(world, area, false);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -352,7 +352,7 @@ public final class WeatherGameTest implements FabricGameTest {
      * {@link ShapeBrushLaneGameTest#TICK_MICROS}, GC pauses left out}, times in microseconds, each tick's time without
      * the garbage collectors' pauses during it ({@link ShapeBrushLaneGameTest#gcMillis}).
      */
-    private static long[] timedTicks(EditExecutor<ServerWorld> executor, Harness h,
+    private static long[] timedTicks(EditExecutor<ServerLevel> executor, Harness h,
                                      java.util.function.BooleanSupplier done, int max, String what) {
         long ticks = 0, longest = 0, over = 0, gc = 0;
         while (!done.getAsBoolean() && ticks < max) {
@@ -410,7 +410,7 @@ public final class WeatherGameTest implements FabricGameTest {
     }
 
     /** Twelve dabs on the ground's top face at the columns {@code column} gives, where the cursor would hit it. */
-    private static List<Dab> onGround(ServerWorld world, IntFunction<int[]> column) {
+    private static List<Dab> onGround(ServerLevel world, IntFunction<int[]> column) {
         return line(i -> {
             int[] c = column.apply(i);
             return new Dab(i, c[0] * 16 + 8, (ground(world, c[0], c[1]) + 1) * 16, c[1] * 16 + 8, 255);
@@ -418,10 +418,10 @@ public final class WeatherGameTest implements FabricGameTest {
     }
 
     /** The topmost ground of a column (not air, plants or water), from y 150 down. */
-    private static int ground(ServerWorld world, int x, int z) {
+    private static int ground(ServerLevel world, int x, int z) {
         for (int y = 150; y >= 100; y--) {
-            BlockState state = world.getBlockState(new net.minecraft.util.math.BlockPos(x, y, z));
-            if (!state.isAir() && !state.isReplaceable() && state.getFluidState().isEmpty()) return y;
+            BlockState state = world.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+            if (!state.isAir() && !state.canBeReplaced() && state.getFluidState().isEmpty()) return y;
         }
         return 100;
     }
@@ -450,11 +450,11 @@ public final class WeatherGameTest implements FabricGameTest {
         return "";
     }
 
-    private static void begin(Harness h, ServerPlayerEntity player, int strokeId, BrushSpec spec) {
+    private static void begin(Harness h, ServerPlayer player, int strokeId, BrushSpec spec) {
         try {
             h.service.beginStroke(player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 }

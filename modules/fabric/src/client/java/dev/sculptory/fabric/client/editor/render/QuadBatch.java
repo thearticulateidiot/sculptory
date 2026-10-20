@@ -1,13 +1,13 @@
 package dev.sculptory.fabric.client.editor.render;
 
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import dev.sculptory.fabric.client.editor.world.Aabb;
 import java.util.LinkedHashMap;
 import java.util.SequencedMap;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexConsumer;
-import net.minecraft.client.render.VertexConsumerProvider;
-import net.minecraft.client.util.BufferAllocator;
-import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.client.renderer.MultiBufferSource;
+import net.minecraft.client.renderer.RenderType;
 import org.joml.Matrix4f;
 
 /**
@@ -21,11 +21,11 @@ import org.joml.Matrix4f;
 public final class QuadBatch implements AutoCloseable {
     private static final int LAYER_BUFFER_BYTES = 1 << 16;
 
-    private final BufferAllocator seeThroughBuffer = new BufferAllocator(LAYER_BUFFER_BYTES);
-    private final BufferAllocator depthTestedBuffer = new BufferAllocator(LAYER_BUFFER_BYTES);
-    private final BufferAllocator fallbackBuffer = new BufferAllocator(256);
-    private final VertexConsumerProvider.Immediate immediate;
-    private final MatrixStack matrices = new MatrixStack();
+    private final ByteBufferBuilder seeThroughBuffer = new ByteBufferBuilder(LAYER_BUFFER_BYTES);
+    private final ByteBufferBuilder depthTestedBuffer = new ByteBufferBuilder(LAYER_BUFFER_BYTES);
+    private final ByteBufferBuilder fallbackBuffer = new ByteBufferBuilder(256);
+    private final MultiBufferSource.BufferSource immediate;
+    private final PoseStack matrices = new PoseStack();
     private VertexConsumer seeThrough;
     private VertexConsumer depthTested;
     private double cameraX;
@@ -33,10 +33,10 @@ public final class QuadBatch implements AutoCloseable {
     private double cameraZ;
 
     public QuadBatch() {
-        SequencedMap<RenderLayer, BufferAllocator> layers = new LinkedHashMap<>();
+        SequencedMap<RenderType, ByteBufferBuilder> layers = new LinkedHashMap<>();
         layers.put(OverlayLayers.QUADS_SEE_THROUGH, seeThroughBuffer);
         layers.put(OverlayLayers.QUADS, depthTestedBuffer);
-        immediate = VertexConsumerProvider.immediate(layers, fallbackBuffer);
+        immediate = MultiBufferSource.immediateWithBuffers(layers, fallbackBuffer);
     }
 
     /** Starts a frame: later coordinates are made relative to this camera position. */
@@ -57,7 +57,7 @@ public final class QuadBatch implements AutoCloseable {
             double x4, double y4, double z4,
             int argb,
             boolean seeThrough) {
-        Matrix4f matrix = matrices.peek().getPositionMatrix();
+        Matrix4f matrix = matrices.last().pose();
         VertexConsumer consumer = consumer(seeThrough);
         int color = OverlayOpacity.apply(argb);
         vertex(consumer, matrix, x1, y1, z1, color);
@@ -67,7 +67,7 @@ public final class QuadBatch implements AutoCloseable {
     }
 
     private void vertex(VertexConsumer consumer, Matrix4f matrix, double x, double y, double z, int argb) {
-        consumer.vertex(matrix, (float) (x - cameraX), (float) (y - cameraY), (float) (z - cameraZ)).color(argb);
+        consumer.addVertex(matrix, (float) (x - cameraX), (float) (y - cameraY), (float) (z - cameraZ)).setColor(argb);
     }
 
     /** A horizontal rectangle at height {@code y}, e.g. a column's top-face tint. */
@@ -93,7 +93,7 @@ public final class QuadBatch implements AutoCloseable {
 
     /** Draws everything collected since {@link #begin} and resets the batch. */
     public void draw() {
-        immediate.draw();
+        immediate.endBatch();
         seeThrough = null;
         depthTested = null;
     }

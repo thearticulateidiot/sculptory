@@ -45,29 +45,29 @@ import java.util.UUID;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.util.TriState;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.FluidBlock;
-import net.minecraft.block.OperatorBlock;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.entity.attribute.EntityAttributeInstance;
-import net.minecraft.entity.attribute.EntityAttributeModifier;
-import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.item.ItemPlacementContext;
-import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Clearable;
-import net.minecraft.util.Hand;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.math.BlockBox;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Clearable;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.GameMasterBlock;
+import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -107,24 +107,24 @@ import org.slf4j.LoggerFactory;
  * reach as far; it is removed as soon as they may not (checked every tick for the game mode and the modifier, every
  * {@value #RECHECK_TICKS} ticks and on op changes for the nodes), and when they leave.
  */
-final class BuilderService implements BuilderMode<ServerPlayerEntity> {
+final class BuilderService implements BuilderMode<ServerPlayer> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Added to the reach in the distance check, as vanilla adds to its own. */
     static final double REACH_MARGIN = 1.0;
     static final int DRAG_IDLE_SECONDS = 5;
     static final long DRAG_IDLE_NANOS = DRAG_IDLE_SECONDS * 1_000_000_000L;
     static final String LONG_REACH_PATH = "long_reach";
-    static final Identifier LONG_REACH = Identifier.of("sculptory", LONG_REACH_PATH);
+    static final ResourceLocation LONG_REACH = ResourceLocation.fromNamespaceAndPath("sculptory", LONG_REACH_PATH);
     /** Server ticks between re-checks of the nodes of players holding Long reach. */
     static final int RECHECK_TICKS = 40;
 
-    private final EngineEditService<ServerPlayerEntity, ServerWorld> edits;
+    private final EngineEditService<ServerPlayer, ServerLevel> edits;
     private final EngineRuntime runtime;
     private final MinecraftServer server;
     /** The config in effect ({@code /sculptory reload} replaces it): read whenever a check runs. */
     private final Supplier<SculptoryConfig> configs;
     private final FabricPermissionService permissions;
-    private final EditExecutor<ServerWorld> executor;
+    private final EditExecutor<ServerLevel> executor;
     private final HistoryService history;
     private final FluidTrails trails;
     private final StateSpace states;
@@ -148,7 +148,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     /** The breaks of one click or drag, becoming one history entry. */
     private static final class Drag {
         final int dragId;
-        final ServerWorld world;
+        final ServerLevel world;
         final String worldId;
         final HistoryService.Session session;
         final String label;
@@ -160,7 +160,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
         boolean frozen;
         long lastActivity;
 
-        Drag(int dragId, ServerWorld world, String worldId, HistoryService.Session session, String label, long now) {
+        Drag(int dragId, ServerLevel world, String worldId, HistoryService.Session session, String label, long now) {
             this.dragId = dragId;
             this.world = world;
             this.worldId = worldId;
@@ -170,8 +170,8 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
         }
     }
 
-    BuilderService(EngineEditService<ServerPlayerEntity, ServerWorld> edits, EngineRuntime runtime,
-                   EditExecutor<ServerWorld> executor, HistoryService history, LongSupplier clock) {
+    BuilderService(EngineEditService<ServerPlayer, ServerLevel> edits, EngineRuntime runtime,
+                   EditExecutor<ServerLevel> executor, HistoryService history, LongSupplier clock) {
         this.edits = Objects.requireNonNull(edits);
         this.runtime = Objects.requireNonNull(runtime);
         this.server = runtime.server();
@@ -187,7 +187,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     // ================================================================== powers and Long reach
 
     @Override
-    public void powers(ServerPlayerEntity p, int powers) {
+    public void powers(ServerPlayer p, int powers) {
         if (!BuilderPower.valid(powers)) return;
         PlayerState state = state(p);
         state.powers = powers;
@@ -204,44 +204,44 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
 
     /** Re-reads whether the player may use builder mode (op changes) and applies it to Long reach at once. */
     @Override
-    public void permissionsChanged(ServerPlayerEntity p) {
-        PlayerState state = players.get(p.getUuid());
+    public void permissionsChanged(ServerPlayer p) {
+        PlayerState state = players.get(p.getUUID());
         if (state == null) return;
         state.allowed = mayUse(p);
         updateReach(p, state);
     }
 
-    private boolean mayUse(ServerPlayerEntity p) {
+    private boolean mayUse(ServerPlayer p) {
         return config().editingEnabled && permissions.has(p, Perm.USE) && permissions.has(p, Perm.BUILDER);
     }
 
     /** Adds or removes the Long reach modifier to match the power, the game mode and the permission. */
-    private void updateReach(ServerPlayerEntity p, PlayerState state) {
-        EntityAttributeInstance range = p.getAttributeInstance(EntityAttributes.PLAYER_BLOCK_INTERACTION_RANGE);
+    private void updateReach(ServerPlayer p, PlayerState state) {
+        AttributeInstance range = p.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
         if (range == null) return;
         boolean wanted = BuilderPower.LONG_REACH.in(state.powers) && state.allowed && p.isCreative();
-        EntityAttributeModifier held = range.getModifier(LONG_REACH);
+        AttributeModifier held = range.getModifier(LONG_REACH);
         // Clamped by the attribute to 64 (its maximum); builder.maxReach may be less (and a reload may change it).
         double add = Math.max(0, config().builder.maxReach - range.getBaseValue());
-        if (held != null && (!wanted || held.value() != add)) {
+        if (held != null && (!wanted || held.amount() != add)) {
             range.removeModifier(LONG_REACH);
             held = null;
         }
         if (wanted && held == null) {
-            range.addTemporaryModifier(new EntityAttributeModifier(LONG_REACH, add, EntityAttributeModifier.Operation.ADD_VALUE));
+            range.addTransientModifier(new AttributeModifier(LONG_REACH, add, AttributeModifier.Operation.ADD_VALUE));
         }
     }
 
     // ================================================================== placing
 
     @Override
-    public BuilderOutcome place(ServerPlayerEntity p, C2S.BuilderPlace m) {
+    public BuilderOutcome place(ServerPlayer p, C2S.BuilderPlace m) {
         Refusal gate = gate(p);
         if (gate != null) return BuilderOutcome.refused(gate, "");
         BoundMask mask = mask(p);
         if (mask == null) return BuilderOutcome.refused(Refusal.INVALID, EditMasks.REFUSED_DETAIL);
-        ServerWorld world = p.getServerWorld();
-        executor.predicted(p.getUuid());
+        ServerLevel world = p.serverLevel();
+        executor.predicted(p.getUUID());
         boolean replace = BuilderPower.REPLACE.in(m.powers());
         boolean force = BuilderPower.FORCE_PLACE.in(m.powers());
         boolean keepShape = BuilderPower.KEEP_SHAPE.in(m.powers());
@@ -252,11 +252,11 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
         Direction side = direction(m.side());
         // Deciding reads the target, the cell beside it and their neighbours (a fence looks around): all loaded, never
         // loaded by the read.
-        if (!neighbourhoodLoaded(world, target) || !neighbourhoodLoaded(world, target.offset(side))) {
+        if (!neighbourhoodLoaded(world, target) || !neighbourhoodLoaded(world, target.relative(side))) {
             return BuilderOutcome.refused(Refusal.UNLOADED, target.toShortString());
         }
-        Vec3d hitPos = new Vec3d(target.getX() + m.hitX(), target.getY() + m.hitY(), target.getZ() + m.hitZ());
-        Hand hand = m.offHand() ? Hand.OFF_HAND : Hand.MAIN_HAND;
+        Vec3 hitPos = new Vec3(target.getX() + m.hitX(), target.getY() + m.hitY(), target.getZ() + m.hitZ());
+        InteractionHand hand = m.offHand() ? InteractionHand.OFF_HAND : InteractionHand.MAIN_HAND;
         BuilderPlacement.Outcome decided = BuilderPlacement.decide(world, p, hand, new BlockHitResult(hitPos, side, target,
                 false), replace, force);
         if (decided.refusal() != null) return BuilderOutcome.refused(refusal(decided.refusal()), "");
@@ -270,7 +270,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
         if (order != null) return BuilderOutcome.refused(order, "");
         PlayerState state = state(p);
         if (!budget(state).tryAcquire(copies.size())) return BuilderOutcome.refused(Refusal.RATE_LIMITED, "");
-        closeDrag(p.getUuid(), true);
+        closeDrag(p.getUUID(), true);
 
         RecordBuilder record = new RecordBuilder();
         int skipped = 0;
@@ -280,7 +280,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
         try {
             if (replace) emptyContainer(capture, world, cell);
             if (!BuilderPlacement.place(decision.item(), decision.context(), decision.state(), false)) skipped++;
-            ItemStack stack = decision.context().getStack();
+            ItemStack stack = decision.context().getItemInHand();
             for (BuilderPlacement.Copy copy : copies.subList(1, copies.size())) {
                 BlockPos at = copy.pos();
                 if (writable(p, world, at) != null || (replace && !mayReplace(p, world, at))) {
@@ -288,8 +288,8 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
                     continue;
                 }
                 Direction copySide = direction(Symmetry.imageFacing(copy.image(), m.side()));
-                ItemPlacementContext context = BuilderPlacementContext.at(world, p, hand, stack, at, copySide);
-                if (!replace && !world.getBlockState(at).canReplace(context)) {
+                BlockPlaceContext context = BuilderPlacementContext.at(world, p, hand, stack, at, copySide);
+                if (!replace && !world.getBlockState(at).canBeReplaced(context)) {
                     skipped++;
                     continue;
                 }
@@ -315,7 +315,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
         int changed = record(world, record, changes, keepShape).changed();
         if (changed > 0) {
             String label = replace ? "Replace" : "Place";
-            push(history.session(p.getUuid()), runtime.worldId(world), label, record);
+            push(history.session(p.getUUID()), runtime.worldId(world), label, record);
         }
         if (failure != null) return new BuilderOutcome(Refusal.FAILED, failure.toString(), changed, skipped);
         return BuilderOutcome.done(changed, skipped);
@@ -324,8 +324,8 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     // ================================================================== breaking
 
     @Override
-    public BuilderOutcome breakBlocks(ServerPlayerEntity p, C2S.BuilderBreak m) {
-        UUID owner = p.getUuid();
+    public BuilderOutcome breakBlocks(ServerPlayer p, C2S.BuilderBreak m) {
+        UUID owner = p.getUUID();
         Refusal gate = gate(p);
         if (gate != null) {
             if (m.last()) closeDrag(owner, true);
@@ -336,7 +336,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
             if (m.last()) closeDrag(owner, true);
             return BuilderOutcome.refused(Refusal.INVALID, EditMasks.REFUSED_DETAIL);
         }
-        ServerWorld world = p.getServerWorld();
+        ServerLevel world = p.serverLevel();
         executor.predicted(owner);
         boolean keepShape = BuilderPower.KEEP_SHAPE.in(m.powers());
         Symmetry symmetry = BuilderPower.MIRROR.in(m.powers()) ? m.symmetry() : Symmetry.NONE;
@@ -440,10 +440,10 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     }
 
     @Override
-    public void dragEnd(ServerPlayerEntity p, int dragId) {
-        PlayerState state = players.get(p.getUuid());
+    public void dragEnd(ServerPlayer p, int dragId) {
+        PlayerState state = players.get(p.getUUID());
         if (state == null || state.drag == null || state.drag.dragId != dragId) return;
-        closeDrag(p.getUuid(), true);
+        closeDrag(p.getUUID(), true);
     }
 
     /**
@@ -451,16 +451,16 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
      * in Creative (a sword) are {@link Refusal#CANNOT_BREAK}; air, a bare fluid, or another kind than the drag's first in
      * a same-kind drag are {@link Refusal#NOTHING}.
      */
-    private static Refusal breakable(ServerPlayerEntity p, ServerWorld world, BlockPos pos, Drag drag, boolean sameKind) {
+    private static Refusal breakable(ServerPlayer p, ServerLevel world, BlockPos pos, Drag drag, boolean sameKind) {
         BlockState state = world.getBlockState(pos);
-        if (state.isAir() || state.getBlock() instanceof FluidBlock) return Refusal.NOTHING;
+        if (state.isAir() || state.getBlock() instanceof LiquidBlock) return Refusal.NOTHING;
         if (!BuilderPlacement.breakable(world, p, pos)) return Refusal.CANNOT_BREAK;
-        if (!p.getMainHandStack().getItem().canMine(state, world, pos, p)) return Refusal.CANNOT_BREAK;
-        if (sameKind && drag.firstKind != null && !state.isOf(drag.firstKind)) return Refusal.NOTHING;
+        if (!p.getMainHandItem().getItem().canAttackBlock(state, world, pos, p)) return Refusal.CANNOT_BREAK;
+        if (sameKind && drag.firstKind != null && !state.is(drag.firstKind)) return Refusal.NOTHING;
         return null;
     }
 
-    private void breakAt(BuilderCapture capture, ServerWorld world, ServerPlayerEntity p, BlockPos pos) {
+    private void breakAt(BuilderCapture capture, ServerLevel world, ServerPlayer p, BlockPos pos) {
         emptyContainer(capture, world, pos);
         BuilderPlacement.breakBlock(world, p, pos);
     }
@@ -530,9 +530,9 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     }
 
     /** The player's global mask, or {@code null} while their last mask was refused (their actions are refused). */
-    private BoundMask mask(ServerPlayerEntity p) {
+    private BoundMask mask(ServerPlayer p) {
         try {
-            return EditMasks.current(p.getUuid());
+            return EditMasks.current(p.getUUID());
         } catch (EditRejected refused) {
             return null;
         }
@@ -542,7 +542,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
      * The first changed cell the global mask rejects, judged against the world before the action: {@link Refusal#MASKED}, or {@code null} when it accepts them all (or is off). Like the protection
      * check, one rejected cell refuses the whole action.
      */
-    private Blocked masked(BoundMask mask, ServerWorld world, List<Change> changes) {
+    private Blocked masked(BoundMask mask, ServerLevel world, List<Change> changes) {
         if (mask.acceptsAll() || changes.isEmpty()) return null;
         EditMasks.BeforeView before = new EditMasks.BeforeView(runtime.reader(world));
         for (Change change : changes) before.remember(change.pos().getX(), change.pos().getY(), change.pos().getZ(), change.before());
@@ -554,14 +554,14 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     }
 
     /** The cells to break (targets and their copies) the global mask rejects, judged against the world as it is now. */
-    private Set<BlockPos> rejectedTargets(BoundMask mask, ServerWorld world, List<List<BuilderPlacement.Copy>> targets) {
+    private Set<BlockPos> rejectedTargets(BoundMask mask, ServerLevel world, List<List<BuilderPlacement.Copy>> targets) {
         if (mask.acceptsAll()) return Set.of();
         FabricWorldReader reader = runtime.reader(world);
         Set<BlockPos> rejected = new HashSet<>();
         for (List<BuilderPlacement.Copy> copies : targets) {
             for (BuilderPlacement.Copy copy : copies) {
                 BlockPos pos = copy.pos();
-                if (!reader.isLoaded(pos.getX() >> 4, pos.getZ() >> 4) || world.isOutOfHeightLimit(pos)) continue;
+                if (!reader.isLoaded(pos.getX() >> 4, pos.getZ() >> 4) || world.isOutsideBuildHeight(pos)) continue;
                 if (!mask.test(pos.getX(), pos.getY(), pos.getZ(), reader.get(pos.getX(), pos.getY(), pos.getZ()), reader)) {
                     rejected.add(pos);
                 }
@@ -575,7 +575,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
      * by a job), or {@code null}. The target and the mirrored copies were checked before the action; this catches the
      * cells vanilla's own steps reached (a bed's head, a door's upper half, the base of a broken piston head).
      */
-    private Blocked blocked(ServerPlayerEntity p, ServerWorld world, List<Change> changes) {
+    private Blocked blocked(ServerPlayer p, ServerLevel world, List<Change> changes) {
         for (Change change : changes) {
             Refusal refusal = writable(p, world, change.pos());
             if (refusal != null) return new Blocked(refusal, change.pos());
@@ -588,27 +588,27 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
      * the blocks' own callbacks cancelled so nothing drops or reacts); block entities are restored with their contents.
      * Clients hear the writes, and the action's prediction is reverted by its acknowledgement anyway.
      */
-    private static void revert(ServerWorld world, List<Change> changes) {
+    private static void revert(ServerLevel world, List<Change> changes) {
         try (EditScope scope = EditScope.suppressPhysics()) {
             for (int i = changes.size() - 1; i >= 0; i--) {
                 Change change = changes.get(i);
                 BlockPos pos = change.pos();
-                BlockState before = Block.getStateFromRawId(change.before());
+                BlockState before = Block.stateById(change.before());
                 if (world.getBlockState(pos).hasBlockEntity()) world.removeBlockEntity(pos);
-                world.setBlockState(pos, before, Block.FORCE_STATE | Block.NOTIFY_LISTENERS, 0);
+                world.setBlock(pos, before, Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_CLIENTS, 0);
                 if (change.beforeTile() != null) restoreTile(world, pos, before, change.beforeTile());
             }
         }
     }
 
-    private static void restoreTile(ServerWorld world, BlockPos pos, BlockState state, BlockEntityData tile) {
+    private static void restoreTile(ServerLevel world, BlockPos pos, BlockState state, BlockEntityData tile) {
         try {
-            NbtCompound nbt = FabricTile.from(tile).copyNbt();
-            BlockEntity entity = BlockEntity.createFromNbt(pos, state, nbt, world.getRegistryManager());
+            CompoundTag nbt = FabricTile.from(tile).copyNbt();
+            BlockEntity entity = BlockEntity.loadStatic(pos, state, nbt, world.registryAccess());
             if (entity == null) return;
             world.removeBlockEntity(pos);
-            world.addBlockEntity(entity);
-            world.getWorldChunk(pos).setNeedsSaving(true);
+            world.setBlockEntity(entity);
+            world.getChunkAt(pos).setUnsaved(true);
         } catch (IOException | RuntimeException e) {
             LOG.warn("Sculptory: a block entity at {} could not be put back after a refused builder action",
                     pos.toShortString(), e);
@@ -619,7 +619,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
      * Records the changes into {@code record}, marking fluid the action left as the record's entry's; with Keep shape
      * it clears scheduled ticks at the changed cells, as the editor's physics-off writes do.
      */
-    private Finished record(ServerWorld world, RecordBuilder record, List<Change> changes, boolean keepShape) {
+    private Finished record(ServerLevel world, RecordBuilder record, List<Change> changes, boolean keepShape) {
         boolean fluid = false;
         for (Change change : changes) {
             BlockPos pos = change.pos();
@@ -627,23 +627,23 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
                     change.afterTile());
             fluid |= trails.wrote(world, pos.getX(), pos.getY(), pos.getZ(), change.after(), record.id());
             if (keepShape) {
-                BlockBox box = new BlockBox(pos);
-                world.getBlockTickScheduler().clearNextTicks(box);
-                world.getFluidTickScheduler().clearNextTicks(box);
+                BoundingBox box = new BoundingBox(pos);
+                world.getBlockTicks().clearArea(box);
+                world.getFluidTicks().clearArea(box);
             }
         }
         return new Finished(changes.size(), fluid);
     }
 
     /** Whether Replace may take the block at {@code pos}: an operator block only for a level-2 creative op. */
-    private static boolean mayReplace(ServerPlayerEntity p, ServerWorld world, BlockPos pos) {
-        return !(world.getBlockState(pos).getBlock() instanceof OperatorBlock) || p.isCreativeLevelTwoOp();
+    private static boolean mayReplace(ServerPlayer p, ServerLevel world, BlockPos pos) {
+        return !(world.getBlockState(pos).getBlock() instanceof GameMasterBlock) || p.canUseGameMasterBlocks();
     }
 
     // ================================================================== checks
 
     /** Editing enabled, the nodes, Creative. */
-    private Refusal gate(ServerPlayerEntity p) {
+    private Refusal gate(ServerPlayer p) {
         if (!config().editingEnabled) return Refusal.DISABLED;
         if (!permissions.has(p, Perm.USE) || !permissions.has(p, Perm.BUILDER)) return Refusal.NO_PERMISSION;
         if (!p.isCreative()) return Refusal.NOT_CREATIVE;
@@ -651,19 +651,19 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     }
 
     @Override
-    public boolean withinReach(ServerPlayerEntity p, int x, int y, int z) {
+    public boolean withinReach(ServerPlayer p, int x, int y, int z) {
         return withinReach(p, new BlockPos(x, y, z));
     }
 
     /** Whether {@code pos}'s block lies within the builder reach of the player's eyes (the vanilla test, farther). */
-    boolean withinReach(ServerPlayerEntity p, BlockPos pos) {
+    boolean withinReach(ServerPlayer p, BlockPos pos) {
         double reach = config().builder.maxReach + REACH_MARGIN;
-        return new net.minecraft.util.math.Box(pos).squaredMagnitude(p.getEyePos()) < reach * reach;
+        return new net.minecraft.world.phys.AABB(pos).distanceToSqr(p.getEyePosition()) < reach * reach;
     }
 
     /** Why the player may not write {@code pos}: outside the world, unloaded, protected, held by a job. */
-    private Refusal writable(ServerPlayerEntity p, ServerWorld world, BlockPos pos) {
-        if (!World.isValid(pos) || !WorldChecks.inBuildLimit(world, pos.getX(), pos.getY(), pos.getZ())
+    private Refusal writable(ServerPlayer p, ServerLevel world, BlockPos pos) {
+        if (!Level.isInSpawnableBounds(pos) || !WorldChecks.inBuildLimit(world, pos.getX(), pos.getY(), pos.getZ())
                 || !WorldChecks.insideBorder(world.getWorldBorder(), pos.getX(), pos.getZ())) {
             return Refusal.OUTSIDE_WORLD;
         }
@@ -671,7 +671,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
         Box cell = Box.of(new dev.sculptory.core.BlockPos(pos.getX(), pos.getY(), pos.getZ()));
         ChunkPermit permit = permissions.chunk(p, world, pos.getX() >> 4, pos.getZ() >> 4, cell);
         if (permit == null || !permit.allows(pos.getX(), pos.getZ())) return Refusal.PROTECTED;
-        if (executor.isLockedFor(world, cell, p.getUuid())) return Refusal.AREA_BUSY;
+        if (executor.isLockedFor(world, cell, p.getUUID())) return Refusal.AREA_BUSY;
         return null;
     }
 
@@ -679,7 +679,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
      * Whether the chunks holding {@code pos} and its horizontal neighbours are loaded: an action reads and may update
      * the neighbours, and a read of an unloaded cell would load its chunk on the server thread.
      */
-    private static boolean neighbourhoodLoaded(ServerWorld world, BlockPos pos) {
+    private static boolean neighbourhoodLoaded(ServerLevel world, BlockPos pos) {
         for (int dx = -1; dx <= 1; dx += 2) {
             for (int dz = -1; dz <= 1; dz += 2) {
                 if (!WorldChecks.isChunkLoaded(world, (pos.getX() + dx) >> 4, (pos.getZ() + dz) >> 4)) return false;
@@ -689,9 +689,9 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     }
 
     /** Applies the player's queued brush work first, so the history follows the real order ({@code commitStroke}). */
-    private Refusal followStrokes(ServerPlayerEntity p) {
+    private Refusal followStrokes(ServerPlayer p) {
         try {
-            edits.commitStroke(p.getUuid());
+            edits.commitStroke(p.getUUID());
             return null;
         } catch (EditRejected e) {
             return Refusal.BUSY;
@@ -702,12 +702,12 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
      * Empties a container before it is broken or replaced: its contents go into the record (the cell is noted first),
      * not onto the ground, so undo restores them without duplicating anything.
      */
-    private static void emptyContainer(BuilderCapture capture, ServerWorld world, BlockPos pos) {
+    private static void emptyContainer(BuilderCapture capture, ServerLevel world, BlockPos pos) {
         BlockEntity entity = world.getBlockEntity(pos);
         if (!(entity instanceof Clearable)) return;
         capture.touch(pos);
         try (EditScope scope = EditScope.suppressPhysics()) {
-            Clearable.clear(entity);
+            Clearable.tryClear(entity);
         }
     }
 
@@ -733,8 +733,8 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
 
     // ================================================================== lifecycle
 
-    private PlayerState state(ServerPlayerEntity p) {
-        return players.computeIfAbsent(p.getUuid(), id -> new PlayerState());
+    private PlayerState state(ServerPlayer p) {
+        return players.computeIfAbsent(p.getUUID(), id -> new PlayerState());
     }
 
     private SculptoryConfig config() {
@@ -765,7 +765,7 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
             PlayerState state = entry.getValue();
             if (state.drag != null && now - state.drag.lastActivity >= DRAG_IDLE_NANOS) closeDrag(entry.getKey(), true);
             if (!BuilderPower.LONG_REACH.in(state.powers)) continue;
-            ServerPlayerEntity player = server.getPlayerManager().getPlayer(entry.getKey());
+            ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
             if (player == null) continue;
             if (recheck) {
                 // A permissions mod that fails to answer takes nothing away.
@@ -783,9 +783,9 @@ final class BuilderService implements BuilderMode<ServerPlayerEntity> {
     public void playerLeft(UUID owner, boolean keep) {
         closeDrag(owner, keep);
         players.remove(owner);
-        ServerPlayerEntity player = server.getPlayerManager().getPlayer(owner);
+        ServerPlayer player = server.getPlayerList().getPlayer(owner);
         if (player != null) {
-            EntityAttributeInstance range = player.getAttributeInstance(EntityAttributes.PLAYER_BLOCK_INTERACTION_RANGE);
+            AttributeInstance range = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
             if (range != null) range.removeModifier(LONG_REACH);
         }
     }

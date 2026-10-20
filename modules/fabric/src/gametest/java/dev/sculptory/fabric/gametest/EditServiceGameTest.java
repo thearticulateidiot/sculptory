@@ -35,20 +35,20 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.entity.FurnaceBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.FurnaceBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
 
 /**
  * {@code EngineEditService} region ops, undo and redo against a real server. Each test
@@ -58,10 +58,10 @@ public final class EditServiceGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
     /** 100,000 cells with block entities: filled, then undone to the exact states and NBT. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_fill", tickLimit = LIMIT)
-    public void fill100kThenUndo(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_fill", timeoutTicks = LIMIT)
+    public void fill100kThenUndo(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 11);
         int x = at[0], z = at[1];
         Box region = box(x, 100, z, x + 49, 139, z + 49);
@@ -74,15 +74,15 @@ public final class EditServiceGameTest implements FabricGameTest {
         BlockPos chest = pos(x + 3, 101, z + 3);
         writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
         ChestBlockEntity chestEntity = (ChestBlockEntity) world.getBlockEntity(chest);
-        chestEntity.setStack(0, new ItemStack(Items.DIAMOND, 5));
-        chestEntity.setStack(20, new ItemStack(Items.OAK_LOG, 64));
+        chestEntity.setItem(0, new ItemStack(Items.DIAMOND, 5));
+        chestEntity.setItem(20, new ItemStack(Items.OAK_LOG, 64));
         BlockPos sign = pos(x + 10, 110, z + 10);
         writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign"), null);
         ((SignBlockEntity) world.getBlockEntity(sign)).setText(
-                new SignText().withMessage(0, Text.literal("Builder")).withMessage(1, Text.literal("Suite")), true);
+                new SignText().setMessage(0, Component.literal("Builder")).setMessage(1, Component.literal("Suite")), true);
         BlockPos furnace = pos(x + 40, 139, z + 49);
         writer.write(furnace.getX(), furnace.getY(), furnace.getZ(), h.state("minecraft:furnace"), null);
-        ((FurnaceBlockEntity) world.getBlockEntity(furnace)).setStack(0, new ItemStack(Items.IRON_ORE, 3));
+        ((FurnaceBlockEntity) world.getBlockEntity(furnace)).setItem(0, new ItemStack(Items.IRON_ORE, 3));
         WorldSnapshot before = capture(world, region);
         check(before.tiles.size() == 3, "fixture has " + before.tiles.size() + " block entities");
 
@@ -91,39 +91,39 @@ public final class EditServiceGameTest implements FabricGameTest {
         JobTicket ticket = h.fill(region, "minecraft:stone", fill);
         check(ticket.estimatedCells() == 100_000, "estimate " + ticket.estimatedCells());
         check(ticket.label().equals("Fill"), "label " + ticket.label());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
                     check(fill.result.outcome() == JobOutcome.COMPLETED, "fill " + fill.result);
                     check(fill.result.changed() == 100_000, "changed " + fill.result.changed());
                     check(fill.progressEvents > 1, "progress events: " + fill.progressEvents);
-                    check(world.getBlockEntity(chest) == null && world.getBlockState(chest).isOf(Blocks.STONE), "chest kept");
+                    check(world.getBlockEntity(chest) == null && world.getBlockState(chest).is(Blocks.STONE), "chest kept");
                     HistorySnapshot history = h.history();
                     check(history.canUndo() && history.undoLabel().equals("Fill · 100,000 blocks"),
                             "history " + history);
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     check(undo.result.changed() == 100_000 && undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     checkSame(before, capture(world, region), "after undo");
                     ChestBlockEntity restored = (ChestBlockEntity) world.getBlockEntity(chest);
-                    check(restored.getStack(0).isOf(Items.DIAMOND) && restored.getStack(0).getCount() == 5, "chest items");
+                    check(restored.getItem(0).is(Items.DIAMOND) && restored.getItem(0).getCount() == 5, "chest items");
                     HistorySnapshot history = h.history();
                     check(!history.canUndo() && history.canRedo() && history.redoLabel().equals("Fill · 100,000 blocks"),
                             "history " + history);
                     forceChunks(world, region, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Cells changed by someone else after the edit keep that change; the undo counts them as conflicts. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_conflict", tickLimit = LIMIT)
-    public void undoConflictSkipsForeignCells(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_conflict", timeoutTicks = LIMIT)
+    public void undoConflictSkipsForeignCells(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 12);
         Box region = box(at[0], 112, at[1], at[0] + 15, 127, at[1] + 15);
         loadAndForce(world, region);
@@ -132,36 +132,36 @@ public final class EditServiceGameTest implements FabricGameTest {
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         h.fill(region, "minecraft:stone", fill);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
-                    for (BlockPos p : foreign) world.setBlockState(p, Blocks.GOLD_BLOCK.getDefaultState());
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
+                    for (BlockPos p : foreign) world.setBlockAndUpdate(p, Blocks.GOLD_BLOCK.defaultBlockState());
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     check(undo.result.skippedConflicts() == foreign.length, "conflicts " + undo.result.skippedConflicts());
                     check(undo.result.changed() == 4096 - foreign.length, "changed " + undo.result.changed());
                     for (BlockPos p : foreign) {
-                        check(world.getBlockState(p).isOf(Blocks.GOLD_BLOCK), "foreign change lost at " + p.toShortString());
-                        world.setBlockState(p, Blocks.AIR.getDefaultState());
+                        check(world.getBlockState(p).is(Blocks.GOLD_BLOCK), "foreign change lost at " + p.toShortString());
+                        world.setBlockAndUpdate(p, Blocks.AIR.defaultBlockState());
                     }
                     checkSame(before, capture(world, region), "the rest after undo");
                     forceChunks(world, region, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * The chest scenario: a fill replaced chest A; someone placed a chest of the same state holding other items.
      * Undo keeps the new chest's items and counts one conflict.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_nbt", tickLimit = LIMIT)
-    public void undoKeepsNbtAddedAfterEdit(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_nbt", timeoutTicks = LIMIT)
+    public void undoKeepsNbtAddedAfterEdit(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 13);
         Box region = box(at[0], 112, at[1], at[0] + 15, 119, at[1] + 15);
         loadAndForce(world, region);
@@ -169,25 +169,25 @@ public final class EditServiceGameTest implements FabricGameTest {
         BlockPos chest = pos(at[0] + 5, 113, at[1] + 5);
         int chestState = h.state("minecraft:chest[facing=south]");
         writer.write(chest.getX(), chest.getY(), chest.getZ(), chestState, null);
-        ((ChestBlockEntity) world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 7));
+        ((ChestBlockEntity) world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 7));
         WorldSnapshot before = capture(world, region);
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         h.fill(region, "minecraft:sand", fill);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
-                    check(world.getBlockState(chest).isOf(Blocks.SAND), "chest not replaced");
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
+                    check(world.getBlockState(chest).is(Blocks.SAND), "chest not replaced");
                     writer.write(chest.getX(), chest.getY(), chest.getZ(), chestState, null);
-                    ((ChestBlockEntity) world.getBlockEntity(chest)).setStack(3, new ItemStack(Items.EMERALD, 2));
+                    ((ChestBlockEntity) world.getBlockEntity(chest)).setItem(3, new ItemStack(Items.EMERALD, 2));
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     check(undo.result.skippedConflicts() == 1, "conflicts " + undo.result.skippedConflicts());
                     ChestBlockEntity kept = (ChestBlockEntity) world.getBlockEntity(chest);
-                    check(kept.getStack(3).isOf(Items.EMERALD) && kept.getStack(0).isEmpty(),
+                    check(kept.getItem(3).is(Items.EMERALD) && kept.getItem(0).isEmpty(),
                             "the new chest's items were replaced");
                     WorldSnapshot after = capture(world, region);
                     after.tiles.put(chest.asLong(), before.tiles.get(chest.asLong()));
@@ -195,13 +195,13 @@ public final class EditServiceGameTest implements FabricGameTest {
                     forceChunks(world, region, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_redo", tickLimit = LIMIT)
-    public void redoAfterUndo(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_redo", timeoutTicks = LIMIT)
+    public void redoAfterUndo(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 14);
         Box region = box(at[0], 112, at[1], at[0] + 20, 125, at[1] + 20);
         loadAndForce(world, region);
@@ -211,19 +211,19 @@ public final class EditServiceGameTest implements FabricGameTest {
         RecordingListener undo = new RecordingListener();
         RecordingListener redo = new RecordingListener();
         h.fill(region, "minecraft:polished_granite", fill);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
                     filled[0] = capture(world, region);
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     checkSame(before, capture(world, region), "after undo");
                     h.redo(redo);
                 })
-                .createAndAdd(() -> check(redo.result != null, "redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(redo.result != null, "redo running"))
+                .thenWaitUntil(() -> {
                     check(redo.result.outcome() == JobOutcome.COMPLETED && redo.result.skippedConflicts() == 0,
                             "redo " + redo.result);
                     checkSame(filled[0], capture(world, region), "after redo");
@@ -233,13 +233,13 @@ public final class EditServiceGameTest implements FabricGameTest {
                     forceChunks(world, region, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_clear_redo", tickLimit = LIMIT)
-    public void newEditClearsRedo(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_clear_redo", timeoutTicks = LIMIT)
+    public void newEditClearsRedo(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 15);
         Box first = box(at[0], 112, at[1], at[0] + 9, 121, at[1] + 9);
         Box second = box(at[0] + 20, 112, at[1], at[0] + 29, 121, at[1] + 9);
@@ -249,23 +249,23 @@ public final class EditServiceGameTest implements FabricGameTest {
         RecordingListener undo = new RecordingListener();
         RecordingListener fillB = new RecordingListener();
         h.fill(first, "minecraft:stone", fillA);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fillA.result != null, "fill A running"))
-                .createAndAdd(() -> h.undo(undo))
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fillA.result != null, "fill A running"))
+                .thenWaitUntil(() -> h.undo(undo))
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(h.history().canRedo(), "nothing to redo after the undo");
                     h.fill(second, "minecraft:dirt", fillB);
                 })
-                .createAndAdd(() -> check(fillB.result != null, "fill B running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(fillB.result != null, "fill B running"))
+                .thenWaitUntil(() -> {
                     HistorySnapshot history = h.history();
                     check(history.canUndo() && !history.canRedo(), "history " + history);
                     check(history.undoLabel().equals("Fill · 1,000 blocks") && history.undoLabels().size() == 1,
                             "undo labels " + history.undoLabels());
                     try {
                         h.service.redo(h.player, ConflictPolicy.SKIP_CONFLICTS);
-                        throw new GameTestException("redo was admitted after a new edit");
+                        throw new GameTestAssertException("redo was admitted after a new edit");
                     } catch (EditRejected e) {
                         check(e.reason() == RejectReason.HISTORY_EMPTY, "reason " + e.reason());
                     }
@@ -273,22 +273,22 @@ public final class EditServiceGameTest implements FabricGameTest {
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Per-player entry cap, then the global byte cap: the oldest entry across players goes, and each eviction is
      * reported. Every entry is one full section of air turned to stone, so all have the same size.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_cap", tickLimit = LIMIT)
-    public void historyMemoryCapEvicts(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_cap", timeoutTicks = LIMIT)
+    public void historyMemoryCapEvicts(GameTestHelper context) {
         RecordBuilder probe = new RecordBuilder();
         for (int i = 0; i < 4096; i++) probe.record(i & 15, 112 + (i >> 8), (i >> 4) & 15, 0, null, 1, null);
         EditRecord probeRecord = probe.build();
         long size = probeRecord.estimatedBytes();
         Harness h = new Harness(context, new HistoryLimits(2, Long.MAX_VALUE, size * 5 / 2));
-        ServerPlayerEntity other = h.addPlayer();
-        ServerWorld world = h.world;
+        ServerPlayer other = h.addPlayer();
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 16);
         Box[] sections = new Box[4];
         for (int i = 0; i < 4; i++) sections[i] = box(at[0] + 16 * i, 112, at[1], at[0] + 16 * i + 15, 127, at[1] + 15);
@@ -296,25 +296,25 @@ public final class EditServiceGameTest implements FabricGameTest {
         loadAndForce(world, all);
         RecordingListener[] fills = new RecordingListener[4];
         for (int i = 0; i < 4; i++) fills[i] = new RecordingListener();
-        UUID p1 = h.player.getUuid(), p2 = other.getUuid();
+        UUID p1 = h.player.getUUID(), p2 = other.getUUID();
         h.fill(sections[0], "minecraft:stone", fills[0]);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fills[0].result != null, "fill 1 running"))
-                .createAndAdd(() -> h.fill(sections[1], "minecraft:stone", fills[1]))
-                .createAndAdd(() -> check(fills[1].result != null, "fill 2 running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fills[0].result != null, "fill 1 running"))
+                .thenWaitUntil(() -> h.fill(sections[1], "minecraft:stone", fills[1]))
+                .thenWaitUntil(() -> check(fills[1].result != null, "fill 2 running"))
+                .thenWaitUntil(() -> {
                     check(h.events.evictions.isEmpty(), "early evictions " + h.events.evictions);
                     h.fill(sections[2], "minecraft:stone", fills[2]);
                 })
-                .createAndAdd(() -> check(fills[2].result != null, "fill 3 running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(fills[2].result != null, "fill 3 running"))
+                .thenWaitUntil(() -> {
                     // Entry cap 2: player 1's first entry is discarded.
                     check(h.events.evictions.equals(List.of(p1 + ":1")), "evictions " + h.events.evictions);
                     check(h.service.historyService().undoEntries(p1).size() == 2, "player 1 entries");
                     h.fill(other, sections[3], "minecraft:stone", fills[3]);
                 })
-                .createAndAdd(() -> check(fills[3].result != null, "fill 4 running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(fills[3].result != null, "fill 4 running"))
+                .thenWaitUntil(() -> {
                     // Three entries exceed 2.5 entries' bytes: player 1's older entry is the oldest overall.
                     check(h.events.evictions.equals(List.of(p1 + ":1", p1 + ":1")), "evictions " + h.events.evictions);
                     check(h.service.historyService().undoEntries(p1).size() == 1, "player 1 entries");
@@ -325,19 +325,19 @@ public final class EditServiceGameTest implements FabricGameTest {
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * The {@code /sculptory} debug commands drive the server's own edit service: fill, undo and redo change and restore
      * every cell exactly, history and jobs report it, refusals are reported, and cancel stops a queued fill.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_commands", tickLimit = LIMIT)
-    public void debugCommandsFillUndoRedo(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_commands", timeoutTicks = LIMIT)
+    public void debugCommandsFillUndoRedo(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         var host = EditServiceHost.find(world.getServer())
-                .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
+                .orElseThrow(() -> new GameTestAssertException("the mod did not install the edit service"));
         int[] at = regionCorner(context, 23);
         Box region = box(at[0], 112, at[1], at[0] + 7, 119, at[1] + 7);
         Box big = box(at[0] + 32, 112, at[1], at[0] + 95, 143, at[1] + 63);
@@ -346,14 +346,14 @@ public final class EditServiceGameTest implements FabricGameTest {
         for (int i = 0; i < 8; i++) writer.write(at[0] + i, 112 + i, at[1] + 7 - i, h.state("minecraft:dirt"), null);
         WorldSnapshot before = capture(world, region);
         WorldSnapshot bigBefore = capture(world, big);
-        UUID id = h.player.getUuid();
+        UUID id = h.player.getUUID();
         EditTestSupport.CapturedOutput out = new EditTestSupport.CapturedOutput();
         String fill = "sculptory fill " + at[0] + " 112 " + at[1] + " " + (at[0] + 7) + " 119 " + (at[1] + 7) + " minecraft:gold_block";
         command(h, out, fill);
         check(out.all().contains("Fill started"), "fill output: " + out.all());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(host.jobs(id).isEmpty(), "fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(host.jobs(id).isEmpty(), "fill running"))
+                .thenWaitUntil(() -> {
                     check(countOf(world, region, Blocks.GOLD_BLOCK) == region.volume(), "not every cell is gold");
                     check(host.history(h.player).undoLabel().equals("Fill · 512 blocks"), "history " + host.history(h.player));
                     out.lines.clear();
@@ -364,14 +364,14 @@ public final class EditServiceGameTest implements FabricGameTest {
                     check(out.all().contains("Your jobs: 0"), "jobs output: " + out.all());
                     command(h, out, "sculptory undo");
                 })
-                .createAndAdd(() -> check(host.jobs(id).isEmpty(), "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(host.jobs(id).isEmpty(), "undo running"))
+                .thenWaitUntil(() -> {
                     checkSame(before, capture(world, region), "after /sculptory undo");
                     check(host.history(h.player).canRedo(), "history " + host.history(h.player));
                     command(h, out, "sculptory redo");
                 })
-                .createAndAdd(() -> check(host.jobs(id).isEmpty(), "redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(host.jobs(id).isEmpty(), "redo running"))
+                .thenWaitUntil(() -> {
                     check(countOf(world, region, Blocks.GOLD_BLOCK) == region.volume(), "redo did not refill");
                     out.lines.clear();
                     command(h, out, "sculptory redo");
@@ -384,7 +384,7 @@ public final class EditServiceGameTest implements FabricGameTest {
                     check(out.all().contains("Cancelled 1 job"), "cancel output: " + out.all());
                     check(host.jobs(id).isEmpty(), "the cancelled job is still listed");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     checkSame(bigBefore, capture(world, big), "the cancelled fill");
                     HistorySnapshot history = host.history(h.player);
                     check(history.undoLabels().equals(List.of("Fill · 512 blocks")) && !history.canRedo(),
@@ -393,19 +393,19 @@ public final class EditServiceGameTest implements FabricGameTest {
                     forceChunks(world, box(at[0], 112, at[1], at[0] + 95, 143, at[1] + 63), false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     private static void command(Harness h, EditTestSupport.CapturedOutput out, String command) {
-        h.world.getServer().getCommandManager().executeWithPrefix(h.player.getCommandSource().withOutput(out), command);
+        h.world.getServer().getCommands().performPrefixedCommand(h.player.createCommandSourceStack().withSource(out), command);
     }
 
-    private static long countOf(ServerWorld world, Box box, net.minecraft.block.Block block) {
+    private static long countOf(ServerLevel world, Box box, net.minecraft.world.level.block.Block block) {
         long n = 0;
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
-                    if (world.getBlockState(pos(x, y, z)).isOf(block)) n++;
+                    if (world.getBlockState(pos(x, y, z)).is(block)) n++;
                 }
             }
         }
@@ -416,10 +416,10 @@ public final class EditServiceGameTest implements FabricGameTest {
      * Regression (review H1): an undo while the player's own job is still running is refused, so the job's entry
      * cannot land after the undo and discard the entry just undone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_undo_running", tickLimit = LIMIT)
-    public void undoRefusedWhileOwnJobRuns(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_undo_running", timeoutTicks = LIMIT)
+    public void undoRefusedWhileOwnJobRuns(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 24);
         Box region = box(at[0], 112, at[1], at[0] + 63, 143, at[1] + 63);
         loadAndForce(world, region);
@@ -429,46 +429,46 @@ public final class EditServiceGameTest implements FabricGameTest {
         RecordingListener undoSecond = new RecordingListener();
         RecordingListener undoFirst = new RecordingListener();
         h.fill(region, "minecraft:stone", first);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(first.result != null, "first fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(first.result != null, "first fill running"))
+                .thenWaitUntil(() -> {
                     h.fill(region, "minecraft:dirt", second);
                     try {
                         h.service.undo(h.player, ConflictPolicy.SKIP_CONFLICTS);
-                        throw new GameTestException("undo admitted while the player's fill is running");
+                        throw new GameTestAssertException("undo admitted while the player's fill is running");
                     } catch (EditRejected e) {
                         check(e.reason() == RejectReason.QUEUE_FULL, "reason " + e.reason());
                     }
                 })
-                .createAndAdd(() -> check(second.result != null, "second fill running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(second.result != null, "second fill running"))
+                .thenWaitUntil(() -> {
                     check(h.history().undoLabels().size() == 2, "history " + h.history());
                     h.undo(undoSecond);
                 })
-                .createAndAdd(() -> check(undoSecond.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoSecond.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undoSecond.result.skippedConflicts() == 0, "conflicts " + undoSecond.result);
                     check(h.history().undoLabels().size() == 1 && h.history().redoLabels().size() == 1,
                             "history " + h.history());
                     h.undo(undoFirst);
                 })
-                .createAndAdd(() -> check(undoFirst.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoFirst.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     checkSame(before, capture(world, region), "after both undos");
                     forceChunks(world, region, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Review M1: a redo cancelled after its first section still counts as redone, so its partial result is
      * undoable; after a new edit, undoing everything restores the region exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_partial_redo", tickLimit = LIMIT)
-    public void cancelledRedoStaysUndoable(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_partial_redo", timeoutTicks = LIMIT)
+    public void cancelledRedoStaysUndoable(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 25);
         Box region = box(at[0], 112, at[1], at[0] + 63, 143, at[1] + 63); // 32 sections
         Box other = box(at[0] + 80, 112, at[1], at[0] + 87, 119, at[1] + 7);
@@ -495,13 +495,13 @@ public final class EditServiceGameTest implements FabricGameTest {
             }
         };
         h.fill(region, "minecraft:stone", fill);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> h.undo(undo))
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> redoId[0] = h.redo(cancelRedo).jobId())
-                .createAndAdd(() -> check(redo.result != null, "redo running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> h.undo(undo))
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> redoId[0] = h.redo(cancelRedo).jobId())
+                .thenWaitUntil(() -> check(redo.result != null, "redo running"))
+                .thenWaitUntil(() -> {
                     check(redo.result.outcome() == JobOutcome.CANCELLED && redo.result.changed() == 4096,
                             "redo " + redo.result);
                     HistorySnapshot history = h.history();
@@ -509,30 +509,30 @@ public final class EditServiceGameTest implements FabricGameTest {
                             "the partial redo is not undoable: " + history);
                     h.fill(other, "minecraft:gold_block", newEdit);
                 })
-                .createAndAdd(() -> check(newEdit.result != null, "new edit running"))
-                .createAndAdd(() -> h.undo(undoNew))
-                .createAndAdd(() -> check(undoNew.result != null, "undo of the new edit running"))
-                .createAndAdd(() -> h.undo(undoPartial))
-                .createAndAdd(() -> check(undoPartial.result != null, "undo of the partial redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(newEdit.result != null, "new edit running"))
+                .thenWaitUntil(() -> h.undo(undoNew))
+                .thenWaitUntil(() -> check(undoNew.result != null, "undo of the new edit running"))
+                .thenWaitUntil(() -> h.undo(undoPartial))
+                .thenWaitUntil(() -> check(undoPartial.result != null, "undo of the partial redo running"))
+                .thenWaitUntil(() -> {
                     check(undoPartial.result.skippedConflicts() == 0 && undoPartial.result.changed() == 4096,
                             "undo " + undoPartial.result);
                     checkSame(before, capture(world, region), "after undoing the partial redo");
                     forceChunks(world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A non-op builder (nodes granted by a permissions mod, no operator NBT right) undoes a fill over a sign: the
      * sign's text, operator-only NBT, comes back intact because history tiles are server-captured and trusted.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_nonop_nbt", tickLimit = LIMIT)
-    public void nonOpUndoRestoresTrustedNbt(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_nonop_nbt", timeoutTicks = LIMIT)
+    public void nonOpUndoRestoresTrustedNbt(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         check(h.runtime.permissions().has(builder, Perm.REGION), "grant did not apply");
         check(!h.runtime.permissions().mayWriteOperatorNbt(builder), "the builder may write operator NBT");
@@ -543,23 +543,23 @@ public final class EditServiceGameTest implements FabricGameTest {
         BlockPos sign = pos(at[0] + 3, 113, at[1] + 3);
         writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign"), null);
         ((SignBlockEntity) world.getBlockEntity(sign)).setText(
-                new SignText().withMessage(0, Text.literal("Builder")).withMessage(1, Text.literal("Suite")), true);
+                new SignText().setMessage(0, Component.literal("Builder")).setMessage(1, Component.literal("Suite")), true);
         WorldSnapshot before = capture(world, region);
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         h.fill(builder, region, "minecraft:stone", fill);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
                     check(world.getBlockEntity(sign) == null, "the sign survived the fill");
                     try {
                         h.service.undo(builder, ConflictPolicy.SKIP_CONFLICTS, undo);
                     } catch (EditRejected e) {
-                        throw new GameTestException("undo refused: " + e.getMessage());
+                        throw new GameTestAssertException("undo refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.strippedNbt() == 0,
                             "undo " + undo.result);
                     SignBlockEntity restored = (SignBlockEntity) world.getBlockEntity(sign);
@@ -570,7 +570,7 @@ public final class EditServiceGameTest implements FabricGameTest {
                     forceChunks(world, region, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -578,17 +578,17 @@ public final class EditServiceGameTest implements FabricGameTest {
      * still waiting to start is cancelled on leaving, as any waiting job: see {@code MultiplayerGameTest}.) A private
      * executor ticked by hand, so the undo is really running when the player leaves.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_leave_undo", tickLimit = LIMIT)
-    public void disconnectDuringUndo(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_leave_undo", timeoutTicks = LIMIT)
+    public void disconnectDuringUndo(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, 4096, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 27);
         Box region = box(at[0], 112, at[1], at[0] + 63, 143, at[1] + 63);
         loadAndForce(world, region);
         WorldSnapshot before = capture(world, region);
-        UUID id = h.player.getUuid();
+        UUID id = h.player.getUUID();
         RecordingListener fill = new RecordingListener();
         RecordingListener undo = new RecordingListener();
         RecordingListener later = new RecordingListener();
@@ -612,14 +612,14 @@ public final class EditServiceGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, region, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /** A job cancelled after its first section keeps (and records) that section; undoing it restores the region. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_cancel", tickLimit = LIMIT)
-    public void cancelMidJobUndoable(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_cancel", timeoutTicks = LIMIT)
+    public void cancelMidJobUndoable(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 17);
         Box region = box(at[0], 112, at[1], at[0] + 63, 143, at[1] + 63); // 32 sections
         loadAndForce(world, region);
@@ -646,9 +646,9 @@ public final class EditServiceGameTest implements FabricGameTest {
             }
         };
         id[0] = h.fill(region, "minecraft:stone", cancelOnApply).jobId();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(fill.result != null, "fill running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(fill.result != null, "fill running"))
+                .thenWaitUntil(() -> {
                     check(cancelled[0], "cancel returned false");
                     check(fill.result.outcome() == JobOutcome.CANCELLED, "outcome " + fill.result.outcome());
                     check(fill.result.changed() == 4096, "changed " + fill.result.changed() + "; expected one section");
@@ -656,14 +656,14 @@ public final class EditServiceGameTest implements FabricGameTest {
                     check(history.undoLabel().equals("Fill (cancelled) · 4,096 blocks"), "history " + history);
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before, capture(world, region), "after undo");
                     forceChunks(world, region, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A copy of {@code snapshot} with the states at {@code cells} set to {@code states} (no tiles there). */
@@ -677,7 +677,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         return copy;
     }
 
-    private static void runUntilFinished(EditExecutor<ServerWorld> executor, RecordingListener listener, String what) {
+    private static void runUntilFinished(EditExecutor<ServerLevel> executor, RecordingListener listener, String what) {
         for (int i = 0; i < 10_000 && listener.result == null; i++) executor.tick();
         check(listener.result != null, what + " did not finish");
     }
@@ -687,9 +687,9 @@ public final class EditServiceGameTest implements FabricGameTest {
      * section was computed but before it is written survives and is reported as a conflict (the write-time check). Redo
      * after that partial undo, and undo again, leave every other cell exact.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_edit_history_race", tickLimit = LIMIT)
-    public void undoAndRedoLeaveACellChangedWhileTheyWrite(TestContext context) {
-        EditExecutor<ServerWorld> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_edit_history_race", timeoutTicks = LIMIT)
+    public void undoAndRedoLeaveACellChangedWhileTheyWrite(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = new EditExecutor<>(EngineTestSupport.runtime(context),
                 new EditExecutor.Settings(200_000_000L, 8, 0.4, 2, 8, 32, 64, UnloadedPolicy.LOAD, 1024, 16_384));
         Harness h = new Harness(context, null, System::nanoTime, executor);
         int[] at = regionCorner(context, 92);
@@ -713,11 +713,11 @@ public final class EditServiceGameTest implements FabricGameTest {
         executor.tick();
         check(undo.result == null && undo.phases.contains(Phase.APPLY), "the undo is not writing: " + undo.phases);
         check(h.world.getBlockState(pos(x, 100, z)).isAir(), "nothing undone in the first tick");
-        check(h.world.getBlockState(gold).isOf(Blocks.STONE), "the last cell is already undone");
+        check(h.world.getBlockState(gold).is(Blocks.STONE), "the last cell is already undone");
         writer.write(gold.getX(), gold.getY(), gold.getZ(), goldState, null);
         runUntilFinished(executor, undo, "the undo");
         check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 1, "undo " + undo.result);
-        check(h.world.getBlockState(gold).isOf(Blocks.GOLD_BLOCK), "the undo overwrote the gold block");
+        check(h.world.getBlockState(gold).is(Blocks.GOLD_BLOCK), "the undo overwrote the gold block");
         checkSame(with(original, List.of(gold), List.of(goldState)), capture(h.world, around), "after the undo");
 
         RecordingListener redo = new RecordingListener();
@@ -729,7 +729,7 @@ public final class EditServiceGameTest implements FabricGameTest {
         runUntilFinished(executor, redo, "the redo");
         check(redo.result.outcome() == JobOutcome.COMPLETED && redo.result.skippedConflicts() == 2,
                 "redo (the gold block at compute, the diamond block at write) " + redo.result);
-        check(h.world.getBlockState(diamond).isOf(Blocks.DIAMOND_BLOCK), "the redo overwrote the diamond block");
+        check(h.world.getBlockState(diamond).is(Blocks.DIAMOND_BLOCK), "the redo overwrote the diamond block");
         checkSame(with(filled, List.of(gold, diamond), List.of(goldState, diamondState)), capture(h.world, around),
                 "after the redo");
 
@@ -742,6 +742,6 @@ public final class EditServiceGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(h.world, around, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 }

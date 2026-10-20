@@ -8,21 +8,21 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.server.world.ServerLightingProvider;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.chunk.light.ChunkBlockLightProvider;
-import net.minecraft.world.chunk.light.ChunkLightProvider;
-import net.minecraft.world.chunk.light.ChunkSkyLightProvider;
-import net.minecraft.world.chunk.light.LightingProvider;
+import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ThreadedLevelLightEngine;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.lighting.BlockLightEngine;
+import net.minecraft.world.level.lighting.LevelLightEngine;
+import net.minecraft.world.level.lighting.LightEngine;
+import net.minecraft.world.level.lighting.SkyLightEngine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * The light checks of one writer's physics-off writes, handed to the light engine about a thousand at a time instead
  * of once per cell. Vanilla's {@code WorldChunk.setBlockState} asks the server's light engine to check every cell whose
- * light may change, and {@link ServerLightingProvider#checkBlock} queues a task per cell (about 100 bytes: two
+ * light may change, and {@link ThreadedLevelLightEngine#checkBlock} queues a task per cell (about 100 bytes: two
  * lambdas, the position, the priority queue's entry) that its chunk task sorter hands to the light thread one chunk's
  * tasks at a time. They pile up while an edit writes faster than the light thread takes them, and while the server
  * thread is held: 2.2 GB of a 4 GB GameTest heap after a fill, two radius-128 Heightmap stamps and their undo.
@@ -43,8 +43,8 @@ import org.slf4j.LoggerFactory;
  * before the edit.
  *
  * <p>Batching is on only when the vanilla light engine does the work: no mod known to replace it is loaded, the world's
- * light engine is {@link ServerLightingProvider} itself, its providers are vanilla's {@link ChunkBlockLightProvider}
- * and {@link ChunkSkyLightProvider} (either may be absent, not both). Otherwise every check goes the vanilla way.
+ * light engine is {@link ThreadedLevelLightEngine} itself, its providers are vanilla's {@link BlockLightEngine}
+ * and {@link SkyLightEngine} (either may be absent, not both). Otherwise every check goes the vanilla way.
  * {@code LightBatchMixin} is optional: where another mod rewrote {@code WorldChunk.setBlockState} so its call is not
  * there, nothing reaches {@link #take} and every check goes the vanilla way too. Which way it goes is logged once.
  * Server thread only.
@@ -72,7 +72,7 @@ public final class LightBatch {
     private static final Scope SCOPE = new Scope(true);
     private static final Scope NESTED = new Scope(false);
 
-    private final ServerLightingProvider provider;
+    private final ThreadedLevelLightEngine provider;
     /** Chunk column ({@link ChunkPos#toLong}) → the cells to check there, in the order written. */
     private final Long2ObjectLinkedOpenHashMap<LongArrayList> columns = new Long2ObjectLinkedOpenHashMap<>();
     private long lastColumn = Long.MIN_VALUE;
@@ -80,13 +80,13 @@ public final class LightBatch {
     private long cells;
     private long flushedTasks;
 
-    private LightBatch(ServerLightingProvider provider) {
+    private LightBatch(ThreadedLevelLightEngine provider) {
         this.provider = provider;
     }
 
     /** A batch for {@code world}'s light engine, or {@code null} when batching is off there (checks go per cell). */
-    public static LightBatch of(ServerWorld world) {
-        ServerLightingProvider provider = world.getChunkManager().getLightingProvider();
+    public static LightBatch of(ServerLevel world) {
+        ThreadedLevelLightEngine provider = world.getChunkSource().getLightEngine();
         String off = whyOff(provider);
         if (off != null) {
             log("Sculptory: light checks of edits go to the light engine one per cell: " + off);
@@ -101,16 +101,16 @@ public final class LightBatch {
     }
 
     /** Why batching is off for {@code light}, or {@code null} when it is on. */
-    private static String whyOff(LightingProvider light) {
+    private static String whyOff(LevelLightEngine light) {
         if (disabled) return "turned off";
         for (String mod : LIGHT_ENGINE_MODS) {
             if (modLoaded(mod)) return "the mod " + mod + " is loaded";
         }
-        if (light.getClass() != ServerLightingProvider.class) {
+        if (light.getClass() != ThreadedLevelLightEngine.class) {
             return "the light engine is " + light.getClass().getName();
         }
-        if (!vanillaProviders(light.blockLightProvider, light.skyLightProvider)) {
-            return "the light providers are " + name(light.blockLightProvider) + " and " + name(light.skyLightProvider);
+        if (!vanillaProviders(light.blockEngine, light.skyEngine)) {
+            return "the light providers are " + name(light.blockEngine) + " and " + name(light.skyEngine);
         }
         return null;
     }
@@ -122,8 +122,8 @@ public final class LightBatch {
      */
     public static boolean vanillaProviders(Object block, Object sky) {
         if (block == null && sky == null) return false;
-        return (block == null || block.getClass() == ChunkBlockLightProvider.class)
-                && (sky == null || sky.getClass() == ChunkSkyLightProvider.class);
+        return (block == null || block.getClass() == BlockLightEngine.class)
+                && (sky == null || sky.getClass() == SkyLightEngine.class);
     }
 
     private static String name(Object provider) {
@@ -184,7 +184,7 @@ public final class LightBatch {
      * Called by {@code LightBatchMixin} for each light check {@code WorldChunk.setBlockState} asks: whether the
      * collecting batch took it (the check of a cell of its world, on its thread); otherwise it goes to {@code light}.
      */
-    public static boolean take(LightingProvider light, BlockPos pos) {
+    public static boolean take(LevelLightEngine light, BlockPos pos) {
         if (!wrapSeen) {
             // Only a report: the wrap is active. Without it nothing reaches here and vanilla's checkBlock runs.
             wrapSeen = true;
@@ -193,7 +193,7 @@ public final class LightBatch {
         }
         LightBatch batch = collecting;
         if (batch == null || batch.provider != light || Thread.currentThread() != collectingThread) return false;
-        batch.add(pos.asLong(), ChunkPos.toLong(pos.getX() >> 4, pos.getZ() >> 4));
+        batch.add(pos.asLong(), ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
         return true;
     }
 
@@ -222,12 +222,12 @@ public final class LightBatch {
         if (cells == 0) return;
         for (var entry : columns.long2ObjectEntrySet()) {
             long column = entry.getLongKey();
-            int x = ChunkPos.getPackedX(column), z = ChunkPos.getPackedZ(column);
+            int x = ChunkPos.getX(column), z = ChunkPos.getZ(column);
             long[] all = entry.getValue().elements();
             int size = entry.getValue().size();
             for (int from = 0; from < size; from += TASK_CELLS) {
                 long[] positions = Arrays.copyOfRange(all, from, Math.min(size, from + TASK_CELLS));
-                provider.enqueue(x, z, ServerLightingProvider.Stage.PRE_UPDATE, () -> check(provider, positions));
+                provider.addTask(x, z, ThreadedLevelLightEngine.TaskType.PRE_UPDATE, () -> check(provider, positions));
                 flushedTasks++;
             }
         }
@@ -247,10 +247,10 @@ public final class LightBatch {
     }
 
     /** What {@code LightingProvider.checkBlock} does for each position, on the light thread. */
-    private static void check(LightingProvider light, long[] positions) {
-        ChunkLightProvider<?, ?> block = light.blockLightProvider;
-        ChunkLightProvider<?, ?> sky = light.skyLightProvider;
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+    private static void check(LevelLightEngine light, long[] positions) {
+        LightEngine<?, ?> block = light.blockEngine;
+        LightEngine<?, ?> sky = light.skyEngine;
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (long p : positions) {
             pos.set(p);
             if (block != null) block.checkBlock(pos);

@@ -1,15 +1,15 @@
 package dev.sculptory.fabric.client.editor.render;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.VertexBuffer;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import java.util.Objects;
-import net.minecraft.client.gl.ShaderProgram;
-import net.minecraft.client.gl.VertexBuffer;
-import net.minecraft.client.render.BufferBuilder;
-import net.minecraft.client.render.BuiltBuffer;
-import net.minecraft.client.render.RenderLayer;
-import net.minecraft.client.render.VertexFormat;
-import net.minecraft.client.render.VertexFormats;
-import net.minecraft.client.util.BufferAllocator;
+import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.ShaderInstance;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Matrix4f;
 
@@ -31,10 +31,10 @@ public final class CellMeshBuffers implements AutoCloseable {
         private final int originX;
         private final int originY;
         private final int originZ;
-        private @Nullable BufferAllocator fillMemory;
-        private @Nullable BuiltBuffer fill;
-        private @Nullable BufferAllocator edgeMemory;
-        private @Nullable BuiltBuffer edges;
+        private @Nullable ByteBufferBuilder fillMemory;
+        private @Nullable MeshData fill;
+        private @Nullable ByteBufferBuilder edgeMemory;
+        private @Nullable MeshData edges;
 
         private Built(int originX, int originY, int originZ) {
             this.originX = originX;
@@ -71,8 +71,8 @@ public final class CellMeshBuffers implements AutoCloseable {
         Built built = new Built(originX, originY, originZ);
         try {
             if (mesh.quadCount() > 0 && !mesh.tooDetailed()) {
-                built.fillMemory = new BufferAllocator((int) Math.min(1 << 26, Math.max(256, mesh.quadCount() * CellMesh.QUAD_BYTES)));
-                BufferBuilder builder = new BufferBuilder(built.fillMemory, VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_COLOR);
+                built.fillMemory = new ByteBufferBuilder((int) Math.min(1 << 26, Math.max(256, mesh.quadCount() * CellMesh.QUAD_BYTES)));
+                BufferBuilder builder = new BufferBuilder(built.fillMemory, VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_COLOR);
                 double[] corners = new double[12];
                 for (CellMesh.Section section : mesh.sections()) {
                     float baseX = (section.sectionX() << 4) - originX;
@@ -81,16 +81,16 @@ public final class CellMeshBuffers implements AutoCloseable {
                     for (int quad : section.quads()) {
                         CellMesh.quadCorners(quad, CameraRelative.INFLATE, corners);
                         for (int i = 0; i < 4; i++) {
-                            builder.vertex(baseX + (float) corners[i * 3], baseY + (float) corners[i * 3 + 1],
-                                    baseZ + (float) corners[i * 3 + 2]).color(fillArgb);
+                            builder.addVertex(baseX + (float) corners[i * 3], baseY + (float) corners[i * 3 + 1],
+                                    baseZ + (float) corners[i * 3 + 2]).setColor(fillArgb);
                         }
                     }
                 }
-                built.fill = builder.endNullable();
+                built.fill = builder.build();
             }
             if (mesh.edgeCount() > 0) {
-                built.edgeMemory = new BufferAllocator((int) Math.min(1 << 26, Math.max(256, mesh.edgeCount() * CellMesh.EDGE_BYTES)));
-                BufferBuilder builder = new BufferBuilder(built.edgeMemory, VertexFormat.DrawMode.LINES, VertexFormats.LINES);
+                built.edgeMemory = new ByteBufferBuilder((int) Math.min(1 << 26, Math.max(256, mesh.edgeCount() * CellMesh.EDGE_BYTES)));
+                BufferBuilder builder = new BufferBuilder(built.edgeMemory, VertexFormat.Mode.LINES, DefaultVertexFormat.POSITION_COLOR_NORMAL);
                 double[] ends = new double[6];
                 for (CellMesh.Section section : mesh.sections()) {
                     float baseX = (section.sectionX() << 4) - originX;
@@ -102,13 +102,13 @@ public final class CellMeshBuffers implements AutoCloseable {
                         float nx = axis == 0 ? 1 : 0;
                         float ny = axis == 1 ? 1 : 0;
                         float nz = axis == 2 ? 1 : 0;
-                        builder.vertex(baseX + (float) ends[0], baseY + (float) ends[1], baseZ + (float) ends[2])
-                                .color(0xFFFFFFFF).normal(nx, ny, nz);
-                        builder.vertex(baseX + (float) ends[3], baseY + (float) ends[4], baseZ + (float) ends[5])
-                                .color(0xFFFFFFFF).normal(nx, ny, nz);
+                        builder.addVertex(baseX + (float) ends[0], baseY + (float) ends[1], baseZ + (float) ends[2])
+                                .setColor(0xFFFFFFFF).setNormal(nx, ny, nz);
+                        builder.addVertex(baseX + (float) ends[3], baseY + (float) ends[4], baseZ + (float) ends[5])
+                                .setColor(0xFFFFFFFF).setNormal(nx, ny, nz);
                     }
                 }
-                built.edges = builder.endNullable();
+                built.edges = builder.build();
             }
             return built;
         } catch (RuntimeException | Error failure) {
@@ -127,12 +127,12 @@ public final class CellMeshBuffers implements AutoCloseable {
             originY = built.originY;
             originZ = built.originZ;
             if (built.fill != null) {
-                bytes += built.fill.getDrawParameters().vertexCount() * (long) VertexFormats.POSITION_COLOR.getVertexSizeByte();
+                bytes += built.fill.drawState().vertexCount() * (long) DefaultVertexFormat.POSITION_COLOR.getVertexSize();
                 fill = uploaded(built.fill);
                 built.fill = null; // consumed by the upload
             }
             if (built.edges != null) {
-                bytes += built.edges.getDrawParameters().vertexCount() * (long) VertexFormats.LINES.getVertexSizeByte();
+                bytes += built.edges.drawState().vertexCount() * (long) DefaultVertexFormat.POSITION_COLOR_NORMAL.getVertexSize();
                 edges = uploaded(built.edges);
                 built.edges = null;
             }
@@ -141,7 +141,7 @@ public final class CellMeshBuffers implements AutoCloseable {
         }
     }
 
-    private static VertexBuffer uploaded(BuiltBuffer vertices) {
+    private static VertexBuffer uploaded(MeshData vertices) {
         VertexBuffer buffer = new VertexBuffer(VertexBuffer.Usage.STATIC);
         buffer.bind();
         buffer.upload(vertices); // consumes (closes) the built buffer
@@ -181,20 +181,20 @@ public final class CellMeshBuffers implements AutoCloseable {
     }
 
     /** One draw of a buffer, tinted {@code argb} at the Tool outlines opacity ({@link OverlayOpacity}). */
-    private static void pass(RenderLayer layer, VertexBuffer buffer, Matrix4f modelView, Matrix4f projection, int argb) {
+    private static void pass(RenderType layer, VertexBuffer buffer, Matrix4f modelView, Matrix4f projection, int argb) {
         int color = OverlayOpacity.apply(argb);
-        layer.startDrawing();
+        layer.setupRenderState();
         try {
-            ShaderProgram shader = RenderSystem.getShader();
+            ShaderInstance shader = RenderSystem.getShader();
             if (shader == null) return;
             RenderSystem.setShaderColor(OverlayColors.red(color), OverlayColors.green(color), OverlayColors.blue(color),
                     OverlayColors.alphaFloat(color));
             buffer.bind();
-            buffer.draw(modelView, projection, shader);
+            buffer.drawWithShader(modelView, projection, shader);
             VertexBuffer.unbind();
         } finally {
             RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-            layer.endDrawing();
+            layer.clearRenderState();
         }
     }
 

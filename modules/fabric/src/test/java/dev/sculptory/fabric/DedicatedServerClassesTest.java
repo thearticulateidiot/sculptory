@@ -28,7 +28,7 @@ import org.junit.jupiter.api.Test;
 class DedicatedServerClassesTest {
     /** Internal-name prefixes that exist only on the client (the integrated server ships in the client jar only). */
     private static final List<String> CLIENT_ONLY = List.of("net/minecraft/client/", "com/mojang/blaze3d/",
-            "net/minecraft/server/integrated/", "net/fabricmc/fabric/api/client/", "dev/sculptory/fabric/client/");
+            "net/minecraft/client/server/", "net/fabricmc/fabric/api/client/", "dev/sculptory/fabric/client/");
 
     @Test
     void commonAndServerClassesReferenceNoClientOnlyClass() throws IOException {

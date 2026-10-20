@@ -42,23 +42,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.fluid.FluidState;
-import net.minecraft.fluid.Fluids;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.entry.RegistryEntry;
-import net.minecraft.server.command.FillBiomeCommand;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.ChunkPos;
-import net.minecraft.world.biome.Biome;
-import net.minecraft.world.biome.BiomeKeys;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.commands.FillBiomeCommand;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.level.material.Fluids;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -117,27 +117,27 @@ public final class FluidUndoGameTest implements FabricGameTest {
         }
     }
 
-    static Leftover leftover(ServerWorld world, WorldSnapshot before) {
+    static Leftover leftover(ServerLevel world, WorldSnapshot before) {
         Box area = before.box;
         int cells = 0, sources = 0, flowing = 0;
         String first = null;
-        BlockPos.Mutable p = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
                     BlockState now = world.getBlockState(p.set(x, y, z));
                     int was = before.get(x, y, z);
-                    if (Block.getRawIdFromState(now) == was) continue;
+                    if (Block.getId(now) == was) continue;
                     cells++;
                     FluidState fluid = now.getFluidState();
                     if (!fluid.isEmpty()) {
-                        if (fluid.isStill()) {
+                        if (fluid.isSource()) {
                             sources++;
                         } else {
                             flowing++;
                         }
                     }
-                    if (first == null) first = x + "," + y + "," + z + ": " + now + " instead of " + Block.getStateFromRawId(was);
+                    if (first == null) first = x + "," + y + "," + z + ": " + now + " instead of " + Block.stateById(was);
                 }
             }
         }
@@ -145,7 +145,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
     }
 
     /** The area is exactly as {@code before} (states and block entities), with the fluid leftovers counted if not. */
-    static void checkExact(ServerWorld world, WorldSnapshot before, String what) {
+    static void checkExact(ServerLevel world, WorldSnapshot before, String what) {
         Leftover left = leftover(world, before);
         LOG.info("FluidUndoGameTest: {}: {}", what, left);
         check(left.none(), what + ": " + left);
@@ -153,9 +153,9 @@ public final class FluidUndoGameTest implements FabricGameTest {
     }
 
     /** Fluid cells (source or flowing) in {@code area} outside {@code edited}. */
-    static int fluidOutside(ServerWorld world, Box area, Region edited) {
+    static int fluidOutside(ServerLevel world, Box area, Region edited) {
         int n = 0;
-        BlockPos.Mutable p = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
@@ -172,11 +172,11 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * the first try and then stayed unchanged for {@code ticks} world ticks: the fluid has moved and come to rest. A
      * tick count alone is a poor clock here: a freshly loaded region can wait a while before its chunks tick.
      */
-    static Runnable settles(ServerWorld world, Box area, int ticks, String what) {
+    static Runnable settles(ServerLevel world, Box area, int ticks, String what) {
         long[] seen = new long[3]; // the first hash, the last hash, when it last changed
         boolean[] started = {false};
         return () -> {
-            long now = world.getTime(), hash = hash(world, area);
+            long now = world.getGameTime(), hash = hash(world, area);
             if (!started[0]) {
                 started[0] = true;
                 seen[0] = hash;
@@ -191,13 +191,13 @@ public final class FluidUndoGameTest implements FabricGameTest {
         };
     }
 
-    private static long hash(ServerWorld world, Box area) {
+    private static long hash(ServerLevel world, Box area) {
         long hash = 17;
-        BlockPos.Mutable p = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
-                    hash = hash * 31 + Block.getRawIdFromState(world.getBlockState(p.set(x, y, z)));
+                    hash = hash * 31 + Block.getId(world.getBlockState(p.set(x, y, z)));
                 }
             }
         }
@@ -205,24 +205,24 @@ public final class FluidUndoGameTest implements FabricGameTest {
     }
 
     /** Whether every chunk of {@code area} ticks blocks and fluids (a freshly loaded region takes a moment). */
-    static boolean ticking(ServerWorld world, Box area) {
+    static boolean ticking(ServerLevel world, Box area) {
         for (int cx = area.min().x() >> 4; cx <= area.max().x() >> 4; cx++) {
             for (int cz = area.min().z() >> 4; cz <= area.max().z() >> 4; cz++) {
-                long key = ChunkPos.toLong(cx, cz);
+                long key = ChunkPos.asLong(cx, cz);
                 // What the world's tick schedulers ask before running a chunk's scheduled ticks.
-                if (!world.isChunkLoaded(key) || !world.getChunkManager().isTickingFutureReady(key)) return false;
+                if (!world.areEntitiesLoaded(key) || !world.getChunkSource().isPositionTicking(key)) return false;
             }
         }
         return true;
     }
 
-    static int count(ServerWorld world, Box area, Block block) {
+    static int count(ServerLevel world, Box area, Block block) {
         int n = 0;
-        BlockPos.Mutable p = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
                 for (int x = area.min().x(); x <= area.max().x(); x++) {
-                    if (world.getBlockState(p.set(x, y, z)).isOf(block)) n++;
+                    if (world.getBlockState(p.set(x, y, z)).is(block)) n++;
                 }
             }
         }
@@ -230,19 +230,19 @@ public final class FluidUndoGameTest implements FabricGameTest {
     }
 
     /** A neighbour update from (x, y, z), as a player placing or breaking a block there sends: wakes fluid beside it. */
-    static void nudge(ServerWorld world, int x, int y, int z) {
-        world.updateNeighbors(pos(x, y, z), Blocks.AIR);
+    static void nudge(ServerLevel world, int x, int y, int z) {
+        world.blockUpdated(pos(x, y, z), Blocks.AIR);
     }
 
-    private static void run(Harness h, ServerPlayerEntity player, Region region, Pattern pattern, RecordingListener l) {
+    private static void run(Harness h, ServerPlayer player, Region region, Pattern pattern, RecordingListener l) {
         try {
             h.service.run(player, new OpSpec.Fill(region, pattern, CellMask.ANY), RunOptions.DEFAULT, l);
         } catch (EditRejected e) {
-            throw new GameTestException("fill refused: " + e.getMessage());
+            throw new GameTestAssertException("fill refused: " + e.getMessage());
         }
     }
 
-    private static void step(Harness h, ServerPlayerEntity player, boolean undo, RecordingListener listener) {
+    private static void step(Harness h, ServerPlayer player, boolean undo, RecordingListener listener) {
         try {
             if (undo) {
                 h.service.undo(player, ConflictPolicy.SKIP_CONFLICTS, listener);
@@ -250,7 +250,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
                 h.service.redo(player, ConflictPolicy.SKIP_CONFLICTS, listener);
             }
         } catch (EditRejected e) {
-            throw new GameTestException((undo ? "undo" : "redo") + " refused: " + e.getMessage());
+            throw new GameTestAssertException((undo ? "undo" : "redo") + " refused: " + e.getMessage());
         }
     }
 
@@ -258,7 +258,7 @@ public final class FluidUndoGameTest implements FabricGameTest {
         try {
             h.service.historyOverwrite(h.player, false, 1, listener);
         } catch (EditRejected e) {
-            throw new GameTestException("Undo anyway refused: " + e.getMessage());
+            throw new GameTestAssertException("Undo anyway refused: " + e.getMessage());
         }
     }
 
@@ -274,10 +274,10 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * the Fill, the grass included, and stays so. Redo puts back the water as it lay before the undo (the flowed water
      * too, lying still); undo again restores the area once more.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_fill", tickLimit = LIMIT)
-    public void undoingAWaterFillOnGrassTakesBackWhatTheWaterDid(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_fill", timeoutTicks = LIMIT)
+    public void undoingAWaterFillOnGrassTakesBackWhatTheWaterDid(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 920);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:grass_block");
@@ -287,9 +287,9 @@ public final class FluidUndoGameTest implements FabricGameTest {
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener(),
                 redone = new RecordingListener(), again = new RecordingListener();
         h.fill(fill, "minecraft:water", filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     check(fluidOutside(world, area, new Region.Cuboid(fill)) == 0, "the edited water lies still");
                     // Random ticks, as the world gives them (the Fill lies in one chunk column), until grass has died.
@@ -298,8 +298,8 @@ public final class FluidUndoGameTest implements FabricGameTest {
                     }
                     check(count(world, area, Blocks.DIRT) > 0, "grass under the water died");
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     int outside = fluidOutside(world, area, new Region.Cuboid(fill));
                     LOG.info("FluidUndoGameTest fill: {} fluid cells outside the Fill after it flowed, {} dirt", outside,
                             count(world, area, Blocks.DIRT));
@@ -307,33 +307,33 @@ public final class FluidUndoGameTest implements FabricGameTest {
                     flowed[0] = capture(world, area);
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(undone, "undo");
                     check(undone.result.skippedConflicts() == 0, "nothing kept: " + undone.result);
                     checkExact(world, before, "fill: right after the undo");
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "fill: " + WATER_TICKS + " ticks after the undo");
                     step(h, h.player, false, redone);
                 })
-                .createAndAdd(() -> check(redone.result != null, "redo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(redone.result != null, "redo running"))
+                .thenExecute(() -> {
                     completed(redone, "redo");
                     checkSame(flowed[0], capture(world, area), "the redo puts back the water as the undo found it");
                     step(h, h.player, true, again);
                 })
-                .createAndAdd(() -> check(again.result != null, "second undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(again.result != null, "second undo running"))
+                .thenExecute(() -> {
                     completed(again, "second undo");
                     checkExact(world, before, "fill: after undo, redo and undo");
-                    UUID id = h.service.historyService().redoEntries(h.player.getUuid()).get(0).id();
+                    UUID id = h.service.historyService().redoEntries(h.player.getUUID()).get(0).id();
                     check(!h.runtime.fluidTrails().isFrozen(id), "the entry is not held still once its steps are done");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -342,10 +342,10 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * also builds on a cell the water flowed to. Undo keeps both of the player's blocks and takes back everything else;
      * Undo anyway then overwrites them: the area is exactly as before the Fill.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_anyway", tickLimit = LIMIT)
-    public void undoAnywayTakesBackTheSourcesTheFlowMade(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_anyway", timeoutTicks = LIMIT)
+    public void undoAnywayTakesBackTheSourcesTheFlowMade(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 922);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -363,50 +363,50 @@ public final class FluidUndoGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener(), anyway = new RecordingListener();
         run(h, h.player, ell, new Pattern.Single(h.state("minecraft:water")), filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     // A player's block in the water, with vanilla's block updates.
-                    world.setBlockState(pos(x0 + 27, FLOOR + 1, z0 + 18), Blocks.STONE.getDefaultState());
+                    world.setBlockAndUpdate(pos(x0 + 27, FLOOR + 1, z0 + 18), Blocks.STONE.defaultBlockState());
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     LOG.info("FluidUndoGameTest anyway: {} fluid cells outside the L; the notch corner {}",
                             fluidOutside(world, area, ell), world.getBlockState(corner));
-                    check(world.getFluidState(corner).isStill(), "the notch became a source: " + world.getBlockState(corner));
+                    check(world.getFluidState(corner).isSource(), "the notch became a source: " + world.getBlockState(corner));
                     check(!world.getFluidState(outside).isEmpty(), "the water reached " + outside.toShortString());
                     // The player builds where the water flowed.
-                    world.setBlockState(outside, Blocks.OAK_PLANKS.getDefaultState());
+                    world.setBlockAndUpdate(outside, Blocks.OAK_PLANKS.defaultBlockState());
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> step(h, h.player, true, undone))
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> step(h, h.player, true, undone))
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(undone, "undo");
                     Leftover left = leftover(world, before);
                     LOG.info("FluidUndoGameTest anyway: after the undo (kept {}): {}", undone.result.skippedConflicts(), left);
                     check(undone.result.skippedConflicts() == 2, "the player's two blocks were kept: " + undone.result);
                     check(left.cells() == 2 && left.sources() == 0 && left.flowing() == 0, "only they differ: " + left);
-                    check(world.getBlockState(outside).isOf(Blocks.OAK_PLANKS), "the planks were kept");
+                    check(world.getBlockState(outside).is(Blocks.OAK_PLANKS), "the planks were kept");
                     undoAnyway(h, anyway);
                 })
-                .createAndAdd(() -> check(anyway.result != null, "Undo anyway running"))
-                .createAndAddReported(() -> completed(anyway, "Undo anyway"))
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(anyway.result != null, "Undo anyway running"))
+                .thenExecute(() -> completed(anyway, "Undo anyway"))
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "anyway: after Undo anyway");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Lava: a Fill on stone, woken by a neighbour update; it flows 3 blocks. Undo leaves the area as before. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_lava", tickLimit = LIMIT)
-    public void undoingALavaFillTakesBackTheLavaThatFlowed(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_lava", timeoutTicks = LIMIT)
+    public void undoingALavaFillTakesBackTheLavaThatFlowed(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 924);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -414,28 +414,28 @@ public final class FluidUndoGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
         h.fill(fill, "minecraft:lava", filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     nudge(world, x0 + 19, FLOOR + 1, z0 + 23);
                 })
-                .createAndAdd(settles(world, area, 300, "the lava"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 300, "the lava"))
+                .thenExecute(() -> {
                     int outside = fluidOutside(world, area, new Region.Cuboid(fill));
                     LOG.info("FluidUndoGameTest lava: {} fluid cells outside the Fill after it flowed", outside);
                     check(outside > 0, "the lava flowed out of the Fill");
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> completed(undone, "undo"))
-                .expectMinDuration(LAVA_TICKS)
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> completed(undone, "undo"))
+                .thenIdle(LAVA_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "lava: after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== what must stay
@@ -445,57 +445,57 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * Woken, the Fill's water flows into the channel and raises the stream. Undo takes the Fill's water back and leaves
      * the player's stream exactly as it was, source and levels.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_players_water", tickLimit = LIMIT)
-    public void thePlayersOwnWaterBesideTheFillIsKept(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_players_water", timeoutTicks = LIMIT)
+    public void thePlayersOwnWaterBesideTheFillIsKept(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 926);
         int x0 = at[0], z0 = at[1], zc = z0 + 24;
         Box area = terrain(h, x0, z0, "minecraft:stone");
         for (int x = x0 + 7; x <= x0 + 15; x++) {
-            world.setBlockState(pos(x, FLOOR + 1, zc - 1), Blocks.STONE.getDefaultState());
-            world.setBlockState(pos(x, FLOOR + 1, zc + 1), Blocks.STONE.getDefaultState());
+            world.setBlockAndUpdate(pos(x, FLOOR + 1, zc - 1), Blocks.STONE.defaultBlockState());
+            world.setBlockAndUpdate(pos(x, FLOOR + 1, zc + 1), Blocks.STONE.defaultBlockState());
         }
-        world.setBlockState(pos(x0 + 7, FLOOR + 1, zc), Blocks.STONE.getDefaultState());
+        world.setBlockAndUpdate(pos(x0 + 7, FLOOR + 1, zc), Blocks.STONE.defaultBlockState());
         BlockPos source = pos(x0 + 8, FLOOR + 1, zc);
-        world.setBlockState(source, Blocks.WATER.getDefaultState()); // the player's bucket
+        world.setBlockAndUpdate(source, Blocks.WATER.defaultBlockState()); // the player's bucket
         Box fill = box(x0 + 16, FLOOR + 1, zc - 3, x0 + 23, FLOOR + 1, zc + 3);
         WorldSnapshot[] before = new WorldSnapshot[1];
         BlockState[] streamEnd = new BlockState[1];
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     streamEnd[0] = world.getBlockState(pos(x0 + 15, FLOOR + 1, zc));
-                    check(streamEnd[0].getFluidState().getLevel() == 1, "the stream reaches the Fill's edge: " + streamEnd[0]);
+                    check(streamEnd[0].getFluidState().getAmount() == 1, "the stream reaches the Fill's edge: " + streamEnd[0]);
                     before[0] = capture(world, area);
                     h.fill(fill, "minecraft:water", filled);
                 })
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     // Something happens above the stream's end: it updates, next to the Fill's water.
                     nudge(world, x0 + 15, FLOOR + 2, zc);
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     BlockState raised = world.getBlockState(pos(x0 + 15, FLOOR + 1, zc));
                     LOG.info("FluidUndoGameTest players_water: the stream's end {} after the Fill's water came", raised);
-                    check(raised.getFluidState().getLevel() > 1, "the Fill's water raised the stream: " + raised);
+                    check(raised.getFluidState().getAmount() > 1, "the Fill's water raised the stream: " + raised);
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> completed(undone, "undo"))
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
-                    check(world.getBlockState(source).isOf(Blocks.WATER) && world.getFluidState(source).isStill(),
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> completed(undone, "undo"))
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
+                    check(world.getBlockState(source).is(Blocks.WATER) && world.getFluidState(source).isSource(),
                             "the player's source is there");
                     check(world.getBlockState(pos(x0 + 15, FLOOR + 1, zc)) == streamEnd[0], "the stream is as it was");
                     checkExact(world, before[0], "players_water: after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== other tools and paths
@@ -504,10 +504,10 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * Waterlogged blocks leak: a Fill with the Waterlog pattern (the Fluid tool's flood) waterlogs a row of bottom slabs
      * on stone, and woken, the water runs out of their sides. Undo dries the slabs and takes back what ran out.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_waterlogged", tickLimit = LIMIT)
-    public void undoingAWaterlogFillTakesBackWhatLeakedFromTheBlocks(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_waterlogged", timeoutTicks = LIMIT)
+    public void undoingAWaterlogFillTakesBackWhatLeakedFromTheBlocks(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 928);
         int x0 = at[0], z0 = at[1], zc = z0 + 24;
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -522,40 +522,40 @@ public final class FluidUndoGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
         run(h, h.player, slabs, new Pattern.Waterlog(h.state("minecraft:water")), filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "waterlog");
-                    check(world.getFluidState(pos(x0 + 20, FLOOR + 1, zc)).isStill(), "the slabs are waterlogged");
+                    check(world.getFluidState(pos(x0 + 20, FLOOR + 1, zc)).isSource(), "the slabs are waterlogged");
                     // A player places a block beside the row and breaks it again: waterlogged blocks wake on the
                     // shape update a changed neighbour sends (a bare neighbour update does not reach them).
-                    world.setBlockState(pos(x0 + 19, FLOOR + 1, zc), Blocks.STONE.getDefaultState());
-                    world.setBlockState(pos(x0 + 19, FLOOR + 1, zc), Blocks.AIR.getDefaultState());
+                    world.setBlockAndUpdate(pos(x0 + 19, FLOOR + 1, zc), Blocks.STONE.defaultBlockState());
+                    world.setBlockAndUpdate(pos(x0 + 19, FLOOR + 1, zc), Blocks.AIR.defaultBlockState());
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     int outside = fluidOutside(world, area, slabs);
                     LOG.info("FluidUndoGameTest waterlogged: {} fluid cells leaked from the slabs", outside);
                     check(outside > 0, "water ran out of the slabs");
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> completed(undone, "undo"))
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> completed(undone, "undo"))
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "waterlogged: after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A Fluid ball (a Shape-brush stroke of water) on stone, woken on every side: it flows; undo leaves nothing. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_ball", tickLimit = LIMIT)
-    public void undoingAFluidBallTakesBackTheWaterThatFlowed(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_ball", timeoutTicks = LIMIT)
+    public void undoingAFluidBallTakesBackTheWaterThatFlowed(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 930);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -574,29 +574,29 @@ public final class FluidUndoGameTest implements FabricGameTest {
                 }
             }
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     int outside = fluidOutside(world, area, ball);
                     LOG.info("FluidUndoGameTest ball: {} fluid cells outside the ball after it flowed", outside);
                     check(outside > 0, "the ball's water flowed");
                     ShapeBrushGameTest.undoAll(h, executor, 1, 20);
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "ball: after the undo");
                     executor.shutdown();
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** Undo while the water is still flowing: the flow stops for the undo, and nothing is left behind. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_while_flowing", tickLimit = LIMIT)
-    public void undoWhileTheWaterStillFlowsLeavesNothing(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_while_flowing", timeoutTicks = LIMIT)
+    public void undoWhileTheWaterStillFlowsLeavesNothing(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 932);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -604,28 +604,28 @@ public final class FluidUndoGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
         h.fill(fill, "minecraft:water", filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     for (int z = z0 + 20; z <= z0 + 27; z++) nudge(world, x0 + 19, FLOOR + 1, z);
                 })
                 // As soon as water is outside (the flow has only begun), the undo starts.
-                .createAndAdd(() -> check(fluidOutside(world, area, new Region.Cuboid(fill)) > 0, "the water is flowing"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(fluidOutside(world, area, new Region.Cuboid(fill)) > 0, "the water is flowing"))
+                .thenExecute(() -> {
                     LOG.info("FluidUndoGameTest while_flowing: {} fluid cells outside when the undo starts",
                             fluidOutside(world, area, new Region.Cuboid(fill)));
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> completed(undone, "undo"))
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> completed(undone, "undo"))
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "while_flowing: after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -633,10 +633,10 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * and undo refills the pool. Woken, its water runs out through the gap. Redo drains the pool again and takes back
      * what ran out: the area is exactly as after the drain and the broken wall.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_redo_drain", tickLimit = LIMIT)
-    public void redoOfADrainTakesBackWhatTheRefilledPoolDid(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_redo_drain", timeoutTicks = LIMIT)
+    public void redoOfADrainTakesBackWhatTheRefilledPoolDid(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 934);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -644,12 +644,12 @@ public final class FluidUndoGameTest implements FabricGameTest {
         for (int x = x0 + 18; x <= x0 + 29; x++) {
             for (int z = z0 + 18; z <= z0 + 29; z++) {
                 boolean wall = x == x0 + 18 || x == x0 + 29 || z == z0 + 18 || z == z0 + 29;
-                if (wall) world.setBlockState(pos(x, FLOOR + 1, z), Blocks.STONE.getDefaultState());
+                if (wall) world.setBlockAndUpdate(pos(x, FLOOR + 1, z), Blocks.STONE.defaultBlockState());
             }
         }
         for (int x = x0 + 19; x <= x0 + 28; x++) {
             for (int z = z0 + 19; z <= z0 + 28; z++) {
-                world.setBlockState(pos(x, FLOOR + 1, z), Blocks.WATER.getDefaultState());
+                world.setBlockAndUpdate(pos(x, FLOOR + 1, z), Blocks.WATER.defaultBlockState());
                 cells.add(x, FLOOR + 1, z);
             }
         }
@@ -658,37 +658,37 @@ public final class FluidUndoGameTest implements FabricGameTest {
         WorldSnapshot[] drained = new WorldSnapshot[1];
         RecordingListener drain = new RecordingListener(), undone = new RecordingListener(), redone = new RecordingListener();
         run(h, h.player, pool, new Pattern.Dry(), drain);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(drain.result != null, "drain running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(drain.result != null, "drain running"))
+                .thenExecute(() -> {
                     completed(drain, "drain");
-                    world.setBlockState(gap, Blocks.AIR.getDefaultState()); // the player breaks a wall block
+                    world.setBlockAndUpdate(gap, Blocks.AIR.defaultBlockState()); // the player breaks a wall block
                     drained[0] = capture(world, area);
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(undone, "undo");
-                    check(world.getFluidState(pos(x0 + 19, FLOOR + 1, z0 + 23)).isStill(), "the pool is full again");
+                    check(world.getFluidState(pos(x0 + 19, FLOOR + 1, z0 + 23)).isSource(), "the pool is full again");
                     check(fluidOutside(world, area, pool) == 0, "its water lies still");
                     nudge(world, gap.getX(), gap.getY(), gap.getZ());
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     int outside = fluidOutside(world, area, pool);
                     LOG.info("FluidUndoGameTest redo_drain: {} fluid cells ran out of the refilled pool", outside);
                     check(outside > 0, "the water ran out through the gap");
                     step(h, h.player, false, redone);
                 })
-                .createAndAdd(() -> check(redone.result != null, "redo running"))
-                .createAndAddReported(() -> completed(redone, "redo"))
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(redone.result != null, "redo running"))
+                .thenExecute(() -> completed(redone, "redo"))
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, drained[0], "redo_drain: after the redo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== refusals and bookkeeping
@@ -697,11 +697,11 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * Protection applies to what the fluid did: a builder's water flows into a chunk protected against them; their undo
      * skips the cells there (counted as protected) and restores everything else.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_protected", tickLimit = LIMIT)
-    public void undoLeavesWhatFlowedIntoAProtectedAreaAlone(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_protected", timeoutTicks = LIMIT)
+    public void undoLeavesWhatFlowedIntoAProtectedAreaAlone(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         int[] at = regionCorner(context, 936);
         int x0 = at[0], z0 = at[1];
@@ -711,30 +711,30 @@ public final class FluidUndoGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
         run(h, builder, new Region.Cuboid(fill), new Pattern.Single(h.state("minecraft:water")), filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     for (int z = z0 + 20; z <= z0 + 25; z++) nudge(world, x0 + 15, FLOOR + 1, z);
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     check(!world.getFluidState(east).isEmpty(), "the water crossed into the next chunk");
                     ProtectionHook.protect(builder, world, x0 + 16, z0, x0 + SIDE - 1, z0 + SIDE - 1);
                     step(h, builder, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     ProtectionHook.clear(builder);
                     completed(undone, "undo");
                     check(undone.result.skippedProtected() > 0, "cells in the protected chunk were skipped: " + undone.result);
                     check(!world.getFluidState(east).isEmpty(), "the water there stays");
                     int differing = 0;
-                    BlockPos.Mutable p = new BlockPos.Mutable();
+                    BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
                     for (int y = area.min().y(); y <= area.max().y(); y++) {
                         for (int z = area.min().z(); z <= area.max().z(); z++) {
                             for (int x = area.min().x(); x < x0 + 16; x++) {
-                                if (Block.getRawIdFromState(world.getBlockState(p.set(x, y, z))) != before.get(x, y, z)) {
+                                if (Block.getId(world.getBlockState(p.set(x, y, z))) != before.get(x, y, z)) {
                                     differing++;
                                 }
                             }
@@ -744,17 +744,17 @@ public final class FluidUndoGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Marks live as long as their entry: an entry dropped from the history (over its step cap) loses the marks of its
      * water at the next sweep, while the entry still held keeps them.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_sweep", tickLimit = LIMIT)
-    public void anEntryDroppedFromTheHistoryLosesItsMarks(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_sweep", timeoutTicks = LIMIT)
+    public void anEntryDroppedFromTheHistoryLosesItsMarks(GameTestHelper context) {
         Harness h = new Harness(context, new HistoryLimits(1, 1L << 30, 1L << 32));
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
         int[] at = regionCorner(context, 937);
         int x0 = at[0], z0 = at[1];
@@ -763,18 +763,18 @@ public final class FluidUndoGameTest implements FabricGameTest {
         UUID[] ids = new UUID[2];
         RecordingListener a = new RecordingListener(), b = new RecordingListener();
         h.fill(box(x0 + 10, FLOOR + 1, z0 + 10, x0 + 12, FLOOR + 1, z0 + 12), "minecraft:water", a);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(a.result != null, "first fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(a.result != null, "first fill running"))
+                .thenExecute(() -> {
                     completed(a, "first fill");
-                    ids[0] = h.service.historyService().undoEntries(h.player.getUuid()).get(0).id();
+                    ids[0] = h.service.historyService().undoEntries(h.player.getUUID()).get(0).id();
                     check(trails.markedBy(world, first, ids[0]), "the first fill's water is marked");
                     h.fill(box(x0 + 30, FLOOR + 1, z0 + 30, x0 + 32, FLOOR + 1, z0 + 32), "minecraft:water", b);
                 })
-                .createAndAdd(() -> check(b.result != null, "second fill running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(b.result != null, "second fill running"))
+                .thenExecute(() -> {
                     completed(b, "second fill");
-                    List<HistoryEntry> held = h.service.historyService().undoEntries(h.player.getUuid());
+                    List<HistoryEntry> held = h.service.historyService().undoEntries(h.player.getUUID());
                     check(held.size() == 1 && !held.get(0).id().equals(ids[0]), "the first entry was dropped");
                     ids[1] = held.get(0).id();
                     // While a saved history is still loading its entries are unknown: nothing is forgotten.
@@ -791,13 +791,13 @@ public final class FluidUndoGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // =================================================================== failure cases (review of 2d392ba4)
 
     private static UUID newestEntry(Harness h) {
-        return h.service.historyService().undoEntries(h.player.getUuid()).get(0).id();
+        return h.service.historyService().undoEntries(h.player.getUUID()).get(0).id();
     }
 
     /**
@@ -805,11 +805,11 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * never flows into a cell the Fill writes later (the record would then take that water as the cell's "before" and
      * undo would leave it). Woken on its outer edge too, it flows once the Fill is done; undo leaves nothing.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_mid_fill", tickLimit = LIMIT)
-    public void waterWokenWhileItsFillStillWritesIsUndoneExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 256);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_mid_fill", timeoutTicks = LIMIT)
+    public void waterWokenWhileItsFillStillWritesIsUndoneExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 256);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
         int[] at = regionCorner(context, 921);
         int x0 = at[0], z0 = at[1];
@@ -819,53 +819,53 @@ public final class FluidUndoGameTest implements FabricGameTest {
         BlockPos written = pos(x0 + 20, FLOOR + 1, z0 + 31), later = pos(x0 + 20, FLOOR + 1, z0 + 32);
         WorldSnapshot[] before = new WorldSnapshot[1];
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(ticking(world, area), "the area's chunks tick"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(ticking(world, area), "the area's chunks tick"))
+                .thenExecute(() -> {
                     before[0] = capture(world, area);
                     h.fill(fill, "minecraft:water", filled);
-                    MultiplayerGameTest.tickUntil(executor, () -> world.getFluidState(written).isStill(), 20,
+                    MultiplayerGameTest.tickUntil(executor, () -> world.getFluidState(written).isSource(), 20,
                             "the first section");
                     check(filled.result == null && world.getBlockState(later).isAir(), "the Fill is half written");
                     for (int x = x0 + 16; x <= x0 + 31; x++) nudge(world, x, FLOOR + 1, z0 + 32); // the written edge
                     for (int z = z0 + 16; z <= z0 + 31; z++) nudge(world, x0 + 15, FLOOR + 1, z); // its outer side
                 })
-                .expectMinDuration(100)
-                .createAndAddReported(() -> {
-                    check(world.getFluidTickScheduler().isQueued(written, Fluids.WATER), "the woken water waits to tick");
+                .thenIdle(100)
+                .thenExecute(() -> {
+                    check(world.getFluidTicks().hasScheduledTick(written, Fluids.WATER), "the woken water waits to tick");
                     check(fluidOutside(world, area, new Region.Cuboid(fill)) == 0 && world.getBlockState(later).isAir(),
                             "the half-written Fill's water stayed put");
                     MultiplayerGameTest.tickUntil(executor, () -> filled.result != null, 20, "the Fill");
                     completed(filled, "fill");
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     check(fluidOutside(world, area, new Region.Cuboid(fill)) > 0, "the water flowed once the Fill was done");
                     check(!trails.isFrozen(newestEntry(h)), "the Fill's entry is no longer held still");
                     step(h, h.player, true, undone);
                     MultiplayerGameTest.tickUntil(executor, () -> undone.result != null, 40, "the undo");
                     completed(undone, "undo");
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before[0], "mid_fill: after the undo");
                     executor.shutdown();
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * An undo refused after its trail was taken (the executor's queue is full) changes nothing: the trail is given
      * back, the entry is not replaced and not held still. The next undo takes everything back.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_refused", tickLimit = LIMIT)
-    public void anUndoRefusedAfterTakingTheTrailGivesItBack(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_refused", timeoutTicks = LIMIT)
+    public void anUndoRefusedAfterTakingTheTrailGivesItBack(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
-        EditExecutor<ServerWorld> executor = h.runtime.executor();
+        EditExecutor<ServerLevel> executor = h.runtime.executor();
         int[] at = regionCorner(context, 923);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
@@ -873,15 +873,15 @@ public final class FluidUndoGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
         h.fill(fill, "minecraft:water", filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     for (int z = z0 + 20; z <= z0 + 27; z++) nudge(world, x0 + 19, FLOOR + 1, z);
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
-                    HistoryEntry held = h.service.historyService().undoEntries(h.player.getUuid()).get(0);
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
+                    HistoryEntry held = h.service.historyService().undoEntries(h.player.getUUID()).get(0);
                     long trail = trails.trailCells(world, held.id());
                     check(trail > 0, "the water left a trail");
                     // The server's own jobs fill the executor's queue.
@@ -893,44 +893,44 @@ public final class FluidUndoGameTest implements FabricGameTest {
                             fillers.add(executor.submit(JobRequest.system(world,
                                     new EngineTestSupport.BoxFill("filler " + i, one, air), null)).jobId());
                         }
-                        throw new GameTestException("the queue never filled");
+                        throw new GameTestAssertException("the queue never filled");
                     } catch (EditRejected e) {
                         check(e.reason() == RejectReason.QUEUE_FULL, "filler " + e.getMessage());
                     }
                     try {
                         h.service.undo(h.player, ConflictPolicy.SKIP_CONFLICTS, undone);
-                        throw new GameTestException("the undo was admitted into a full queue");
+                        throw new GameTestAssertException("the undo was admitted into a full queue");
                     } catch (EditRejected e) {
                         check(e.reason() == RejectReason.QUEUE_FULL, "refused " + e.getMessage());
                     } finally {
                         for (UUID filler : fillers) executor.cancel(filler);
                     }
                     check(trails.trailCells(world, held.id()) == trail, "the trail was given back");
-                    check(h.service.historyService().undoEntries(h.player.getUuid()).get(0).record() == held.record(),
+                    check(h.service.historyService().undoEntries(h.player.getUUID()).get(0).record() == held.record(),
                             "the entry was not replaced");
                     check(!trails.isFrozen(held.id()), "the entry is not held still");
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> completed(undone, "undo"))
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> completed(undone, "undo"))
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "refused: after the second undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * An undo cancelled part way leaves the entry undoable and not held still; what its remaining water does meanwhile
      * is followed, and the undo run again takes everything back.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_cancelled", tickLimit = LIMIT)
-    public void aCancelledUndoRunAgainLeavesNothing(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 64);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_cancelled", timeoutTicks = LIMIT)
+    public void aCancelledUndoRunAgainLeavesNothing(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 64);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
         int[] at = regionCorner(context, 925);
         int x0 = at[0], z0 = at[1];
@@ -946,15 +946,15 @@ public final class FluidUndoGameTest implements FabricGameTest {
         for (int z = z0 + 20; z <= z0 + 27; z++) nudge(world, x0 + 11, FLOOR + 1, z);
         for (int z = z0 + 20; z <= z0 + 27; z++) nudge(world, x0 + 20, FLOOR + 1, z);
         UUID[] id = new UUID[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     id[0] = newestEntry(h);
                     JobTicket ticket;
                     try {
                         ticket = h.service.undo(h.player, ConflictPolicy.SKIP_CONFLICTS, undone);
                     } catch (EditRejected e) {
-                        throw new GameTestException("undo refused: " + e.getMessage());
+                        throw new GameTestAssertException("undo refused: " + e.getMessage());
                     }
                     executor.tick();
                     check(h.service.cancel(h.player, ticket.jobId()), "the undo was cancelled");
@@ -964,30 +964,30 @@ public final class FluidUndoGameTest implements FabricGameTest {
                     check(!trails.isFrozen(id[0]), "a cancelled undo does not hold the entry still");
                     check(newestEntry(h).equals(id[0]), "the entry is still the one to undo");
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     step(h, h.player, true, again);
                     MultiplayerGameTest.tickUntil(executor, () -> again.result != null, 400, "the undo run again");
                     completed(again, "undo run again");
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "cancelled: after the undo run again");
                     executor.shutdown();
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Redo anyway marks the water it puts back as the entry's: a redo kept a cell a player built on, Redo anyway puts
      * the water there too, and what that water does next is undone with the entry.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_redo_anyway", tickLimit = LIMIT)
-    public void redoAnywayMarksTheWaterItPutsBack(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_redo_anyway", timeoutTicks = LIMIT)
+    public void redoAnywayMarksTheWaterItPutsBack(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
         int[] at = regionCorner(context, 927);
         int x0 = at[0], z0 = at[1];
@@ -998,51 +998,51 @@ public final class FluidUndoGameTest implements FabricGameTest {
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener(),
                 redone = new RecordingListener(), anyway = new RecordingListener(), last = new RecordingListener();
         h.fill(fill, "minecraft:water", filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(undone, "undo");
-                    world.setBlockState(built, Blocks.STONE.getDefaultState()); // a player builds in the emptied Fill
+                    world.setBlockAndUpdate(built, Blocks.STONE.defaultBlockState()); // a player builds in the emptied Fill
                     step(h, h.player, false, redone);
                 })
-                .createAndAdd(() -> check(redone.result != null, "redo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(redone.result != null, "redo running"))
+                .thenExecute(() -> {
                     completed(redone, "redo");
                     check(redone.result.skippedConflicts() == 1, "the redo kept the player's block: " + redone.result);
                     try {
                         h.service.historyOverwrite(h.player, true, 1, anyway);
                     } catch (EditRejected e) {
-                        throw new GameTestException("Redo anyway refused: " + e.getMessage());
+                        throw new GameTestAssertException("Redo anyway refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(anyway.result != null, "Redo anyway running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(anyway.result != null, "Redo anyway running"))
+                .thenExecute(() -> {
                     completed(anyway, "Redo anyway");
                     UUID id = newestEntry(h);
-                    check(world.getFluidState(built).isStill(), "Redo anyway put the water back");
+                    check(world.getFluidState(built).isSource(), "Redo anyway put the water back");
                     check(trails.markedBy(world, built, id), "Redo anyway marked its water as the entry's");
                     check(!trails.isFrozen(id), "the entry is not held still after Redo anyway");
                     for (int z = z0 + 20; z <= z0 + 27; z++) nudge(world, x0 + 19, FLOOR + 1, z);
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     check(fluidOutside(world, area, new Region.Cuboid(fill)) > 0, "the water flowed");
                     step(h, h.player, true, last);
                 })
-                .createAndAdd(() -> check(last.result != null, "undo running"))
-                .createAndAddReported(() -> completed(last, "undo"))
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(last.result != null, "undo running"))
+                .thenExecute(() -> completed(last, "undo"))
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "redo_anyway: after the last undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -1052,10 +1052,10 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * would); that undo then leaves the area exactly as before the Fill, grass included. (Folded toward the after, as
      * before 2026-09-29, Redo anyway put the grass back and the undo then turned it to dirt.)
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_redo_anyway_flowed", tickLimit = LIMIT)
-    public void redoAnywayAfterTheWaterFlowedLeavesTheNextUndoExact(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_redo_anyway_flowed", timeoutTicks = LIMIT)
+    public void redoAnywayAfterTheWaterFlowedLeavesTheNextUndoExact(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 958);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:grass_block");
@@ -1065,20 +1065,20 @@ public final class FluidUndoGameTest implements FabricGameTest {
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener(),
                 redone = new RecordingListener(), anyway = new RecordingListener(), last = new RecordingListener();
         h.fill(fill, "minecraft:water", filled);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(undone, "undo");
-                    world.setBlockState(built, Blocks.STONE.getDefaultState()); // a player builds in the emptied Fill
+                    world.setBlockAndUpdate(built, Blocks.STONE.defaultBlockState()); // a player builds in the emptied Fill
                     step(h, h.player, false, redone);
                 })
-                .createAndAdd(() -> check(redone.result != null, "redo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(redone.result != null, "redo running"))
+                .thenExecute(() -> {
                     completed(redone, "redo");
                     check(redone.result.skippedConflicts() == 1, "the redo kept the player's block: " + redone.result);
                     for (int i = 0; i < 8 && count(world, area, Blocks.DIRT) == 0; i++) {
@@ -1086,35 +1086,35 @@ public final class FluidUndoGameTest implements FabricGameTest {
                     }
                     check(count(world, area, Blocks.DIRT) > 0, "grass under the redone water died");
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     check(fluidOutside(world, area, new Region.Cuboid(fill)) > 0, "the redone water flowed");
                     try {
                         h.service.historyOverwrite(h.player, true, 1, anyway);
                     } catch (EditRejected e) {
-                        throw new GameTestException("Redo anyway refused: " + e.getMessage());
+                        throw new GameTestAssertException("Redo anyway refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(anyway.result != null, "Redo anyway running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(anyway.result != null, "Redo anyway running"))
+                .thenExecute(() -> {
                     completed(anyway, "Redo anyway");
-                    check(world.getFluidState(built).isStill(), "Redo anyway put the water on the player's block");
+                    check(world.getFluidState(built).isSource(), "Redo anyway put the water on the player's block");
                     check(count(world, area, Blocks.DIRT) > 0, "Redo anyway left what the water did");
                     step(h, h.player, true, last);
                 })
-                .createAndAdd(() -> check(last.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(last.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(last, "undo");
                     check(last.result.skippedConflicts() == 0, "nothing kept: " + last.result);
                     checkExact(world, before, "redo_anyway_flowed: the undo after Redo anyway");
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "redo_anyway_flowed: " + WATER_TICKS + " ticks after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -1124,95 +1124,95 @@ public final class FluidUndoGameTest implements FabricGameTest {
      * Undo leaves the area exactly as before the Fill, and stays so; redo puts the water and ice back as the undo found
      * them, and undo again restores the area.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_frozen", tickLimit = LIMIT)
-    public void undoingAWaterFillThatFrozeTakesBackTheIce(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_frozen", timeoutTicks = LIMIT)
+    public void undoingAWaterFillThatFrozeTakesBackTheIce(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
         int[] at = regionCorner(context, 959);
         int x0 = at[0], z0 = at[1];
         Box area = terrain(h, x0, z0, "minecraft:stone");
-        RegistryEntry<Biome> snowy = world.getRegistryManager().get(RegistryKeys.BIOME)
-                .getEntry(BiomeKeys.SNOWY_PLAINS).orElseThrow();
-        check(FillBiomeCommand.fillBiome(world, pos(x0, FLOOR - 3, z0), pos(x0 + SIDE - 1, FLOOR + 8, z0 + SIDE - 1),
+        Holder<Biome> snowy = world.registryAccess().registryOrThrow(Registries.BIOME)
+                .getHolder(Biomes.SNOWY_PLAINS).orElseThrow();
+        check(FillBiomeCommand.fill(world, pos(x0, FLOOR - 3, z0), pos(x0 + SIDE - 1, FLOOR + 8, z0 + SIDE - 1),
                 snowy).left().isPresent(), "the area became a snowy plain");
-        world.setWeather(24_000, 0, false, false); // no snow falls on the stone meanwhile
+        world.setWeatherParameters(24_000, 0, false, false); // no snow falls on the stone meanwhile
         Box fill = box(x0 + 20, FLOOR + 1, z0 + 20, x0 + 27, FLOOR + 1, z0 + 27);
         BlockPos lit = pos(x0 + 20, FLOOR + 1, z0 + 23);
-        BlockPos lamp = lit.up();
+        BlockPos lamp = lit.above();
         WorldSnapshot before = capture(world, area);
         WorldSnapshot[] found = new WorldSnapshot[1];
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener(),
                 redone = new RecordingListener(), again = new RecordingListener();
         h.fill(fill, "minecraft:water", filled);
         UUID[] id = new UUID[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     id[0] = newestEntry(h);
                     // The world's ice-and-snow tick of every column of the Fill: the edge sources freeze.
                     for (int x = fill.min().x(); x <= fill.max().x(); x++) {
-                        for (int z = fill.min().z(); z <= fill.max().z(); z++) world.tickIceAndSnow(pos(x, FLOOR + 1, z));
+                        for (int z = fill.min().z(); z <= fill.max().z(); z++) world.tickPrecipitation(pos(x, FLOOR + 1, z));
                     }
                     // Edges first; a source beside ice is not surrounded by water any more, so it freezes too.
                     int ice = count(world, area, Blocks.ICE);
                     check(ice >= 28, "at least the Fill's 28 edge sources froze: " + ice);
-                    check(world.getBlockState(lit).isOf(Blocks.ICE), "the ice at " + lit.toShortString());
+                    check(world.getBlockState(lit).is(Blocks.ICE), "the ice at " + lit.toShortString());
                     check(trails.markedBy(world, lit, id[0]), "the ice is still the entry's");
                     check(trails.trailCells(world, id[0]) >= 28, "the freezing was followed");
-                    world.setBlockState(lamp, Blocks.GLOWSTONE.getDefaultState()); // a player's light over the ice
+                    world.setBlockAndUpdate(lamp, Blocks.GLOWSTONE.defaultBlockState()); // a player's light over the ice
                 })
                 // Random ticks until the light has reached the ice and melted it.
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     world.tickChunk(world.getChunk(lit.getX() >> 4, lit.getZ() >> 4), 4096);
-                    check(world.getFluidState(lit).isStill(), "waiting for the ice under the glowstone to melt");
+                    check(world.getFluidState(lit).isSource(), "waiting for the ice under the glowstone to melt");
                 })
-                .createAndAdd(settles(world, area, 100, "the meltwater"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the meltwater"))
+                .thenExecute(() -> {
                     check(fluidOutside(world, area, new Region.Cuboid(fill)) > 0, "the meltwater ran out");
-                    world.setBlockState(lamp, Blocks.AIR.getDefaultState()); // the player takes the glowstone away
+                    world.setBlockAndUpdate(lamp, Blocks.AIR.defaultBlockState()); // the player takes the glowstone away
                 })
-                .expectMinDuration(100)
-                .createAndAddReported(() -> {
+                .thenIdle(100)
+                .thenExecute(() -> {
                     found[0] = capture(world, area);
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(undone, "undo");
                     check(undone.result.skippedConflicts() == 0, "nothing kept: " + undone.result);
                     checkExact(world, before, "frozen: right after the undo");
                 })
-                .expectMinDuration(WATER_TICKS)
-                .createAndAddReported(() -> {
+                .thenIdle(WATER_TICKS)
+                .thenExecute(() -> {
                     checkExact(world, before, "frozen: " + WATER_TICKS + " ticks after the undo");
                     step(h, h.player, false, redone);
                 })
-                .createAndAdd(() -> check(redone.result != null, "redo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(redone.result != null, "redo running"))
+                .thenExecute(() -> {
                     completed(redone, "redo");
                     checkSame(found[0], capture(world, area), "the redo puts back the water and ice as the undo found them");
                     step(h, h.player, true, again);
                 })
-                .createAndAdd(() -> check(again.result != null, "second undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(again.result != null, "second undo running"))
+                .thenExecute(() -> {
                     completed(again, "second undo");
                     checkExact(world, before, "frozen: after undo, redo and undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Past its trail cap an entry is no longer followed: its marks go, and its undo takes back what was recorded until
      * then (the Fill's own cells always) and leaves the rest (the documented limit).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_fluid_undo_capped", tickLimit = LIMIT)
-    public void pastItsTrailCapAnEntryIsNoLongerFollowed(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_undo_capped", timeoutTicks = LIMIT)
+    public void pastItsTrailCapAnEntryIsNoLongerFollowed(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         FluidTrails trails = h.runtime.fluidTrails();
         int[] at = regionCorner(context, 929);
         int x0 = at[0], z0 = at[1];
@@ -1222,22 +1222,22 @@ public final class FluidUndoGameTest implements FabricGameTest {
         RecordingListener filled = new RecordingListener(), undone = new RecordingListener();
         h.fill(fill, "minecraft:water", filled);
         UUID[] id = new UUID[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(filled.result != null, "fill running"))
-                .createAndAddReported(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(filled.result != null, "fill running"))
+                .thenExecute(() -> {
                     completed(filled, "fill");
                     id[0] = newestEntry(h);
                     check(trails.markedBy(world, inside, id[0]), "the Fill's water is marked");
                     trails.capTrail(id[0], 1);
                     for (int z = z0 + 20; z <= z0 + 27; z++) nudge(world, x0 + 19, FLOOR + 1, z);
                 })
-                .createAndAdd(settles(world, area, 100, "the water"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(settles(world, area, 100, "the water"))
+                .thenExecute(() -> {
                     check(!trails.markedBy(world, inside, id[0]), "past the cap the entry's marks are gone");
                     step(h, h.player, true, undone);
                 })
-                .createAndAdd(() -> check(undone.result != null, "undo running"))
-                .createAndAddReported(() -> {
+                .thenWaitUntil(() -> check(undone.result != null, "undo running"))
+                .thenExecute(() -> {
                     completed(undone, "undo");
                     for (int x = x0 + 20; x <= x0 + 27; x++) {
                         for (int z = z0 + 20; z <= z0 + 27; z++) {
@@ -1249,6 +1249,6 @@ public final class FluidUndoGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

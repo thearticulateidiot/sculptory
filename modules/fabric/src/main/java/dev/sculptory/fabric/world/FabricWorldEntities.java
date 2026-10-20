@@ -11,14 +11,14 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
-import net.minecraft.entity.Entity;
-import net.minecraft.server.world.ServerWorld;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
 
-/** A {@link ServerWorld}'s entities for the engine: {@link FabricEntities} and {@link EntityWriter} over one world. */
+/** A {@link ServerLevel}'s entities for the engine: {@link FabricEntities} and {@link EntityWriter} over one world. */
 public final class FabricWorldEntities implements WorldEntities<Entity> {
-    private final ServerWorld world;
+    private final ServerLevel world;
 
-    public FabricWorldEntities(ServerWorld world) {
+    public FabricWorldEntities(ServerLevel world) {
         this.world = Objects.requireNonNull(world);
     }
 
@@ -49,7 +49,7 @@ public final class FabricWorldEntities implements WorldEntities<Entity> {
 
     @Override
     public UUID id(Entity entity) {
-        return entity.getUuid();
+        return entity.getUUID();
     }
 
     @Override
@@ -59,12 +59,12 @@ public final class FabricWorldEntities implements WorldEntities<Entity> {
 
     @Override
     public boolean riding(Entity entity) {
-        return entity.hasVehicle();
+        return entity.isPassenger();
     }
 
     @Override
     public BlockPos cell(Entity entity) {
-        net.minecraft.util.math.BlockPos cell = FabricEntities.cell(entity);
+        net.minecraft.core.BlockPos cell = FabricEntities.cell(entity);
         return new BlockPos(cell.getX(), cell.getY(), cell.getZ());
     }
 

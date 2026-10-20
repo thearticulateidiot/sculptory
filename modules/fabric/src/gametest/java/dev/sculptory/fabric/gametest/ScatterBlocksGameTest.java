@@ -47,16 +47,15 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.TallPlantBlock;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.enums.DoubleBlockHalf;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.state.property.Properties;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoublePlantBlock;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 
 /**
  * Block variants in scatter (plants without schematics) against a real server world: vanilla's survival rule decides
@@ -89,7 +88,7 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         }
     }
 
-    static int count(Harness h, Box box, net.minecraft.block.Block block) {
+    static int count(Harness h, Box box, net.minecraft.world.level.block.Block block) {
         return find(h.world, box, FLOOR_Y + 1, block).size();
     }
 
@@ -98,8 +97,8 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
      * as SURVIVAL. Every tall grass is written whole (lower on the grass, upper above). The commit is one history
      * entry and its undo restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_survive", tickLimit = LIMIT)
-    public void scatterBlocksOnlyWhereTheySurvive(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_survive", timeoutTicks = LIMIT)
+    public void scatterBlocksOnlyWhereTheySurvive(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 110);
@@ -111,12 +110,12 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 2, 11L,
                 ScatterSettings.Fit.DEFAULT, POPPY, TALL_GRASS));
         RecordingListener[] jobs = new RecordingListener[2];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 20, "only " + plan.placements() + " placements");
                     Integer survival = plan.rejectedCounts().get("SURVIVAL");
@@ -127,23 +126,23 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     }
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     Box stoneHalf = box(x0 + 16, FLOOR_Y, z0, x0 + 31, FLOOR_Y, z0 + 15);
                     check(count(h, stoneHalf, Blocks.POPPY) == 0 && count(h, stoneHalf, Blocks.TALL_GRASS) == 0,
                             "plants on the stone half");
-                    List<net.minecraft.util.math.BlockPos> poppies = find(h.world, all, FLOOR_Y + 1, Blocks.POPPY);
-                    List<net.minecraft.util.math.BlockPos> tall = find(h.world, all, FLOOR_Y + 1, Blocks.TALL_GRASS);
+                    List<net.minecraft.core.BlockPos> poppies = find(h.world, all, FLOOR_Y + 1, Blocks.POPPY);
+                    List<net.minecraft.core.BlockPos> tall = find(h.world, all, FLOOR_Y + 1, Blocks.TALL_GRASS);
                     check(!poppies.isEmpty() && !tall.isEmpty(), poppies.size() + " poppies, " + tall.size()
                             + " tall grass");
                     check(poppies.size() + tall.size() == reply.plan.placements(), poppies.size() + " + " + tall.size()
                             + " plants for " + reply.plan.placements() + " placements");
-                    for (net.minecraft.util.math.BlockPos lower : tall) {
+                    for (net.minecraft.core.BlockPos lower : tall) {
                         BlockState low = h.world.getBlockState(lower);
-                        BlockState up = h.world.getBlockState(lower.up());
-                        check(low.get(TallPlantBlock.HALF) == DoubleBlockHalf.LOWER, "not a lower half at " + lower);
-                        check(up.isOf(Blocks.TALL_GRASS) && up.get(TallPlantBlock.HALF) == DoubleBlockHalf.UPPER,
+                        BlockState up = h.world.getBlockState(lower.above());
+                        check(low.getValue(DoublePlantBlock.HALF) == DoubleBlockHalf.LOWER, "not a lower half at " + lower);
+                        check(up.is(Blocks.TALL_GRASS) && up.getValue(DoublePlantBlock.HALF) == DoubleBlockHalf.UPPER,
                                 "no upper half above " + lower.toShortString() + ": " + up);
                     }
                     check(find(h.world, all, FLOOR_Y + 2, Blocks.TALL_GRASS).size() == tall.size(),
@@ -154,8 +153,8 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     jobs[1] = new RecordingListener();
                     h.undo(jobs[1]);
                 })
-                .createAndAdd(() -> check(jobs[1].result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[1].result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(jobs[1].result.outcome() == JobOutcome.COMPLETED && jobs[1].result.skippedConflicts() == 0,
                             "undo " + jobs[1].result);
                     checkSame(before, capture(h.world, area), "after undo");
@@ -163,15 +162,15 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * With survival off, poppies land on stone too; a block with a block entity (a chest) is placed with default
      * contents, turned by its placement.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_anywhere", tickLimit = LIMIT)
-    public void scatterBlocksAnywhereWithSurvivalOff(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_anywhere", timeoutTicks = LIMIT)
+    public void scatterBlocksAnywhereWithSurvivalOff(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 111);
@@ -181,46 +180,46 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 15, z0 + 15), 2, 5L,
                 ScatterSettings.Fit.DEFAULT.withSurvive(false), POPPY, chest));
         RecordingListener[] jobs = new RecordingListener[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 10, "only " + plan.placements() + " placements");
                     check(!plan.rejectedCounts().containsKey("SURVIVAL"), "survival asked: " + plan.rejectedCounts());
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
-                    List<net.minecraft.util.math.BlockPos> poppies = find(h.world, all, FLOOR_Y + 1, Blocks.POPPY);
-                    List<net.minecraft.util.math.BlockPos> chests = find(h.world, all, FLOOR_Y + 1, Blocks.CHEST);
+                    List<net.minecraft.core.BlockPos> poppies = find(h.world, all, FLOOR_Y + 1, Blocks.POPPY);
+                    List<net.minecraft.core.BlockPos> chests = find(h.world, all, FLOOR_Y + 1, Blocks.CHEST);
                     check(!poppies.isEmpty(), "no poppy on the stone");
                     check(!chests.isEmpty(), "no chest");
                     check(poppies.size() + chests.size() == reply.plan.placements(), poppies.size() + " + "
                             + chests.size() + " blocks for " + reply.plan.placements() + " placements");
-                    java.util.Set<net.minecraft.util.math.Direction> facings = new java.util.HashSet<>();
-                    for (net.minecraft.util.math.BlockPos p : chests) {
+                    java.util.Set<net.minecraft.core.Direction> facings = new java.util.HashSet<>();
+                    for (net.minecraft.core.BlockPos p : chests) {
                         check(h.world.getBlockEntity(p) instanceof ChestBlockEntity entity && entity.isEmpty(),
                                 "no empty chest block entity at " + p.toShortString());
-                        facings.add(h.world.getBlockState(p).get(net.minecraft.block.ChestBlock.FACING));
+                        facings.add(h.world.getBlockState(p).getValue(net.minecraft.world.level.block.ChestBlock.FACING));
                     }
                     check(chests.size() < 4 || facings.size() > 1, "the chests never turned: " + facings);
                     scatter.shutdown();
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A block variant and a library asset in one mix: survival holds the poppies to the grass half while the asset (a
      * gold slab, which survival does not concern) lands on both halves.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_mixed", tickLimit = LIMIT)
-    public void scatterMixesBlocksAndAssets(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_mixed", timeoutTicks = LIMIT)
+    public void scatterMixesBlocksAndAssets(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 112);
@@ -234,12 +233,12 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 3, 21L,
                 ScatterSettings.Fit.DEFAULT, POPPY, gold));
         RecordingListener[] jobs = new RecordingListener[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 10, "only " + plan.placements() + " placements");
                     int slabsOnStone = 0;
@@ -250,8 +249,8 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     check(slabsOnStone > 0, "no gold slab planned on the stone");
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     Box grassHalf = box(x0, FLOOR_Y, z0, x0 + 15, FLOOR_Y, z0 + 15);
                     Box stoneHalf = box(x0 + 16, FLOOR_Y, z0, x0 + 31, FLOOR_Y, z0 + 15);
@@ -262,15 +261,15 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A block the server cannot place is refused {@code INVALID} before anything is held, and the reason says why:
      * malformed state text, an unknown block, properties it does not have, air, a fluid.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_invalid", tickLimit = LIMIT)
-    public void scatterRefusesBlocksItCannotPlace(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_invalid", timeoutTicks = LIMIT)
+    public void scatterRefusesBlocksItCannotPlace(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 113);
@@ -293,12 +292,12 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     c[0] + " refused saying " + refused.getMessage());
         }
         check(!h.service.executor().isLocked(h.world, all), "a refusal held the area");
-        check(h.service.scatterPlans().get(h.player.getUuid()).isEmpty(), "a refusal left a plan");
+        check(h.service.scatterPlans().get(h.player.getUUID()).isEmpty(), "a refusal left a plan");
         check(h.world.getBlockState(pos(x0, FLOOR_Y + 1, z0)).isAir(), "a refusal wrote something");
         scatter.shutdown();
         forceChunks(h.world, all, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -307,8 +306,8 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
      * survival on or off; a bubble column is refused {@code INVALID} ("carries water"); the same blocks picked dry are
      * placed dry: no water appears, then or a second later.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_water", tickLimit = LIMIT)
-    public void scatterPlacesNoWater(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_water", timeoutTicks = LIMIT)
+    public void scatterPlacesNoWater(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 114);
@@ -346,45 +345,45 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                 }
             }
         };
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 10, "only " + plan.placements() + " placements");
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
-                    List<net.minecraft.util.math.BlockPos> fans = find(h.world, all, FLOOR_Y + 1,
+                    List<net.minecraft.core.BlockPos> fans = find(h.world, all, FLOOR_Y + 1,
                             Blocks.DEAD_TUBE_CORAL_FAN);
-                    List<net.minecraft.util.math.BlockPos> seaPickles = find(h.world, all, FLOOR_Y + 1, Blocks.SEA_PICKLE);
+                    List<net.minecraft.core.BlockPos> seaPickles = find(h.world, all, FLOOR_Y + 1, Blocks.SEA_PICKLE);
                     check(!fans.isEmpty() && !seaPickles.isEmpty(), fans.size() + " fans, " + seaPickles.size()
                             + " sea pickles");
                     check(fans.size() + seaPickles.size() == reply.plan.placements(), "blocks for placements");
-                    for (net.minecraft.util.math.BlockPos p : fans) {
-                        check(!h.world.getBlockState(p).get(Properties.WATERLOGGED), "a wet fan at " + p.toShortString());
+                    for (net.minecraft.core.BlockPos p : fans) {
+                        check(!h.world.getBlockState(p).getValue(BlockStateProperties.WATERLOGGED), "a wet fan at " + p.toShortString());
                     }
-                    for (net.minecraft.util.math.BlockPos p : seaPickles) {
+                    for (net.minecraft.core.BlockPos p : seaPickles) {
                         BlockState state = h.world.getBlockState(p);
-                        check(!state.get(Properties.WATERLOGGED) && state.get(Properties.PICKLES) == 2,
+                        check(!state.getValue(BlockStateProperties.WATERLOGGED) && state.getValue(BlockStateProperties.PICKLES) == 2,
                                 "sea pickles at " + p.toShortString() + ": " + state);
                     }
                     noWater.run();
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(++waited[0] >= 20, "waiting a second for water to show");
                     noWater.run();
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     scatter.shutdown();
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -392,11 +391,11 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
      * refused {@code NO_PERMISSION} (and may still scatter a clipboard); with {@code region} the preview plans; the
      * commit asks again, so losing both refuses it (the plan stays), and with {@code brush} it runs.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_perm", tickLimit = LIMIT)
-    public void scatterBlockVariantsNeedBrushOrRegion(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_perm", timeoutTicks = LIMIT)
+    public void scatterBlockVariantsNeedBrushOrRegion(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.SCATTER, Perm.CLIPBOARD);
         int[] at = regionCorner(context, 115);
         int x0 = at[0], z0 = at[1];
@@ -423,27 +422,27 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         EditRejected late = refusal(() -> h.service.run(builder, new OpSpec.ScatterCommit(plan.planId()),
                 RunOptions.DEFAULT, null));
         check(late.reason() == RejectReason.NO_PERMISSION, "a commit after losing region: " + late.reason());
-        check(h.service.scatterPlans().get(builder.getUuid()).isPresent(), "the refusal dropped the plan");
+        check(h.service.scatterPlans().get(builder.getUUID()).isPresent(), "the refusal dropped the plan");
         EditTestSupport.grant(builder, Perm.USE, Perm.SCATTER, Perm.BRUSH);
         RecordingListener job = commit(h, builder, plan.planId());
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(job.result != null, "commit running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(job.result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(job.result.outcome() == JobOutcome.COMPLETED, "commit " + job.result);
                     check(find(h.world, all, FLOOR_Y + 1, Blocks.POPPY).size() == plan.placements(), "poppies missing");
                     scatter.shutdown();
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * Standing tall grass and sunflowers are never cut in half: poppies scattered over a meadow of them go only where
      * no two-block plant stands, and every plant keeps both halves.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_meadow", tickLimit = LIMIT)
-    public void scatterNeverTakesHalfATallPlant(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_meadow", timeoutTicks = LIMIT)
+    public void scatterNeverTakesHalfATallPlant(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 116);
@@ -465,12 +464,12 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 15, z0 + 15), 0, 4L,
                 ScatterSettings.Fit.DEFAULT, POPPY));
         RecordingListener[] jobs = new RecordingListener[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     Integer collisions = plan.rejectedCounts().get("COLLISION");
                     check(collisions != null && collisions == standing, "tall plants not refused: "
@@ -478,21 +477,21 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     check(plan.placements() > 0, "no poppy between the tall plants");
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     int whole = 0;
                     for (int x = x0; x < x0 + 16; x++) {
                         for (int z = z0; z < z0 + 16; z++) {
                             BlockState lower = h.world.getBlockState(pos(x, FLOOR_Y + 1, z));
                             BlockState upper = h.world.getBlockState(pos(x, FLOOR_Y + 2, z));
-                            if (!(lower.getBlock() instanceof TallPlantBlock)) {
-                                check(!(upper.getBlock() instanceof TallPlantBlock), "a floating upper half at " + x
+                            if (!(lower.getBlock() instanceof DoublePlantBlock)) {
+                                check(!(upper.getBlock() instanceof DoublePlantBlock), "a floating upper half at " + x
                                         + "," + z);
                                 continue;
                             }
-                            check(lower.get(TallPlantBlock.HALF) == DoubleBlockHalf.LOWER && upper.isOf(lower.getBlock())
-                                    && upper.get(TallPlantBlock.HALF) == DoubleBlockHalf.UPPER, "a half plant at " + x
+                            check(lower.getValue(DoublePlantBlock.HALF) == DoubleBlockHalf.LOWER && upper.is(lower.getBlock())
+                                    && upper.getValue(DoublePlantBlock.HALF) == DoubleBlockHalf.UPPER, "a half plant at " + x
                                     + "," + z + ": " + lower + " / " + upper);
                             whole++;
                         }
@@ -504,7 +503,7 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -512,8 +511,8 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
      * water, seagrass and kelp (fluids not allowed) go only on the meadow, and seagrass grown on the meadow where a
      * poppy was planned, before the commit, is left alone (that placement is skipped). The riverbed is untouched.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_scatter_blocks_riverbed", tickLimit = LIMIT)
-    public void scatterLeavesSeagrassUnderWater(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_scatter_blocks_riverbed", timeoutTicks = LIMIT)
+    public void scatterLeavesSeagrassUnderWater(GameTestHelper context) {
         Harness h = new Harness(context);
         var scatter = new ServerScatter<>(h.service);
         int[] at = regionCorner(context, 117);
@@ -550,13 +549,13 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
         Reply reply = preview(scatter, h.player, request(region(x0, z0, x0 + 31, z0 + 15), 0, 6L,
                 ScatterSettings.Fit.DEFAULT, POPPY));
         RecordingListener[] jobs = new RecordingListener[1];
-        net.minecraft.util.math.BlockPos[] grown = new net.minecraft.util.math.BlockPos[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        net.minecraft.core.BlockPos[] grown = new net.minecraft.core.BlockPos[1];
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     scatter.tick();
                     check(reply.finished(), "planning");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     ScatterService.PlanReady plan = reply.get("preview");
                     check(plan.placements() > 100, "only " + plan.placements() + " placements on the meadow");
                     List<ScatterPlan.Placement> placements = heldPlan(h, h.player).placements();
@@ -572,11 +571,11 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     writer.write(anchor.x(), anchor.y(), anchor.z(), seagrass, null);
                     jobs[0] = commit(h, h.player, plan.planId());
                 })
-                .createAndAdd(() -> check(jobs[0].result != null, "commit running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(jobs[0].result != null, "commit running"))
+                .thenWaitUntil(() -> {
                     check(jobs[0].result.outcome() == JobOutcome.COMPLETED, "commit " + jobs[0].result);
                     check(jobs[0].result.skippedConflicts() == 1, "skipped " + jobs[0].result.skippedConflicts());
-                    check(h.world.getBlockState(grown[0]).isOf(Blocks.SEAGRASS), "the poppy took the grown seagrass");
+                    check(h.world.getBlockState(grown[0]).is(Blocks.SEAGRASS), "the poppy took the grown seagrass");
                     check(find(h.world, all, FLOOR_Y + 1, Blocks.POPPY).size() == reply.plan.placements() - 1,
                             "poppies missing");
                     checkSame(before, capture(h.world, riverbed), "the riverbed");
@@ -584,6 +583,6 @@ public final class ScatterBlocksGameTest implements FabricGameTest {
                     forceChunks(h.world, all, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 }

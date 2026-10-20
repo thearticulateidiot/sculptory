@@ -34,9 +34,9 @@ import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
  * Generate's path-point tools on a real world: a Line with Extend to Ground stands on the terrain the world
@@ -66,11 +66,11 @@ public final class PathPointsGameTest implements FabricGameTest {
         return LineKernel.generate(new LineKernel.Spec(new PathSpec(List.of(new BlockPos(x0, 104, z0),
                 new BlockPos(x0 + 16, 104, z0)), PathKind.STRAIGHT), 3, LineKernel.Profile.SQUARE,
                 new Pattern.Single(h.state("minecraft:stone_bricks"))), h.runtime.states(), 1 << 16,
-                h.world.getBottomY(), h.world.getTopY());
+                h.world.getMinBuildHeight(), h.world.getMaxBuildHeight());
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_points_extend_ground", tickLimit = LIMIT)
-    public void aLineExtendedToGroundStandsOnTheTerrainBelowAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_points_extend_ground", timeoutTicks = LIMIT)
+    public void aLineExtendedToGroundStandsOnTheTerrainBelowAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2300);
         int x0 = at[0], z0 = at[1];
@@ -83,7 +83,7 @@ public final class PathPointsGameTest implements FabricGameTest {
         Long2IntMap lowest = GroundFill.lowest(line);
         GroundMap ground = GroundFill.groundUnder(lowest, new FabricWorldReader(h.world, h.runtime.states()));
         GeneratedSource wall = GroundFill.extend(line, lowest, ground, (x, y, z, low) -> stone, 1 << 16,
-                h.world.getBottomY());
+                h.world.getMinBuildHeight());
         for (Long2IntMap.Entry column : lowest.long2IntEntrySet()) {
             int x = GroundMap.columnX(column.getLongKey()), z = GroundMap.columnZ(column.getLongKey());
             boolean valley = x >= x0 + 4 && x <= x0 + 12 && Math.abs(z - z0) <= 2;
@@ -98,8 +98,8 @@ public final class PathPointsGameTest implements FabricGameTest {
         ExtrudePathsGameTest.buildAndUndo(context, h, area, wall, OpLabel.LINE, undone -> {});
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_points_extend_refused", tickLimit = LIMIT)
-    public void aFillPastTheCapIsRefusedAndAnUploadOverTheLimitWritesNothing(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_points_extend_refused", timeoutTicks = LIMIT)
+    public void aFillPastTheCapIsRefusedAndAnUploadOverTheLimitWritesNothing(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2301);
         int x0 = at[0], z0 = at[1];
@@ -112,13 +112,13 @@ public final class PathPointsGameTest implements FabricGameTest {
         GroundMap ground = GroundFill.groundUnder(lowest, new FabricWorldReader(h.world, h.runtime.states()));
         boolean refused = false;
         try {
-            GroundFill.extend(line, lowest, ground, (x, y, z, low) -> stone, line.cells() + 10, h.world.getBottomY());
+            GroundFill.extend(line, lowest, ground, (x, y, z, low) -> stone, line.cells() + 10, h.world.getMinBuildHeight());
         } catch (GeneratedTooLargeException e) {
             refused = true;
         }
         check(refused, "a fill past the cap is too large (the preview says so and Enter sends nothing)");
 
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION, Perm.CLIPBOARD);
         WorldSnapshot before = capture(h.world, area);
         List<String> undoBefore = h.service.history(builder).undoLabels();
@@ -133,7 +133,7 @@ public final class PathPointsGameTest implements FabricGameTest {
         check(h.service.history(builder).undoLabels().equals(undoBefore), "a refusal pushed history");
         forceChunks(h.world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /** The stairs and slabs of a block's family, as Generate reads them. */
@@ -152,8 +152,8 @@ public final class PathPointsGameTest implements FabricGameTest {
         };
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_points_line_stairs", tickLimit = LIMIT)
-    public void aLineWithStairsAndSlabsClimbsInStoneBrickStairsAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_points_line_stairs", timeoutTicks = LIMIT)
+    public void aLineWithStairsAndSlabsClimbsInStoneBrickStairsAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2302);
         int x0 = at[0], z0 = at[1];
@@ -163,7 +163,7 @@ public final class PathPointsGameTest implements FabricGameTest {
         PathSpec path = new PathSpec(List.of(new BlockPos(x0, 101, z0), new BlockPos(x0 + 12, 107, z0)), PathKind.STRAIGHT);
         int bricks = h.state("minecraft:stone_bricks");
         GeneratedSource line = LineKernel.generate(new LineKernel.Spec(path, 1, LineKernel.Profile.ROUND,
-                new Pattern.Single(bricks)), h.runtime.states(), 1 << 16, h.world.getBottomY(), h.world.getTopY());
+                new Pattern.Single(bricks)), h.runtime.states(), 1 << 16, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight());
         SlopeSteps.Result stepped = SlopeSteps.apply(line, SlopeSteps.along(PathSampler.sample(path, 0.5)), steps(h),
                 h.state("minecraft:air"));
         int stairs = h.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
@@ -176,8 +176,8 @@ public final class PathPointsGameTest implements FabricGameTest {
         ExtrudePathsGameTest.buildAndUndo(context, h, area, stepped.source(), OpLabel.LINE, undone -> {});
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_points_road_stairs", tickLimit = LIMIT)
-    public void aRoadWithStairsAndSlabsStepsUpInStairsAcrossItsWidthAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_points_road_stairs", timeoutTicks = LIMIT)
+    public void aRoadWithStairsAndSlabsStepsUpInStairsAcrossItsWidthAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 2303);
         int x0 = at[0], z0 = at[1];
@@ -189,7 +189,7 @@ public final class PathPointsGameTest implements FabricGameTest {
                 new Pattern.Single(bricks), null, RoadKernel.HeightMode.STRAIGHT, true, 0, 2, h.state("minecraft:air"));
         RoadKernel.Path laid = RoadKernel.path(spec);
         GroundMap ground = RoadKernel.deckGround(spec, laid, new FabricWorldReader(h.world, h.runtime.states()));
-        GeneratedSource road = RoadKernel.generate(spec, laid, ground, h.world.getBottomY(), h.world.getTopY(), 1 << 16)
+        GeneratedSource road = RoadKernel.generate(spec, laid, ground, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight(), 1 << 16)
                 .source();
         GeneratedSource stepped = SlopeSteps.apply(road, SlopeSteps.byColumn(laid.climbAxes()), steps(h),
                 h.state("minecraft:air")).source();

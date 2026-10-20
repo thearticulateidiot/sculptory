@@ -4,10 +4,10 @@ import dev.sculptory.core.Box;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Predicate;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * The block states of a box of the world at one moment (the integrated server's or the client's), compared cell by cell.
@@ -31,14 +31,14 @@ public final class Cells {
     }
 
     /** The states of {@code box} in {@code world} now. */
-    public static Cells of(World world, Box box) {
+    public static Cells of(Level world, Box box) {
         int[] states = new int[Math.toIntExact(box.volume())];
-        BlockPos.Mutable at = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos at = new BlockPos.MutableBlockPos();
         int i = 0;
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
-                    states[i++] = Block.getRawIdFromState(world.getBlockState(at.set(x, y, z)));
+                    states[i++] = Block.getId(world.getBlockState(at.set(x, y, z)));
                 }
             }
         }
@@ -50,7 +50,7 @@ public final class Cells {
     }
 
     public BlockState at(int x, int y, int z) {
-        return Block.getStateFromRawId(states[index(x, y, z)]);
+        return Block.stateById(states[index(x, y, z)]);
     }
 
     private int index(int x, int y, int z) {
@@ -74,7 +74,7 @@ public final class Cells {
         }
 
         public Editor set(int x, int y, int z, BlockState state) {
-            cells.states[cells.index(x, y, z)] = Block.getRawIdFromState(state);
+            cells.states[cells.index(x, y, z)] = Block.getId(state);
             return this;
         }
 
@@ -91,7 +91,7 @@ public final class Cells {
     public long count(Predicate<BlockState> which) {
         long count = 0;
         for (int state : states) {
-            if (which.test(Block.getStateFromRawId(state))) {
+            if (which.test(Block.stateById(state))) {
                 count++;
             }
         }
@@ -124,8 +124,8 @@ public final class Cells {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
                     if (states[i] != after.states[i]) {
-                        changes.add(new Change(x, y, z, Block.getStateFromRawId(states[i]),
-                                Block.getStateFromRawId(after.states[i])));
+                        changes.add(new Change(x, y, z, Block.stateById(states[i]),
+                                Block.stateById(after.states[i])));
                     }
                     i++;
                 }

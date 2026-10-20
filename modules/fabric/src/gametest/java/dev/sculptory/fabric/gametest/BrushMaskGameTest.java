@@ -34,14 +34,14 @@ import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
-import net.minecraft.world.World;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 
 /**
  * Brush masks on the server: the clip box ("only inside selection") drops every write outside it, strokes stay one
@@ -55,10 +55,10 @@ public final class BrushMaskGameTest implements FabricGameTest {
      * A clipped Lower through a pond (with its water refill) and a clipped Raise change only cells inside the box;
      * each stroke is one history entry, and undoing both restores the area exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mask_clip_undo", tickLimit = LIMIT)
-    public void clippedStrokesLeaveTheOutsideAloneAndUndoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mask_clip_undo", timeoutTicks = LIMIT)
+    public void clippedStrokesLeaveTheOutsideAloneAndUndoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 100);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 47, 170, z0 + 47);
@@ -77,19 +77,19 @@ public final class BrushMaskGameTest implements FabricGameTest {
         RecordingListener undo = new RecordingListener();
         RecordingListener undoAgain = new RecordingListener();
         int[] inside = {0};
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(h.acks.seqs.size() == 1, "lower applying"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(h.acks.seqs.size() == 1, "lower applying"))
+                .thenWaitUntil(() -> {
                     h.service.endStroke(h.player, 30);
                     begin(h, 31, raise);
                     check(h.service.dabs(h.player, 31, 2, path(x0 + 15, z0 + 23, 108, 10)).accepted(), "raise dabs");
                 })
-                .createAndAdd(() -> check(h.acks.seqs.size() == 2, "raise applying"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(h.acks.seqs.size() == 2, "raise applying"))
+                .thenWaitUntil(() -> {
                     h.service.endStroke(h.player, 31);
                     inside[0] = 0; // a failed check retries this step
                     check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
-                    List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+                    List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
                     check(entries.size() == 2, "one entry per stroke, got " + entries.size());
                     WorldSnapshot after = capture(world, area);
                     int water = h.state("minecraft:water");
@@ -100,7 +100,7 @@ public final class BrushMaskGameTest implements FabricGameTest {
                                 int was = before.get(x, y, z), now = after.get(x, y, z);
                                 if (was == now) continue;
                                 check(clip.contains(x, y, z), "changed outside the box at " + x + "," + y + "," + z + ": "
-                                        + Block.getStateFromRawId(was) + " -> " + Block.getStateFromRawId(now));
+                                        + Block.stateById(was) + " -> " + Block.stateById(now));
                                 inside[0]++;
                                 if (now == water) refilled = true;
                             }
@@ -113,30 +113,30 @@ public final class BrushMaskGameTest implements FabricGameTest {
                     check(recorded >= inside[0], "records hold " + recorded + " cells for " + inside[0] + " changed");
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "first undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "first undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     h.undo(undoAgain);
                 })
-                .createAndAdd(() -> check(undoAgain.result != null, "second undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undoAgain.result != null, "second undo running"))
+                .thenWaitUntil(() -> {
                     check(undoAgain.result.outcome() == JobOutcome.COMPLETED && undoAgain.result.skippedConflicts() == 0,
                             "undo " + undoAgain.result);
                     checkSame(before, capture(world, area), "after undoing both strokes");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /** A clip box outside the world (beyond the build height or the horizontal limit) is refused as INVALID. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mask_clip_refused", tickLimit = LIMIT)
-    public void clipBoxesOutsideTheWorldAreRefused(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mask_clip_refused", timeoutTicks = LIMIT)
+    public void clipBoxesOutsideTheWorldAreRefused(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        int bottom = world.getBottomY(), top = world.getTopY();
+        ServerLevel world = h.world;
+        int bottom = world.getMinBuildHeight(), top = world.getMaxBuildHeight();
         BrushSpec free = new BrushSpec(BrushTool.RAISE, 3, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0, 1L);
-        int far = World.HORIZONTAL_LIMIT + 1;
+        int far = Level.MAX_LEVEL_SIZE + 1;
         List<Box> outside = List.of(
                 box(0, top - 4, 0, 3, top, 3),                   // one layer above the build height
                 box(0, bottom - 1, 0, 3, bottom + 4, 3),         // one layer below it
@@ -146,19 +146,19 @@ public final class BrushMaskGameTest implements FabricGameTest {
         for (Box clip : outside) {
             try {
                 h.service.beginStroke(h.player, id, free.withClip(clip));
-                throw new GameTestException("a clip box outside the world was accepted: " + clip);
+                throw new GameTestAssertException("a clip box outside the world was accepted: " + clip);
             } catch (EditRejected e) {
                 check(e.reason() == RejectReason.INVALID, "refused with " + e.reason() + " for " + clip);
             }
-            check(h.service.openStroke(h.player.getUuid()).isEmpty(), "a refused stroke is open");
+            check(h.service.openStroke(h.player.getUUID()).isEmpty(), "a refused stroke is open");
             id++;
         }
         // The whole build height and the world's edge are fine.
-        begin(h, id, free.withClip(box(-World.HORIZONTAL_LIMIT, bottom, 0, World.HORIZONTAL_LIMIT, top - 1, 5)));
-        check(h.service.openStroke(h.player.getUuid()).orElse(-1) == id, "the in-world clip box was not accepted");
+        begin(h, id, free.withClip(box(-Level.MAX_LEVEL_SIZE, bottom, 0, Level.MAX_LEVEL_SIZE, top - 1, 5)));
+        check(h.service.openStroke(h.player.getUUID()).orElse(-1) == id, "the in-world clip box was not accepted");
         h.service.endStroke(h.player, id);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -166,10 +166,10 @@ public final class BrushMaskGameTest implements FabricGameTest {
      * and inverted masks, Lower through a pond, and a radius-24 Flatten and Smooth (sizes the client does not
      * predict, so only the server runs them). Every kernel write is inside its box.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mask_clip_kernel", tickLimit = LIMIT)
-    public void clippedAndMaskedStrokesMatchTheSnapshotKernel(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mask_clip_kernel", timeoutTicks = LIMIT)
+    public void clippedAndMaskedStrokesMatchTheSnapshotKernel(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 102);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 90, z0, x0 + 63, 170, z0 + 63);
@@ -181,7 +181,7 @@ public final class BrushMaskGameTest implements FabricGameTest {
         for (int x = x0 + 20; x <= x0 + 44; x += 2) {
             for (int z = z0 + 20; z <= z0 + 44; z += 3) {
                 int y = surface(world, x, z);
-                if (world.getBlockState(new net.minecraft.util.math.BlockPos(x, y, z)).isOf(Blocks.GRASS_BLOCK)) {
+                if (world.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).is(Blocks.GRASS_BLOCK)) {
                     writer.write(x, y, z, snowy, null);
                 }
             }
@@ -224,10 +224,10 @@ public final class BrushMaskGameTest implements FabricGameTest {
         }
 
         int[] seq = {1};
-        TimedTaskRunner runner = context.createTimedTaskRunner();
+        GameTestSequence runner = context.startSequence();
         for (int s = 0; s < specs.size(); s++) {
             int current = s;
-            runner.createAndAdd(() -> {
+            runner.thenWaitUntil(() -> {
                 begin(h, 50 + current, specs.get(current));
                 List<Dab> dabs = strokes.get(current);
                 for (int from = 0; from < dabs.size(); from += 6) {
@@ -236,38 +236,38 @@ public final class BrushMaskGameTest implements FabricGameTest {
                     check(outcome.accepted(), "stroke " + current + " batch " + from + ": " + outcome);
                 }
             });
-            runner.createAndAdd(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
-            runner.createAndAdd(() -> h.service.endStroke(h.player, 50 + current));
+            runner.thenWaitUntil(() -> check(h.acks.seqs.size() == seq[0] - 1, "stroke " + current + " still applying"));
+            runner.thenWaitUntil(() -> h.service.endStroke(h.player, 50 + current));
         }
         // The replay mutates the snapshot, so it runs once; a failed check is retried against the same verdict.
         String[] replay = {null};
-        runner.createAndAdd(() -> {
+        runner.thenWaitUntil(() -> {
             check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
             if (replay[0] == null) replay[0] = replay(specs, strokes, snapshot);
             check(replay[0].isEmpty(), replay[0]);
             int mismatches = 0;
             String first = null;
-            net.minecraft.util.math.BlockPos.Mutable pos = new net.minecraft.util.math.BlockPos.Mutable();
+            net.minecraft.core.BlockPos.MutableBlockPos pos = new net.minecraft.core.BlockPos.MutableBlockPos();
             for (int y = area.min().y(); y <= area.max().y(); y++) {
                 for (int z = area.min().z(); z <= area.max().z(); z++) {
                     for (int x = area.min().x(); x <= area.max().x(); x++) {
-                        int server = Block.getRawIdFromState(world.getBlockState(pos.set(x, y, z)));
+                        int server = Block.getId(world.getBlockState(pos.set(x, y, z)));
                         int kernel = snapshot.get(x, y, z);
                         if (server == kernel) continue;
                         mismatches++;
                         if (first == null) {
-                            first = x + "," + y + "," + z + ": server " + Block.getStateFromRawId(server) + ", kernel "
-                                    + Block.getStateFromRawId(kernel);
+                            first = x + "," + y + "," + z + ": server " + Block.stateById(server) + ", kernel "
+                                    + Block.stateById(kernel);
                         }
                     }
                 }
             }
             check(mismatches == 0, mismatches + " cells differ; first " + first);
-            check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+            check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
             forceChunks(world, area, false);
             h.close();
         });
-        runner.completeIfSuccessful();
+        runner.thenSucceed();
     }
 
     // ------------------------------------------------------------------ helpers
@@ -319,9 +319,9 @@ public final class BrushMaskGameTest implements FabricGameTest {
     }
 
     /** The topmost non-air y of a column (from y 140 down to the stone floor). */
-    private static int surface(ServerWorld world, int x, int z) {
+    private static int surface(ServerLevel world, int x, int z) {
         for (int y = 140; y >= 100; y--) {
-            if (!world.getBlockState(new net.minecraft.util.math.BlockPos(x, y, z)).isAir()) return y;
+            if (!world.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).isAir()) return y;
         }
         return 100;
     }
@@ -330,7 +330,7 @@ public final class BrushMaskGameTest implements FabricGameTest {
         try {
             h.service.beginStroke(h.player, strokeId, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("stroke refused: " + e.getMessage());
+            throw new GameTestAssertException("stroke refused: " + e.getMessage());
         }
     }
 }

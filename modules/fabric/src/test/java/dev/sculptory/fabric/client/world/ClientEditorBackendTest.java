@@ -23,8 +23,8 @@ import dev.sculptory.server.net.ServerDispatcher;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
-import net.minecraft.Bootstrap;
 import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -39,8 +39,8 @@ class ClientEditorBackendTest {
 
     @BeforeAll
     static void bootstrap() {
-        SharedConstants.createGameVersion();
-        Bootstrap.initialize();
+        SharedConstants.tryDetectVersion();
+        Bootstrap.bootStrap();
         client = FabricStateSpace.build();
     }
 

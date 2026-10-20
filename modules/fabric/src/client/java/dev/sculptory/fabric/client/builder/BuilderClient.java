@@ -1,5 +1,6 @@
 package dev.sculptory.fabric.client.builder;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.state.StateSpace;
@@ -40,33 +41,32 @@ import net.fabricmc.fabric.api.event.player.AttackBlockCallback;
 import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.client.network.PendingUpdateManager;
-import net.minecraft.client.option.KeyBinding;
-import net.minecraft.client.util.InputUtil;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.item.BlockItem;
-import net.minecraft.item.ItemPlacementContext;
-import net.minecraft.item.ItemStack;
-import net.minecraft.text.Text;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.ItemActionResult;
-import net.minecraft.util.TypedActionResult;
-import net.minecraft.util.Util;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
-import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Direction;
-import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.World;
+import net.minecraft.Util;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.multiplayer.prediction.BlockStatePredictionHandler;
+import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.InteractionResultHolder;
+import net.minecraft.world.ItemInteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
+import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -114,8 +114,8 @@ public final class BuilderClient {
 
     private static BuilderClient instance;
 
-    private final MinecraftClient client;
-    private final KeyBinding ringKey;
+    private final Minecraft client;
+    private final KeyMapping ringKey;
     private final Translator translator;
     private final Supplier<FabricEditorSession> sessions;
     private final Supplier<StateSpace> states;
@@ -141,7 +141,7 @@ public final class BuilderClient {
     private TinkerPower tinkerPower;
     private final McWorldDraw worldDraw = new McWorldDraw();
 
-    private BuilderClient(MinecraftClient client, KeyBinding ringKey, Translator translator,
+    private BuilderClient(Minecraft client, KeyMapping ringKey, Translator translator,
                           Supplier<FabricEditorSession> sessions, Supplier<StateSpace> states, EditorClient editor) {
         this.client = client;
         this.ringKey = ringKey;
@@ -155,13 +155,13 @@ public final class BuilderClient {
     public static BuilderClient init(EditorClient editor, Supplier<FabricEditorSession> sessions,
                                      Supplier<StateSpace> states) {
         if (instance != null) return instance;
-        KeyBinding ring = KeyBindingHelper.registerKeyBinding(
-                new KeyBinding(RING_KEY, InputUtil.Type.KEYSYM, GLFW.GLFW_KEY_G, EditorClient.CATEGORY));
-        instance = new BuilderClient(MinecraftClient.getInstance(), ring, new McTranslator(), sessions, states, editor);
+        KeyMapping ring = KeyBindingHelper.registerKeyBinding(
+                new KeyMapping(RING_KEY, InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G, EditorClient.CATEGORY));
+        instance = new BuilderClient(Minecraft.getInstance(), ring, new McTranslator(), sessions, states, editor);
         instance.installTinker();
         instance.registerEvents();
         editor.setBuilderMode(() -> instance.powers.mask() != 0,
-                () -> instance.ringKey.getBoundKeyLocalizedText().getString());
+                () -> instance.ringKey.getTranslatedKeyMessage().getString());
         return instance;
     }
 
@@ -178,7 +178,7 @@ public final class BuilderClient {
         TinkerController controller = new TinkerController(tinkerHost);
         tinkerPower = new TinkerPower(controller, this::openTinkerPanel);
         controller.addListener(() -> {
-            if (client.currentScreen instanceof TinkerScreen panel) panel.refresh();
+            if (client.screen instanceof TinkerScreen panel) panel.refresh();
         });
         powers.register(BuilderPower.TINKER, tinkerPower);
         powers.setGate(BuilderPower.TINKER, () -> TinkerPower.gate(Optional.ofNullable(sessions.get())));
@@ -200,9 +200,9 @@ public final class BuilderClient {
         AttackBlockCallback.EVENT.register(this::attackBlock);
         AttackEntityCallback.EVENT.register(this::attackEntity);
         HudRenderCallback.EVENT.register((context, tickCounter) -> {
-            tinkerFrame(tickCounter.getTickDelta(true));
-            if (client.player != null && !client.options.hudHidden && !editor.mode().isEditing() && unavailable() == null) {
-                BuilderHud.render(context, client.textRenderer, powers.mask(), translator);
+            tinkerFrame(tickCounter.getGameTimeDeltaPartialTick(true));
+            if (client.player != null && !client.options.hideGui && !editor.mode().isEditing() && unavailable() == null) {
+                BuilderHud.render(context, client.font, powers.mask(), translator);
                 drawTinkerLabel(context);
             }
         });
@@ -218,22 +218,22 @@ public final class BuilderClient {
      * the player's reach (Long reach included); otherwise it aims at nothing.
      */
     private void tinkerFrame(float tickDelta) {
-        ClientPlayerEntity player = client.player;
-        boolean alt = player != null && client.currentScreen == null && !editor.mode().isEditing()
+        LocalPlayer player = client.player;
+        boolean alt = player != null && client.screen == null && !editor.mode().isEditing()
                 && unavailable() == null && (Screen.hasAltDown() || pinnedKeys.contains(GLFW.GLFW_KEY_LEFT_ALT));
-        tinkerPower.frame(alt, alt ? tinkerHost.crosshair(player.getBlockInteractionRange(), tickDelta) : null);
+        tinkerPower.frame(alt, alt ? tinkerHost.crosshair(player.blockInteractionRange(), tickDelta) : null);
     }
 
     /** Tinker's label ("Oak Stairs · shape: outer left") on a plate beside the crosshair. */
-    private void drawTinkerLabel(DrawContext context) {
+    private void drawTinkerLabel(GuiGraphics context) {
         String label = tinkerPower.label();
         if (label.isEmpty()) return;
-        int width = client.textRenderer.getWidth(label) + 6;
-        int x = context.getScaledWindowWidth() / 2 + 12;
-        int y = context.getScaledWindowHeight() / 2 + 12;
-        if (x + width > context.getScaledWindowWidth()) x = context.getScaledWindowWidth() / 2 - 8 - width;
+        int width = client.font.width(label) + 6;
+        int x = context.guiWidth() / 2 + 12;
+        int y = context.guiHeight() / 2 + 12;
+        if (x + width > context.guiWidth()) x = context.guiWidth() / 2 - 8 - width;
         context.fill(x, y, x + width, y + 12, 0xD0101216);
-        context.drawText(client.textRenderer, label, x + 3, y + 2, 0xFFFFFFFF, false);
+        context.drawString(client.font, label, x + 3, y + 2, 0xFFFFFFFF, false);
     }
 
     /** The twelve edges of what Tinker aims at, drawn in the world. */
@@ -241,7 +241,7 @@ public final class BuilderClient {
         Optional<double[]> outline = tinkerPower.outline();
         if (outline.isEmpty()) return;
         double[] b = outline.get();
-        Vec3d camera = context.camera().getPos();
+        Vec3 camera = context.camera().getPosition();
         worldDraw.begin(camera.x, camera.y, camera.z, context.positionMatrix(), context.projectionMatrix());
         try {
             worldDraw.seeThrough(true);
@@ -264,7 +264,7 @@ public final class BuilderClient {
      * with Alt held over something Scroll changes); true when one took it, so the hotbar keeps its slot.
      */
     public boolean scrolled(double amount) {
-        if (client.player == null || editor.mode().isEditing() || client.currentScreen != null || unavailable() != null) {
+        if (client.player == null || editor.mode().isEditing() || client.screen != null || unavailable() != null) {
             return false;
         }
         return powers.onScroll(amount, MinecraftInput.modifiers());
@@ -284,14 +284,14 @@ public final class BuilderClient {
         sendPowersIfNeeded();
         if (breakCooldown > 0) breakCooldown--;
         if (client.player == null) return;
-        if (client.currentScreen == null && !editor.mode().isEditing()) {
-            while (ringKey.wasPressed()) openRing();
+        if (client.screen == null && !editor.mode().isEditing()) {
+            while (ringKey.consumeClick()) openRing();
             pollHistoryKeys();
             continueDrag();
-        } else if (drags.open() && !(client.currentScreen instanceof RingScreen)) {
+        } else if (drags.open() && !(client.screen instanceof RingScreen)) {
             endDrag();
         }
-        attackHeld = client.options.attackKey.isPressed();
+        attackHeld = client.options.keyAttack.isDown();
     }
 
     private void disconnected() {
@@ -339,10 +339,10 @@ public final class BuilderClient {
             actionBar(translator.translate(why));
             return;
         }
-        int width = client.getWindow().getScaledWidth();
-        int height = client.getWindow().getScaledHeight();
+        int width = client.getWindow().getGuiScaledWidth();
+        int height = client.getWindow().getGuiScaledHeight();
         RingMenu menu = new RingMenu(List.of(BuilderPower.values()), width / 2.0, height / 2.0,
-                Math.max(40, Math.min(width, height) * 0.28), Util.getMeasuringTimeMs());
+                Math.max(40, Math.min(width, height) * 0.28), Util.getMillis());
         client.setScreen(new RingScreen(this, menu, translator, ringKey));
     }
 
@@ -379,55 +379,55 @@ public final class BuilderClient {
         FabricEditorSession session = sessions.get();
         if (session == null || !session.builderOffered()) return NOT_AVAILABLE;
         if (!session.permissions().has(Perm.USE) || !session.permissions().has(Perm.BUILDER)) return NO_PERMISSION;
-        ClientPlayerEntity player = client.player;
+        LocalPlayer player = client.player;
         if (player == null || !player.isCreative()) return NOT_CREATIVE;
         return null;
     }
 
     /** Whether clicks are builder mode's now: a power on, the editor closed, the server and the player allowing it. */
     private boolean active() {
-        return powers.mask() != 0 && !editor.mode().isEditing() && client.currentScreen == null && unavailable() == null;
+        return powers.mask() != 0 && !editor.mode().isEditing() && client.screen == null && unavailable() == null;
     }
 
     // ---- placing ----
 
-    private ActionResult useBlock(PlayerEntity player, World world, Hand hand, BlockHitResult hit) {
-        if (player != client.player || !(world instanceof ClientWorld clientWorld) || !active()) return ActionResult.PASS;
-        ItemStack stack = player.getStackInHand(hand);
-        if (!(stack.getItem() instanceof BlockItem)) return ActionResult.PASS;
-        if (powers.onClick(GLFW.GLFW_MOUSE_BUTTON_RIGHT, MinecraftInput.modifiers())) return ActionResult.FAIL;
+    private InteractionResult useBlock(Player player, Level world, InteractionHand hand, BlockHitResult hit) {
+        if (player != client.player || !(world instanceof ClientLevel clientWorld) || !active()) return InteractionResult.PASS;
+        ItemStack stack = player.getItemInHand(hand);
+        if (!(stack.getItem() instanceof BlockItem)) return InteractionResult.PASS;
+        if (powers.onClick(GLFW.GLFW_MOUSE_BUTTON_RIGHT, MinecraftInput.modifiers())) return InteractionResult.FAIL;
         // The block's own use first, as vanilla orders it; when it takes the click, vanilla's packet carries it.
-        if (!player.shouldCancelInteraction()) {
+        if (!player.isSecondaryUseActive()) {
             BlockState state = clientWorld.getBlockState(hit.getBlockPos());
-            ItemActionResult withItem = state.onUseWithItem(stack, clientWorld, player, hand, hit);
-            if (withItem.isAccepted()) return ActionResult.SUCCESS;
-            if (withItem == ItemActionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION && hand == Hand.MAIN_HAND
-                    && state.onUse(clientWorld, player, hit).isAccepted()) {
-                return ActionResult.SUCCESS;
+            ItemInteractionResult withItem = state.useItemOn(stack, clientWorld, player, hand, hit);
+            if (withItem.consumesAction()) return InteractionResult.SUCCESS;
+            if (withItem == ItemInteractionResult.PASS_TO_DEFAULT_BLOCK_INTERACTION && hand == InteractionHand.MAIN_HAND
+                    && state.useWithoutItem(clientWorld, player, hit).consumesAction()) {
+                return InteractionResult.SUCCESS;
             }
         }
-        place(clientWorld, (ClientPlayerEntity) player, hand, hit, false);
-        return ActionResult.FAIL;
+        place(clientWorld, (LocalPlayer) player, hand, hit, false);
+        return InteractionResult.FAIL;
     }
 
-    private TypedActionResult<ItemStack> useItem(PlayerEntity player, World world, Hand hand) {
-        ItemStack stack = player.getStackInHand(hand);
-        if (player != client.player || !(world instanceof ClientWorld clientWorld) || !active()
+    private InteractionResultHolder<ItemStack> useItem(Player player, Level world, InteractionHand hand) {
+        ItemStack stack = player.getItemInHand(hand);
+        if (player != client.player || !(world instanceof ClientLevel clientWorld) || !active()
                 || !powers.on(BuilderPower.PLACE_IN_AIR) || !(stack.getItem() instanceof BlockItem)) {
-            return TypedActionResult.pass(stack);
+            return InteractionResultHolder.pass(stack);
         }
-        HitResult target = client.crosshairTarget;
-        if (target == null || target.getType() != HitResult.Type.MISS) return TypedActionResult.pass(stack);
-        Vec3d point = player.getEyePos().add(player.getRotationVec(1.0f).multiply(PLACE_IN_AIR_DISTANCE));
-        BlockPos cell = BlockPos.ofFloored(point);
-        place(clientWorld, (ClientPlayerEntity) player, hand, new BlockHitResult(Vec3d.ofCenter(cell), Direction.UP, cell,
+        HitResult target = client.hitResult;
+        if (target == null || target.getType() != HitResult.Type.MISS) return InteractionResultHolder.pass(stack);
+        Vec3 point = player.getEyePosition().add(player.getViewVector(1.0f).scale(PLACE_IN_AIR_DISTANCE));
+        BlockPos cell = BlockPos.containing(point);
+        place(clientWorld, (LocalPlayer) player, hand, new BlockHitResult(Vec3.atCenterOf(cell), Direction.UP, cell,
                 false), true);
         // Consumed, so the off hand does not fire too (a FAIL is not "accepted" to doItemUse).
-        return TypedActionResult.consume(stack);
+        return InteractionResultHolder.consume(stack);
     }
 
     /** Predicts the placement in the client world and sends it; a refusal the client can see shows in the action bar. */
-    private void place(ClientWorld world, ClientPlayerEntity player, Hand hand, BlockHitResult hit, boolean inAir) {
+    private void place(ClientLevel world, LocalPlayer player, InteractionHand hand, BlockHitResult hit, boolean inAir) {
         boolean replace = powers.on(BuilderPower.REPLACE) && !inAir;
         boolean force = powers.on(BuilderPower.FORCE_PLACE);
         BuilderPlacement.Outcome decided = BuilderPlacement.decide(world, player, hand, hit, replace, force);
@@ -439,62 +439,62 @@ public final class BuilderClient {
         BuilderPlacement.Decision decision = decided.decision();
         BlockPos cell = decision.pos();
         List<BuilderPlacement.Copy> copies = BuilderPlacement.copies(symmetry, cell);
-        ItemStack stack = decision.context().getStack();
+        ItemStack stack = decision.context().getItemInHand();
         StateSpace space = states.get();
         int seq;
-        PendingUpdateManager pending = world.getPendingUpdateManager().incrementSequence();
+        BlockStatePredictionHandler pending = world.getBlockStatePredictionHandler().startPredicting();
         try {
-            seq = pending.getSequence();
+            seq = pending.currentSequence();
             BuilderPlacement.place(decision.item(), decision.context(), decision.state(), false);
             for (BuilderPlacement.Copy copy : copies.subList(1, copies.size())) {
-                Direction side = direction(Symmetry.imageFacing(copy.image(), facing(hit.getSide())));
-                ItemPlacementContext context = BuilderPlacementContext.at(world, player, hand, stack, copy.pos(), side);
-                if (!replace && !world.getBlockState(copy.pos()).canReplace(context)) continue;
+                Direction side = direction(Symmetry.imageFacing(copy.image(), facing(hit.getDirection())));
+                BlockPlaceContext context = BuilderPlacementContext.at(world, player, hand, stack, copy.pos(), side);
+                if (!replace && !world.getBlockState(copy.pos()).canBeReplaced(context)) continue;
                 BlockState state = space == null ? decision.state()
                         : BuilderPlacement.imageState(space, copy.image(), decision.state());
                 BuilderPlacement.place(decision.item(), context, state, true);
             }
         } catch (RuntimeException e) {
             SculptoryMod.LOG.warn("Sculptory: predicting a builder placement failed: {}", e.toString());
-            seq = pending.getSequence();
+            seq = pending.currentSequence();
         } finally {
             pending.close();
         }
-        player.swingHand(hand);
+        player.swing(hand);
         int mask = powers.mask() & (BuilderPower.REPLACE.bit() | BuilderPower.FORCE_PLACE.bit()
                 | BuilderPower.KEEP_SHAPE.bit() | BuilderPower.MIRROR.bit());
         if (inAir) mask |= BuilderPower.PLACE_IN_AIR.bit();
         if (inAir) mask &= ~BuilderPower.REPLACE.bit();
         if (symmetry.isOff()) mask &= ~BuilderPower.MIRROR.bit();
         BlockPos pos = hit.getBlockPos();
-        Vec3d at = hit.getPos();
-        send(new C2S.BuilderPlace(seq, hand == Hand.OFF_HAND, wire(pos), facing(hit.getSide()),
+        Vec3 at = hit.getLocation();
+        send(new C2S.BuilderPlace(seq, hand == InteractionHand.OFF_HAND, wire(pos), facing(hit.getDirection()),
                 within(at.x - pos.getX()), within(at.y - pos.getY()), within(at.z - pos.getZ()), mask, symmetry));
     }
 
     // ---- breaking ----
 
-    private ActionResult attackBlock(PlayerEntity player, World world, Hand hand, BlockPos pos, Direction direction) {
-        if (player != client.player || !(world instanceof ClientWorld clientWorld) || !active()) return ActionResult.PASS;
-        if (powers.onClick(GLFW.GLFW_MOUSE_BUTTON_LEFT, MinecraftInput.modifiers())) return ActionResult.FAIL;
+    private InteractionResult attackBlock(Player player, Level world, InteractionHand hand, BlockPos pos, Direction direction) {
+        if (player != client.player || !(world instanceof ClientLevel clientWorld) || !active()) return InteractionResult.PASS;
+        if (powers.onClick(GLFW.GLFW_MOUSE_BUTTON_LEFT, MinecraftInput.modifiers())) return InteractionResult.FAIL;
         // A bulldozer drag in progress: the tick adds what the crosshair sweeps.
-        if (drags.open()) return ActionResult.FAIL;
+        if (drags.open()) return InteractionResult.FAIL;
         // Held down (vanilla asks every tick in Creative): a break every HELD_BREAK_TICKS, as vanilla breaks.
-        if (attackHeld && breakCooldown > 0) return ActionResult.FAIL;
+        if (attackHeld && breakCooldown > 0) return InteractionResult.FAIL;
         BlockState state = clientWorld.getBlockState(pos);
         if (!BuilderPlacement.breakable(clientWorld, player, pos)
-                || !player.getMainHandStack().getItem().canMine(state, clientWorld, pos, player)) {
-            return ActionResult.FAIL;
+                || !player.getMainHandItem().getItem().canAttackBlock(state, clientWorld, pos, player)) {
+            return InteractionResult.FAIL;
         }
         boolean dozer = powers.on(BuilderPower.BULLDOZER);
-        drags.begin(dozer && player.isSneaking());
+        drags.begin(dozer && player.isShiftKeyDown());
         drags.add(wire(pos));
-        sendBreaks(clientWorld, (ClientPlayerEntity) player, !dozer);
+        sendBreaks(clientWorld, (LocalPlayer) player, !dozer);
         if (!dozer) {
             drags.end();
             breakCooldown = HELD_BREAK_TICKS;
         }
-        return ActionResult.FAIL;
+        return InteractionResult.FAIL;
     }
 
     /**
@@ -502,29 +502,29 @@ public final class BuilderClient {
      * with Alt held over an armor stand, item frame, painting or display opens its panel and keeps vanilla from hitting
      * it); otherwise the attack is vanilla's.
      */
-    private ActionResult attackEntity(PlayerEntity player, World world, Hand hand, Entity entity, EntityHitResult hit) {
-        if (player != client.player || !active()) return ActionResult.PASS;
-        return powers.onClick(GLFW.GLFW_MOUSE_BUTTON_LEFT, MinecraftInput.modifiers()) ? ActionResult.FAIL : ActionResult.PASS;
+    private InteractionResult attackEntity(Player player, Level world, InteractionHand hand, Entity entity, EntityHitResult hit) {
+        if (player != client.player || !active()) return InteractionResult.PASS;
+        return powers.onClick(GLFW.GLFW_MOUSE_BUTTON_LEFT, MinecraftInput.modifiers()) ? InteractionResult.FAIL : InteractionResult.PASS;
     }
 
     /** While the attack button is held with a bulldozer drag open, the block under the crosshair joins the drag. */
     private void continueDrag() {
         if (!drags.open()) return;
-        if (!client.options.attackKey.isPressed() || !active() || !powers.on(BuilderPower.BULLDOZER)) {
+        if (!client.options.keyAttack.isDown() || !active() || !powers.on(BuilderPower.BULLDOZER)) {
             endDrag();
             return;
         }
-        ClientWorld world = client.world;
-        ClientPlayerEntity player = client.player;
+        ClientLevel world = client.level;
+        LocalPlayer player = client.player;
         if (world == null || player == null) {
             endDrag();
             return;
         }
-        if (client.crosshairTarget instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
+        if (client.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK) {
             BlockPos pos = hit.getBlockPos();
             BlockState state = world.getBlockState(pos);
             if (BuilderPlacement.breakable(world, player, pos)
-                    && player.getMainHandStack().getItem().canMine(state, world, pos, player) && drags.add(wire(pos))) {
+                    && player.getMainHandItem().getItem().canAttackBlock(state, world, pos, player) && drags.add(wire(pos))) {
                 sendBreaks(world, player, false);
             }
         }
@@ -536,7 +536,7 @@ public final class BuilderClient {
     }
 
     /** Predicts the drag's new cells (and their mirrored copies) as broken and sends them. */
-    private void sendBreaks(ClientWorld world, ClientPlayerEntity player, boolean last) {
+    private void sendBreaks(ClientLevel world, LocalPlayer player, boolean last) {
         Symmetry symmetry = symmetry();
         int mask = powers.mask() & (BuilderPower.BULLDOZER.bit() | BuilderPower.KEEP_SHAPE.bit() | BuilderPower.MIRROR.bit());
         if (symmetry.isOff()) mask &= ~BuilderPower.MIRROR.bit();
@@ -544,9 +544,9 @@ public final class BuilderClient {
         for (int i = 0; i < batches.size(); i++) {
             List<dev.sculptory.core.BlockPos> batch = batches.get(i);
             int seq;
-            PendingUpdateManager pending = world.getPendingUpdateManager().incrementSequence();
+            BlockStatePredictionHandler pending = world.getBlockStatePredictionHandler().startPredicting();
             try {
-                seq = pending.getSequence();
+                seq = pending.currentSequence();
                 for (dev.sculptory.core.BlockPos cell : batch) {
                     for (BuilderPlacement.Copy copy : BuilderPlacement.copies(symmetry, new BlockPos(cell.x(), cell.y(), cell.z()))) {
                         if (BuilderPlacement.breakable(world, player, copy.pos())) {
@@ -556,11 +556,11 @@ public final class BuilderClient {
                 }
             } catch (RuntimeException e) {
                 SculptoryMod.LOG.warn("Sculptory: predicting a builder break failed: {}", e.toString());
-                seq = pending.getSequence();
+                seq = pending.currentSequence();
             } finally {
                 pending.close();
             }
-            player.swingHand(Hand.MAIN_HAND);
+            player.swing(InteractionHand.MAIN_HAND);
             send(new C2S.BuilderBreak(seq, drags.dragId(), batch, mask, symmetry, drags.sameKind(),
                     last && i == batches.size() - 1));
         }
@@ -578,11 +578,11 @@ public final class BuilderClient {
     }
 
     private boolean chordDown(List<KeyChord> chords) {
-        long window = client.getWindow().getHandle();
+        long window = client.getWindow().getWindow();
         int modifiers = MinecraftInput.modifiers() | pinnedModifiers();
         for (KeyChord chord : chords) {
             if (chord.input() == KeyChord.Input.KEY && chord.modifiers() == modifiers
-                    && (pinnedKeys.contains(chord.code()) || InputUtil.isKeyPressed(window, chord.code()))) {
+                    && (pinnedKeys.contains(chord.code()) || InputConstants.isKeyDown(window, chord.code()))) {
                 return true;
             }
         }
@@ -641,7 +641,7 @@ public final class BuilderClient {
     }
 
     private void actionBar(String text) {
-        client.inGameHud.setOverlayMessage(Text.literal(text), false);
+        client.gui.setOverlayMessage(Component.literal(text), false);
     }
 
     private static float within(double offset) {
@@ -701,11 +701,11 @@ public final class BuilderClient {
         if (ringKeyPinned) {
             return true;
         }
-        InputUtil.Key key = KeyBindingHelper.getBoundKeyOf(ringKey);
-        long window = client.getWindow().getHandle();
-        if (key.getCategory() == InputUtil.Type.MOUSE) {
-            return GLFW.glfwGetMouseButton(window, key.getCode()) == GLFW.GLFW_PRESS;
+        InputConstants.Key key = KeyBindingHelper.getBoundKeyOf(ringKey);
+        long window = client.getWindow().getWindow();
+        if (key.getType() == InputConstants.Type.MOUSE) {
+            return GLFW.glfwGetMouseButton(window, key.getValue()) == GLFW.GLFW_PRESS;
         }
-        return InputUtil.isKeyPressed(window, key.getCode());
+        return InputConstants.isKeyDown(window, key.getValue());
     }
 }

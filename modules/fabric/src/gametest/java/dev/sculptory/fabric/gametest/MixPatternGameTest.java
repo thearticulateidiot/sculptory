@@ -51,12 +51,12 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
 
 /**
  * Block mixes laid out in space on the server with its real state space: Palette
@@ -104,11 +104,11 @@ public final class MixPatternGameTest implements FabricGameTest {
      * is one history entry, and all of them undo exactly. Steepness puts the last block at the cliff's edge and the
      * first on flat ground; the mirrored copy's patches mirror the dab's.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_palette_paint", tickLimit = LIMIT)
-    public void palettePaintWithEveryPatternMatchesTheKernelAndUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mix_palette_paint", timeoutTicks = LIMIT)
+    public void palettePaintWithEveryPatternMatchesTheKernelAndUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 1040);
         int x0 = corner[0], z0 = corner[1];
         // Tall enough for the mirrored copies' ground search (64 blocks above and below the dabs at 112).
@@ -152,11 +152,11 @@ public final class MixPatternGameTest implements FabricGameTest {
         WorldSnapshot after = capture(world, area);
         // Steepness (thirds of 90°): the cliff's edge is the last block, the plateau the first, the 1:1 ramp the middle.
         check(topState(after, x0 + 44, z0 + 38) == blocks[2], "the cliff's edge is cobblestone: "
-                + Block.getStateFromRawId(topState(after, x0 + 44, z0 + 38)));
+                + Block.stateById(topState(after, x0 + 44, z0 + 38)));
         check(topState(after, x0 + 38, z0 + 38) == blocks[0], "the plateau is moss: "
-                + Block.getStateFromRawId(topState(after, x0 + 38, z0 + 38)));
+                + Block.stateById(topState(after, x0 + 38, z0 + 38)));
         check(topState(after, x0 + 26, z0 + 38) == blocks[1], "the 1:1 ramp is coarse dirt: "
-                + Block.getStateFromRawId(topState(after, x0 + 26, z0 + 38)));
+                + Block.stateById(topState(after, x0 + 26, z0 + 38)));
         // The mirrored Patches: a copy's column x holds the pattern read at its mirror image 2 × x0 + 48 - x, at its own
         // height (the copy stands on its own ground).
         Pattern mirroredPatches = materials.get(4);
@@ -169,19 +169,19 @@ public final class MixPatternGameTest implements FabricGameTest {
             mirrored++;
         }
         check(mirrored > 3, "the mirrored stroke painted the copy's side: " + mirrored);
-        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUuid());
+        List<HistoryEntry> entries = h.service.historyService().undoEntries(h.player.getUUID());
         check(entries.size() == specs.size(), "one entry per stroke, got " + entries.size());
         ShapeBrushGameTest.undoAll(h, executor, specs.size(), 40);
         checkSame(before, capture(world, area), "after undoing every Palette Paint stroke");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /** The topmost non-air y of column (x, z) in a snapshot (from y 140 down), or 0. */
     private static int topY(WorldSnapshot snapshot, int x, int z) {
-        int air = Block.getRawIdFromState(net.minecraft.block.Blocks.AIR.getDefaultState());
+        int air = Block.getId(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
         for (int y = 140; y >= 96; y--) {
             if (snapshot.get(x, y, z) != air) return y;
         }
@@ -197,11 +197,11 @@ public final class MixPatternGameTest implements FabricGameTest {
      * each stroke writes exactly what the kernel writes on a snapshot, is one entry, and all undo exactly; the turned
      * copy of the Gradient cube holds the dab's cube turned.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_shape", tickLimit = LIMIT)
-    public void shapeBrushWithEveryPatternMatchesTheKernelAndUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mix_shape", timeoutTicks = LIMIT)
+    public void shapeBrushWithEveryPatternMatchesTheKernelAndUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 1042);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 63, 140, z0 + 63);
@@ -240,13 +240,13 @@ public final class MixPatternGameTest implements FabricGameTest {
                 "the gradient cube runs stone to tuff");
         check(after.get(x0 + 55, 118, z0 + 53) == blocks[0] && after.get(x0 + 45, 118, z0 + 53) == blocks[3],
                 "the turned copy runs along the turned line");
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == specs.size(), "one entry per stroke");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == specs.size(), "one entry per stroke");
         ShapeBrushGameTest.undoAll(h, executor, specs.size(), 40);
         checkSame(before, capture(world, area), "after undoing every Shape stroke");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -254,11 +254,11 @@ public final class MixPatternGameTest implements FabricGameTest {
      * pick), a Mirror X Fill with Patches writes the pattern mirrored into the copy, each is one entry and all undo
      * exactly. A Steepness Fill is refused INVALID and writes nothing.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_fill", tickLimit = LIMIT)
-    public void fillWithEveryPatternWritesThePatternAndUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mix_fill", timeoutTicks = LIMIT)
+    public void fillWithEveryPatternWritesThePatternAndUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 1044);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 63, 130, z0 + 31);
@@ -285,7 +285,7 @@ public final class MixPatternGameTest implements FabricGameTest {
                 h.service.run(h.player, new OpSpec.Fill(new Region.Cuboid(fill.box()), fill.pattern(), CellMask.ANY,
                         fill.symmetry()), RunOptions.DEFAULT, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("fill refused: " + e.getMessage());
+                throw new GameTestAssertException("fill refused: " + e.getMessage());
             }
             MultiplayerGameTest.tickUntil(executor, () -> listener.result != null, 40, "fill");
             check(listener.result.outcome() == JobOutcome.COMPLETED, "fill: " + listener.result);
@@ -318,23 +318,23 @@ public final class MixPatternGameTest implements FabricGameTest {
                 new Pattern.Arranged(mix, new MixLayout.Steepness(5)), CellMask.ANY, Symmetry.NONE),
                 RunOptions.DEFAULT, new RecordingListener()));
         check(steep.reason() == RejectReason.INVALID, "a Steepness Fill: " + steep.reason() + " " + steep.getMessage());
-        check(h.service.historyService().undoEntries(h.player.getUuid()).size() == cases.size(), "one entry per Fill");
+        check(h.service.historyService().undoEntries(h.player.getUUID()).size() == cases.size(), "one entry per Fill");
         ShapeBrushGameTest.undoAll(h, executor, cases.size(), 40);
         checkSame(before, capture(world, area), "after undoing every Fill");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A palette saved with a pattern keeps its order and pattern through the server's file and back (the server's own
      * state text in the file), and a Steepness palette too; a file with an unknown pattern is refused INVALID naming it.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_palette_file", tickLimit = LIMIT)
-    public void aPalettesPatternGoesThroughTheServersFileAndBack(TestContext context) throws IOException {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mix_palette_file", timeoutTicks = LIMIT)
+    public void aPalettesPatternGoesThroughTheServersFileAndBack(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.LIBRARY_WRITE);
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
@@ -347,10 +347,10 @@ public final class MixPatternGameTest implements FabricGameTest {
         try {
             clips.savePalette(builder, "mixes/hills.palette.json", saved, change);
         } catch (EditRejected e) {
-            throw new GameTestException("save refused: " + e.getMessage());
+            throw new GameTestAssertException("save refused: " + e.getMessage());
         }
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> {
                     String path = change.get("save").to();
                     try {
                         PaletteFile.Content content = PaletteFile.decode(Files.readAllBytes(root.resolve(path)));
@@ -363,10 +363,10 @@ public final class MixPatternGameTest implements FabricGameTest {
                                 + " \"pattern\": {\"kind\": \"stripes\"}}");
                         clips.loadPalette(builder, path, loaded);
                     } catch (IOException | PaletteFile.PaletteFormatException | EditRejected e) {
-                        throw new GameTestException("reading the palette back: " + e);
+                        throw new GameTestAssertException("reading the palette back: " + e);
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     BlockPalette back = loaded.get("load").palette();
                     check(back.pattern().equals(pattern), "the pattern loads back: " + back.pattern());
                     check(back.entries().get(1).state().equals("minecraft:coarse_dirt")
@@ -374,17 +374,17 @@ public final class MixPatternGameTest implements FabricGameTest {
                     try {
                         clips.loadPalette(builder, "mixes/strange.palette.json", strange);
                     } catch (EditRejected e) {
-                        throw new GameTestException("the load was refused up front: " + e.getMessage());
+                        throw new GameTestAssertException("the load was refused up front: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     check(strange.finished(), "the load of an unknown pattern is still running");
                     check(strange.reason == RejectReason.INVALID && strange.detail.contains("unknown pattern"),
                             "an unknown pattern: " + strange.reason + " " + strange.detail);
                     ClipTestSupport.deleteTree(root.getParent());
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -393,20 +393,20 @@ public final class MixPatternGameTest implements FabricGameTest {
      * {@code region} but no {@code brush} has a Gradient Palette Paint stroke refused naming {@code brush}. Nothing is
      * written, no stroke stays open and no history entry is made; the same builder's Patches Fill is then admitted.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_permission", tickLimit = LIMIT)
-    public void patternsNeedThePlainEditsPermission(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mix_permission", timeoutTicks = LIMIT)
+    public void patternsNeedThePlainEditsPermission(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 1046);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 31, 130, z0 + 31);
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 32, 32);
         WorldSnapshot before = capture(world, area);
-        ServerPlayerEntity user = h.addPlayer(false);
+        ServerPlayer user = h.addPlayer(false);
         EditTestSupport.grant(user, Perm.USE);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         int[] blocks = states(h, "minecraft:stone", "minecraft:andesite");
         Pattern.Weighted mix = new Pattern.Weighted(blocks, new int[] {1, 1}, 7L);
@@ -424,29 +424,29 @@ public final class MixPatternGameTest implements FabricGameTest {
         EditRejected noBrush = ClipboardGameTest.refusal(() -> h.service.beginStroke(builder, 70, gradient));
         check(noBrush.reason() == RejectReason.NO_PERMISSION && noBrush.getMessage().contains(Perm.BRUSH.node()),
                 "a Gradient stroke without brush: " + noBrush.reason() + " " + noBrush.getMessage());
-        check(h.service.openStroke(builder.getUuid()).isEmpty(), "a refused stroke stays open");
+        check(h.service.openStroke(builder.getUUID()).isEmpty(), "a refused stroke stays open");
         executor.tick();
         checkSame(before, capture(world, area), "after the refusals");
-        check(h.service.historyService().undoEntries(user.getUuid()).isEmpty()
-                && h.service.historyService().undoEntries(builder.getUuid()).isEmpty(), "a refusal made history");
+        check(h.service.historyService().undoEntries(user.getUUID()).isEmpty()
+                && h.service.historyService().undoEntries(builder.getUUID()).isEmpty(), "a refusal made history");
 
         // The plain edit's permission is all a pattern needs: the builder's Fill runs and writes the pattern.
         RecordingListener listener = new RecordingListener();
         try {
             h.service.run(builder, fill, RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException("the builder's Patches Fill was refused: " + e.getMessage());
+            throw new GameTestAssertException("the builder's Patches Fill was refused: " + e.getMessage());
         }
         MultiplayerGameTest.tickUntil(executor, () -> listener.result != null, 40, "fill");
         check(listener.result.outcome() == JobOutcome.COMPLETED, "fill: " + listener.result);
         WorldSnapshot after = capture(world, area);
         check(after.get(x0 + 7, 105, z0 + 7) == fill.pattern().apply(h.runtime.states(), x0 + 7, 105, z0 + 7,
                 before.get(x0 + 7, 105, z0 + 7)), "the admitted Fill wrote the pattern");
-        check(h.service.historyService().undoEntries(builder.getUuid()).size() == 1, "one entry for the admitted Fill");
+        check(h.service.historyService().undoEntries(builder.getUUID()).size() == 1, "one entry for the admitted Fill");
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -454,18 +454,18 @@ public final class MixPatternGameTest implements FabricGameTest {
      * a claim) writes its unprotected cells, skips the protected ones (reported in the result, nothing refused), is one
      * history entry, and undoes exactly: the same code paths as a plain Fill, the pattern changing nothing about them.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_mix_partial", tickLimit = LIMIT)
-    public void aPatternedFillOverProtectedColumnsAppliesPartlyAndUndoesExactly(TestContext context) {
-        EditExecutor<ServerWorld> executor = MultiplayerGameTest.executor(context, 0);
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mix_partial", timeoutTicks = LIMIT)
+    public void aPatternedFillOverProtectedColumnsAppliesPartlyAndUndoesExactly(GameTestHelper context) {
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
         Harness h = new Harness(context, null, System::nanoTime, executor);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] corner = regionCorner(context, 1048);
         int x0 = corner[0], z0 = corner[1];
         Box area = box(x0, 95, z0, x0 + 31, 130, z0 + 31);
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 32, 32);
         WorldSnapshot before = capture(world, area);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         int[] blocks = states(h, "minecraft:white_concrete", "minecraft:gray_concrete");
         Pattern.Arranged patches = new Pattern.Arranged(new Pattern.Weighted(blocks, new int[] {1, 1}, 3L),
@@ -481,7 +481,7 @@ public final class MixPatternGameTest implements FabricGameTest {
                 h.service.run(builder, new OpSpec.Fill(new Region.Cuboid(box), patches, CellMask.ANY, Symmetry.NONE),
                         RunOptions.DEFAULT, fill);
             } catch (EditRejected e) {
-                throw new GameTestException("the fill over a partly protected box was refused: " + e.getMessage());
+                throw new GameTestAssertException("the fill over a partly protected box was refused: " + e.getMessage());
             }
             MultiplayerGameTest.tickUntil(executor, () -> fill.result != null, 40, "partial fill");
         } finally {
@@ -500,11 +500,11 @@ public final class MixPatternGameTest implements FabricGameTest {
                 }
             }
         }
-        check(h.service.historyService().undoEntries(builder.getUuid()).size() == 1, "one entry for the partial Fill");
+        check(h.service.historyService().undoEntries(builder.getUUID()).size() == 1, "one entry for the partial Fill");
         try {
             h.service.undo(builder, ConflictPolicy.SKIP_CONFLICTS, undo);
         } catch (EditRejected e) {
-            throw new GameTestException("undo refused: " + e.getMessage());
+            throw new GameTestAssertException("undo refused: " + e.getMessage());
         }
         MultiplayerGameTest.tickUntil(executor, () -> undo.result != null, 40, "undo");
         check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.changed() == half
@@ -513,6 +513,6 @@ public final class MixPatternGameTest implements FabricGameTest {
         executor.shutdown();
         forceChunks(world, area, false);
         h.close();
-        context.complete();
+        context.succeed();
     }
 }

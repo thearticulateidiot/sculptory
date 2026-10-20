@@ -39,28 +39,28 @@ import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EquipmentSlot;
-import net.minecraft.entity.decoration.ArmorStandEntity;
-import net.minecraft.entity.decoration.ItemFrameEntity;
-import net.minecraft.entity.decoration.painting.PaintingEntity;
-import net.minecraft.entity.decoration.painting.PaintingVariants;
-import net.minecraft.inventory.Inventory;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.test.TimedTaskRunner;
-import net.minecraft.text.ClickEvent;
-import net.minecraft.text.Text;
-import net.minecraft.util.DyeColor;
-import net.minecraft.util.math.Direction;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.gametest.framework.GameTestSequence;
+import net.minecraft.network.chat.ClickEvent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Container;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EquipmentSlot;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.entity.decoration.Painting;
+import net.minecraft.world.entity.decoration.PaintingVariants;
+import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
 
 /**
  * Tinker on a real server (regionCorner slots 1020-1026 and 1028): a property
@@ -76,20 +76,20 @@ public final class TinkerGameTest implements FabricGameTest {
 
     // ------------------------------------------------------------------------------------------------ helpers
 
-    private static void tinker(Harness h, ServerPlayerEntity player, int x, int y, int z, String expected, String target,
+    private static void tinker(Harness h, ServerPlayer player, int x, int y, int z, String expected, String target,
                                SignText sign) {
         try {
             h.service.block(player, new BlockPos(x, y, z), h.state(expected), h.state(target), sign);
         } catch (EditRejected e) {
-            throw new GameTestException("Tinker refused " + x + "," + y + "," + z + ": " + e.getMessage());
+            throw new GameTestAssertException("Tinker refused " + x + "," + y + "," + z + ": " + e.getMessage());
         }
     }
 
-    private static EntityView edit(Harness h, ServerPlayerEntity player, UUID id, EntityEdit... edits) {
+    private static EntityView edit(Harness h, ServerPlayer player, UUID id, EntityEdit... edits) {
         try {
             return h.service.entity(player, id, List.of(edits));
         } catch (EditRejected e) {
-            throw new GameTestException("Tinker refused an entity edit: " + e.getMessage());
+            throw new GameTestAssertException("Tinker refused an entity edit: " + e.getMessage());
         }
     }
 
@@ -97,20 +97,20 @@ public final class TinkerGameTest implements FabricGameTest {
         return EntitiesGameTest.refusal(run);
     }
 
-    private static String stateAt(ServerWorld world, int x, int y, int z) {
+    private static String stateAt(ServerLevel world, int x, int y, int z) {
         return world.getBlockState(pos(x, y, z)).toString();
     }
 
     private static void checkState(Harness h, int x, int y, int z, String spec, String what) {
-        int got = Block.getRawIdFromState(h.world.getBlockState(pos(x, y, z)));
+        int got = Block.getId(h.world.getBlockState(pos(x, y, z)));
         check(got == h.state(spec), what + ": " + stateAt(h.world, x, y, z) + " instead of " + spec);
     }
 
-    private static List<HistoryEntry> entries(Harness h, ServerPlayerEntity player) {
-        return h.service.historyService().undoEntries(player.getUuid());
+    private static List<HistoryEntry> entries(Harness h, ServerPlayer player) {
+        return h.service.historyService().undoEntries(player.getUUID());
     }
 
-    private static void checkLatestLabel(Harness h, ServerPlayerEntity player, String label) {
+    private static void checkLatestLabel(Harness h, ServerPlayer player, String label) {
         List<HistoryEntry> entries = entries(h, player);
         check(!entries.isEmpty(), "no history entry");
         check(entries.get(0).label().equals(label), "label '" + entries.get(0).label() + "', expected '" + label + "'");
@@ -122,19 +122,19 @@ public final class TinkerGameTest implements FabricGameTest {
      */
     private static final class Script {
         private final Harness h;
-        private final ServerPlayerEntity player;
-        private final TimedTaskRunner runner;
+        private final ServerPlayer player;
+        private final GameTestSequence runner;
         private RecordingListener running;
 
-        Script(Harness h, ServerPlayerEntity player, TestContext context) {
+        Script(Harness h, ServerPlayer player, GameTestHelper context) {
             this.h = h;
             this.player = player;
-            this.runner = context.createTimedTaskRunner();
+            this.runner = context.startSequence();
         }
 
         Script then(Runnable step) {
-            runner.createAndAdd(() -> check(running == null || running.result != null, "a history step is running"));
-            runner.createAndAdd(EntitiesGameTest.once(() -> {
+            runner.thenWaitUntil(() -> check(running == null || running.result != null, "a history step is running"));
+            runner.thenWaitUntil(EntitiesGameTest.once(() -> {
                 if (running != null) {
                     check(running.result.outcome() == JobOutcome.COMPLETED, "the history step " + running.result);
                     check(running.result.skippedConflicts() == 0, "the history step kept "
@@ -148,7 +148,7 @@ public final class TinkerGameTest implements FabricGameTest {
 
         /** A check tried again every tick until it passes (a wait). */
         Script waitFor(Runnable check) {
-            runner.createAndAdd(check);
+            runner.thenWaitUntil(check);
             return this;
         }
 
@@ -158,7 +158,7 @@ public final class TinkerGameTest implements FabricGameTest {
                 try {
                     h.service.undo(player, ConflictPolicy.SKIP_CONFLICTS, running);
                 } catch (EditRejected e) {
-                    throw new GameTestException("undo refused: " + e.getMessage());
+                    throw new GameTestAssertException("undo refused: " + e.getMessage());
                 }
             });
         }
@@ -169,14 +169,14 @@ public final class TinkerGameTest implements FabricGameTest {
                 try {
                     h.service.redo(player, ConflictPolicy.SKIP_CONFLICTS, running);
                 } catch (EditRejected e) {
-                    throw new GameTestException("redo refused: " + e.getMessage());
+                    throw new GameTestAssertException("redo refused: " + e.getMessage());
                 }
             });
         }
 
         void done(Runnable last) {
             then(last);
-            runner.completeIfSuccessful();
+            runner.thenSucceed();
         }
     }
 
@@ -186,7 +186,7 @@ public final class TinkerGameTest implements FabricGameTest {
             return EntityNbt.withoutVolatileKeepingPlacement(FabricEntities.fromBytes(
                     FabricEntities.bytes(FabricEntities.save(entity, EntityFilter.ALL))));
         } catch (IOException e) {
-            throw new GameTestException("entity NBT: " + e);
+            throw new GameTestAssertException("entity NBT: " + e);
         }
     }
 
@@ -219,8 +219,8 @@ public final class TinkerGameTest implements FabricGameTest {
      * updates), a chest's facing (its items stay) and a fence's connection towards nothing. None is undone by block
      * updates a few ticks later; three undos give the area back exactly and three redos the changes.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_blocks", tickLimit = LIMIT)
-    public void propertyChangesAreExactStepsWithoutBlockUpdates(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_blocks", timeoutTicks = LIMIT)
+    public void propertyChangesAreExactStepsWithoutBlockUpdates(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1020);
         int x0 = at[0] + 4, z0 = at[1] + 4;
@@ -234,7 +234,7 @@ public final class TinkerGameTest implements FabricGameTest {
         writer.write(x0 + 1, FLOOR + 1, z0 + 1, h.state("minecraft:oak_stairs[facing=north,shape=straight]"), null);
         writer.write(x0 + 2, FLOOR + 1, z0 + 1, h.state("minecraft:oak_stairs[facing=east]"), null);
         writer.write(x0 + 4, FLOOR + 1, z0 + 1, h.state("minecraft:chest[facing=north]"), null);
-        ((Inventory) h.world.getBlockEntity(pos(x0 + 4, FLOOR + 1, z0 + 1))).setStack(3, new ItemStack(Items.DIAMOND, 7));
+        ((Container) h.world.getBlockEntity(pos(x0 + 4, FLOOR + 1, z0 + 1))).setItem(3, new ItemStack(Items.DIAMOND, 7));
         writer.write(x0 + 6, FLOOR + 1, z0 + 1, h.state("minecraft:oak_fence"), null);
         writer.write(x0 + 6, FLOOR + 1, z0, h.state("minecraft:stone"), null);
         WorldSnapshot[] snapshots = new WorldSnapshot[2];
@@ -249,8 +249,8 @@ public final class TinkerGameTest implements FabricGameTest {
                     tinker(h, h.player, x0 + 6, FLOOR + 1, z0 + 1, "minecraft:oak_fence",
                             "minecraft:oak_fence[east=true]", null);
                     check(entries(h, h.player).size() == 3, "three steps, got " + entries(h, h.player).size());
-                    ItemStack kept = ((Inventory) h.world.getBlockEntity(pos(x0 + 4, FLOOR + 1, z0 + 1))).getStack(3);
-                    check(kept.isOf(Items.DIAMOND) && kept.getCount() == 7, "the chest keeps its diamonds: " + kept);
+                    ItemStack kept = ((Container) h.world.getBlockEntity(pos(x0 + 4, FLOOR + 1, z0 + 1))).getItem(3);
+                    check(kept.is(Items.DIAMOND) && kept.getCount() == 7, "the chest keeps its diamonds: " + kept);
                 })
                 .then(() -> {
                     // A few ticks later: no block update came to put back what vanilla would have chosen.
@@ -273,8 +273,8 @@ public final class TinkerGameTest implements FabricGameTest {
      * it in the selection (a Fill with the property pattern) sets the shape of the oak stairs only, facings kept,
      * labelled after the change, and undoes exactly.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_blocks", tickLimit = LIMIT)
-    public void aDoorsOtherHalfFollowsAndApplyToAllChangesOnlyItsBlock(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_blocks", timeoutTicks = LIMIT)
+    public void aDoorsOtherHalfFollowsAndApplyToAllChangesOnlyItsBlock(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1021);
         int x0 = at[0] + 4, z0 = at[1] + 4;
@@ -305,7 +305,7 @@ public final class TinkerGameTest implements FabricGameTest {
                                 h.state("minecraft:oak_stairs[shape=outer_right]"), "shape"), CellMask.ANY),
                                 RunOptions.DEFAULT, fill);
                     } catch (EditRejected e) {
-                        throw new GameTestException("apply to all refused: " + e.getMessage());
+                        throw new GameTestAssertException("apply to all refused: " + e.getMessage());
                     }
                 })
                 .waitFor(() -> check(fill.result != null, "the fill finished"))
@@ -337,8 +337,8 @@ public final class TinkerGameTest implements FabricGameTest {
      * Apply to all over a row that crosses a protected column (slot 1028): the protected cells are skipped and counted,
      * the rest change as one step, and undo gives the row back exactly with the protection still on.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_blocks", tickLimit = LIMIT)
-    public void applyToAllSkipsProtectedCellsAndUndoesTheRestExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_blocks", timeoutTicks = LIMIT)
+    public void applyToAllSkipsProtectedCellsAndUndoesTheRestExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1028);
         int x0 = at[0] + 4, z0 = at[1] + 4;
@@ -351,8 +351,8 @@ public final class TinkerGameTest implements FabricGameTest {
         for (int i = 0; i < 5; i++) writer.write(x0 + 2 + i, FLOOR + 1, z0 + 2, h.state(stairs), null);
         Box rowBox = box(x0 + 2, FLOOR + 1, z0 + 2, x0 + 6, FLOOR + 1, z0 + 2);
         ProtectionHook.protect(h.player, h.world, x0 + 5, z0, x0 + 6, z0 + 3);
-        check(!h.world.canPlayerModifyAt(h.player, pos(x0 + 5, FLOOR + 1, z0 + 2)), "the last two columns are protected");
-        check(h.world.canPlayerModifyAt(h.player, pos(x0 + 4, FLOOR + 1, z0 + 2)), "the first three are not");
+        check(!h.world.mayInteract(h.player, pos(x0 + 5, FLOOR + 1, z0 + 2)), "the last two columns are protected");
+        check(h.world.mayInteract(h.player, pos(x0 + 4, FLOOR + 1, z0 + 2)), "the first three are not");
         WorldSnapshot[] snapshots = new WorldSnapshot[2];
         RecordingListener fill = new RecordingListener();
         new Script(h, h.player, context)
@@ -362,7 +362,7 @@ public final class TinkerGameTest implements FabricGameTest {
                         h.service.run(h.player, new OpSpec.Fill(rowBox, new Pattern.SetProperty(h.state(outer), "shape"),
                                 CellMask.ANY), RunOptions.DEFAULT, fill);
                     } catch (EditRejected e) {
-                        throw new GameTestException("apply to all refused: " + e.getMessage());
+                        throw new GameTestAssertException("apply to all refused: " + e.getMessage());
                     }
                 })
                 .waitFor(() -> check(fill.result != null, "the fill finished"))
@@ -390,10 +390,10 @@ public final class TinkerGameTest implements FabricGameTest {
      * goes, its text stays); an operator keeps the side they left. Undo gives back the sign exactly, click event
      * included.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_blocks", tickLimit = LIMIT)
-    public void signTextIsPlainAndSanitized(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_blocks", timeoutTicks = LIMIT)
+    public void signTextIsPlainAndSanitized(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         int[] at = regionCorner(context, 1022);
         int x0 = at[0] + 4, z0 = at[1] + 4;
@@ -404,9 +404,9 @@ public final class TinkerGameTest implements FabricGameTest {
         String sign = "minecraft:oak_sign[rotation=0]";
         Supplier<SignBlockEntity> live = () -> (SignBlockEntity) h.world.getBlockEntity(pos(x0 + 1, FLOOR + 1, z0 + 1));
         writer.write(x0 + 1, FLOOR + 1, z0 + 1, h.state(sign), null);
-        live.get().setText(new net.minecraft.block.entity.SignText().withMessage(0, Text.literal("Hi")), true);
-        live.get().setText(new net.minecraft.block.entity.SignText().withMessage(0, Text.literal("Click")
-                .styled(style -> style.withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/say pwned")))), false);
+        live.get().setText(new net.minecraft.world.level.block.entity.SignText().setMessage(0, Component.literal("Hi")), true);
+        live.get().setText(new net.minecraft.world.level.block.entity.SignText().setMessage(0, Component.literal("Click")
+                .withStyle(style -> style.withClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/say pwned")))), false);
         SignText.Side back = new SignText.Side(List.of("Click", "", "", ""), "black", false);
         SignText text = new SignText(new SignText.Side(List.of("§cRed", "Two", "", ""), "red", true), back);
         WorldSnapshot[] snapshots = new WorldSnapshot[2];
@@ -415,13 +415,13 @@ public final class TinkerGameTest implements FabricGameTest {
                     snapshots[0] = capture(h.world, area);
                     tinker(h, builder, x0 + 1, FLOOR + 1, z0 + 1, sign, sign, text);
                     checkLatestLabel(h, builder, "Tinker · Oak Sign · text");
-                    net.minecraft.block.entity.SignText front = live.get().getFrontText();
+                    net.minecraft.world.level.block.entity.SignText front = live.get().getFrontText();
                     check(front.getMessage(0, false).getString().equals("Red"), "the code is dropped: "
                             + front.getMessage(0, false));
                     check(front.getMessage(0, false).getStyle().getColor() == null, "no colour from the code");
                     check(front.getMessage(1, false).getString().equals("Two"), "line two");
-                    check(front.getColor() == DyeColor.RED && front.isGlowing(), "colour and glow");
-                    net.minecraft.block.entity.SignText backText = live.get().getBackText();
+                    check(front.getColor() == DyeColor.RED && front.hasGlowingText(), "colour and glow");
+                    net.minecraft.world.level.block.entity.SignText backText = live.get().getBackText();
                     check(backText.getMessage(0, false).getString().equals("Click"), "the back keeps its text");
                     check(backText.getMessage(0, false).getStyle().getClickEvent() == null,
                             "the back's click event is gone for a player without operator rights");
@@ -459,14 +459,14 @@ public final class TinkerGameTest implements FabricGameTest {
      * change, an entity in a protected column, an edit that does not fit its kind, and a painting that would not fit
      * its wall (the painting stays, with its UUID).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_refusals", tickLimit = LIMIT)
-    public void refusalsWriteNothing(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_refusals", timeoutTicks = LIMIT)
+    public void refusalsWriteNothing(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity stranger = h.addPlayer(false);
+        ServerPlayer stranger = h.addPlayer(false);
         EditTestSupport.grant(stranger, Perm.USE);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
-        ServerPlayerEntity noUse = h.addPlayer(false);
+        ServerPlayer noUse = h.addPlayer(false);
         EditTestSupport.grant(noUse, Perm.REGION);
         int[] at = regionCorner(context, 1023);
         int x0 = at[0] + 4, z0 = at[1] + 4;
@@ -484,12 +484,12 @@ public final class TinkerGameTest implements FabricGameTest {
         new Script(h, builder, context)
                 .waitFor(() -> EntitiesGameTest.ready(h.world, area))
                 .then(() -> {
-                    PaintingEntity painting = new PaintingEntity(h.world, pos(x0 + 3, FLOOR + 2, z0 + 6), Direction.SOUTH,
-                            h.world.getRegistryManager().get(RegistryKeys.PAINTING_VARIANT).entryOf(PaintingVariants.POOL));
-                    ArmorStandEntity stand = new ArmorStandEntity(h.world, x0 + 1.5, FLOOR + 1, z0 + 3.5);
+                    Painting painting = new Painting(h.world, pos(x0 + 3, FLOOR + 2, z0 + 6), Direction.SOUTH,
+                            h.world.registryAccess().registryOrThrow(Registries.PAINTING_VARIANT).getHolderOrThrow(PaintingVariants.POOL));
+                    ArmorStand stand = new ArmorStand(h.world, x0 + 1.5, FLOOR + 1, z0 + 3.5);
                     Entity pig = EntitiesGameTest.load(h.world, "minecraft:pig", x0 + 6.5, FLOOR + 1, z0 + 2.5, 0f, n -> { });
                     for (Entity e : List.of(painting, stand, pig)) {
-                        check(h.world.spawnEntity(e), "fixture " + e);
+                        check(h.world.addFreshEntity(e), "fixture " + e);
                         made.add(e);
                     }
                 })
@@ -503,13 +503,13 @@ public final class TinkerGameTest implements FabricGameTest {
                             == RejectReason.NO_PERMISSION, "without region");
                     check(refusal(() -> h.service.block(noUse, cell, stairsState, outerState, null))
                             == RejectReason.NO_PERMISSION, "without use");
-                    check(refusal(() -> h.service.entity(noUse, stand.getUuid(), List.of(new EntityEdit.Yaw(90))))
+                    check(refusal(() -> h.service.entity(noUse, stand.getUUID(), List.of(new EntityEdit.Yaw(90))))
                             == RejectReason.NO_PERMISSION, "an entity without use");
                     h.runtime.config().editingEnabled = false;
                     try {
                         check(refusal(() -> h.service.block(builder, cell, stairsState, outerState, null))
                                 == RejectReason.DISABLED, "editing off");
-                        check(refusal(() -> h.service.entity(builder, stand.getUuid(), List.of(new EntityEdit.Yaw(90))))
+                        check(refusal(() -> h.service.entity(builder, stand.getUUID(), List.of(new EntityEdit.Yaw(90))))
                                 == RejectReason.DISABLED, "an entity with editing off");
                     } finally {
                         h.runtime.config().editingEnabled = true;
@@ -525,28 +525,28 @@ public final class TinkerGameTest implements FabricGameTest {
                             SignText.EMPTY)) == RejectReason.INVALID, "sign text for a block without a sign");
                     check(refusal(() -> h.service.entity(builder, UUID.randomUUID(), List.of(new EntityEdit.Yaw(90))))
                             == RejectReason.INVALID, "no such entity");
-                    check(refusal(() -> h.service.entity(builder, pig.getUuid(), List.of(new EntityEdit.Yaw(90))))
+                    check(refusal(() -> h.service.entity(builder, pig.getUUID(), List.of(new EntityEdit.Yaw(90))))
                             == RejectReason.INVALID, "a pig is not Tinker's");
-                    check(refusal(() -> h.service.entity(builder, stand.getUuid(), List.of(new EntityEdit.ItemRotation(2))))
+                    check(refusal(() -> h.service.entity(builder, stand.getUUID(), List.of(new EntityEdit.ItemRotation(2))))
                             == RejectReason.INVALID, "an edit the kind does not take");
-                    check(refusal(() -> h.service.entity(builder, painting.getUuid(),
+                    check(refusal(() -> h.service.entity(builder, painting.getUUID(),
                             List.of(new EntityEdit.PaintingVariant("minecraft:pointer")))) == RejectReason.INVALID,
                             "a painting too large for its wall");
-                    check(refusal(() -> h.service.entity(builder, painting.getUuid(),
+                    check(refusal(() -> h.service.entity(builder, painting.getUUID(),
                             List.of(new EntityEdit.PaintingVariant("minecraft:no_such_painting")))) == RejectReason.INVALID,
                             "an unknown painting");
-                    checkPlaced(h, painting.getUuid(), paintingBefore, "the painting after its refusals");
+                    checkPlaced(h, painting.getUUID(), paintingBefore, "the painting after its refusals");
                     ProtectionHook.protect(builder, h.world, x0, z0, x0 + 7, z0 + 7);
                     try {
                         check(refusal(() -> h.service.block(builder, cell, stairsState, outerState, null))
                                 == RejectReason.PROTECTED, "a protected column");
-                        check(refusal(() -> h.service.entity(builder, stand.getUuid(), List.of(new EntityEdit.Yaw(45))))
+                        check(refusal(() -> h.service.entity(builder, stand.getUUID(), List.of(new EntityEdit.Yaw(45))))
                                 == RejectReason.PROTECTED, "a protected entity");
                     } finally {
                         ProtectionHook.clear(builder);
                     }
                     // An entity removed meanwhile.
-                    UUID gone = stand.getUuid();
+                    UUID gone = stand.getUUID();
                     stand.discard();
                     check(refusal(() -> h.service.entity(builder, gone, List.of(new EntityEdit.Yaw(45))))
                             == RejectReason.INVALID, "an entity removed meanwhile");
@@ -562,9 +562,9 @@ public final class TinkerGameTest implements FabricGameTest {
      * A running edit holds the section: Tinker is refused {@code AREA_BUSY} until it is done, then goes ahead; so is an
      * entity standing in it, and a move into a section another edit holds (the stand's own section being free).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_busy", tickLimit = LIMIT)
-    public void aBusyAreaIsRefused(TestContext context) {
-        dev.sculptory.server.engine.impl.EditExecutor<ServerWorld> executor =
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_busy", timeoutTicks = LIMIT)
+    public void aBusyAreaIsRefused(GameTestHelper context) {
+        dev.sculptory.server.engine.impl.EditExecutor<ServerLevel> executor =
                 new dev.sculptory.server.engine.impl.EditExecutor<>(EngineTestSupport.runtime(context),
                         new dev.sculptory.server.engine.impl.EditExecutor.Settings(200_000_000L, 4096, 0.4, 2, 8,
                                 32, 64, dev.sculptory.server.config.UnloadedPolicy.LOAD, 1024, 16_384));
@@ -579,8 +579,8 @@ public final class TinkerGameTest implements FabricGameTest {
         // The stand stands on a block, so it stays in its section: over the cleared floor it fell once its entities
         // ticked, out of the section within about ten ticks and down to the flat test world's ground at y = -60.
         h.runtime.writer(h.world, WriteOptions.DEFAULT).write(x0 + 1, FLOOR, z0 + 2, h.state("minecraft:stone"), null);
-        ArmorStandEntity stand = new ArmorStandEntity(h.world, x0 + 1.5, FLOOR + 1, z0 + 2.5);
-        check(h.world.spawnEntity(stand), "fixture stand");
+        ArmorStand stand = new ArmorStand(h.world, x0 + 1.5, FLOOR + 1, z0 + 2.5);
+        check(h.world.addFreshEntity(stand), "fixture stand");
         RecordingListener fill = new RecordingListener();
         h.fill(box(x0 + 2, FLOOR, z0, x0 + 3, FLOOR, z0 + 3), "minecraft:stone", fill);
         BlockPos cell = new BlockPos(x0 + 1, FLOOR + 1, z0 + 1);
@@ -593,46 +593,46 @@ public final class TinkerGameTest implements FabricGameTest {
         RecordingListener aboveFill = new RecordingListener();
         String innerLeft = "minecraft:oak_stairs[facing=north,shape=inner_left]";
         boolean[] aboveStarted = {false};
-        context.createTimedTaskRunner()
+        context.startSequence()
                 // An entity edit puts the edited entity back only where the chunk's entities are loaded, which the
                 // game does a few ticks after the chunk (later under load): wait for it, so no edit below is refused
                 // for it (each step would retry, but a slow load then decided which check ran when).
-                .createAndAdd(() -> check(FabricEntities.loaded(h.world, x0 >> 4, z0 >> 4),
+                .thenWaitUntil(() -> check(FabricEntities.loaded(h.world, x0 >> 4, z0 >> 4),
                         "the stand's chunk has its entities loaded"))
-                .createAndAdd(() -> {
-                    dev.sculptory.core.nbt.NbtCompound standBefore = placed(live(h, stand.getUuid(), "the stand"));
-                    check(refusal(() -> h.service.entity(h.player, stand.getUuid(), List.of(new EntityEdit.Yaw(90))))
+                .thenWaitUntil(() -> {
+                    dev.sculptory.core.nbt.NbtCompound standBefore = placed(live(h, stand.getUUID(), "the stand"));
+                    check(refusal(() -> h.service.entity(h.player, stand.getUUID(), List.of(new EntityEdit.Yaw(90))))
                             == RejectReason.AREA_BUSY, "the fill (not yet run) holds the stand's section");
-                    checkPlaced(h, stand.getUuid(), standBefore, "the stand after the refusal");
+                    checkPlaced(h, stand.getUUID(), standBefore, "the stand after the refusal");
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     executor.tick();
                     check(fill.result != null, "the fill finished");
                 })
                 // One action per step: a step that fails is retried on the next tick, and a retried Tinker of a block
                 // it already changed would be refused as "changed meanwhile", hiding the check that failed first.
-                .createAndAdd(() -> tinker(h, h.player, x0 + 1, FLOOR + 1, z0 + 1, stairs, innerLeft, null))
-                .createAndAdd(() -> edit(h, h.player, stand.getUuid(), new EntityEdit.Yaw(90)))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> tinker(h, h.player, x0 + 1, FLOOR + 1, z0 + 1, stairs, innerLeft, null))
+                .thenWaitUntil(() -> edit(h, h.player, stand.getUUID(), new EntityEdit.Yaw(90)))
+                .thenWaitUntil(() -> {
                     if (!aboveStarted[0]) h.fill(above, "minecraft:stone", aboveFill);
                     aboveStarted[0] = true;
                 })
-                .createAndAdd(() -> {
-                    check(refusal(() -> h.service.entity(h.player, stand.getUuid(), List.of(new EntityEdit.Position(
+                .thenWaitUntil(() -> {
+                    check(refusal(() -> h.service.entity(h.player, stand.getUUID(), List.of(new EntityEdit.Position(
                             x0 + 1.5, FLOOR + 13, z0 + 2.5)))) == RejectReason.AREA_BUSY, "a move into a held section");
-                    check(live(h, stand.getUuid(), "the stand").getY() < FLOOR + 2, "the stand did not move");
+                    check(live(h, stand.getUUID(), "the stand").getY() < FLOOR + 2, "the stand did not move");
                 })
-                .createAndAdd(() -> edit(h, h.player, stand.getUuid(), new EntityEdit.Yaw(45))) // its own section is free
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> edit(h, h.player, stand.getUUID(), new EntityEdit.Yaw(45))) // its own section is free
+                .thenWaitUntil(() -> {
                     executor.tick();
                     check(aboveFill.result != null, "the second fill finished");
-                    edit(h, h.player, stand.getUuid(), new EntityEdit.Position(x0 + 1.5, FLOOR + 13, z0 + 2.5));
-                    check(live(h, stand.getUuid(), "the moved stand").getY() > FLOOR + 12, "moved once the section is free");
-                    live(h, stand.getUuid(), "the moved stand").discard();
+                    edit(h, h.player, stand.getUUID(), new EntityEdit.Position(x0 + 1.5, FLOOR + 13, z0 + 2.5));
+                    check(live(h, stand.getUUID(), "the moved stand").getY() > FLOOR + 12, "moved once the section is free");
+                    live(h, stand.getUUID(), "the moved stand").discard();
                     executor.shutdown();
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     // ------------------------------------------------------------------------------------------------ entities
@@ -641,8 +641,8 @@ public final class TinkerGameTest implements FabricGameTest {
      * An armor stand's pose and flags, a move by a sixteenth and a turn of 15°, each one step: three undos give back the
      * stand exactly where and as it was (with its UUID), three redos the edited one.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_entities", tickLimit = LIMIT)
-    public void armorStandEditsUndoAndRedoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_entities", timeoutTicks = LIMIT)
+    public void armorStandEditsUndoAndRedoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1025);
         int x0 = at[0] + 4, z0 = at[1] + 4;
@@ -654,12 +654,12 @@ public final class TinkerGameTest implements FabricGameTest {
         new Script(h, h.player, context)
                 .waitFor(() -> EntitiesGameTest.ready(h.world, area))
                 .then(() -> {
-                    ArmorStandEntity stand = new ArmorStandEntity(h.world, x0 + 1.5, FLOOR + 1, z0 + 1.5);
-                    stand.setYaw(30f);
+                    ArmorStand stand = new ArmorStand(h.world, x0 + 1.5, FLOOR + 1, z0 + 1.5);
+                    stand.setYRot(30f);
                     stand.setNoGravity(true);
-                    stand.equipStack(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
-                    check(h.world.spawnEntity(stand), "the stand spawned");
-                    id[0] = stand.getUuid();
+                    stand.setItemSlot(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
+                    check(h.world.addFreshEntity(stand), "the stand spawned");
+                    id[0] = stand.getUUID();
                 })
                 .then(() -> {
                     states[0] = placed(live(h, id[0], "before"));
@@ -668,19 +668,19 @@ public final class TinkerGameTest implements FabricGameTest {
                     view = edit(h, h.player, id[0], new EntityEdit.Pose(EntityEdit.Part.RIGHT_ARM, -90, 10, 0),
                             new EntityEdit.Toggle(EntityEdit.Flag.SMALL, true),
                             new EntityEdit.Toggle(EntityEdit.Flag.SHOW_ARMS, true));
-                    ArmorStandEntity stand = (ArmorStandEntity) live(h, id[0], "posed");
-                    check(stand.isSmall() && stand.shouldShowArms(), "small with arms");
-                    check(stand.getRightArmRotation().getPitch() == -90f && stand.getRightArmRotation().getYaw() == 10f,
-                            "the right arm " + stand.getRightArmRotation());
-                    check(stand.getEquippedStack(EquipmentSlot.HEAD).isOf(Items.IRON_HELMET), "the helmet stays");
+                    ArmorStand stand = (ArmorStand) live(h, id[0], "posed");
+                    check(stand.isSmall() && stand.isShowArms(), "small with arms");
+                    check(stand.getRightArmPose().getX() == -90f && stand.getRightArmPose().getY() == 10f,
+                            "the right arm " + stand.getRightArmPose());
+                    check(stand.getItemBySlot(EquipmentSlot.HEAD).is(Items.IRON_HELMET), "the helmet stays");
                     check(view.flag(EntityEdit.Flag.SMALL) && view.pose(EntityEdit.Part.RIGHT_ARM)[0] == -90f,
                             "the view after");
                     checkLatestLabel(h, h.player, "Tinker · Armor Stand · 3 settings");
                     edit(h, h.player, id[0], new EntityEdit.Position(x0 + 1.5625, FLOOR + 1, z0 + 1.5));
                     edit(h, h.player, id[0], new EntityEdit.Yaw(45));
                     Entity moved = live(h, id[0], "moved");
-                    check(moved.getX() == x0 + 1.5625 && moved.getYaw() == 45f, "moved and turned: " + moved.getPos()
-                            + " " + moved.getYaw());
+                    check(moved.getX() == x0 + 1.5625 && moved.getYRot() == 45f, "moved and turned: " + moved.position()
+                            + " " + moved.getYRot());
                     check(entries(h, h.player).size() == 3, "three steps");
                     states[1] = placed(moved);
                 })
@@ -699,8 +699,8 @@ public final class TinkerGameTest implements FabricGameTest {
      * block display's transformation, billboard, light and block; an item display's item and a text display's text:
      * each set, then every step undone (each entity exactly as before) and redone.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tinker_entities", tickLimit = LIMIT)
-    public void framesPaintingsAndDisplaysUndoAndRedoExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tinker_entities", timeoutTicks = LIMIT)
+    public void framesPaintingsAndDisplaysUndoAndRedoExactly(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1026);
         int x0 = at[0] + 4, z0 = at[1] + 4;
@@ -717,10 +717,10 @@ public final class TinkerGameTest implements FabricGameTest {
         int[] steps = {0};
         Script script = new Script(h, h.player, context).waitFor(() -> EntitiesGameTest.ready(h.world, area));
         script.then(() -> {
-            ItemFrameEntity frame = new ItemFrameEntity(h.world, pos(x0 + 1, FLOOR + 1, z0 + 1), Direction.SOUTH);
-            frame.setHeldItemStack(new ItemStack(Items.DIAMOND), false);
-            PaintingEntity painting = new PaintingEntity(h.world, pos(x0 + 4, FLOOR + 1, z0 + 1), Direction.SOUTH,
-                    h.world.getRegistryManager().get(RegistryKeys.PAINTING_VARIANT).entryOf(PaintingVariants.POOL));
+            ItemFrame frame = new ItemFrame(h.world, pos(x0 + 1, FLOOR + 1, z0 + 1), Direction.SOUTH);
+            frame.setItem(new ItemStack(Items.DIAMOND), false);
+            Painting painting = new Painting(h.world, pos(x0 + 4, FLOOR + 1, z0 + 1), Direction.SOUTH,
+                    h.world.registryAccess().registryOrThrow(Registries.PAINTING_VARIANT).getHolderOrThrow(PaintingVariants.POOL));
             Entity block = EntitiesGameTest.load(h.world, "minecraft:block_display", x0 + 1.5, FLOOR + 1, z0 + 3.5, 0f,
                     n -> n.put("block_state", EntitiesGameTest.compound("Name", "minecraft:stone")));
             Entity item = EntitiesGameTest.load(h.world, "minecraft:item_display", x0 + 3.5, FLOOR + 1, z0 + 3.5, 0f,
@@ -728,8 +728,8 @@ public final class TinkerGameTest implements FabricGameTest {
             Entity text = EntitiesGameTest.load(h.world, "minecraft:text_display", x0 + 5.5, FLOOR + 1, z0 + 3.5, 0f,
                     n -> n.putString("text", "{\"text\":\"old\"}"));
             for (Entity e : List.of(frame, painting, block, item, text)) {
-                check(h.world.spawnEntity(e), "fixture " + e);
-                ids.add(e.getUuid());
+                check(h.world.addFreshEntity(e), "fixture " + e);
+                ids.add(e.getUUID());
             }
         }).then(() -> {
             for (UUID id : ids) before.add(placed(live(h, id, "fixture")));
@@ -737,10 +737,10 @@ public final class TinkerGameTest implements FabricGameTest {
                     new EntityEdit.Toggle(EntityEdit.Flag.FIXED, true), new EntityEdit.Toggle(EntityEdit.Flag.INVISIBLE, true));
             check(frame.itemRotation() == 3 && frame.flag(EntityEdit.Flag.FIXED) && frame.item().equals("minecraft:diamond"),
                     "the frame's view " + frame);
-            ItemFrameEntity liveFrame = (ItemFrameEntity) live(h, ids.get(0), "frame");
+            ItemFrame liveFrame = (ItemFrame) live(h, ids.get(0), "frame");
             check(liveFrame.getRotation() == 3 && liveFrame.isInvisible(), "the frame turned its item and hides");
             edit(h, h.player, ids.get(0), new EntityEdit.Position(liveFrame.getX(), liveFrame.getY() + 1, liveFrame.getZ()));
-            check(((ItemFrameEntity) live(h, ids.get(0), "frame moved")).getAttachedBlockPos()
+            check(((ItemFrame) live(h, ids.get(0), "frame moved")).getPos()
                     .equals(pos(x0 + 1, FLOOR + 2, z0 + 1)), "the frame hangs a block higher");
             EntityView painting = edit(h, h.player, ids.get(1), new EntityEdit.PaintingVariant("minecraft:courbet"));
             check(painting.variant().equals("minecraft:courbet"), "the picture " + painting.variant());

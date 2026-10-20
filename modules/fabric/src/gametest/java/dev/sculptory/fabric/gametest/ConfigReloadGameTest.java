@@ -40,13 +40,13 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
  * {@code /sculptory reload}: a reload applies the file to what is checked from then on,
@@ -70,12 +70,12 @@ public final class ConfigReloadGameTest implements FabricGameTest {
      * remove the op's nodes. Everything runs within the test's first tick, and the private engine, the forced chunks and
      * the temporary folder are released however it ends.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_config_reload", tickLimit = LIMIT)
-    public void aReloadAppliesToNewWorkWhileAdmittedJobsKeepTheirLimits(TestContext context) {
-        MinecraftServer server = context.getWorld().getServer();
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_config_reload", timeoutTicks = LIMIT)
+    public void aReloadAppliesToNewWorkWhileAdmittedJobsKeepTheirLimits(GameTestHelper context) {
+        MinecraftServer server = context.getLevel().getServer();
         Harness h = new Harness(context);
         // Not an op: ops hold limit.bypass, which lifts maxOpVolume.
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.REGION);
         Path dir = tempDir();
         Path file = dir.resolve("server.json");
@@ -96,7 +96,7 @@ public final class ConfigReloadGameTest implements FabricGameTest {
             check(same.ok() && same.applied().isEmpty() && same.needRestart().isEmpty(), "reloading the same file: " + same);
 
             fill(service, h, builder, area, admitted);
-            check(runtime.executor().isWaiting(service.jobs(builder.getUuid()).get(0).jobId()), "the fill starts next tick");
+            check(runtime.executor().isWaiting(service.jobs(builder.getUUID()).get(0).jobId()), "the fill starts next tick");
 
             SculptoryConfig lowered = SculptoryConfig.defaults();
             lowered.limits.maxOpVolume = 1_000;
@@ -120,7 +120,7 @@ public final class ConfigReloadGameTest implements FabricGameTest {
             check(runtime.executor().settings().maxTicketsPerJob() == 1, "the executor has the new settings");
             try {
                 service.run(builder, fillOp(h, area), RunOptions.DEFAULT, new RecordingListener());
-                throw new GameTestException("a fill over the new maxOpVolume was admitted");
+                throw new GameTestAssertException("a fill over the new maxOpVolume was admitted");
             } catch (EditRejected e) {
                 check(e.reason() == RejectReason.TOO_LARGE, "refused " + e.reason());
             }
@@ -159,7 +159,7 @@ public final class ConfigReloadGameTest implements FabricGameTest {
             try {
                 service.run(builder, fillOp(h, box(area.min().x(), 100, area.min().z(), area.min().x(), 100,
                         area.min().z())), RunOptions.DEFAULT, new RecordingListener());
-                throw new GameTestException("a fill was admitted with editing switched off");
+                throw new GameTestAssertException("a fill was admitted with editing switched off");
             } catch (EditRejected e) {
                 check(e.reason() == RejectReason.DISABLED, "refused " + e.reason());
             }
@@ -168,7 +168,7 @@ public final class ConfigReloadGameTest implements FabricGameTest {
         } finally {
             cleanUp(h, runtime, service, area, dir);
         }
-        context.complete();
+        context.succeed();
     }
 
     /** One tick of the private engine's executor: its work, then its flush. */
@@ -183,31 +183,31 @@ public final class ConfigReloadGameTest implements FabricGameTest {
      * and permissions at once. {@code /sculptory version} needs only {@code sculptory.use} and names the server's build;
      * for the console it lists every player's client (none here: mock players have no editor).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_config_reload_command")
-    public void reloadIsForAdminsAndVersionForEditorUsers(TestContext context) {
-        MinecraftServer server = context.getWorld().getServer();
-        CommandDispatcher<ServerCommandSource> dispatcher = server.getCommandManager().getDispatcher();
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_config_reload_command")
+    public void reloadIsForAdminsAndVersionForEditorUsers(GameTestHelper context) {
+        MinecraftServer server = context.getLevel().getServer();
+        CommandDispatcher<CommandSourceStack> dispatcher = server.getCommands().getDispatcher();
         Harness h = new Harness(context);
-        ServerPlayerEntity user = h.addPlayer(false);
+        ServerPlayer user = h.addPlayer(false);
         Set<UUID> pushed = new HashSet<>();
-        Consumer<ServerPlayerEntity> observer = player -> pushed.add(player.getUuid());
+        Consumer<ServerPlayer> observer = player -> pushed.add(player.getUUID());
         try {
             EditTestSupport.grant(user, Perm.USE, Perm.REGION);
-            ServerCommandSource userSource = user.getCommandSource();
+            CommandSourceStack userSource = user.createCommandSourceStack();
             check(!parses(dispatcher, "sculptory reload", userSource), "an editor user must not be able to address /sculptory reload");
-            check(parses(dispatcher, "sculptory reload", h.player.getCommandSource()), "an admin must be able to address it");
-            check(parses(dispatcher, "sculptory reload", server.getCommandSource()), "the console must be able to address it");
+            check(parses(dispatcher, "sculptory reload", h.player.createCommandSourceStack()), "an admin must be able to address it");
+            check(parses(dispatcher, "sculptory reload", server.createCommandSourceStack()), "the console must be able to address it");
             check(parses(dispatcher, "sculptory version", userSource), "an editor user must be able to address /sculptory version");
 
             CapturedOutput version = new CapturedOutput();
-            server.getCommandManager().executeWithPrefix(userSource.withOutput(version), "sculptory version");
+            server.getCommands().performPrefixedCommand(userSource.withSource(version), "sculptory version");
             check(version.all().contains("Sculptory " + SculptoryMod.buildId() + " on this server (protocol "
                     + ProtocolV2.VERSION + ")") && version.all().contains("Your client: no Sculptory editor connected"),
                     "version output: " + version.all());
             check(version.lines.size() == 1 && version.all().lines().count() == 2,
                     "a non-admin sees the server's build and their own client only: " + version.all());
             CapturedOutput consoleVersion = new CapturedOutput();
-            server.getCommandManager().executeWithPrefix(server.getCommandSource().withOutput(consoleVersion), "sculptory version");
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSource(consoleVersion), "sculptory version");
             check(consoleVersion.all().contains(user.getGameProfile().getName() + ": no Sculptory editor connected"),
                     "the console's version output lists players: " + consoleVersion.all());
 
@@ -215,17 +215,17 @@ public final class ConfigReloadGameTest implements FabricGameTest {
             String running = runtime.config().toJson();
             ServerNet.observePermissionChecks(observer);
             CapturedOutput out = new CapturedOutput();
-            server.getCommandManager().executeWithPrefix(server.getCommandSource().withOutput(out), "sculptory reload");
+            server.getCommands().performPrefixedCommand(server.createCommandSourceStack().withSource(out), "sculptory reload");
             check(out.all().contains("Sculptory config reloaded from") && out.all().contains("Nothing changed."),
                     "reload output: " + out.all());
             check(runtime.config().toJson().equals(running), "the server's own file changed the running config");
-            check(pushed.contains(user.getUuid()) && pushed.contains(h.player.getUuid()),
+            check(pushed.contains(user.getUUID()) && pushed.contains(h.player.getUUID()),
                     "every online player's limits must be pushed at once");
         } finally {
             ServerNet.observePermissionChecks(null);
             h.close();
         }
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------- helpers
@@ -239,11 +239,11 @@ public final class ConfigReloadGameTest implements FabricGameTest {
 
     /** Every cell of {@code box} holds stone: the whole fill was written. */
     private static void checkStone(Harness h, Box box) {
-        net.minecraft.block.BlockState stone = net.minecraft.block.Blocks.STONE.getDefaultState();
+        net.minecraft.world.level.block.state.BlockState stone = net.minecraft.world.level.block.Blocks.STONE.defaultBlockState();
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
-                    check(h.world.getBlockState(new net.minecraft.util.math.BlockPos(x, y, z)) == stone,
+                    check(h.world.getBlockState(new net.minecraft.core.BlockPos(x, y, z)) == stone,
                             "the admitted fill left " + x + "," + y + "," + z + " unwritten");
                 }
             }
@@ -254,12 +254,12 @@ public final class ConfigReloadGameTest implements FabricGameTest {
         return new OpSpec.Fill(box, new Pattern.Single(h.state("minecraft:stone")), CellMask.ANY);
     }
 
-    private static void fill(EngineEditService<ServerPlayerEntity, ServerWorld> service, Harness h,
-                             ServerPlayerEntity player, Box box, RecordingListener listener) {
+    private static void fill(EngineEditService<ServerPlayer, ServerLevel> service, Harness h,
+                             ServerPlayer player, Box box, RecordingListener listener) {
         try {
             service.run(player, fillOp(h, box), RunOptions.DEFAULT, listener);
         } catch (EditRejected e) {
-            throw new GameTestException("fill refused: " + e.getMessage());
+            throw new GameTestAssertException("fill refused: " + e.getMessage());
         }
     }
 
@@ -269,9 +269,9 @@ public final class ConfigReloadGameTest implements FabricGameTest {
         return keys;
     }
 
-    private static boolean parses(CommandDispatcher<ServerCommandSource> dispatcher, String command,
-                                  ServerCommandSource source) {
-        ParseResults<ServerCommandSource> parsed = dispatcher.parse(command, source);
+    private static boolean parses(CommandDispatcher<CommandSourceStack> dispatcher, String command,
+                                  CommandSourceStack source) {
+        ParseResults<CommandSourceStack> parsed = dispatcher.parse(command, source);
         return parsed.getExceptions().isEmpty() && !parsed.getReader().canRead();
     }
 
@@ -308,7 +308,7 @@ public final class ConfigReloadGameTest implements FabricGameTest {
     }
 
     private static void cleanUp(Harness h, EngineRuntime runtime,
-                                EngineEditService<ServerPlayerEntity, ServerWorld> service, Box area, Path dir) {
+                                EngineEditService<ServerPlayer, ServerLevel> service, Box area, Path dir) {
         runtime.executor().shutdown();
         service.shutdown();
         runtime.fluidTrails().close();

@@ -54,12 +54,12 @@ import java.util.List;
 import java.util.Random;
 import java.util.TreeMap;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
 
 /**
  * Generators: a sparse clipboard upload pasted with
@@ -101,7 +101,7 @@ public final class GenerateGameTest implements FabricGameTest {
     }
 
     /** Every cell of {@code area} holds its source cell, else what {@code before} held. */
-    private static void checkPasted(ServerWorld world, Box area, GeneratedSource source, WorldSnapshot before, String what) {
+    private static void checkPasted(ServerLevel world, Box area, GeneratedSource source, WorldSnapshot before, String what) {
         WorldSnapshot now = capture(world, area);
         for (int y = area.min().y(); y <= area.max().y(); y++) {
             for (int z = area.min().z(); z <= area.max().z(); z++) {
@@ -110,8 +110,8 @@ public final class GenerateGameTest implements FabricGameTest {
                     int want = generated >= 0 ? generated : before.get(x, y, z);
                     int got = now.get(x, y, z);
                     if (want != got) {
-                        throw new GameTestException(what + " at " + x + "," + y + "," + z + ": "
-                                + Block.getStateFromRawId(got) + " instead of " + Block.getStateFromRawId(want));
+                        throw new GameTestAssertException(what + " at " + x + "," + y + "," + z + ": "
+                                + Block.stateById(got) + " instead of " + Block.stateById(want));
                     }
                 }
             }
@@ -129,10 +129,10 @@ public final class GenerateGameTest implements FabricGameTest {
      * (air included, replacing stone) and nothing else, as one history entry; undo restores every cell and redo writes
      * them again.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_paste", tickLimit = LIMIT)
-    public void aSparseUploadPastesExactlyItsCellsAndUndoesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_paste", timeoutTicks = LIMIT)
+    public void aSparseUploadPastesExactlyItsCellsAndUndoesExactly(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
+        ServerLevel world = h.world;
         int[] at = regionCorner(context, 820);
         int x0 = at[0], z0 = at[1];
         Box area = box(x0, 98, z0, x0 + 31, 110, z0 + 31);
@@ -143,10 +143,10 @@ public final class GenerateGameTest implements FabricGameTest {
         WorldSnapshot before = capture(world, area);
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
-        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
+        ServerDispatcher<ServerPlayer> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, h.player);
-        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
+        NetSession<ServerPlayer> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
         transport.receive(dispatcher, session, new C2S.GeneratedUpload(1, bounds, source.cells(), payload.length));
         S2C.UploadGrant grant = transport.first(S2C.UploadGrant.class);
@@ -155,16 +155,16 @@ public final class GenerateGameTest implements FabricGameTest {
         for (Message m : sender.poll(payload.length)) transport.receive(dispatcher, session, (C2S) m);
         check(sender.done(), "the whole payload fits one poll");
         RecordingListener undo = new RecordingListener(), redo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(!transport.sent(S2C.UploadResult.class).isEmpty(), "decoding: " + transport.sent))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(!transport.sent(S2C.UploadResult.class).isEmpty(), "decoding: " + transport.sent))
+                .thenWaitUntil(() -> {
                     S2C.UploadResult result = transport.first(S2C.UploadResult.class);
                     check(result.clipboardId() != null, "upload " + result);
                     S2C.ClipboardReady ready = transport.first(S2C.ClipboardReady.class);
                     check(ready.reqId() == 1 && ready.cells() == source.cells() && ready.entities() == 0
                             && ready.anchor().equals(BlockPos.ORIGIN)
                             && ready.dims().equals(new BlockPos(bounds.sizeX(), bounds.sizeY(), bounds.sizeZ())), "ready " + ready);
-                    Clipboard held = h.service.clipboards().get(h.player.getUuid()).orElseThrow().clipboard();
+                    Clipboard held = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     check(held.cellCount() == source.cells() && held.tileCount() == 0 && held.entityCount() == 0,
                             "the clipboard is the source: " + held);
                     check(held.get(x0 + 2 - bounds.min().x(), 103 - bounds.min().y(), z0 + 7 - bounds.min().z())
@@ -176,8 +176,8 @@ public final class GenerateGameTest implements FabricGameTest {
                     check(transport.sent(S2C.JobAccepted.class).stream().anyMatch(a -> a.reqId() == 2),
                             "the paste was not accepted: " + transport.sent);
                 })
-                .createAndAdd(() -> check(!transport.sent(S2C.JobFinished.class).isEmpty(), "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(!transport.sent(S2C.JobFinished.class).isEmpty(), "paste running"))
+                .thenWaitUntil(() -> {
                     S2C.JobFinished finished = transport.first(S2C.JobFinished.class);
                     check(finished.outcome() == JobOutcome.COMPLETED && finished.skippedProtected() == 0, "paste " + finished);
                     checkPasted(world, area, source, before, "the paste");
@@ -185,20 +185,20 @@ public final class GenerateGameTest implements FabricGameTest {
                     dispatcher.close(session);
                     h.undo(undo);
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED && undo.result.skippedConflicts() == 0, "undo " + undo.result);
                     checkSame(before, capture(world, area), "after the undo");
                     h.redo(redo);
                 })
-                .createAndAdd(() -> check(redo.result != null, "redo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(redo.result != null, "redo running"))
+                .thenWaitUntil(() -> {
                     check(redo.result.outcome() == JobOutcome.COMPLETED, "redo " + redo.result);
                     checkPasted(world, area, source, before, "the redo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -206,13 +206,13 @@ public final class GenerateGameTest implements FabricGameTest {
      * payload naming a block-entity state once decoded; a malformed payload, and a stream aborted mid-way, through the
      * network layer. A well-formed one from the same player then goes through, so the refusals released the slot.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_refusals", tickLimit = LIMIT)
-    public void refusalsLeaveNoClipboard(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_refusals", timeoutTicks = LIMIT)
+    public void refusalsLeaveNoClipboard(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
-        ServerPlayerEntity noClipboard = h.addPlayer(false);
+        ServerPlayer noClipboard = h.addPlayer(false);
         EditTestSupport.grant(noClipboard, Perm.USE, Perm.REGION);
         int[] at = regionCorner(context, 822);
         int x0 = at[0], z0 = at[1];
@@ -233,7 +233,7 @@ public final class GenerateGameTest implements FabricGameTest {
                 == RejectReason.NO_PERMISSION, "without the clipboard node");
         check(refusal(() -> clips.beginGeneratedUpload(builder, bounds, bounds.volume() + 1, payload.length)).reason()
                 == RejectReason.INVALID, "more cells than the box");
-        check(!clips.building(builder.getUuid()) && !clips.building(noClipboard.getUuid()), "a refusal kept a slot");
+        check(!clips.building(builder.getUUID()) && !clips.building(noClipboard.getUUID()), "a refusal kept a slot");
 
         // The builder's clipboard before the refusals: a small good upload, which every refusal must leave in place.
         GeneratedSource.Builder small = GeneratedSource.builder(100);
@@ -254,49 +254,49 @@ public final class GenerateGameTest implements FabricGameTest {
             clips.beginGeneratedUpload(builder, previous.bounds(), previous.cells(), previousPayload.length)
                     .completed(previousPayload, kept);
         } catch (EditRejected e) {
-            throw new GameTestException("unexpected refusal: " + e.getMessage());
+            throw new GameTestAssertException("unexpected refusal: " + e.getMessage());
         }
 
         // Through the network: garbage of the announced size, then a stream aborted mid-way.
-        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
+        ServerDispatcher<ServerPlayer> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, builder);
-        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
+        NetSession<ServerPlayer> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
         Captured<ClipboardService.ClipboardInfo> good = new Captured<>();
         java.util.UUID[] previousId = new java.util.UUID[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(kept.finished(), "uploading the previous clipboard"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(kept.finished(), "uploading the previous clipboard"))
+                .thenWaitUntil(() -> {
                     previousId[0] = kept.get("the previous clipboard").clipboardId();
                     try {
                         clips.beginGeneratedUpload(builder, tiles.bounds(), tiles.cells(), tilePayload.length)
                                 .completed(tilePayload, tileReply);
                     } catch (EditRejected e) {
-                        throw new GameTestException("unexpected refusal: " + e.getMessage());
+                        throw new GameTestAssertException("unexpected refusal: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(tileReply.finished(), "decoding the block-entity payload"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(tileReply.finished(), "decoding the block-entity payload"))
+                .thenWaitUntil(() -> {
                     tileReply.failedWith(RejectReason.INVALID, "a block-entity state");
                     check(tileReply.detail.contains("Block entities"), "detail " + tileReply.detail);
-                    check(h.service.clipboards().find(builder.getUuid(), previousId[0]).isPresent(),
+                    check(h.service.clipboards().find(builder.getUUID(), previousId[0]).isPresent(),
                             "a refused payload replaced the previous clipboard");
-                    check(!clips.building(builder.getUuid()), "the refusal kept the slot");
+                    check(!clips.building(builder.getUUID()), "the refusal kept the slot");
                     // The source touches several sections; a cap of one refuses it as too large.
                     h.runtime.config().limits.maxSelectionSections = 1;
                     try {
                         clips.beginGeneratedUpload(builder, bounds, source.cells(), payload.length).completed(payload, spreadReply);
                     } catch (EditRejected e) {
-                        throw new GameTestException("unexpected refusal: " + e.getMessage());
+                        throw new GameTestAssertException("unexpected refusal: " + e.getMessage());
                     } finally {
                         h.runtime.config().limits.maxSelectionSections = sectionCap;
                     }
                 })
-                .createAndAdd(() -> check(spreadReply.finished(), "decoding over the section cap"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(spreadReply.finished(), "decoding over the section cap"))
+                .thenWaitUntil(() -> {
                     spreadReply.failedWith(RejectReason.TOO_LARGE, "over the section cap");
-                    check(h.service.clipboards().find(builder.getUuid(), previousId[0]).isPresent(),
+                    check(h.service.clipboards().find(builder.getUUID(), previousId[0]).isPresent(),
                             "the section-cap refusal replaced the previous clipboard");
                     byte[] garbage = new byte[payload.length];
                     new Random(822).nextBytes(garbage);
@@ -306,12 +306,12 @@ public final class GenerateGameTest implements FabricGameTest {
                             new TreeMap<>(), StreamSender.MAX_C2S_CHUNK, grant.creditBytes());
                     for (Message m : sender.poll(garbage.length)) transport.receive(dispatcher, session, (C2S) m);
                 })
-                .createAndAdd(() -> check(!transport.sent(S2C.UploadResult.class).isEmpty(), "decoding the garbage"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(!transport.sent(S2C.UploadResult.class).isEmpty(), "decoding the garbage"))
+                .thenWaitUntil(() -> {
                     S2C.UploadResult result = transport.first(S2C.UploadResult.class);
                     check(result.reqId() == 3 && result.error() != null && result.error().startsWith("INVALID"), "garbage " + result);
                     check(transport.sent(S2C.ClipboardReady.class).isEmpty(), "a ClipboardReady for garbage");
-                    check(h.service.clipboards().find(builder.getUuid(), previousId[0]).isPresent(),
+                    check(h.service.clipboards().find(builder.getUUID(), previousId[0]).isPresent(),
                             "garbage replaced the previous clipboard");
                     transport.sent.clear();
                     // Half the payload, then the client aborts the stream.
@@ -326,38 +326,38 @@ public final class GenerateGameTest implements FabricGameTest {
                     transport.receive(dispatcher, session, new StreamAbort(grant.streamId(), "cancelled"));
                     S2C.UploadResult aborted = transport.first(S2C.UploadResult.class);
                     check(aborted.reqId() == 4 && aborted.error() != null, "aborted " + aborted);
-                    check(h.service.clipboards().find(builder.getUuid(), previousId[0]).isPresent(),
+                    check(h.service.clipboards().find(builder.getUUID(), previousId[0]).isPresent(),
                             "half a payload replaced the previous clipboard");
-                    check(!clips.building(builder.getUuid()), "the aborted upload kept the slot");
+                    check(!clips.building(builder.getUUID()), "the aborted upload kept the slot");
                     // The slot is free: a well-formed upload goes through.
                     try {
                         clips.beginGeneratedUpload(builder, bounds, source.cells(), payload.length).completed(payload, good);
                     } catch (EditRejected e) {
-                        throw new GameTestException("the good upload was refused: " + e.getMessage());
+                        throw new GameTestAssertException("the good upload was refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(good.finished(), "decoding the good payload"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(good.finished(), "decoding the good payload"))
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = good.get("the good upload");
                     check(info.cells() == source.cells(), "info " + info);
-                    check(h.service.clipboards().find(builder.getUuid(), info.clipboardId()).isPresent(),
+                    check(h.service.clipboards().find(builder.getUUID(), info.clipboardId()).isPresent(),
                             "the good upload did not replace the clipboard");
                     dispatcher.close(session);
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
      * A paste of a generated clipboard skips the cells the player may not modify (the east chunk, protected by the
      * test hook as a claim mod would) and writes the rest; the skipped cells are counted, and undo restores the rest.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_protected", tickLimit = LIMIT)
-    public void protectedChunkCellsAreSkipped(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_protected", timeoutTicks = LIMIT)
+    public void protectedChunkCellsAreSkipped(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
         int[] at = regionCorner(context, 824);
         int x0 = at[0], z0 = at[1];
@@ -373,7 +373,7 @@ public final class GenerateGameTest implements FabricGameTest {
         try {
             clips.beginGeneratedUpload(builder, bounds, source.cells(), payload.length).completed(payload, uploaded);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
         long[] eastCells = {0};
         source.forEach((x, y, z, state) -> {
@@ -382,21 +382,21 @@ public final class GenerateGameTest implements FabricGameTest {
         check(eastCells[0] > 0 && eastCells[0] < source.cells(), "the source spans both chunks");
         ProtectionHook.protect(builder, world, x0 + 16, z0, x0 + 31, z0 + 31);
         RecordingListener pasted = new RecordingListener(), undo = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("the upload");
-                    check(!world.canPlayerModifyAt(builder, pos(x0 + 20, 103, z0 + 8)), "the east chunk is not protected");
-                    check(world.canPlayerModifyAt(builder, pos(x0 + 10, 103, z0 + 8)), "the west chunk is protected");
+                    check(!world.mayInteract(builder, pos(x0 + 20, 103, z0 + 8)), "the east chunk is not protected");
+                    check(world.mayInteract(builder, pos(x0 + 10, 103, z0 + 8)), "the west chunk is protected");
                     try {
                         h.service.run(builder, paste(info.clipboardId(), bounds), RunOptions.DEFAULT, pasted);
                     } catch (EditRejected e) {
                         ProtectionHook.clear(builder);
-                        throw new GameTestException("paste refused: " + e.getMessage());
+                        throw new GameTestAssertException("paste refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(pasted.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     ProtectionHook.clear(builder);
                     check(pasted.result.outcome() == JobOutcome.COMPLETED, "paste " + pasted.result);
                     check(pasted.result.skippedProtected() == eastCells[0], "skipped " + pasted.result.skippedProtected()
@@ -414,17 +414,17 @@ public final class GenerateGameTest implements FabricGameTest {
                     try {
                         h.service.undo(builder, ConflictPolicy.SKIP_CONFLICTS, undo);
                     } catch (EditRejected e) {
-                        throw new GameTestException("undo refused: " + e.getMessage());
+                        throw new GameTestAssertException("undo refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(undo.result != null, "undo running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(undo.result != null, "undo running"))
+                .thenWaitUntil(() -> {
                     check(undo.result.outcome() == JobOutcome.COMPLETED, "undo " + undo.result);
                     checkSame(before, capture(world, area), "after the undo");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -432,11 +432,11 @@ public final class GenerateGameTest implements FabricGameTest {
      * box larger than {@code maxOpVolume} (and {@code maxClipboardVolume}) uploads and pastes for a player without
      * {@code limit.bypass}, while a fill of that box is refused.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_sparse", tickLimit = LIMIT)
-    public void aSparseClipboardInAVastBoxPastesOnItsBlocks(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_sparse", timeoutTicks = LIMIT)
+    public void aSparseClipboardInAVastBoxPastesOnItsBlocks(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
         int[] at = regionCorner(context, 826);
         int x0 = at[0], z0 = at[1];
@@ -463,24 +463,24 @@ public final class GenerateGameTest implements FabricGameTest {
         try {
             clips.beginGeneratedUpload(builder, vast, source.cells(), payload.length).completed(payload, uploaded);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
         RecordingListener pasted = new RecordingListener();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(uploaded.finished(), "upload running"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(uploaded.finished(), "upload running"))
+                .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = uploaded.get("the upload");
                     check(info.cells() == 24, "info " + info);
                     try {
                         h.service.run(builder, paste(info.clipboardId(), vast), RunOptions.DEFAULT, pasted);
                     } catch (EditRejected e) {
-                        throw new GameTestException("the sparse paste was refused: " + e.getMessage());
+                        throw new GameTestAssertException("the sparse paste was refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(pasted.result != null, "paste running"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(pasted.result != null, "paste running"))
+                .thenWaitUntil(() -> {
                     check(pasted.result.outcome() == JobOutcome.COMPLETED && pasted.result.changed() == 24, "paste " + pasted.result);
-                    check(world.getBlockState(pos(x0 + 74, 319, z0 + 74)).isOf(net.minecraft.block.Blocks.STONE_BRICKS),
+                    check(world.getBlockState(pos(x0 + 74, 319, z0 + 74)).is(net.minecraft.world.level.block.Blocks.STONE_BRICKS),
                             "the far corner was not written");
                     WorldSnapshot now = capture(world, box(x0, 90, z0, x0 + 74, 130, z0 + 74));
                     for (int y = 90; y <= 130; y++) {
@@ -495,7 +495,7 @@ public final class GenerateGameTest implements FabricGameTest {
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -508,10 +508,10 @@ public final class GenerateGameTest implements FabricGameTest {
      * check, two blocks up to 65,535 apart made the server write up to two billion cells, as the permission review of the
      * Generate tool found.) Region slot 972 (no blocks are placed).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_save_box", tickLimit = LIMIT)
-    public void aSparseClipboardWiderThanTheLimitIsNeitherSavedNorExported(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_save_box", timeoutTicks = LIMIT)
+    public void aSparseClipboardWiderThanTheLimitIsNeitherSavedNorExported(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerPlayerEntity builder = h.addPlayer(false);
+        ServerPlayer builder = h.addPlayer(false);
         EditTestSupport.grant(builder, Perm.USE, Perm.CLIPBOARD, Perm.REGION, Perm.SCHEMATIC_EXPORT);
         int[] at = regionCorner(context, 972);
         int x0 = at[0], z0 = at[1];
@@ -531,10 +531,10 @@ public final class GenerateGameTest implements FabricGameTest {
         check(vast.bounds().volume() > ServerClipboards.MAX_STORED_BOX, "the box is over the absolute cap");
         Captured<ClipboardService.ClipboardInfo> vastUpload = new Captured<>();
         Captured<ClipboardService.Saved> saved = new Captured<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> upload(clips, h.player, vast, h, vastUpload))
-                .createAndAdd(() -> check(vastUpload.finished(), "uploading the vast clipboard"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> upload(clips, h.player, vast, h, vastUpload))
+                .thenWaitUntil(() -> check(vastUpload.finished(), "uploading the vast clipboard"))
+                .thenWaitUntil(() -> {
                     java.util.UUID id = vastUpload.get("the op's vast upload").clipboardId();
                     EditRejected save = refusal(() -> clips.save(h.player, id, "vast.schem", new Captured<>()));
                     check(save.reason() == RejectReason.TOO_LARGE && save.getMessage().contains("the most any save"),
@@ -543,8 +543,8 @@ public final class GenerateGameTest implements FabricGameTest {
                     check(export.reason() == RejectReason.TOO_LARGE, "exporting with limit.bypass: " + export.reason());
                     upload(clips, builder, wide, h, wideUpload);
                 })
-                .createAndAdd(() -> check(wideUpload.finished(), "uploading the wide clipboard"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(wideUpload.finished(), "uploading the wide clipboard"))
+                .thenWaitUntil(() -> {
                     java.util.UUID id = wideUpload.get("the wide upload").clipboardId();
                     Captured<ClipboardService.Saved> refusedSave = new Captured<>();
                     EditRejected save = refusal(() -> clips.save(builder, id, "wide.schem", refusedSave));
@@ -552,28 +552,28 @@ public final class GenerateGameTest implements FabricGameTest {
                     EditRejected export = refusal(() -> clips.export(builder, id, new Captured<>()));
                     check(export.reason() == RejectReason.TOO_LARGE, "exporting: " + export.reason() + " " + export.getMessage());
                     check(!refusedSave.finished(), "a refused save answered as well");
-                    check(!clips.building(builder.getUuid()), "a refusal kept a slot");
+                    check(!clips.building(builder.getUUID()), "a refusal kept a slot");
                     upload(clips, builder, fits, h, fitsUpload);
                 })
-                .createAndAdd(() -> check(fitsUpload.finished(), "uploading the clipboard that fits"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(fitsUpload.finished(), "uploading the clipboard that fits"))
+                .thenWaitUntil(() -> {
                     java.util.UUID id = fitsUpload.get("the upload that fits").clipboardId();
                     try {
                         clips.save(builder, id, "fits.schem", saved);
                     } catch (EditRejected e) {
-                        throw new GameTestException("saving a clipboard whose box fits was refused: " + e.getMessage());
+                        throw new GameTestAssertException("saving a clipboard whose box fits was refused: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(saved.finished(), "saving"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(saved.finished(), "saving"))
+                .thenWaitUntil(() -> {
                     ClipboardService.Saved done = saved.get("the save");
-                    Path folder = root.resolve("_players").resolve(builder.getUuid().toString());
+                    Path folder = root.resolve("_players").resolve(builder.getUUID().toString());
                     check(done.path().endsWith("fits.schem") && Files.isRegularFile(folder.resolve("fits.schem")),
                             "saved " + done);
                     check(!Files.exists(folder.resolve("wide.schem")), "the refused save wrote a file");
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     /**
@@ -584,13 +584,13 @@ public final class GenerateGameTest implements FabricGameTest {
      * is refused when the payload arrives, the slot released and no clipboard made. Nothing is written to the world. The
      * same payload from a player holding both nodes goes through. Region slot 974.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_generate_needs_region", tickLimit = LIMIT)
-    public void aClipboardOnlyPlayerIsRefusedAndNothingIsHeld(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_generate_needs_region", timeoutTicks = LIMIT)
+    public void aClipboardOnlyPlayerIsRefusedAndNothingIsHeld(GameTestHelper context) {
         Harness h = new Harness(context);
-        ServerWorld world = h.world;
-        ServerPlayerEntity clipboardOnly = h.addPlayer(false);
+        ServerLevel world = h.world;
+        ServerPlayer clipboardOnly = h.addPlayer(false);
         EditTestSupport.grant(clipboardOnly, Perm.USE, Perm.CLIPBOARD);
-        ServerPlayerEntity losing = h.addPlayer(false);
+        ServerPlayer losing = h.addPlayer(false);
         EditTestSupport.grant(losing, Perm.USE, Perm.CLIPBOARD, Perm.REGION);
         int[] at = regionCorner(context, 974);
         int x0 = at[0], z0 = at[1];
@@ -607,20 +607,20 @@ public final class GenerateGameTest implements FabricGameTest {
                 payload.length));
         check(refused.reason() == RejectReason.NO_PERMISSION && refused.getMessage().contains(Perm.REGION.node()),
                 "refused " + refused.reason() + " " + refused.getMessage());
-        check(!clips.building(clipboardOnly.getUuid()), "the refusal kept a slot");
-        check(h.service.clipboards().get(clipboardOnly.getUuid()).isEmpty(), "a clipboard was made");
+        check(!clips.building(clipboardOnly.getUUID()), "the refusal kept a slot");
+        check(h.service.clipboards().get(clipboardOnly.getUUID()).isEmpty(), "a clipboard was made");
 
         // Through the network: refused before the grant, so nothing is streamed.
-        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
+        ServerDispatcher<ServerPlayer> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
         Transport transport = new Transport(h, clipboardOnly);
-        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
+        NetSession<ServerPlayer> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
         transport.receive(dispatcher, session, new C2S.GeneratedUpload(5, source.bounds(), source.cells(), payload.length));
         check(transport.sent(S2C.UploadGrant.class).isEmpty(), "a clipboard-only player was granted the upload");
         check(transport.sent(S2C.JobRejected.class).stream().anyMatch(r -> r.reqId() == 5
                 && r.reason() == RejectReason.NO_PERMISSION), "no NO_PERMISSION refusal: " + transport.sent);
-        check(!clips.building(clipboardOnly.getUuid()) && h.service.clipboards().get(clipboardOnly.getUuid()).isEmpty(),
+        check(!clips.building(clipboardOnly.getUUID()) && h.service.clipboards().get(clipboardOnly.getUUID()).isEmpty(),
                 "the network refusal held something");
         dispatcher.close(session);
 
@@ -629,19 +629,19 @@ public final class GenerateGameTest implements FabricGameTest {
         try {
             upload = clips.beginGeneratedUpload(losing, source.bounds(), source.cells(), payload.length);
         } catch (EditRejected e) {
-            throw new GameTestException("a player with both nodes was refused: " + e.getMessage());
+            throw new GameTestAssertException("a player with both nodes was refused: " + e.getMessage());
         }
-        check(clips.building(losing.getUuid()), "the grant holds the clipboard slot");
+        check(clips.building(losing.getUUID()), "the grant holds the clipboard slot");
         EditTestSupport.deny(losing, Perm.REGION);
         Captured<ClipboardService.ClipboardInfo> lost = new Captured<>();
         upload.completed(payload, lost);
         Captured<ClipboardService.ClipboardInfo> good = new Captured<>();
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> check(lost.finished(), "checking the arrived payload"))
-                .createAndAdd(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> check(lost.finished(), "checking the arrived payload"))
+                .thenWaitUntil(() -> {
                     lost.failedWith(RejectReason.NO_PERMISSION, "region lost after the grant");
-                    check(!clips.building(losing.getUuid()), "the refusal kept the slot");
-                    check(h.service.clipboards().get(losing.getUuid()).isEmpty(), "a clipboard was made without region");
+                    check(!clips.building(losing.getUUID()), "the refusal kept the slot");
+                    check(h.service.clipboards().get(losing.getUUID()).isEmpty(), "a clipboard was made without region");
                     checkSame(before, capture(world, area), "after the refusals");
                     // With both nodes again the same payload becomes the clipboard.
                     EditTestSupport.deny(losing);
@@ -649,26 +649,26 @@ public final class GenerateGameTest implements FabricGameTest {
                         clips.beginGeneratedUpload(losing, source.bounds(), source.cells(), payload.length)
                                 .completed(payload, good);
                     } catch (EditRejected e) {
-                        throw new GameTestException("refused with both nodes: " + e.getMessage());
+                        throw new GameTestAssertException("refused with both nodes: " + e.getMessage());
                     }
                 })
-                .createAndAdd(() -> check(good.finished(), "decoding with both nodes"))
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> check(good.finished(), "decoding with both nodes"))
+                .thenWaitUntil(() -> {
                     check(good.get("the upload with both nodes").cells() == source.cells(), "cells");
                     checkSame(before, capture(world, area), "an upload writes nothing by itself");
                     forceChunks(world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
-    private static void upload(ServerClipboards<ServerPlayerEntity, ServerWorld> clips, ServerPlayerEntity player,
+    private static void upload(ServerClipboards<ServerPlayer, ServerLevel> clips, ServerPlayer player,
                                GeneratedSource source, Harness h, Captured<ClipboardService.ClipboardInfo> reply) {
         byte[] payload = SparseUpload.encode(source, h.runtime.states());
         try {
             clips.beginGeneratedUpload(player, source.bounds(), source.cells(), payload.length).completed(payload, reply);
         } catch (EditRejected e) {
-            throw new GameTestException("upload refused: " + e.getMessage());
+            throw new GameTestAssertException("upload refused: " + e.getMessage());
         }
     }
 
@@ -679,25 +679,25 @@ public final class GenerateGameTest implements FabricGameTest {
     /** A transport collecting what the dispatcher sends, decoded, for one player. */
     private static final class Transport implements FabricTransport {
         final Harness h;
-        final ServerPlayerEntity player;
+        final ServerPlayer player;
         final List<S2C> sent = new ArrayList<>();
 
-        Transport(Harness h, ServerPlayerEntity player) {
+        Transport(Harness h, ServerPlayer player) {
             this.h = h;
             this.player = player;
         }
 
-        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayer> dispatcher, NetSession<ServerPlayer> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {
-                throw new GameTestException("encode: " + e.getMessage());
+                throw new GameTestAssertException("encode: " + e.getMessage());
             }
         }
 
         <T> T first(Class<T> type) {
             List<T> all = sent(type);
-            if (all.isEmpty()) throw new GameTestException("no " + type.getSimpleName() + " sent: " + sent);
+            if (all.isEmpty()) throw new GameTestAssertException("no " + type.getSimpleName() + " sent: " + sent);
             return all.get(0);
         }
 
@@ -706,7 +706,7 @@ public final class GenerateGameTest implements FabricGameTest {
         }
 
         @Override
-        public ServerPlayerEntity player() {
+        public ServerPlayer player() {
             return player;
         }
 
@@ -720,7 +720,7 @@ public final class GenerateGameTest implements FabricGameTest {
             try {
                 sent.add(Codec.decodeS2C(frame, h.runtime.states()));
             } catch (ProtocolException e) {
-                throw new GameTestException("the server sent an undecodable frame: " + e.getMessage());
+                throw new GameTestAssertException("the server sent an undecodable frame: " + e.getMessage());
             }
         }
 
@@ -739,7 +739,7 @@ public final class GenerateGameTest implements FabricGameTest {
 
         @Override
         public void disconnect(String reason) {
-            throw new GameTestException("disconnected: " + reason);
+            throw new GameTestAssertException("disconnected: " + reason);
         }
     }
 }

@@ -19,13 +19,13 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import net.minecraft.block.Block;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
 import org.slf4j.LoggerFactory;
 
 /** Helpers for the M2 GameTests (clipboards, schematics, library). Server thread only. */
@@ -73,20 +73,20 @@ final class ClipTestSupport {
     }
 
     /** A private library folder for one test, under the GameTest server's run directory. */
-    static Path libraryRoot(TestContext context) {
-        return context.getWorld().getServer().getRunDirectory().resolve("sculptory-gametest")
+    static Path libraryRoot(GameTestHelper context) {
+        return context.getLevel().getServer().getServerDirectory().resolve("sculptory-gametest")
                 .resolve(UUID.randomUUID().toString()).resolve("library").toAbsolutePath().normalize();
     }
 
     /** A clipboard service over the harness's edit service and a private library, with its own bounded executor. */
-    static ServerClipboards<ServerPlayerEntity, ServerWorld> clipboards(Harness h, Path libraryRoot) {
+    static ServerClipboards<ServerPlayer, ServerLevel> clipboards(Harness h, Path libraryRoot) {
         return new ServerClipboards<>(h.service, new Library(libraryRoot, Library.Settings.DEFAULTS),
                 ServerClipboards.newExecutor(), FabricDataFixHook.get());
     }
 
     /** Begins and completes an upload in one go (the network part is the dispatcher's, unit-tested). */
-    static void upload(ServerClipboards<ServerPlayerEntity, ServerWorld> clips,
-                       net.minecraft.server.network.ServerPlayerEntity player, String name, byte[] bytes,
+    static void upload(ServerClipboards<ServerPlayer, ServerLevel> clips,
+                       net.minecraft.server.level.ServerPlayer player, String name, byte[] bytes,
                        ClipboardService.Reply<ClipboardService.ClipboardInfo> reply) {
         try {
             clips.beginUpload(player, name, bytes.length).completed(bytes, reply);
@@ -155,12 +155,12 @@ final class ClipTestSupport {
      * Requires the cells of {@code expected} (states and block-entity NBT) to be found again with their minimum corner
      * at {@code targetMin}.
      */
-    static void checkShifted(ServerWorld world, WorldSnapshot expected, BlockPos targetMin, String what) {
+    static void checkShifted(ServerLevel world, WorldSnapshot expected, BlockPos targetMin, String what) {
         checkShifted(world, expected, targetMin, what, pos -> false);
     }
 
     /** As above; block entities at the source positions {@code skipTile} accepts are compared by presence only. */
-    static void checkShifted(ServerWorld world, WorldSnapshot expected, BlockPos targetMin, String what,
+    static void checkShifted(ServerLevel world, WorldSnapshot expected, BlockPos targetMin, String what,
                              java.util.function.Predicate<BlockPos> skipTile) {
         Box source = expected.box;
         int dx = targetMin.getX() - source.min().x(), dy = targetMin.getY() - source.min().y();
@@ -172,18 +172,18 @@ final class ClipTestSupport {
                 for (int x = source.min().x(); x <= source.max().x(); x++) {
                     int a = expected.get(x, y, z), b = actual.get(x + dx, y + dy, z + dz);
                     if (a != b) {
-                        throw new GameTestException(what + ": at " + (x + dx) + "," + (y + dy) + "," + (z + dz)
-                                + " expected " + Block.getStateFromRawId(a) + ", got " + Block.getStateFromRawId(b));
+                        throw new GameTestAssertException(what + ": at " + (x + dx) + "," + (y + dy) + "," + (z + dz)
+                                + " expected " + Block.stateById(a) + ", got " + Block.stateById(b));
                     }
                 }
             }
         }
         check(expected.tiles.size() == actual.tiles.size(), what + ": " + expected.tiles.size() + " block entities, got "
                 + actual.tiles.size());
-        for (Map.Entry<Long, NbtCompound> entry : expected.tiles.entrySet()) {
-            BlockPos at = BlockPos.fromLong(entry.getKey()).add(dx, dy, dz);
-            NbtCompound got = actual.tiles.get(at.asLong());
-            if (skipTile.test(BlockPos.fromLong(entry.getKey()))) {
+        for (Map.Entry<Long, CompoundTag> entry : expected.tiles.entrySet()) {
+            BlockPos at = BlockPos.of(entry.getKey()).offset(dx, dy, dz);
+            CompoundTag got = actual.tiles.get(at.asLong());
+            if (skipTile.test(BlockPos.of(entry.getKey()))) {
                 check(got != null, what + ": no block entity at " + at.toShortString());
                 continue;
             }

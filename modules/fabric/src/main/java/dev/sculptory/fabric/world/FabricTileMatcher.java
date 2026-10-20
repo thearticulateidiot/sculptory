@@ -12,17 +12,17 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import net.minecraft.block.BlockEntityProvider;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.BlockEntityType;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
-import net.minecraft.nbt.NbtList;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.block.EntityBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.BlockEntityType;
+import net.minecraft.world.level.block.state.BlockState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -86,16 +86,16 @@ public final class FabricTileMatcher implements TileMatcher {
     /** Warnings logged, for tests. */
     static final AtomicInteger WARNINGS = new AtomicInteger();
     /** A state creates no block entity by itself, or its canonical form could not be made. */
-    private static final NbtCompound NONE = new NbtCompound();
+    private static final CompoundTag NONE = new CompoundTag();
 
-    private final RegistryWrapper.WrapperLookup registries;
+    private final HolderLookup.Provider registries;
     private final FabricStateSpace states;
     /** Per state handle: the block entity the game creates for it by itself, canonical ({@link #NONE}: none). */
-    private final Int2ObjectOpenHashMap<NbtCompound> defaults = new Int2ObjectOpenHashMap<>();
+    private final Int2ObjectOpenHashMap<CompoundTag> defaults = new Int2ObjectOpenHashMap<>();
     /** Canonical forms of the recorded tiles of the section being worked on ({@link #NONE}: none can be made). */
-    private final IdentityHashMap<BlockEntityData, NbtCompound> canonical = new IdentityHashMap<>();
+    private final IdentityHashMap<BlockEntityData, CompoundTag> canonical = new IdentityHashMap<>();
 
-    public FabricTileMatcher(RegistryWrapper.WrapperLookup registries, FabricStateSpace states) {
+    public FabricTileMatcher(HolderLookup.Provider registries, FabricStateSpace states) {
         this.registries = Objects.requireNonNull(registries);
         this.states = Objects.requireNonNull(states);
     }
@@ -111,17 +111,17 @@ public final class FabricTileMatcher implements TileMatcher {
         BlockState state = states.state(handle);
         // A state without a block entity holds no contents to lose, whatever was recorded.
         if (!state.hasBlockEntity()) return true;
-        NbtCompound now = live == null ? fresh(handle, state) : liveNbt(live);
+        CompoundTag now = live == null ? fresh(handle, state) : liveNbt(live);
         if (now == null) return false; // unreadable live data counts as changed: the block is kept
         // Server-captured data (a copy of world blocks, or what an edit replaced) equal to the live data: no load needed.
         if (expected instanceof FabricTile tile && tile.compound().equals(now)) return true;
-        NbtCompound wanted = expected == null ? fresh(handle, state) : canonical(handle, state, expected);
+        CompoundTag wanted = expected == null ? fresh(handle, state) : canonical(handle, state, expected);
         if (wanted == null) return false;
         return sameLeavingOutVolatile(now, wanted, now.getString("id"));
     }
 
     /** Whether {@code a} and {@code b}, of block-entity type {@code type}, match apart from that type's volatile keys. */
-    static boolean sameLeavingOutVolatile(NbtCompound a, NbtCompound b, String type) {
+    static boolean sameLeavingOutVolatile(CompoundTag a, CompoundTag b, String type) {
         Set<String> ignored = VOLATILE_KEYS.get(type);
         Map<String, Set<String>> lists = VOLATILE_ENTRY_KEYS.get(type);
         if (lists == null) return sameIgnoring(a, b, ignored);
@@ -135,13 +135,13 @@ public final class FabricTileMatcher implements TileMatcher {
     }
 
     /** Whether lists {@code a} and {@code b} hold the same entries in the same order, compounds leaving out {@code ignored}. */
-    private static boolean sameEntriesIgnoring(NbtElement a, NbtElement b, Set<String> ignored) {
-        if (!(a instanceof NbtList left) || !(b instanceof NbtList right)) return Objects.equals(a, b);
+    private static boolean sameEntriesIgnoring(Tag a, Tag b, Set<String> ignored) {
+        if (!(a instanceof ListTag left) || !(b instanceof ListTag right)) return Objects.equals(a, b);
         if (left.size() != right.size()) return false;
         for (int i = 0; i < left.size(); i++) {
-            NbtElement x = left.get(i);
-            NbtElement y = right.get(i);
-            boolean same = x instanceof NbtCompound cx && y instanceof NbtCompound cy
+            Tag x = left.get(i);
+            Tag y = right.get(i);
+            boolean same = x instanceof CompoundTag cx && y instanceof CompoundTag cy
                     ? sameIgnoring(cx, cy, ignored)
                     : Objects.equals(x, y);
             if (!same) return false;
@@ -150,7 +150,7 @@ public final class FabricTileMatcher implements TileMatcher {
     }
 
     /** The live content's compound, not copied ({@code createNbtWithId} for a captured tile), or {@code null}. */
-    private static NbtCompound liveNbt(BlockEntityData live) {
+    private static CompoundTag liveNbt(BlockEntityData live) {
         if (live instanceof FabricTile tile) return tile.compound();
         try {
             return FabricTile.from(live).compound();
@@ -164,8 +164,8 @@ public final class FabricTileMatcher implements TileMatcher {
      * detached block entity and saved again; the state's own default when that cannot be done (as the writer then leaves
      * the default). Remembered for the section.
      */
-    private NbtCompound canonical(int handle, BlockState state, BlockEntityData tile) {
-        NbtCompound known = canonical.get(tile);
+    private CompoundTag canonical(int handle, BlockState state, BlockEntityData tile) {
+        CompoundTag known = canonical.get(tile);
         if (known == null) {
             known = load(state, tile);
             if (known == null) known = fresh(handle, state);
@@ -175,23 +175,23 @@ public final class FabricTileMatcher implements TileMatcher {
     }
 
     /** {@code tile} as a block entity of {@code state} would save it, or {@code null} where the writer fails too. */
-    private NbtCompound load(BlockState state, BlockEntityData tile) {
-        NbtCompound nbt;
+    private CompoundTag load(BlockState state, BlockEntityData tile) {
+        CompoundTag nbt;
         try {
             nbt = FabricTile.from(tile).copyNbt();
         } catch (IOException | RuntimeException e) {
             return null; // the writer cannot read it either
         }
         String typeId = nbt.getString("id");
-        Identifier id = Identifier.tryParse(typeId);
-        BlockEntityType<?> type = id == null ? null : Registries.BLOCK_ENTITY_TYPE.getOrEmpty(id).orElse(null);
-        if (type == null || !type.supports(state)) return null;
+        ResourceLocation id = ResourceLocation.tryParse(typeId);
+        BlockEntityType<?> type = id == null ? null : BuiltInRegistries.BLOCK_ENTITY_TYPE.getOptional(id).orElse(null);
+        if (type == null || !type.isValid(state)) return null;
         try {
             // Not BlockEntity.createFromNbt: it logs an error with a stack trace for every tile that fails.
-            BlockEntity entity = type.instantiate(BlockPos.ORIGIN, state);
+            BlockEntity entity = type.create(BlockPos.ZERO, state);
             if (entity == null) return null;
-            entity.read(nbt, registries);
-            return entity.createNbtWithId(registries);
+            entity.loadWithComponents(nbt, registries);
+            return entity.saveWithId(registries);
         } catch (RuntimeException e) {
             warn(typeId, e);
             return null;
@@ -202,16 +202,16 @@ public final class FabricTileMatcher implements TileMatcher {
      * The block entity the game creates for {@code state} by itself (what {@code BlockWriter} leaves when it writes no
      * data), canonical; {@code null} when there is none or it cannot be made.
      */
-    private NbtCompound fresh(int handle, BlockState state) {
-        NbtCompound known = defaults.get(handle);
+    private CompoundTag fresh(int handle, BlockState state) {
+        CompoundTag known = defaults.get(handle);
         if (known == null) {
             known = NONE;
-            if (state.getBlock() instanceof BlockEntityProvider provider) {
+            if (state.getBlock() instanceof EntityBlock provider) {
                 try {
-                    BlockEntity entity = provider.createBlockEntity(BlockPos.ORIGIN, state);
-                    if (entity != null) known = entity.createNbtWithId(registries);
+                    BlockEntity entity = provider.newBlockEntity(BlockPos.ZERO, state);
+                    if (entity != null) known = entity.saveWithId(registries);
                 } catch (RuntimeException e) {
-                    warn(String.valueOf(Registries.BLOCK.getId(state.getBlock())), e);
+                    warn(String.valueOf(BuiltInRegistries.BLOCK.getKey(state.getBlock())), e);
                 }
             }
             defaults.put(handle, known);
@@ -231,15 +231,15 @@ public final class FabricTileMatcher implements TileMatcher {
     }
 
     /** Whether {@code a} and {@code b} hold the same entries, leaving out {@code ignored} keys ({@code null}: none). */
-    static boolean sameIgnoring(NbtCompound a, NbtCompound b, Set<String> ignored) {
+    static boolean sameIgnoring(CompoundTag a, CompoundTag b, Set<String> ignored) {
         if (ignored == null) return a.equals(b);
         int entries = 0;
-        for (String key : a.getKeys()) {
+        for (String key : a.getAllKeys()) {
             if (ignored.contains(key)) continue;
             entries++;
             if (!Objects.equals(a.get(key), b.get(key))) return false;
         }
-        for (String key : b.getKeys()) {
+        for (String key : b.getAllKeys()) {
             if (!ignored.contains(key)) entries--;
         }
         return entries == 0;

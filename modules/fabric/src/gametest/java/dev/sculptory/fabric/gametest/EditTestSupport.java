@@ -41,25 +41,25 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 import me.lucko.fabric.api.permissions.v0.PermissionCheckEvent;
 import net.fabricmc.fabric.api.util.TriState;
-import net.minecraft.block.Block;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.network.ClientConnection;
-import net.minecraft.network.NetworkSide;
-import net.minecraft.registry.RegistryKey;
+import net.minecraft.commands.CommandSource;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.network.Connection;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.PacketFlow;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.OperatorEntry;
-import net.minecraft.server.command.CommandOutput;
-import net.minecraft.server.command.ServerCommandSource;
-import net.minecraft.server.network.ConnectedClientData;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.World;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.network.CommonListenerCookie;
+import net.minecraft.server.players.ServerOpListEntry;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.chunk.LevelChunk;
 import org.slf4j.LoggerFactory;
 
 /** Edit-service GameTest helpers: op'd mock players, a private service, world snapshots. Server thread only. */
@@ -71,32 +71,32 @@ final class EditTestSupport {
      * {@link EngineEditService} of the test's own over the live engine, recording acknowledgements and events.
      */
     static final class Harness {
-        final TestContext context;
+        final GameTestHelper context;
         final EngineRuntime runtime;
-        final ServerWorld world;
-        final ServerPlayerEntity player;
+        final ServerLevel world;
+        final ServerPlayer player;
         final RecordingAcks acks = new RecordingAcks();
         final RecordingEvents events = new RecordingEvents();
-        final EngineEditService<ServerPlayerEntity, ServerWorld> service;
-        private final List<ServerPlayerEntity> players = new ArrayList<>();
+        final EngineEditService<ServerPlayer, ServerLevel> service;
+        private final List<ServerPlayer> players = new ArrayList<>();
 
-        Harness(TestContext context) {
+        Harness(GameTestHelper context) {
             this(context, null);
         }
 
-        Harness(TestContext context, HistoryLimits limits) {
+        Harness(GameTestHelper context, HistoryLimits limits) {
             this(context, limits, System::nanoTime);
         }
 
-        Harness(TestContext context, HistoryLimits limits, LongSupplier clock) {
+        Harness(GameTestHelper context, HistoryLimits limits, LongSupplier clock) {
             this(context, limits, clock, null);
         }
 
         /** With a private executor (ticked by the test) instead of the server's. */
-        Harness(TestContext context, HistoryLimits limits, LongSupplier clock, EditExecutor<ServerWorld> executor) {
+        Harness(GameTestHelper context, HistoryLimits limits, LongSupplier clock, EditExecutor<ServerLevel> executor) {
             this.context = context;
             this.runtime = runtime(context);
-            this.world = context.getWorld();
+            this.world = context.getLevel();
             this.player = addPlayer();
             this.service = new EngineEditService<>(runtime, executor == null ? runtime.executor() : executor,
                     limits == null ? runtime.config().toHistoryLimits() : limits, p -> JobRequest.NO_LISTENER, acks,
@@ -104,15 +104,15 @@ final class EditTestSupport {
             acks.service = service;
         }
 
-        ServerPlayerEntity addPlayer() {
+        ServerPlayer addPlayer() {
             return addPlayer(true);
         }
 
         /** Another mock creative player: op level 2, or (when {@code op} is false) level 0 with no nodes. */
         @SuppressWarnings("removal") // createMockCreativeServerPlayerInWorld is vanilla's test-only mock player
-        ServerPlayerEntity addPlayer(boolean op) {
-            ServerPlayerEntity p = context.createMockCreativeServerPlayerInWorld();
-            if (op) world.getServer().getPlayerManager().getOpList().add(new OperatorEntry(p.getGameProfile(), 2, false));
+        ServerPlayer addPlayer(boolean op) {
+            ServerPlayer p = context.makeMockServerPlayerInLevel();
+            if (op) world.getServer().getPlayerList().getOps().add(new ServerOpListEntry(p.getGameProfile(), 2, false));
             players.add(p);
             return p;
         }
@@ -121,12 +121,12 @@ final class EditTestSupport {
             return EngineTestSupport.handle(runtime.states(), spec);
         }
 
-        JobTicket fill(ServerPlayerEntity p, Box box, String state, JobListener listener) {
+        JobTicket fill(ServerPlayer p, Box box, String state, JobListener listener) {
             try {
                 return service.run(p, new OpSpec.Fill(box, new Pattern.Single(state(state)), CellMask.ANY),
                         RunOptions.DEFAULT, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("fill rejected: " + e.getMessage());
+                throw new GameTestAssertException("fill rejected: " + e.getMessage());
             }
         }
 
@@ -138,7 +138,7 @@ final class EditTestSupport {
             try {
                 return service.undo(player, ConflictPolicy.SKIP_CONFLICTS, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("undo rejected: " + e.getMessage());
+                throw new GameTestAssertException("undo rejected: " + e.getMessage());
             }
         }
 
@@ -146,7 +146,7 @@ final class EditTestSupport {
             try {
                 return service.redo(player, ConflictPolicy.SKIP_CONFLICTS, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("redo rejected: " + e.getMessage());
+                throw new GameTestAssertException("redo rejected: " + e.getMessage());
             }
         }
 
@@ -157,16 +157,16 @@ final class EditTestSupport {
         /** Deops and removes the mock players. */
         void close() {
             MinecraftServer server = world.getServer();
-            for (ServerPlayerEntity p : players) {
-                GRANTS.remove(p.getUuid());
-                DENIALS.remove(p.getUuid());
-                FAILING.remove(p.getUuid());
-                FAILED_CHECKS.remove(p.getUuid());
-                WORLD_GRANTS.remove(p.getUuid());
+            for (ServerPlayer p : players) {
+                GRANTS.remove(p.getUUID());
+                DENIALS.remove(p.getUUID());
+                FAILING.remove(p.getUUID());
+                FAILED_CHECKS.remove(p.getUUID());
+                WORLD_GRANTS.remove(p.getUUID());
                 try {
-                    server.getPlayerManager().getOpList().remove(p.getGameProfile());
-                    service.playerLeft(p.getUuid());
-                    server.getPlayerManager().remove(p);
+                    server.getPlayerList().getOps().remove(p.getGameProfile());
+                    service.playerLeft(p.getUUID());
+                    server.getPlayerList().remove(p);
                 } catch (RuntimeException e) {
                     LoggerFactory.getLogger("sculptory").warn("Could not remove a mock player", e);
                 }
@@ -184,15 +184,15 @@ final class EditTestSupport {
     /** How many checks threw, per player. */
     private static final Map<UUID, Integer> FAILED_CHECKS = new ConcurrentHashMap<>();
     /** Nodes granted only while the player is in a given world. */
-    private static final Map<UUID, Map<RegistryKey<World>, Set<String>>> WORLD_GRANTS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Map<ResourceKey<Level>, Set<String>>> WORLD_GRANTS = new ConcurrentHashMap<>();
     private static boolean grantsInstalled;
 
     private static synchronized void installGrants() {
         if (grantsInstalled) return;
         grantsInstalled = true;
         PermissionCheckEvent.EVENT.register((source, node) -> {
-            if (source instanceof ServerCommandSource command && command.getEntity() != null) {
-                UUID id = command.getEntity().getUuid();
+            if (source instanceof CommandSourceStack command && command.getEntity() != null) {
+                UUID id = command.getEntity().getUUID();
                 if (FAILING.contains(id)) {
                     FAILED_CHECKS.merge(id, 1, Integer::sum);
                     throw new IllegalStateException("permission backend unavailable");
@@ -203,9 +203,9 @@ final class EditTestSupport {
                 if (granted != null && granted.contains(node)) return TriState.TRUE;
                 // A grant scoped to one world, like a LuckPerms world context: it holds only while the check's
                 // source (the player) is in that world.
-                Map<RegistryKey<World>, Set<String>> scoped = WORLD_GRANTS.get(id);
-                if (scoped != null && command.getWorld() != null) {
-                    Set<String> here = scoped.get(command.getWorld().getRegistryKey());
+                Map<ResourceKey<Level>, Set<String>> scoped = WORLD_GRANTS.get(id);
+                if (scoped != null && command.getLevel() != null) {
+                    Set<String> here = scoped.get(command.getLevel().dimension());
                     if (here != null && here.contains(node)) return TriState.TRUE;
                 }
             }
@@ -214,12 +214,12 @@ final class EditTestSupport {
     }
 
     /** Makes every permission check for {@code player} throw (or stop throwing). */
-    static void failPermissionChecks(ServerPlayerEntity player, boolean failing) {
+    static void failPermissionChecks(ServerPlayer player, boolean failing) {
         installGrants();
         if (failing) {
-            FAILING.add(player.getUuid());
+            FAILING.add(player.getUUID());
         } else {
-            FAILING.remove(player.getUuid());
+            FAILING.remove(player.getUUID());
         }
     }
 
@@ -227,11 +227,11 @@ final class EditTestSupport {
      * Grants {@code nodes} to {@code player} the way a permissions mod would ({@code PermissionCheckEvent}), so a
      * non-op player can edit; {@link Harness#close()} revokes it. Other nodes keep the op-level fallback.
      */
-    static synchronized void grant(ServerPlayerEntity player, Perm... nodes) {
+    static synchronized void grant(ServerPlayer player, Perm... nodes) {
         installGrants();
         Set<String> set = ConcurrentHashMap.newKeySet();
         for (Perm node : nodes) set.add(node.node());
-        GRANTS.put(player.getUuid(), set);
+        GRANTS.put(player.getUUID(), set);
     }
 
     /**
@@ -239,26 +239,26 @@ final class EditTestSupport {
      * contexts give); other grants are kept. Replaces earlier scoped grants for that world; lifted by
      * {@link #clearWorldGrants}.
      */
-    static synchronized void grantIn(ServerPlayerEntity player, RegistryKey<World> world, Perm... nodes) {
+    static synchronized void grantIn(ServerPlayer player, ResourceKey<Level> world, Perm... nodes) {
         installGrants();
         Set<String> set = ConcurrentHashMap.newKeySet();
         for (Perm node : nodes) set.add(node.node());
-        WORLD_GRANTS.computeIfAbsent(player.getUuid(), id -> new ConcurrentHashMap<>()).put(world, set);
+        WORLD_GRANTS.computeIfAbsent(player.getUUID(), id -> new ConcurrentHashMap<>()).put(world, set);
     }
 
-    static void clearWorldGrants(ServerPlayerEntity player) {
-        WORLD_GRANTS.remove(player.getUuid());
+    static void clearWorldGrants(ServerPlayer player) {
+        WORLD_GRANTS.remove(player.getUUID());
     }
 
     /**
      * A mock creative player named {@code name}, connected like vanilla's {@code createMockCreativeServerPlayerInWorld}
      * (which names every mock player "test-mock-player"). The caller removes it from the player manager.
      */
-    static ServerPlayerEntity namedMockPlayer(TestContext context, String name) {
-        ServerWorld world = context.getWorld();
+    static ServerPlayer namedMockPlayer(GameTestHelper context, String name) {
+        ServerLevel world = context.getLevel();
         GameProfile profile = new GameProfile(UUID.randomUUID(), name);
-        ConnectedClientData data = ConnectedClientData.createDefault(profile, false);
-        ServerPlayerEntity player = new ServerPlayerEntity(world.getServer(), world, data.gameProfile(), data.syncedOptions()) {
+        CommonListenerCookie data = CommonListenerCookie.createInitial(profile, false);
+        ServerPlayer player = new ServerPlayer(world.getServer(), world, data.gameProfile(), data.clientInformation()) {
             @Override
             public boolean isSpectator() {
                 return false;
@@ -269,49 +269,49 @@ final class EditTestSupport {
                 return true;
             }
         };
-        ClientConnection connection = new ClientConnection(NetworkSide.SERVERBOUND);
+        Connection connection = new Connection(PacketFlow.SERVERBOUND);
         new EmbeddedChannel(connection);
-        world.getServer().getPlayerManager().onPlayerConnect(connection, player, data);
+        world.getServer().getPlayerList().placeNewPlayer(connection, player, data);
         return player;
     }
 
     /** How many of {@code player}'s permission checks threw ({@link #failPermissionChecks}). */
-    static int failedChecks(ServerPlayerEntity player) {
-        return FAILED_CHECKS.getOrDefault(player.getUuid(), 0);
+    static int failedChecks(ServerPlayer player) {
+        return FAILED_CHECKS.getOrDefault(player.getUUID(), 0);
     }
 
     /**
      * Refuses {@code nodes} to {@code player} the way a permissions mod would (an explicit {@code false}, which beats
      * the op-level fallback); {@link Harness#close()} lifts it. Replaces earlier denials.
      */
-    static synchronized void deny(ServerPlayerEntity player, Perm... nodes) {
+    static synchronized void deny(ServerPlayer player, Perm... nodes) {
         installGrants();
         Set<String> set = ConcurrentHashMap.newKeySet();
         for (Perm node : nodes) set.add(node.node());
-        DENIALS.put(player.getUuid(), set);
+        DENIALS.put(player.getUUID(), set);
     }
 
     /** Command output collected as plain strings. */
-    static final class CapturedOutput implements CommandOutput {
+    static final class CapturedOutput implements CommandSource {
         final List<String> lines = new ArrayList<>();
 
         @Override
-        public void sendMessage(Text message) {
+        public void sendSystemMessage(Component message) {
             lines.add(message.getString());
         }
 
         @Override
-        public boolean shouldReceiveFeedback() {
+        public boolean acceptsSuccess() {
             return true;
         }
 
         @Override
-        public boolean shouldTrackOutput() {
+        public boolean acceptsFailure() {
             return true;
         }
 
         @Override
-        public boolean shouldBroadcastConsoleToOps() {
+        public boolean shouldInformAdmins() {
             return false;
         }
 
@@ -321,42 +321,42 @@ final class EditTestSupport {
     }
 
     /** Acknowledged sequences, in order, with the player's queued dabs at each acknowledgement. */
-    static final class RecordingAcks implements AckSink<ServerPlayerEntity> {
+    static final class RecordingAcks implements AckSink<ServerPlayer> {
         final List<Integer> seqs = new ArrayList<>();
         final List<Integer> queuedAtAck = new ArrayList<>();
-        EngineEditService<ServerPlayerEntity, ServerWorld> service;
+        EngineEditService<ServerPlayer, ServerLevel> service;
 
         @Override
-        public void ack(ServerPlayerEntity player, int seq) {
+        public void ack(ServerPlayer player, int seq) {
             seqs.add(seq);
-            queuedAtAck.add(service == null ? -1 : service.queuedDabs(player.getUuid()));
+            queuedAtAck.add(service == null ? -1 : service.queuedDabs(player.getUUID()));
         }
     }
 
-    static final class RecordingEvents implements EditEvents<ServerPlayerEntity> {
+    static final class RecordingEvents implements EditEvents<ServerPlayer> {
         final List<RejectReason> dabRejections = new ArrayList<>();
         final List<String> evictions = new ArrayList<>();
         int historyChanges;
 
         @Override
-        public void historyChanged(ServerPlayerEntity player, HistorySnapshot snapshot) {
+        public void historyChanged(ServerPlayer player, HistorySnapshot snapshot) {
             historyChanges++;
         }
 
         @Override
-        public void historyEvicted(ServerPlayerEntity player, int steps, boolean includesNewest) {
-            evictions.add(player.getUuid() + ":" + steps + (includesNewest ? ":newest" : ""));
+        public void historyEvicted(ServerPlayer player, int steps, boolean includesNewest) {
+            evictions.add(player.getUUID() + ":" + steps + (includesNewest ? ":newest" : ""));
         }
 
         @Override
-        public void dabRejected(ServerPlayerEntity player, int strokeId, int dabIndex, RejectReason reason) {
+        public void dabRejected(ServerPlayer player, int strokeId, int dabIndex, RejectReason reason) {
             dabRejections.add(reason);
         }
 
         final List<Long> scatterSkips = new ArrayList<>();
 
         @Override
-        public void scatterSkipped(ServerPlayerEntity player, long placements) {
+        public void scatterSkipped(ServerPlayer player, long placements) {
             scatterSkips.add(placements);
         }
 
@@ -364,13 +364,13 @@ final class EditTestSupport {
         final List<String> noGround = new ArrayList<>();
 
         @Override
-        public void symmetryNoGround(ServerPlayerEntity player, int strokeId, int dabIndex, int copies) {
+        public void symmetryNoGround(ServerPlayer player, int strokeId, int dabIndex, int copies) {
             noGround.add(strokeId + ":" + dabIndex + ":" + copies);
         }
     }
 
     /** Forces the chunks under {@code box} and loads them now (generating if needed). */
-    static void loadAndForce(ServerWorld world, Box box) {
+    static void loadAndForce(ServerLevel world, Box box) {
         EngineTestSupport.forceChunks(world, box, true);
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) world.getChunk(cx, cz);
@@ -381,7 +381,7 @@ final class EditTestSupport {
     static final class WorldSnapshot {
         final Box box;
         final int[] states;
-        final Map<Long, NbtCompound> tiles = new HashMap<>();
+        final Map<Long, CompoundTag> tiles = new HashMap<>();
 
         WorldSnapshot(Box box, int[] states) {
             this.box = box;
@@ -397,25 +397,25 @@ final class EditTestSupport {
         }
     }
 
-    static WorldSnapshot capture(ServerWorld world, Box box) {
+    static WorldSnapshot capture(ServerLevel world, Box box) {
         int[] states = new int[Math.toIntExact(box.volume())];
         WorldSnapshot snapshot = new WorldSnapshot(box, states);
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         int i = 0;
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
-                    states[i++] = Block.getRawIdFromState(world.getBlockState(pos.set(x, y, z)));
+                    states[i++] = Block.getId(world.getBlockState(pos.set(x, y, z)));
                 }
             }
         }
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
-                WorldChunk chunk = world.getChunk(cx, cz);
+                LevelChunk chunk = world.getChunk(cx, cz);
                 for (Map.Entry<BlockPos, BlockEntity> entry : chunk.getBlockEntities().entrySet()) {
                     BlockPos p = entry.getKey();
                     if (!box.contains(p.getX(), p.getY(), p.getZ())) continue;
-                    snapshot.tiles.put(p.asLong(), entry.getValue().createNbtWithId(world.getRegistryManager()));
+                    snapshot.tiles.put(p.asLong(), entry.getValue().saveWithId(world.registryAccess()));
                 }
             }
         }
@@ -434,8 +434,8 @@ final class EditTestSupport {
                     if (a == b) continue;
                     diffs++;
                     if (first == null) {
-                        first = x + "," + y + "," + z + ": expected " + Block.getStateFromRawId(a) + ", got "
-                                + Block.getStateFromRawId(b);
+                        first = x + "," + y + "," + z + ": expected " + Block.stateById(a) + ", got "
+                                + Block.stateById(b);
                     }
                 }
             }
@@ -444,19 +444,19 @@ final class EditTestSupport {
         if (!expected.tiles.keySet().equals(actual.tiles.keySet())) {
             return "block entities at " + positions(expected.tiles) + ", expected; got " + positions(actual.tiles);
         }
-        for (Map.Entry<Long, NbtCompound> entry : expected.tiles.entrySet()) {
-            NbtCompound got = actual.tiles.get(entry.getKey());
+        for (Map.Entry<Long, CompoundTag> entry : expected.tiles.entrySet()) {
+            CompoundTag got = actual.tiles.get(entry.getKey());
             if (!Objects.equals(entry.getValue(), got)) {
-                return "block entity at " + BlockPos.fromLong(entry.getKey()).toShortString() + ": expected "
+                return "block entity at " + BlockPos.of(entry.getKey()).toShortString() + ": expected "
                         + entry.getValue() + ", got " + got;
             }
         }
         return null;
     }
 
-    private static String positions(Map<Long, NbtCompound> tiles) {
+    private static String positions(Map<Long, CompoundTag> tiles) {
         List<String> list = new ArrayList<>();
-        for (long key : tiles.keySet()) list.add(BlockPos.fromLong(key).toShortString());
+        for (long key : tiles.keySet()) list.add(BlockPos.of(key).toShortString());
         return list.toString();
     }
 
@@ -481,16 +481,16 @@ final class EditTestSupport {
         final int topY;
         final BlockBuffer blocks = new BlockBuffer();
 
-        SnapshotWorld(ServerWorld world, StateSpace states, Box box) {
+        SnapshotWorld(ServerLevel world, StateSpace states, Box box) {
             this.states = states;
             this.box = box;
-            this.bottomY = world.getBottomY();
-            this.topY = world.getTopY();
-            BlockPos.Mutable pos = new BlockPos.Mutable();
+            this.bottomY = world.getMinBuildHeight();
+            this.topY = world.getMaxBuildHeight();
+            BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
             for (int y = box.min().y(); y <= box.max().y(); y++) {
                 for (int z = box.min().z(); z <= box.max().z(); z++) {
                     for (int x = box.min().x(); x <= box.max().x(); x++) {
-                        blocks.set(x, y, z, Block.getRawIdFromState(world.getBlockState(pos.set(x, y, z))));
+                        blocks.set(x, y, z, Block.getId(world.getBlockState(pos.set(x, y, z))));
                     }
                 }
             }
@@ -539,7 +539,7 @@ final class EditTestSupport {
         }
 
         private void inside(int x, int y, int z) {
-            if (!box.contains(x, y, z)) throw new GameTestException("snapshot read outside its box at " + x + "," + y + "," + z);
+            if (!box.contains(x, y, z)) throw new GameTestAssertException("snapshot read outside its box at " + x + "," + y + "," + z);
         }
     }
 }

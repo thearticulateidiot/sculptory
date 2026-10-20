@@ -40,11 +40,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerPlayer;
 
 /**
  * History names per tool: a {@code RunOp} carrying a tool label makes a job and
@@ -56,8 +55,8 @@ public final class ToolLabelGameTest implements FabricGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
 
     /** One op after another, each named after its tool; a misfit label is refused; no label keeps the op's name. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_tool_labels", tickLimit = LIMIT)
-    public void stepsAreNamedAfterTheirTools(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_tool_labels", timeoutTicks = LIMIT)
+    public void stepsAreNamedAfterTheirTools(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1080);
         int x0 = at[0], z0 = at[1];
@@ -77,10 +76,10 @@ public final class ToolLabelGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         // The session takes only so many requests a second: its clock is moved on between the bursts below.
         long[] clock = {System.nanoTime()};
-        ServerDispatcher<ServerPlayerEntity> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
+        ServerDispatcher<ServerPlayer> dispatcher = new ServerDispatcher<>(h.service, clips, ScatterService.disabled(), h.runtime.permissions(),
                 () -> Limits.DEFAULTS, h.runtime::states, () -> clock[0]);
         Transport transport = new Transport(h, h.player);
-        NetSession<ServerPlayerEntity> session = dispatcher.open(transport);
+        NetSession<ServerPlayer> session = dispatcher.open(transport);
         transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS, Features.CLIPBOARD)));
 
         Region flood = new Region.Cuboid(box(x0 + 8, 104, z0, x0 + 11, 104, z0 + 3));       // air over the stone
@@ -91,62 +90,62 @@ public final class ToolLabelGameTest implements FabricGameTest {
         Box copied = box(x0 + 8, 103, z0 + 8, x0 + 9, 103, z0 + 9);
         List<String> expected = new ArrayList<>();
         UUID[] clipboard = new UUID[1];
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> run(transport, dispatcher, session, 1,
+        context.startSequence()
+                .thenWaitUntil(() -> run(transport, dispatcher, session, 1,
                         new OpSpec.Fill(flood, new Pattern.Waterlog(water), CellMask.ANY), OpLabel.FLOOD))
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 1, "the flood");
                     expected.add(0, "Flood · 16 blocks");
                     checkLabels(h, expected);
                     run(transport, dispatcher, session, 2, new OpSpec.Fill(drain, new Pattern.Dry(), CellMask.ANY), OpLabel.DRAIN);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 2, "the drain");
                     expected.add(0, "Drain · 16 blocks");
                     checkLabels(h, expected);
                     run(transport, dispatcher, session, 3, new OpSpec.Stack(extrude, 0, 1, 0, 1, EntityFilter.NONE), OpLabel.EXTRUDE);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 3, "the extrude");
                     expected.add(0, "Extrude · 4 blocks");
                     checkLabels(h, expected);
                     run(transport, dispatcher, session, 4, new OpSpec.Erase(carve, CellMask.ANY), OpLabel.CARVE);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 4, "the carve");
                     expected.add(0, "Carve · 4 blocks");
                     checkLabels(h, expected);
                     run(transport, dispatcher, session, 5, new OpSpec.Move(smear, new BlockPos(0, 1, 0), Transform.IDENTITY,
                             new Pattern.Single(air), EntityFilter.NONE), OpLabel.SMEAR);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 5, "the smear");
                     expected.add(0, "Smear · 8 blocks");
                     checkLabels(h, expected);
                     transport.receive(dispatcher, session, new C2S.Copy(6, new Region.Cuboid(copied), copied.min(), false,
                             CellMask.ANY, EntityFilter.NONE));
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     S2C.ClipboardReady ready = transport.first(S2C.ClipboardReady.class);
                     check(ready.reqId() == 6 && ready.cells() == 4, "copy " + ready);
                     clipboard[0] = ready.clipboardId();
                     run(transport, dispatcher, session, 7, paste(clipboard[0], new BlockPos(x0 + 8, 105, z0 + 8)), OpLabel.ROAD);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 7, "the road");
                     expected.add(0, "Road · 4 blocks");
                     checkLabels(h, expected);
                     run(transport, dispatcher, session, 8, paste(clipboard[0], new BlockPos(x0 + 8, 107, z0 + 8)), OpLabel.ROOF);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 8, "the roof");
                     expected.add(0, "Roof · 4 blocks");
                     checkLabels(h, expected);
@@ -154,7 +153,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
                     transport.receive(dispatcher, session, new C2S.RunOp(9, new OpSpec.Erase(carve, CellMask.ANY), false,
                             ConflictPolicy.SKIP_CONFLICTS, OpLabel.FLOOD));
                     S2C.JobRejected rejected = transport.sent(S2C.JobRejected.class).stream().filter(r -> r.reqId() == 9)
-                            .findFirst().orElseThrow(() -> new GameTestException("not refused: " + transport.sent));
+                            .findFirst().orElseThrow(() -> new GameTestAssertException("not refused: " + transport.sent));
                     check(rejected.reason() == RejectReason.INVALID, "refused as " + rejected.reason());
                     check(transport.sent(S2C.JobAccepted.class).stream().noneMatch(a -> a.reqId() == 9), "nothing ran");
                     checkLabels(h, expected);
@@ -162,52 +161,52 @@ public final class ToolLabelGameTest implements FabricGameTest {
                     run(transport, dispatcher, session, 10, new OpSpec.Fill(flood, new Pattern.Single(stone), CellMask.ANY),
                             OpLabel.NONE);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 10, "the fill");
                     expected.add(0, "Fill · 16 blocks");
                     checkLabels(h, expected);
                     clock[0] += 3_000_000_000L; // three seconds on: the request allowance is full again
                 })
                 // Protocol 6: Extrude along a path, Taper and Sweep are generated pastes; Stamp a multi-paste.
-                .createAndAdd(() -> run(transport, dispatcher, session, 11, paste(clipboard[0], new BlockPos(x0 + 8, 109, z0 + 8)),
+                .thenWaitUntil(() -> run(transport, dispatcher, session, 11, paste(clipboard[0], new BlockPos(x0 + 8, 109, z0 + 8)),
                         OpLabel.PATH_EXTRUDE))
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 11, "the path extrusion");
                     expected.add(0, "Extrude path · 4 blocks");
                     checkLabels(h, expected);
                 })
-                .createAndAdd(() -> run(transport, dispatcher, session, 12, paste(clipboard[0], new BlockPos(x0 + 8, 111, z0 + 8)),
+                .thenWaitUntil(() -> run(transport, dispatcher, session, 12, paste(clipboard[0], new BlockPos(x0 + 8, 111, z0 + 8)),
                         OpLabel.TAPER))
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 12, "the taper");
                     expected.add(0, "Taper · 4 blocks");
                     checkLabels(h, expected);
                 })
-                .createAndAdd(() -> run(transport, dispatcher, session, 13, paste(clipboard[0], new BlockPos(x0 + 8, 113, z0 + 8)),
+                .thenWaitUntil(() -> run(transport, dispatcher, session, 13, paste(clipboard[0], new BlockPos(x0 + 8, 113, z0 + 8)),
                         OpLabel.SWEEP))
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 13, "the sweep");
                     expected.add(0, "Sweep · 4 blocks");
                     checkLabels(h, expected);
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     run(transport, dispatcher, session, 14, new OpSpec.PasteMany(new SourceRef.Clipboard(clipboard[0]),
                             List.of(new OpSpec.PasteMany.Placement(new BlockPos(x0 + 8, 115, z0 + 8), Orientation.IDENTITY),
                                     new OpSpec.PasteMany.Placement(new BlockPos(x0 + 11, 115, z0 + 8), Orientation.IDENTITY)),
                             new PasteOptions(true, false, false)), OpLabel.STAMP);
                 })
-                .createAndAdd(() -> {}) // one tick for the job to finish
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {}) // one tick for the job to finish
+                .thenWaitUntil(() -> {
                     finished(transport, 14, "the stamp");
                     expected.add(0, "Stamp · 8 blocks");
                     checkLabels(h, expected);
                     clock[0] += 3_000_000_000L; // three seconds on: the request allowance is full again
                 })
-                .createAndAdd(() -> {
+                .thenWaitUntil(() -> {
                     // Stamp names only a multi-paste, and a multi-paste takes no other tool's name.
                     transport.receive(dispatcher, session, new C2S.RunOp(15, paste(clipboard[0], new BlockPos(x0 + 8, 117,
                             z0 + 8)), false, ConflictPolicy.SKIP_CONFLICTS, OpLabel.STAMP));
@@ -218,7 +217,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
                     for (int reqId : new int[] {15, 16}) {
                         S2C.JobRejected misfit = transport.sent(S2C.JobRejected.class).stream()
                                 .filter(r -> r.reqId() == reqId).findFirst()
-                                .orElseThrow(() -> new GameTestException(reqId + " not refused: " + transport.sent));
+                                .orElseThrow(() -> new GameTestAssertException(reqId + " not refused: " + transport.sent));
                         check(misfit.reason() == RejectReason.INVALID, reqId + " refused as " + misfit.reason());
                     }
                     checkLabels(h, expected);
@@ -226,14 +225,14 @@ public final class ToolLabelGameTest implements FabricGameTest {
                     forceChunks(h.world, area, false);
                     h.close();
                 })
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     private static OpSpec.Paste paste(UUID clipboardId, BlockPos origin) {
         return new OpSpec.Paste(new SourceRef.Clipboard(clipboardId), origin, Transform.IDENTITY, new PasteOptions(true, false, false));
     }
 
-    private static void run(Transport transport, ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, int reqId, OpSpec op,
+    private static void run(Transport transport, ServerDispatcher<ServerPlayer> dispatcher, NetSession<ServerPlayer> session, int reqId, OpSpec op,
                             OpLabel label) {
         transport.receive(dispatcher, session, new C2S.RunOp(reqId, op, false, ConflictPolicy.SKIP_CONFLICTS, label));
         check(transport.sent(S2C.JobAccepted.class).stream().anyMatch(a -> a.reqId() == reqId),
@@ -243,9 +242,9 @@ public final class ToolLabelGameTest implements FabricGameTest {
     /** The job of {@code reqId} finished completely. */
     private static void finished(Transport transport, int reqId, String what) {
         UUID job = transport.sent(S2C.JobAccepted.class).stream().filter(a -> a.reqId() == reqId).findFirst()
-                .orElseThrow(() -> new GameTestException(what + " was not accepted")).jobId();
+                .orElseThrow(() -> new GameTestAssertException(what + " was not accepted")).jobId();
         S2C.JobFinished done = transport.sent(S2C.JobFinished.class).stream().filter(f -> f.jobId().equals(job)).findFirst()
-                .orElseThrow(() -> new GameTestException(what + " has not finished: " + transport.sent));
+                .orElseThrow(() -> new GameTestAssertException(what + " has not finished: " + transport.sent));
         check(done.outcome() == JobOutcome.COMPLETED && done.changed() > 0, what + " " + done);
     }
 
@@ -258,25 +257,25 @@ public final class ToolLabelGameTest implements FabricGameTest {
     /** A transport collecting what the dispatcher sends, decoded (as GenerateGameTest's). */
     private static final class Transport implements FabricTransport {
         final Harness h;
-        final ServerPlayerEntity player;
+        final ServerPlayer player;
         final List<S2C> sent = new ArrayList<>();
 
-        Transport(Harness h, ServerPlayerEntity player) {
+        Transport(Harness h, ServerPlayer player) {
             this.h = h;
             this.player = player;
         }
 
-        void receive(ServerDispatcher<ServerPlayerEntity> dispatcher, NetSession<ServerPlayerEntity> session, C2S message) {
+        void receive(ServerDispatcher<ServerPlayer> dispatcher, NetSession<ServerPlayer> session, C2S message) {
             try {
                 dispatcher.receive(session, Codec.encodeC2S(message, h.runtime.states()));
             } catch (ProtocolException e) {
-                throw new GameTestException("encode: " + e.getMessage());
+                throw new GameTestAssertException("encode: " + e.getMessage());
             }
         }
 
         <T> T first(Class<T> type) {
             List<T> all = sent(type);
-            if (all.isEmpty()) throw new GameTestException("no " + type.getSimpleName() + " sent: " + sent);
+            if (all.isEmpty()) throw new GameTestAssertException("no " + type.getSimpleName() + " sent: " + sent);
             return all.get(0);
         }
 
@@ -285,7 +284,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
         }
 
         @Override
-        public ServerPlayerEntity player() {
+        public ServerPlayer player() {
             return player;
         }
 
@@ -299,7 +298,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
             try {
                 sent.add(Codec.decodeS2C(frame, h.runtime.states()));
             } catch (ProtocolException e) {
-                throw new GameTestException("the server sent an undecodable frame: " + e.getMessage());
+                throw new GameTestAssertException("the server sent an undecodable frame: " + e.getMessage());
             }
         }
 
@@ -318,7 +317,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
 
         @Override
         public void disconnect(String reason) {
-            throw new GameTestException("disconnected: " + reason);
+            throw new GameTestAssertException("disconnected: " + reason);
         }
     }
 }

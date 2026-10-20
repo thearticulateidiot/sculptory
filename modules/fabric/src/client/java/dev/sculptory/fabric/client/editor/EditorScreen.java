@@ -2,9 +2,9 @@ package dev.sculptory.fabric.client.editor;
 
 import java.nio.file.Path;
 import java.util.List;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.text.Text;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.network.chat.Component;
 
 /**
  * The editor's single overlay screen. It doesn't pause, draws no background (no blur, no dimming)
@@ -17,7 +17,7 @@ public final class EditorScreen extends Screen {
     private final EditorClient editor;
 
     EditorScreen(EditorClient editor) {
-        super(Text.translatable("sculptory.editor.title"));
+        super(Component.translatable("sculptory.editor.title"));
         this.editor = editor;
     }
 
@@ -27,17 +27,17 @@ public final class EditorScreen extends Screen {
     }
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void render(GuiGraphics context, int mouseX, int mouseY, float delta) {
         editor.renderScreen(context, mouseX, mouseY);
     }
 
     @Override
-    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
+    public void renderBackground(GuiGraphics context, int mouseX, int mouseY, float delta) {
         // The world stays fully visible behind the editor.
     }
 
     @Override
-    public boolean shouldPause() {
+    public boolean isPauseScreen() {
         return false;
     }
 
@@ -48,7 +48,7 @@ public final class EditorScreen extends Screen {
 
     /** Anything asking this screen to close (rather than Esc, which the router handles) leaves the editor. */
     @Override
-    public void close() {
+    public void onClose() {
         editor.closeRequested();
     }
 
@@ -107,7 +107,7 @@ public final class EditorScreen extends Screen {
 
     /** Files dropped on the game window while the editor is open: schematics (.schem, .litematic, .nbt) are imported. */
     @Override
-    public void filesDragged(List<Path> paths) {
+    public void onFilesDrop(List<Path> paths) {
         editor.filesDragged(paths);
     }
 }

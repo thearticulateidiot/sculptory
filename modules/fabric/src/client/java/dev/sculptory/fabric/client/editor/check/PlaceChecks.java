@@ -10,8 +10,8 @@ import dev.sculptory.fabric.client.editor.tools.place.PlaceTool;
 import dev.sculptory.fabric.client.editor.windows.EditorWindows;
 import java.util.List;
 import java.util.Optional;
-import net.minecraft.block.BlockState;
-import net.minecraft.util.BlockMirror;
+import net.minecraft.world.level.block.Mirror;
+import net.minecraft.world.level.block.state.BlockState;
 import org.lwjgl.glfw.GLFW;
 
 /**
@@ -80,7 +80,7 @@ final class PlaceChecks {
         for (int dx = 0; dx <= 2; dx++) {
             for (int dz = 0; dz <= 2; dz++) {
                 BlockState state = b.world().getBlockState(b.pos(x + dx, 0, z + dz));
-                b.set(2 * CENTRE - (x + dx), 0, z + dz, state.mirror(BlockMirror.FRONT_BACK));
+                b.set(2 * CENTRE - (x + dx), 0, z + dz, state.mirror(Mirror.FRONT_BACK));
             }
         }
     }
@@ -105,7 +105,7 @@ final class PlaceChecks {
         for (int x = box.min().x(); x <= box.max().x(); x++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 expected.set(x, box.min().y(), z, stairs);
-                expected.set(2 * a.x(CENTRE) - x, box.min().y(), z, stairs.mirror(BlockMirror.FRONT_BACK));
+                expected.set(2 * a.x(CENTRE) - x, box.min().y(), z, stairs.mirror(Mirror.FRONT_BACK));
             }
         }
         Cells filled = run.exact("the Fill fills the box and its mirror image, the mirrored stairs facing west",
@@ -161,7 +161,7 @@ final class PlaceChecks {
             for (int z = source.min().z(); z <= source.max().z(); z++) {
                 BlockState state = before.at(x, source.min().y(), z);
                 expected.set(x + dx, target.min().y(), z + dz, state);
-                expected.set(2 * a.x(CENTRE) - (x + dx), target.min().y(), z + dz, state.mirror(BlockMirror.FRONT_BACK));
+                expected.set(2 * a.x(CENTRE) - (x + dx), target.min().y(), z + dz, state.mirror(Mirror.FRONT_BACK));
             }
         }
         run.exact("the paste places the copy where the ghost was and its mirror image", expected.done());
@@ -191,7 +191,7 @@ final class PlaceChecks {
         run.require("the move's ghost dropped where it was clicked", target != null, "no placement");
         run.edit("mirrored move", () -> d.action(KeyAction.COMMIT));
         Cells.Editor expected = before.edit();
-        BlockState air = net.minecraft.block.Blocks.AIR.getDefaultState();
+        BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
         int dx = target.min().x() - source.min().x();
         int dz = target.min().z() - source.min().z();
         for (int x = source.min().x(); x <= source.max().x(); x++) {
@@ -205,7 +205,7 @@ final class PlaceChecks {
                 BlockState state = before.at(x, source.min().y(), z);
                 expected.set(x + dx, target.min().y(), z + dz, state);
                 expected.set(2 * a.x(CENTRE) - (x + dx), target.min().y(), z + dz,
-                        state.mirror(BlockMirror.FRONT_BACK));
+                        state.mirror(Mirror.FRONT_BACK));
             }
         }
         run.exact("the move takes both structures to the target and its mirror image", expected.done());

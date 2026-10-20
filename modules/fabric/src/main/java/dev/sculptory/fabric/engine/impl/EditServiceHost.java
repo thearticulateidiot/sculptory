@@ -57,10 +57,9 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.util.Util;
-import net.minecraft.util.WorldSavePath;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -114,9 +113,9 @@ public final class EditServiceHost {
     private static volatile boolean hookWarned;
     /** System property that moves the host's history folder (tests). */
     public static final String HISTORY_DIR_PROPERTY = "sculptory.historyDir";
-    private static volatile EngineEditService<ServerPlayerEntity, ServerWorld> current;
-    private static volatile ServerClipboards<ServerPlayerEntity, ServerWorld> clipboards;
-    private static volatile ServerScatter<ServerPlayerEntity, ServerWorld> scatter;
+    private static volatile EngineEditService<ServerPlayer, ServerLevel> current;
+    private static volatile ServerClipboards<ServerPlayer, ServerLevel> clipboards;
+    private static volatile ServerScatter<ServerPlayer, ServerLevel> scatter;
 
     private EditServiceHost() {}
 
@@ -126,8 +125,8 @@ public final class EditServiceHost {
      * @param listeners listeners for undo/redo jobs, e.g. {@code ServerNet::jobListener}
      * @param acks dab acknowledgements, e.g. {@code ServerNet::predictionApplied}
      */
-    public static synchronized void install(Function<ServerPlayerEntity, JobListener> listeners,
-                                            AckSink<ServerPlayerEntity> acks, EditEvents<ServerPlayerEntity> events) {
+    public static synchronized void install(Function<ServerPlayer, JobListener> listeners,
+                                            AckSink<ServerPlayer> acks, EditEvents<ServerPlayer> events) {
         if (installed) throw new IllegalStateException("EditServiceHost is already installed");
         installed = true;
         Objects.requireNonNull(listeners);
@@ -160,7 +159,7 @@ public final class EditServiceHost {
                 var planning = scatter;
                 if (planning != null) planning.housekeeping();
                 var clips = clipboards;
-                if (clips != null && server.getTicks() % INDEX_FLUSH_TICKS == 0) clips.flushSoon();
+                if (clips != null && server.getTickCount() % INDEX_FLUSH_TICKS == 0) clips.flushSoon();
             }
         });
         ServerLifecycleEvents.AFTER_SAVE.register((server, flush, force) -> {
@@ -171,16 +170,16 @@ public final class EditServiceHost {
             }
         });
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            ServerPlayerEntity player = handler.player;
-            if (server.isOnThread()) {
+            ServerPlayer player = handler.player;
+            if (server.isSameThread()) {
                 playerJoined(server, player);
             } else {
                 server.execute(() -> playerJoined(server, player));
             }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            ServerPlayerEntity player = handler.player;
-            if (server.isOnThread()) {
+            ServerPlayer player = handler.player;
+            if (server.isSameThread()) {
                 playerLeft(server, player);
             } else {
                 server.execute(() -> playerLeft(server, player));
@@ -222,7 +221,7 @@ public final class EditServiceHost {
      * test world) puts it in {@code <property>/<world folder name>} instead.
      */
     public static Path historyDir(MinecraftServer server) {
-        Path world = server.getSavePath(WorldSavePath.ROOT).toAbsolutePath().normalize();
+        Path world = server.getWorldPath(LevelResource.ROOT).toAbsolutePath().normalize();
         String override = System.getProperty(HISTORY_DIR_PROPERTY);
         if (override != null && !override.isBlank()) {
             return Path.of(override).resolve(String.valueOf(world.getFileName())).normalize();
@@ -293,11 +292,11 @@ public final class EditServiceHost {
     }
 
     /** A player joined (the {@code JOIN} hook; server thread): their saved history starts loading. */
-    public static void playerJoined(MinecraftServer server, ServerPlayerEntity player) {
+    public static void playerJoined(MinecraftServer server, ServerPlayer player) {
         var service = current;
         if (service == null || !runs(service, server) || player == null) return;
         try {
-            service.playerJoined(player.getUuid());
+            service.playerJoined(player.getUUID());
         } catch (RuntimeException | LinkageError e) {
             LOG.error("Sculptory: loading {}'s undo history failed", player.getGameProfile().getName(), e);
         }
@@ -307,7 +306,7 @@ public final class EditServiceHost {
      * The game is about to save chunk (cx, cz) of {@code world} ({@code ServerChunkLoadingManagerMixin}): the undo
      * history of the engine's changes there is written first ({@link EngineEditService#beforeChunkSave}). Never throws.
      */
-    public static void beforeChunkSave(ServerWorld world, int cx, int cz) {
+    public static void beforeChunkSave(ServerLevel world, int cx, int cz) {
         CHUNK_SAVE_HOOKS.incrementAndGet();
         var service = current;
         if (service == null || world == null || !runs(service, world.getServer())) return;
@@ -329,16 +328,16 @@ public final class EditServiceHost {
      * looks at online players. Then the scatter preview ends and the edit service lets go of the player (their jobs
      * that have not started are cancelled). A no-op without a running engine.
      */
-    public static void playerLeft(MinecraftServer server, ServerPlayerEntity player) {
+    public static void playerLeft(MinecraftServer server, ServerPlayer player) {
         var service = current;
         if (service == null || !runs(service, server) || player == null) return;
         playerLeft(service, scatter, player);
     }
 
-    /** {@link #playerLeft(MinecraftServer, ServerPlayerEntity)} on the given services ({@code planning} may be null). */
-    public static void playerLeft(EngineEditService<ServerPlayerEntity, ServerWorld> service,
-                                  ServerScatter<ServerPlayerEntity, ServerWorld> planning, ServerPlayerEntity player) {
-        UUID id = player.getUuid();
+    /** {@link #playerLeft(MinecraftServer, ServerPlayer)} on the given services ({@code planning} may be null). */
+    public static void playerLeft(EngineEditService<ServerPlayer, ServerLevel> service,
+                                  ServerScatter<ServerPlayer, ServerLevel> planning, ServerPlayer player) {
+        UUID id = player.getUUID();
         String name = player.getGameProfile().getName();
         // Each step on its own: none may skip the next, nor vanilla's disconnect handling after this hook.
         try {
@@ -370,11 +369,11 @@ public final class EditServiceHost {
      *     resent the command tree (join, respawn, a change of world), which re-checks the jobs in the player's current
      *     world only, since a permissions mod may grant a node in one world only
      */
-    public static void permissionsChanged(ServerPlayerEntity player, boolean allWorlds) {
+    public static void permissionsChanged(ServerPlayer player, boolean allWorlds) {
         if (player == null) return;
         MinecraftServer server = player.getServer();
         if (server == null) return;
-        if (!server.isOnThread()) {
+        if (!server.isSameThread()) {
             server.execute(() -> permissionsChanged(player, allWorlds));
             return;
         }
@@ -399,48 +398,48 @@ public final class EditServiceHost {
         return service == null ? 0 : service.builderPowersOf(player);
     }
 
-    public static Optional<ServerScatter<ServerPlayerEntity, ServerWorld>> findScatter(MinecraftServer server) {
+    public static Optional<ServerScatter<ServerPlayer, ServerLevel>> findScatter(MinecraftServer server) {
         var service = scatter;
         var edits = current;
         return service != null && edits != null && runs(edits, server) ? Optional.of(service) : Optional.empty();
     }
 
     /** A {@link ScatterService} delegating to the running server's; refuses with {@code DISABLED} without one. */
-    public static ScatterService<ServerPlayerEntity> scatter() {
+    public static ScatterService<ServerPlayer> scatter() {
         return SCATTER;
     }
 
     /**
      * A {@link TinkerService} delegating to the running server's edit service; refuses with {@code DISABLED} without one.
      */
-    public static TinkerService<ServerPlayerEntity> tinker() {
+    public static TinkerService<ServerPlayer> tinker() {
         return TINKER;
     }
 
     /** The clipboard service of a running server. */
-    public static Optional<ServerClipboards<ServerPlayerEntity, ServerWorld>> findClipboards(MinecraftServer server) {
+    public static Optional<ServerClipboards<ServerPlayer, ServerLevel>> findClipboards(MinecraftServer server) {
         var service = clipboards;
         return service != null && runs(service.edits(), server) ? Optional.of(service) : Optional.empty();
     }
 
     /** A {@link ClipboardService} delegating to the running server's; refuses with {@code DISABLED} without one. */
-    public static ClipboardService<ServerPlayerEntity> clipboards() {
+    public static ClipboardService<ServerPlayer> clipboards() {
         return CLIPBOARDS;
     }
 
     /** The service of a running server. */
-    public static Optional<EngineEditService<ServerPlayerEntity, ServerWorld>> find(MinecraftServer server) {
+    public static Optional<EngineEditService<ServerPlayer, ServerLevel>> find(MinecraftServer server) {
         var service = current;
         return service != null && runs(service, server) ? Optional.of(service) : Optional.empty();
     }
 
     /** An {@link EditService} (and {@link HistoryView}) delegating to the running server's service. */
-    public static EditService<ServerPlayerEntity> service() {
+    public static EditService<ServerPlayer> service() {
         return FACADE;
     }
 
     /** A {@link PermissionService} delegating to the running server's engine; denies everything without one. */
-    public static PermissionService<ServerPlayerEntity, ServerWorld> permissions() {
+    public static PermissionService<ServerPlayer, ServerLevel> permissions() {
         return PERMISSIONS;
     }
 
@@ -463,27 +462,27 @@ public final class EditServiceHost {
     }
 
     /** Whether {@code service} is the engine of {@code server} (its platform is that server's runtime). */
-    private static boolean runs(EngineEditService<ServerPlayerEntity, ServerWorld> service, MinecraftServer server) {
+    private static boolean runs(EngineEditService<ServerPlayer, ServerLevel> service, MinecraftServer server) {
         return service.runtime() instanceof EngineRuntime runtime && runtime.server() == server;
     }
 
-    private static EngineEditService<ServerPlayerEntity, ServerWorld> of(ServerPlayerEntity p) throws EditRejected {
+    private static EngineEditService<ServerPlayer, ServerLevel> of(ServerPlayer p) throws EditRejected {
         return find(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"));
     }
 
-    private static final class Facade implements EditService<ServerPlayerEntity>, HistoryView<ServerPlayerEntity> {
+    private static final class Facade implements EditService<ServerPlayer>, HistoryView<ServerPlayer> {
         @Override
-        public JobTicket run(ServerPlayerEntity p, OpSpec s, RunOptions o, JobListener l) throws EditRejected {
+        public JobTicket run(ServerPlayer p, OpSpec s, RunOptions o, JobListener l) throws EditRejected {
             return of(p).run(p, s, o, l);
         }
 
         @Override
-        public void beginStroke(ServerPlayerEntity p, int strokeId, BrushSpec spec) throws EditRejected {
+        public void beginStroke(ServerPlayer p, int strokeId, BrushSpec spec) throws EditRejected {
             of(p).beginStroke(p, strokeId, spec);
         }
 
         @Override
-        public DabOutcome dabs(ServerPlayerEntity p, int strokeId, int seq, List<Dab> dabs) {
+        public DabOutcome dabs(ServerPlayer p, int strokeId, int seq, List<Dab> dabs) {
             var service = find(p.getServer());
             if (service.isPresent()) return service.get().dabs(p, strokeId, seq, dabs);
             int last = dabs == null || dabs.isEmpty() || dabs.get(dabs.size() - 1) == null
@@ -492,132 +491,132 @@ public final class EditServiceHost {
         }
 
         @Override
-        public void predicted(ServerPlayerEntity p) {
+        public void predicted(ServerPlayer p) {
             find(p.getServer()).ifPresent(service -> service.predicted(p));
         }
 
         @Override
-        public void endStroke(ServerPlayerEntity p, int strokeId) {
+        public void endStroke(ServerPlayer p, int strokeId) {
             find(p.getServer()).ifPresent(service -> service.endStroke(p, strokeId));
         }
 
         @Override
-        public JobTicket undo(ServerPlayerEntity p, ConflictPolicy c) throws EditRejected {
+        public JobTicket undo(ServerPlayer p, ConflictPolicy c) throws EditRejected {
             return of(p).undo(p, c);
         }
 
         @Override
-        public JobTicket redo(ServerPlayerEntity p, ConflictPolicy c) throws EditRejected {
+        public JobTicket redo(ServerPlayer p, ConflictPolicy c) throws EditRejected {
             return of(p).redo(p, c);
         }
 
         @Override
-        public JobTicket historyOverwrite(ServerPlayerEntity p, boolean redo, int steps) throws EditRejected {
+        public JobTicket historyOverwrite(ServerPlayer p, boolean redo, int steps) throws EditRejected {
             return of(p).historyOverwrite(p, redo, steps);
         }
 
         @Override
-        public void builderPowers(ServerPlayerEntity p, int powers) {
+        public void builderPowers(ServerPlayer p, int powers) {
             find(p.getServer()).ifPresent(service -> service.builderPowers(p, powers));
         }
 
         @Override
-        public BuilderOutcome builderPlace(ServerPlayerEntity p, C2S.BuilderPlace place) {
+        public BuilderOutcome builderPlace(ServerPlayer p, C2S.BuilderPlace place) {
             return find(p.getServer()).map(service -> service.builderPlace(p, place))
                     .orElse(BuilderOutcome.refused(BuilderOutcome.Refusal.DISABLED, "engine not running"));
         }
 
         @Override
-        public BuilderOutcome builderBreak(ServerPlayerEntity p, C2S.BuilderBreak breaks) {
+        public BuilderOutcome builderBreak(ServerPlayer p, C2S.BuilderBreak breaks) {
             return find(p.getServer()).map(service -> service.builderBreak(p, breaks))
                     .orElse(BuilderOutcome.refused(BuilderOutcome.Refusal.DISABLED, "engine not running"));
         }
 
         @Override
-        public void builderDragEnd(ServerPlayerEntity p, int dragId) {
+        public void builderDragEnd(ServerPlayer p, int dragId) {
             find(p.getServer()).ifPresent(service -> service.builderDragEnd(p, dragId));
         }
 
         @Override
-        public S2C.NavigateResult navigate(ServerPlayerEntity p, C2S.Navigate m) {
+        public S2C.NavigateResult navigate(ServerPlayer p, C2S.Navigate m) {
             return find(p.getServer()).map(service -> service.navigate(p, m))
                     .orElse(S2C.NavigateResult.refused(m.reqId(), RejectReason.DISABLED));
         }
 
         @Override
-        public boolean cancel(ServerPlayerEntity p, UUID jobId) {
+        public boolean cancel(ServerPlayer p, UUID jobId) {
             return find(p.getServer()).map(service -> service.cancel(p, jobId)).orElse(false);
         }
 
         @Override
-        public S2C.HistoryState historyState(ServerPlayerEntity player) {
+        public S2C.HistoryState historyState(ServerPlayer player) {
             return find(player.getServer()).map(service -> toHistoryState(service.history(player))).orElse(null);
         }
     }
 
-    private static final class ClipboardFacade implements ClipboardService<ServerPlayerEntity> {
-        private static ServerClipboards<ServerPlayerEntity, ServerWorld> of(ServerPlayerEntity p) throws EditRejected {
+    private static final class ClipboardFacade implements ClipboardService<ServerPlayer> {
+        private static ServerClipboards<ServerPlayer, ServerLevel> of(ServerPlayer p) throws EditRejected {
             return findClipboards(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"));
         }
 
         @Override
-        public JobTicket copy(ServerPlayerEntity p, Region region, BlockPos origin, boolean cut, CellMask mask,
+        public JobTicket copy(ServerPlayer p, Region region, BlockPos origin, boolean cut, CellMask mask,
                               EntityFilter entities, JobListener cutListener, Reply<ClipboardInfo> reply)
                 throws EditRejected {
             return of(p).copy(p, region, origin, cut, mask, entities, cutListener, reply);
         }
 
         @Override
-        public JobTicket copy(ServerPlayerEntity p, Box box, BlockPos origin, boolean cut, CellMask mask,
+        public JobTicket copy(ServerPlayer p, Box box, BlockPos origin, boolean cut, CellMask mask,
                               JobListener cutListener, Reply<ClipboardInfo> reply) throws EditRejected {
             return of(p).copy(p, box, origin, cut, mask, cutListener, reply);
         }
 
         @Override
-        public void preview(ServerPlayerEntity p, SourceRef source, Reply<Outbound> reply) throws EditRejected {
+        public void preview(ServerPlayer p, SourceRef source, Reply<Outbound> reply) throws EditRejected {
             of(p).preview(p, source, reply);
         }
 
         @Override
-        public void export(ServerPlayerEntity p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
+        public void export(ServerPlayer p, UUID clipboardId, SchematicFormat format, Reply<Outbound> reply)
                 throws EditRejected {
             of(p).export(p, clipboardId, format, reply);
         }
 
         @Override
-        public void export(ServerPlayerEntity p, UUID clipboardId, Reply<Outbound> reply) throws EditRejected {
+        public void export(ServerPlayer p, UUID clipboardId, Reply<Outbound> reply) throws EditRejected {
             of(p).export(p, clipboardId, reply);
         }
 
         @Override
-        public Upload beginUpload(ServerPlayerEntity p, String fileName, long totalBytes) throws EditRejected {
+        public Upload beginUpload(ServerPlayer p, String fileName, long totalBytes) throws EditRejected {
             return of(p).beginUpload(p, fileName, totalBytes);
         }
 
         @Override
-        public SelectionUpload beginSelectionUpload(ServerPlayerEntity p, Sha256 hash, Box bounds, long cells,
+        public SelectionUpload beginSelectionUpload(ServerPlayer p, Sha256 hash, Box bounds, long cells,
                                                     long totalBytes) throws EditRejected {
             return of(p).beginSelectionUpload(p, hash, bounds, cells, totalBytes);
         }
 
         @Override
-        public Upload beginGeneratedUpload(ServerPlayerEntity p, Box bounds, long cells, long totalBytes)
+        public Upload beginGeneratedUpload(ServerPlayer p, Box bounds, long cells, long totalBytes)
                 throws EditRejected {
             return of(p).beginGeneratedUpload(p, bounds, cells, totalBytes);
         }
 
         @Override
-        public void list(ServerPlayerEntity p, String folder, Reply<Listing> reply) throws EditRejected {
+        public void list(ServerPlayer p, String folder, Reply<Listing> reply) throws EditRejected {
             of(p).list(p, folder, reply);
         }
 
         @Override
-        public void load(ServerPlayerEntity p, String path, Reply<ClipboardInfo> reply) throws EditRejected {
+        public void load(ServerPlayer p, String path, Reply<ClipboardInfo> reply) throws EditRejected {
             of(p).load(p, path, reply);
         }
 
         @Override
-        public void save(ServerPlayerEntity p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected {
+        public void save(ServerPlayer p, UUID clipboardId, String path, Reply<Saved> reply) throws EditRejected {
             of(p).save(p, clipboardId, path, reply);
         }
 
@@ -625,86 +624,86 @@ public final class EditServiceHost {
         // server. EditServiceHostFacadesTest fails when a facade leaves an interface method to its default.
 
         @Override
-        public void move(ServerPlayerEntity p, boolean folder, String from, String to, Reply<LibraryChange> reply)
+        public void move(ServerPlayer p, boolean folder, String from, String to, Reply<LibraryChange> reply)
                 throws EditRejected {
             of(p).move(p, folder, from, to, reply);
         }
 
         @Override
-        public void delete(ServerPlayerEntity p, boolean folder, String path, Reply<LibraryChange> reply)
+        public void delete(ServerPlayer p, boolean folder, String path, Reply<LibraryChange> reply)
                 throws EditRejected {
             of(p).delete(p, folder, path, reply);
         }
 
         @Override
-        public void createFolder(ServerPlayerEntity p, String path, Reply<LibraryChange> reply) throws EditRejected {
+        public void createFolder(ServerPlayer p, String path, Reply<LibraryChange> reply) throws EditRejected {
             of(p).createFolder(p, path, reply);
         }
 
         @Override
-        public Optional<LibraryChange> shownTo(ServerPlayerEntity viewer, LibraryChange change) {
+        public Optional<LibraryChange> shownTo(ServerPlayer viewer, LibraryChange change) {
             return findClipboards(viewer.getServer()).flatMap(service -> service.shownTo(viewer, change));
         }
 
         @Override
-        public void savePalette(ServerPlayerEntity p, String path, BlockPalette palette, Reply<LibraryChange> reply)
+        public void savePalette(ServerPlayer p, String path, BlockPalette palette, Reply<LibraryChange> reply)
                 throws EditRejected {
             of(p).savePalette(p, path, palette, reply);
         }
 
         @Override
-        public void loadPalette(ServerPlayerEntity p, String path, Reply<LoadedPalette> reply) throws EditRejected {
+        public void loadPalette(ServerPlayer p, String path, Reply<LoadedPalette> reply) throws EditRejected {
             of(p).loadPalette(p, path, reply);
         }
 
         @Override
-        public void access(ServerPlayerEntity p, String path, Reply<AssetAccess> reply) throws EditRejected {
+        public void access(ServerPlayer p, String path, Reply<AssetAccess> reply) throws EditRejected {
             of(p).access(p, path, reply);
         }
 
         @Override
-        public void setAccess(ServerPlayerEntity p, String path, AssetAccess access, Reply<AccessChange> reply)
+        public void setAccess(ServerPlayer p, String path, AssetAccess access, Reply<AccessChange> reply)
                 throws EditRejected {
             of(p).setAccess(p, path, access, reply);
         }
 
         @Override
-        public Optional<LibraryChange> shownAccessChange(ServerPlayerEntity viewer, AccessChange change) {
+        public Optional<LibraryChange> shownAccessChange(ServerPlayer viewer, AccessChange change) {
             return findClipboards(viewer.getServer()).flatMap(service -> service.shownAccessChange(viewer, change));
         }
     }
 
-    private static final class ScatterFacade implements ScatterService<ServerPlayerEntity> {
+    private static final class ScatterFacade implements ScatterService<ServerPlayer> {
         @Override
-        public void preview(ServerPlayerEntity p, C2S.ScatterPreview request, PreviewReply reply) throws EditRejected {
+        public void preview(ServerPlayer p, C2S.ScatterPreview request, PreviewReply reply) throws EditRejected {
             findScatter(p.getServer()).orElseThrow(() -> new EditRejected(RejectReason.DISABLED, "engine not running"))
                     .preview(p, request, reply);
         }
     }
 
-    private static final class TinkerFacade implements TinkerService<ServerPlayerEntity> {
+    private static final class TinkerFacade implements TinkerService<ServerPlayer> {
         @Override
-        public void block(ServerPlayerEntity p, BlockPos pos, int expected, int target,
+        public void block(ServerPlayer p, BlockPos pos, int expected, int target,
                           dev.sculptory.core.tinker.SignText sign) throws EditRejected {
             of(p).block(p, pos, expected, target, sign);
         }
 
         @Override
-        public dev.sculptory.core.tinker.EntityView entity(ServerPlayerEntity p, UUID id,
+        public dev.sculptory.core.tinker.EntityView entity(ServerPlayer p, UUID id,
                                                               List<dev.sculptory.core.tinker.EntityEdit> edits)
                 throws EditRejected {
             return of(p).entity(p, id, edits);
         }
     }
 
-    private static final class PermissionFacade implements PermissionService<ServerPlayerEntity, ServerWorld> {
+    private static final class PermissionFacade implements PermissionService<ServerPlayer, ServerLevel> {
         @Override
-        public boolean has(ServerPlayerEntity p, Perm node) {
+        public boolean has(ServerPlayer p, Perm node) {
             return EngineRuntime.find(p.getServer()).map(runtime -> runtime.permissions().has(p, node)).orElse(false);
         }
 
         @Override
-        public ChunkPermit chunk(ServerPlayerEntity p, ServerWorld w, int cx, int cz, Box bounds) {
+        public ChunkPermit chunk(ServerPlayer p, ServerLevel w, int cx, int cz, Box bounds) {
             return EngineRuntime.find(p.getServer()).map(runtime -> runtime.permissions().chunk(p, w, cx, cz, bounds))
                     .orElse(ChunkPermit.DENY);
         }

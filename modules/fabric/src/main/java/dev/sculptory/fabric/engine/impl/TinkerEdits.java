@@ -44,25 +44,25 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Predicate;
-import net.minecraft.block.BlockState;
-import net.minecraft.block.entity.BlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.decoration.BlockAttachedEntity;
-import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtElement;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderLookup;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.RegistryKeys;
-import net.minecraft.registry.RegistryWrapper;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.text.Text;
-import net.minecraft.util.DyeColor;
-import net.minecraft.util.Identifier;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.nbt.Tag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.decoration.BlockAttachedEntity;
+import net.minecraft.world.item.DyeColor;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -80,15 +80,15 @@ import org.slf4j.LoggerFactory;
  * entity before and after ({@link EntityChange}), and its undo compares where it stands too when that is all it changed
  * ({@code EntityMatcher.placementAware}).
  */
-final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
+final class TinkerEdits implements TinkerService<ServerPlayer> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Longest detail a refusal carries (the protocol's free-text cap is 1 KiB). */
     private static final int MAX_DETAIL_CHARS = 300;
 
-    private final EngineEditService<ServerPlayerEntity, ServerWorld> service;
+    private final EngineEditService<ServerPlayer, ServerLevel> service;
     private final EngineRuntime runtime;
 
-    TinkerEdits(EngineEditService<ServerPlayerEntity, ServerWorld> service, EngineRuntime runtime) {
+    TinkerEdits(EngineEditService<ServerPlayer, ServerLevel> service, EngineRuntime runtime) {
         this.service = Objects.requireNonNull(service);
         this.runtime = Objects.requireNonNull(runtime);
     }
@@ -96,7 +96,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     // =================================================================== blocks
 
     @Override
-    public void block(ServerPlayerEntity player, dev.sculptory.core.BlockPos at, int expected, int target,
+    public void block(ServerPlayer player, dev.sculptory.core.BlockPos at, int expected, int target,
                       SignText sign) throws EditRejected {
         checkThread();
         Objects.requireNonNull(at);
@@ -109,7 +109,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
             throw new EditRejected(RejectReason.INVALID, "Tinker changes a block's properties, not the block");
         }
         if (expected == target && sign == null) throw new EditRejected(RejectReason.INVALID, "nothing to change");
-        ServerWorld world = player.getServerWorld();
+        ServerLevel world = player.serverLevel();
         BlockPos pos = new BlockPos(at.x(), at.y(), at.z());
         requireWritableCell(player, world, pos);
         requireUnlocked(player, world, pos);
@@ -118,17 +118,17 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
             throw new EditRejected(RejectReason.INVALID, "the block changed meanwhile ("
                     + clip(live < 0 ? "an unknown state" : states.format(live)) + ")");
         }
-        RegistryWrapper.WrapperLookup registries = world.getRegistryManager();
+        HolderLookup.Provider registries = world.registryAccess();
         FabricPermissionService permissions = runtime.permissions();
         boolean operatorNbt = permissions.mayWriteOperatorNbt(player);
         BlockEntityData tile = null;
         boolean textChanged = false;
-        BlockEntity entity = world.getWorldChunk(pos).getBlockEntity(pos, WorldChunk.CreationType.CHECK);
+        BlockEntity entity = world.getChunkAt(pos).getBlockEntity(pos, LevelChunk.EntityCreationType.CHECK);
         if (sign != null) {
             if (!(entity instanceof SignBlockEntity signEntity) || !isSign(states, signEntity)) {
                 throw new EditRejected(RejectReason.INVALID, "the block has no sign text");
             }
-            NbtCompound changed = signNbt(signEntity, sign, registries);
+            CompoundTag changed = signNbt(signEntity, sign, registries);
             if (changed != null) {
                 textChanged = true;
                 String typeId = FabricTile.capture(signEntity, registries).typeId();
@@ -155,8 +155,8 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         BlockEntityData partnerTile = null;
         if (!shared.isEmpty()) {
             int flags = states.flags(expected);
-            BlockPos other = StateFlags.has(flags, StateFlags.LOWER_HALF) ? pos.up()
-                    : StateFlags.has(flags, StateFlags.UPPER_HALF) ? pos.down() : null;
+            BlockPos other = StateFlags.has(flags, StateFlags.LOWER_HALF) ? pos.above()
+                    : StateFlags.has(flags, StateFlags.UPPER_HALF) ? pos.below() : null;
             if (other != null && WorldChecks.inBuildLimit(world, other.getX(), other.getY(), other.getZ())) {
                 int partner = states.handle(world.getBlockState(other));
                 if (partner >= 0 && partner != expected && states.blockId(partner).equals(states.blockId(expected))
@@ -170,8 +170,8 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
                         requireUnlocked(player, world, other);
                         partnerPos = other;
                         partnerTarget = changedPartner;
-                        BlockEntity partnerEntity = world.getWorldChunk(other).getBlockEntity(other,
-                                WorldChunk.CreationType.CHECK);
+                        BlockEntity partnerEntity = world.getChunkAt(other).getBlockEntity(other,
+                                LevelChunk.EntityCreationType.CHECK);
                         if (partnerEntity != null && !partnerEntity.isRemoved()) {
                             partnerTile = FabricTile.capture(partnerEntity, registries);
                         }
@@ -181,7 +181,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         }
 
         // The open brush stroke is older than this change: it goes into history first.
-        service.commitStroke(player.getUuid());
+        service.commitStroke(player.getUUID());
         RecordBuilder builder = new RecordBuilder();
         RecordSink sink = runtime.fluidTrails().marking(RecordSink.into(builder), world, builder.id());
         BlockWriter writer = runtime.writer(world, new WriteOptions(false, operatorNbt));
@@ -204,19 +204,19 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
      * The sign's NBT with the sides of {@code text} that differ from the live sign (plain lines, colour, glow) replaced
      * by literal text; {@code null} when both sides already read so.
      */
-    private static NbtCompound signNbt(SignBlockEntity sign, SignText text, RegistryWrapper.WrapperLookup registries)
+    private static CompoundTag signNbt(SignBlockEntity sign, SignText text, HolderLookup.Provider registries)
             throws EditRejected {
-        NbtCompound nbt = sign.createNbtWithId(registries);
+        CompoundTag nbt = sign.saveWithId(registries);
         boolean changed = false;
         for (boolean front : new boolean[] {true, false}) {
-            net.minecraft.block.entity.SignText live = sign.getText(front);
+            net.minecraft.world.level.block.entity.SignText live = sign.getText(front);
             SignText.Side side = text.side(front);
             if (reads(live, side)) continue;
-            net.minecraft.block.entity.SignText made = new net.minecraft.block.entity.SignText();
-            for (int i = 0; i < SignText.LINES; i++) made = made.withMessage(i, Text.literal(side.lines().get(i)));
-            made = made.withColor(DyeColor.byName(side.color(), DyeColor.BLACK)).withGlowing(side.glowing());
-            NbtElement encoded = net.minecraft.block.entity.SignText.CODEC
-                    .encodeStart(registries.getOps(NbtOps.INSTANCE), made).result().orElse(null);
+            net.minecraft.world.level.block.entity.SignText made = new net.minecraft.world.level.block.entity.SignText();
+            for (int i = 0; i < SignText.LINES; i++) made = made.setMessage(i, Component.literal(side.lines().get(i)));
+            made = made.setColor(DyeColor.byName(side.color(), DyeColor.BLACK)).setHasGlowingText(side.glowing());
+            Tag encoded = net.minecraft.world.level.block.entity.SignText.DIRECT_CODEC
+                    .encodeStart(registries.createSerializationContext(NbtOps.INSTANCE), made).result().orElse(null);
             if (encoded == null) throw new EditRejected(RejectReason.INVALID, "the sign text could not be written");
             nbt.put(front ? "front_text" : "back_text", encoded);
             changed = true;
@@ -225,15 +225,15 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     }
 
     /** Whether a live side reads as {@code side}: the same plain lines, colour and glow. */
-    private static boolean reads(net.minecraft.block.entity.SignText live, SignText.Side side) {
+    private static boolean reads(net.minecraft.world.level.block.entity.SignText live, SignText.Side side) {
         for (int i = 0; i < SignText.LINES; i++) {
             if (!live.getMessage(i, false).getString().equals(side.lines().get(i))) return false;
         }
-        return live.getColor().getName().equals(side.color()) && live.isGlowing() == side.glowing();
+        return live.getColor().getName().equals(side.color()) && live.hasGlowingText() == side.glowing();
     }
 
     private static boolean isSign(FabricStateSpace states, SignBlockEntity sign) {
-        Identifier type = net.minecraft.block.entity.BlockEntityType.getId(sign.getType());
+        ResourceLocation type = net.minecraft.world.level.block.entity.BlockEntityType.getKey(sign.getType());
         return type != null && (type.toString().equals("minecraft:sign") || type.toString().equals("minecraft:hanging_sign")
                 || states.isSignBlockEntity(type.toString()));
     }
@@ -261,13 +261,13 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     // =================================================================== entities
 
     @Override
-    public EntityView entity(ServerPlayerEntity player, UUID id, List<EntityEdit> edits) throws EditRejected {
+    public EntityView entity(ServerPlayer player, UUID id, List<EntityEdit> edits) throws EditRejected {
         checkThread();
         Objects.requireNonNull(id);
         Objects.requireNonNull(edits);
         requireAllowed(player);
         if (edits.size() > EntityEdits.MAX_EDITS) throw new EditRejected(RejectReason.TOO_LARGE, "too many edits");
-        ServerWorld world = player.getServerWorld();
+        ServerLevel world = player.serverLevel();
         Entity entity = FabricEntities.find(world, id);
         if (entity == null || entity.isRemoved()) {
             throw new EditRejected(RejectReason.INVALID, "the entity is gone (removed or out of reach)");
@@ -277,7 +277,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
                 new EditRejected(RejectReason.INVALID, "Tinker does not change a " + typeId));
         EntityTypeRules rules = EntityTypeRules.scan(world);
         if (rules.operator(typeId)) throw new EditRejected(RejectReason.NO_PERMISSION, "operator-only entity data");
-        if (entity.hasVehicle()) throw new EditRejected(RejectReason.INVALID, "it rides another entity");
+        if (entity.isPassenger()) throw new EditRejected(RejectReason.INVALID, "it rides another entity");
         requireWritableCell(player, world, FabricEntities.cell(entity));
         requireUnlocked(player, world, FabricEntities.cell(entity));
         EntityState before = EntityWriter.live(entity);
@@ -294,7 +294,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         }
         double[] where = EntityNbt.position(edited);
         if (where == null) throw new EditRejected(RejectReason.INVALID, "the edited entity has no position");
-        requireUnlocked(player, world, BlockPos.ofFloored(where[0], where[1], where[2]));
+        requireUnlocked(player, world, BlockPos.containing(where[0], where[1], where[2]));
         EntityState target;
         try {
             target = new EntityState(typeId, where[0], where[1], where[2], NbtIo.toBytes(edited));
@@ -314,7 +314,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
             return permit != null && permit.allows(cell.getX(), cell.getZ());
         };
 
-        service.commitStroke(player.getUuid());
+        service.commitStroke(player.getUUID());
         EntityWriter writer = new EntityWriter(world, new WriteOptions(false,
                 permissions.mayWriteOperatorNbt(player)), rules);
         writer.remove(entity, before);
@@ -326,15 +326,15 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
             refusal = spawn.refused() ? "protected, outside the world or not loaded where it would stand"
                     : "the edited entity could not be placed";
             if (spawn.refused()) reason = RejectReason.PROTECTED;
-        } else if (placed instanceof BlockAttachedEntity hanging && !hanging.canStayAttached()) {
+        } else if (placed instanceof BlockAttachedEntity hanging && !hanging.survives()) {
             refusal = "it would not hang there";
         }
         EntityState after = placed == null || refusal != null ? null : EntityWriter.live(placed);
         if (placed != null && refusal == null && after == null) refusal = "the edited entity's data is too large";
         if (refusal != null) {
             if (placed != null) {
-                for (Entity rider : placed.getPassengersDeep()) {
-                    if (!rider.isPlayer()) rider.discard();
+                for (Entity rider : placed.getIndirectPassengers()) {
+                    if (!rider.isAlwaysTicking()) rider.discard();
                 }
                 placed.discard();
             }
@@ -353,16 +353,16 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     }
 
     /** Painting variants and display items must be registered (air is no item to show). */
-    private static void checkRegistries(ServerWorld world, List<EntityEdit> edits) throws EditRejected {
+    private static void checkRegistries(ServerLevel world, List<EntityEdit> edits) throws EditRejected {
         for (EntityEdit edit : edits) {
             if (edit instanceof EntityEdit.PaintingVariant variant) {
-                Identifier idOf = Identifier.tryParse(variant.id());
-                if (idOf == null || !world.getRegistryManager().get(RegistryKeys.PAINTING_VARIANT).containsId(idOf)) {
+                ResourceLocation idOf = ResourceLocation.tryParse(variant.id());
+                if (idOf == null || !world.registryAccess().registryOrThrow(Registries.PAINTING_VARIANT).containsKey(idOf)) {
                     throw new EditRejected(RejectReason.INVALID, "unknown painting " + clip(variant.id()));
                 }
             } else if (edit instanceof EntityEdit.DisplayItem item) {
-                Identifier idOf = Identifier.tryParse(item.itemId());
-                if (idOf == null || !Registries.ITEM.containsId(idOf) || Registries.ITEM.get(idOf) == Items.AIR) {
+                ResourceLocation idOf = ResourceLocation.tryParse(item.itemId());
+                if (idOf == null || !BuiltInRegistries.ITEM.containsKey(idOf) || BuiltInRegistries.ITEM.get(idOf) == Items.AIR) {
                     throw new EditRejected(RejectReason.INVALID, "unknown item " + clip(item.itemId()));
                 }
             }
@@ -370,7 +370,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     }
 
     /** What the panel shows of an entity (a text display's text as plain text, read by the game). */
-    private static EntityView view(TinkerKind kind, EntityState state, ServerWorld world) throws EditRejected {
+    private static EntityView view(TinkerKind kind, EntityState state, ServerLevel world) throws EditRejected {
         dev.sculptory.core.nbt.NbtCompound saved;
         try {
             saved = EntityNbt.decode(state.nbt());
@@ -381,7 +381,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
         String json = kind == TinkerKind.TEXT_DISPLAY ? saved.getString("text") : null;
         if (json != null) {
             try {
-                Text parsed = Text.Serialization.fromJson(json, world.getRegistryManager());
+                Component parsed = Component.Serializer.fromJson(json, world.registryAccess());
                 text = parsed == null ? "" : parsed.getString();
             } catch (RuntimeException unreadable) {
                 text = "";
@@ -431,14 +431,14 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
 
     // =================================================================== shared
 
-    private void push(ServerPlayerEntity player, UUID entryId, ServerWorld world, String label, EditRecord record) {
+    private void push(ServerPlayer player, UUID entryId, ServerLevel world, String label, EditRecord record) {
         HistoryService history = service.historyService();
-        history.push(history.session(player.getUuid()), new HistoryEntry(entryId, player.getUuid(),
+        history.push(history.session(player.getUUID()), new HistoryEntry(entryId, player.getUUID(),
                 runtime.worldId(world), label, record, service.createdMillis()));
     }
 
     /** {@code use} and {@code region}, with editing enabled. */
-    private void requireAllowed(ServerPlayerEntity player) throws EditRejected {
+    private void requireAllowed(ServerPlayer player) throws EditRejected {
         if (!runtime.config().editingEnabled) throw new EditRejected(RejectReason.DISABLED);
         FabricPermissionService permissions = runtime.permissions();
         for (Perm node : new Perm[] {Perm.USE, Perm.REGION}) {
@@ -447,7 +447,7 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     }
 
     /** Inside the world and its border, loaded, and the player's to change. */
-    private void requireWritableCell(ServerPlayerEntity player, ServerWorld world, BlockPos pos) throws EditRejected {
+    private void requireWritableCell(ServerPlayer player, ServerLevel world, BlockPos pos) throws EditRejected {
         if (!WorldChecks.inBuildLimit(world, pos.getX(), pos.getY(), pos.getZ())
                 || !WorldChecks.insideBorder(world.getWorldBorder(), pos.getX(), pos.getZ())) {
             throw new EditRejected(RejectReason.INVALID, "outside the world");
@@ -463,8 +463,8 @@ final class TinkerEdits implements TinkerService<ServerPlayerEntity> {
     }
 
     /** No admitted job (a fill, a paste, an undo) holds the section of {@code pos}. */
-    private void requireUnlocked(ServerPlayerEntity player, ServerWorld world, BlockPos pos) throws EditRejected {
-        if (service.executor().isLockedFor(world, box(pos), player.getUuid())) {
+    private void requireUnlocked(ServerPlayer player, ServerLevel world, BlockPos pos) throws EditRejected {
+        if (service.executor().isLockedFor(world, box(pos), player.getUUID())) {
             throw new EditRejected(RejectReason.AREA_BUSY, "a running edit holds this area");
         }
     }

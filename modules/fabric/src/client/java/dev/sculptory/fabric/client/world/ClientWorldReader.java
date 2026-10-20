@@ -5,15 +5,15 @@ import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
 import java.util.Objects;
-import net.minecraft.block.Block;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.world.ClientChunkManager;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.world.Heightmap;
-import net.minecraft.world.chunk.ChunkSection;
-import net.minecraft.world.chunk.ChunkStatus;
-import net.minecraft.world.chunk.PalettedContainer;
-import net.minecraft.world.chunk.WorldChunk;
+import net.minecraft.client.multiplayer.ClientChunkCache;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.chunk.LevelChunkSection;
+import net.minecraft.world.level.chunk.PalettedContainer;
+import net.minecraft.world.level.chunk.status.ChunkStatus;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 /**
  * {@link WorldReader} over the client world, for brush prediction and cursor sampling. Handles are raw block-state
@@ -29,37 +29,37 @@ import net.minecraft.world.chunk.WorldChunk;
  * {@code HAS_BLOCK_ENTITY}, which does not depend on this.
  */
 public final class ClientWorldReader implements WorldReader {
-    private final ClientWorld world;
-    private final ClientChunkManager chunks;
+    private final ClientLevel world;
+    private final ClientChunkCache chunks;
     private final StateSpace states;
     private final int bottomY;
     private final int topY;
     private final int bottomSection;
     private final int topSection;
 
-    public ClientWorldReader(ClientWorld world, StateSpace states) {
+    public ClientWorldReader(ClientLevel world, StateSpace states) {
         this.world = Objects.requireNonNull(world);
         this.states = Objects.requireNonNull(states);
-        this.chunks = world.getChunkManager();
-        this.bottomY = world.getBottomY();
-        this.topY = world.getTopY();
-        this.bottomSection = world.getBottomSectionCoord();
-        this.topSection = world.getTopSectionCoord();
+        this.chunks = world.getChunkSource();
+        this.bottomY = world.getMinBuildHeight();
+        this.topY = world.getMaxBuildHeight();
+        this.bottomSection = world.getMinSection();
+        this.topSection = world.getMaxSection();
     }
 
     /** Whether this reader reads {@code world} in handles of {@code states}. */
-    public boolean readsFrom(ClientWorld world, StateSpace states) {
+    public boolean readsFrom(ClientLevel world, StateSpace states) {
         return this.world == world && this.states == states;
     }
 
     /** The vanilla state of a handle (air for an unknown one). */
     public static BlockState blockState(int handle) {
-        return Block.getStateFromRawId(handle);
+        return Block.stateById(handle);
     }
 
     /** The handle of a vanilla state. */
     public static int handle(BlockState state) {
-        return Block.getRawIdFromState(state);
+        return Block.getId(state);
     }
 
     @Override
@@ -85,9 +85,9 @@ public final class ClientWorldReader implements WorldReader {
     @Override
     public int get(int x, int y, int z) {
         if (y < bottomY || y >= topY) return states.air();
-        WorldChunk chunk = chunk(x >> 4, z >> 4);
+        LevelChunk chunk = chunk(x >> 4, z >> 4);
         if (chunk == null) return states.air();
-        ChunkSection section = chunk.getSection((y >> 4) - bottomSection);
+        LevelChunkSection section = chunk.getSection((y >> 4) - bottomSection);
         if (section == null) return states.air();
         return handleIn(states, section.getBlockState(x & 15, y & 15, z & 15));
     }
@@ -101,12 +101,12 @@ public final class ClientWorldReader implements WorldReader {
     @Override
     public void copySection(int sx, int sy, int sz, SectionBuffer into) {
         into.clearAll();
-        WorldChunk chunk = sy >= bottomSection && sy < topSection ? chunk(sx, sz) : null;
-        ChunkSection section = chunk == null ? null : chunk.getSection(sy - bottomSection);
+        LevelChunk chunk = sy >= bottomSection && sy < topSection ? chunk(sx, sz) : null;
+        LevelChunkSection section = chunk == null ? null : chunk.getSection(sy - bottomSection);
         if (section == null) {
             fill(into, states.air());
         } else {
-            copyStates(section.getBlockStateContainer(), states, into);
+            copyStates(section.getStates(), states, into);
         }
     }
 
@@ -119,14 +119,14 @@ public final class ClientWorldReader implements WorldReader {
      */
     @Override
     public int heightHint(int x, int z) {
-        WorldChunk chunk = chunk(x >> 4, z >> 4);
-        if (chunk == null || !chunk.hasHeightmap(Heightmap.Type.WORLD_SURFACE)) return topY;
-        int hint = chunk.getHeightmap(Heightmap.Type.WORLD_SURFACE).get(x & 15, z & 15);
+        LevelChunk chunk = chunk(x >> 4, z >> 4);
+        if (chunk == null || !chunk.hasPrimedHeightmap(Heightmap.Types.WORLD_SURFACE)) return topY;
+        int hint = chunk.getOrCreateHeightmapUnprimed(Heightmap.Types.WORLD_SURFACE).getFirstAvailable(x & 15, z & 15);
         return Math.max(bottomY, Math.min(topY, hint));
     }
 
     /** The chunk if the client has it, else {@code null}; never loads (create = false). */
-    private WorldChunk chunk(int cx, int cz) {
+    private LevelChunk chunk(int cx, int cz) {
         return chunks.getChunk(cx, cz, ChunkStatus.FULL, false);
     }
 
@@ -137,7 +137,7 @@ public final class ClientWorldReader implements WorldReader {
      */
     static void copyStates(PalettedContainer<BlockState> container, StateSpace states, SectionBuffer into) {
         BlockState first = container.get(0, 0, 0);
-        if (!container.hasAny(state -> state != first)) {
+        if (!container.maybeHas(state -> state != first)) {
             fill(into, handleIn(states, first));
             return;
         }
@@ -160,7 +160,7 @@ public final class ClientWorldReader implements WorldReader {
 
     /** The handle of {@code state}, or air if it is outside {@code states} (a space built for other registries). */
     private static int handleIn(StateSpace states, BlockState state) {
-        int h = Block.getRawIdFromState(state);
+        int h = Block.getId(state);
         return h >= 0 && h < states.size() ? h : states.air();
     }
 

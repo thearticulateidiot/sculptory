@@ -28,35 +28,35 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 
 /**
  * The edit executor against a real server. Each large test works in its own far-away
  * region with forced chunks and runs in its own batch, so tests never share sections or executor limits.
  */
 public final class ExecutorGameTest implements FabricGameTest {
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_exec_budget",
-            tickLimit = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
-    public void executorBudgetSpansTicks(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_exec_budget",
+            timeoutTicks = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
+    public void executorBudgetSpansTicks(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
-        ServerWorld world = context.getWorld();
+        ServerLevel world = context.getLevel();
         int[] at = regionCorner(context, 1);
         Box region = box(at[0], 0, at[1], at[0] + 63, 47, at[1] + 63); // 196,608 cells in 48 sections
         forceChunks(world, region, true);
         BoxFill program = new BoxFill("budget fill", region, handle(runtime.states(), "minecraft:smooth_stone"));
         LongOpenHashSet computeTicks = new LongOpenHashSet();
-        program.onCompute = key -> computeTicks.add(world.getServer().getTicks());
+        program.onCompute = key -> computeTicks.add(world.getServer().getTickCount());
         RecordingListener listener = new RecordingListener();
         JobTicket ticket = submit(runtime, JobRequest.system(world, program, listener));
         check(ticket.estimatedCells() == region.volume(), "estimate");
         check(listener.progressEvents == 0, "listener called before submit returned");
-        context.addInstantFinalTask(() -> {
+        context.succeedWhen(() -> {
             check(listener.result != null, "job still running");
             check(listener.result.outcome() == JobOutcome.COMPLETED, "outcome " + listener.result.outcome());
             check(listener.result.changed() == region.volume(), "changed " + listener.result.changed());
@@ -66,7 +66,7 @@ public final class ExecutorGameTest implements FabricGameTest {
             check(listener.phases.get(listener.phases.size() - 1) == Phase.FINALIZE, "last event is not FINALIZE");
             check(listener.lastDone == region.volume() && !listener.wentBackwards, "final progress " + listener.lastDone);
             for (BlockPos corner : corners(region)) {
-                check(world.getBlockState(corner).isOf(Blocks.SMOOTH_STONE), "not filled at " + corner.toShortString());
+                check(world.getBlockState(corner).is(Blocks.SMOOTH_STONE), "not filled at " + corner.toShortString());
             }
             checkNoEditTickets(runtime.executor(), world, region);
             check(!runtime.executor().isLocked(world, region), "section locks leaked");
@@ -74,12 +74,12 @@ public final class ExecutorGameTest implements FabricGameTest {
         });
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_exec_overlap",
-            tickLimit = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
-    public void overlappingJobsSerialize(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_exec_overlap",
+            timeoutTicks = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
+    public void overlappingJobsSerialize(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
-        ServerWorld world = context.getWorld();
-        EditExecutor<ServerWorld> executor = runtime.executor();
+        ServerLevel world = context.getLevel();
+        EditExecutor<ServerLevel> executor = runtime.executor();
         int[] at = regionCorner(context, 2);
         int x = at[0], z = at[1];
         Box a = box(x, 0, z, x + 31, 31, z + 31);
@@ -116,7 +116,7 @@ public final class ExecutorGameTest implements FabricGameTest {
         }
         check(executor.brushQueueSize() == 3, "brush work not queued");
 
-        context.addInstantFinalTask(() -> {
+        context.succeedWhen(() -> {
             check(listenerA.result != null && listenerB.result != null && listenerC.result != null, "jobs still running");
             check(brushOrder.equals(List.of(0, 1, 2)), "brush lane order " + brushOrder);
             check(listenerB.count(Phase.QUEUED) == 1, "B was not reported QUEUED");
@@ -125,21 +125,21 @@ public final class ExecutorGameTest implements FabricGameTest {
             for (RecordingListener l : List.of(listenerA, listenerB, listenerC)) {
                 check(l.result.outcome() == JobOutcome.COMPLETED, "outcome " + l.result.outcome());
             }
-            check(world.getBlockState(pos(x + 20, 5, z + 5)).isOf(Blocks.POLISHED_ANDESITE), "overlap is not B's");
-            check(world.getBlockState(pos(x + 5, 5, z + 5)).isOf(Blocks.SMOOTH_STONE), "A-only cell");
-            check(world.getBlockState(pos(x + 40, 5, z + 5)).isOf(Blocks.POLISHED_ANDESITE), "B-only cell");
-            check(world.getBlockState(pos(x + 5, 70, z + 5)).isOf(Blocks.POLISHED_GRANITE), "C cell");
+            check(world.getBlockState(pos(x + 20, 5, z + 5)).is(Blocks.POLISHED_ANDESITE), "overlap is not B's");
+            check(world.getBlockState(pos(x + 5, 5, z + 5)).is(Blocks.SMOOTH_STONE), "A-only cell");
+            check(world.getBlockState(pos(x + 40, 5, z + 5)).is(Blocks.POLISHED_ANDESITE), "B-only cell");
+            check(world.getBlockState(pos(x + 5, 70, z + 5)).is(Blocks.POLISHED_GRANITE), "C cell");
             check(!executor.isLocked(world, overlapKey), "locks not released");
             forceChunks(world, all, false);
         });
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_exec_cancel",
-            tickLimit = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
-    public void cancelMidJob(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_exec_cancel",
+            timeoutTicks = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
+    public void cancelMidJob(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
-        ServerWorld world = context.getWorld();
-        EditExecutor<ServerWorld> executor = runtime.executor();
+        ServerLevel world = context.getLevel();
+        EditExecutor<ServerLevel> executor = runtime.executor();
         int[] at = regionCorner(context, 3);
         Box region = box(at[0], 0, at[1], at[0] + 63, 31, at[1] + 63); // 32 sections of 4096 cells
         forceChunks(world, region, true);
@@ -161,7 +161,7 @@ public final class ExecutorGameTest implements FabricGameTest {
                 && queuedListener.result.changed() == 0, "queued job did not end as CANCELLED");
         check(!executor.cancel(queued), "second cancel should report false");
 
-        context.addInstantFinalTask(() -> {
+        context.succeedWhen(() -> {
             check(listener.result != null, "job still running");
             check(listener.result.outcome() == JobOutcome.CANCELLED, "outcome " + listener.result.outcome());
             check(program.computeCount == 5, "sections computed after cancel: " + program.computeCount);
@@ -181,13 +181,13 @@ public final class ExecutorGameTest implements FabricGameTest {
         });
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_exec_protect",
-            tickLimit = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
-    public void protectedCellsAreSkipped(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_exec_protect",
+            timeoutTicks = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT)
+    public void protectedCellsAreSkipped(GameTestHelper context) {
         // Spawn protection cannot be set up in GameTest (TestServer.isSpawnProtected is always false), so the
         // corner rule is JUnit-tested (ChunkPermitsTest) and this drives the executor with a synthetic permit.
         EngineRuntime runtime = runtime(context);
-        ServerWorld world = context.getWorld();
+        ServerLevel world = context.getLevel();
         int[] at = regionCorner(context, 4);
         int x0 = at[0], z0 = at[1];
         Box region = box(x0, 0, z0, x0 + 31, 15, z0 + 31); // 2 x 2 chunks, one section tall
@@ -205,25 +205,25 @@ public final class ExecutorGameTest implements FabricGameTest {
             if (x == cx + 1 && z == cz) return half;
             return ChunkPermit.ALLOW;
         }));
-        context.addInstantFinalTask(() -> {
+        context.succeedWhen(() -> {
             check(listener.result != null, "job still running");
             check(listener.result.outcome() == JobOutcome.COMPLETED, "outcome " + listener.result.outcome());
             check(listener.result.skippedProtected() == 4096 + 2048, "skipped " + listener.result.skippedProtected());
             check(listener.result.changed() == region.volume() - 6144, "changed " + listener.result.changed());
-            check(!world.getBlockState(pos(x0 + 3, 3, z0 + 3)).isOf(Blocks.SMOOTH_STONE), "denied chunk was written");
-            check(world.getBlockState(pos(x0 + 16 + 3, 3, z0 + 3)).isOf(Blocks.SMOOTH_STONE), "allowed column skipped");
-            check(!world.getBlockState(pos(x0 + 16 + 12, 3, z0 + 3)).isOf(Blocks.SMOOTH_STONE), "denied column written");
-            check(world.getBlockState(pos(x0 + 20, 3, z0 + 20)).isOf(Blocks.SMOOTH_STONE), "allowed chunk skipped");
+            check(!world.getBlockState(pos(x0 + 3, 3, z0 + 3)).is(Blocks.SMOOTH_STONE), "denied chunk was written");
+            check(world.getBlockState(pos(x0 + 16 + 3, 3, z0 + 3)).is(Blocks.SMOOTH_STONE), "allowed column skipped");
+            check(!world.getBlockState(pos(x0 + 16 + 12, 3, z0 + 3)).is(Blocks.SMOOTH_STONE), "denied column written");
+            check(world.getBlockState(pos(x0 + 20, 3, z0 + 20)).is(Blocks.SMOOTH_STONE), "allowed chunk skipped");
             forceChunks(world, region, false);
         });
     }
 
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_exec_queue")
-    public void queueFullRejects(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_exec_queue")
+    public void queueFullRejects(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
-        ServerWorld world = context.getWorld();
-        EditExecutor<ServerWorld> executor = runtime.executor();
-        BlockPos cell = context.getAbsolutePos(new BlockPos(1, 1, 1));
+        ServerLevel world = context.getLevel();
+        EditExecutor<ServerLevel> executor = runtime.executor();
+        BlockPos cell = context.absolutePos(new BlockPos(1, 1, 1));
         Box one = box(cell.getX(), cell.getY(), cell.getZ(), cell.getX(), cell.getY(), cell.getZ());
         int stone = handle(runtime.states(), "minecraft:stone");
         List<UUID> admitted = new ArrayList<>();
@@ -233,7 +233,7 @@ public final class ExecutorGameTest implements FabricGameTest {
         }
         try {
             executor.submit(JobRequest.system(world, new BoxFill("overflow", one, stone), null));
-            throw new GameTestException("job " + (limit + 1) + " was admitted past the queue limit");
+            throw new GameTestAssertException("job " + (limit + 1) + " was admitted past the queue limit");
         } catch (EditRejected e) {
             check(e.reason() == RejectReason.QUEUE_FULL, "reason " + e.reason());
         }
@@ -242,30 +242,30 @@ public final class ExecutorGameTest implements FabricGameTest {
         Box outside = box(cell.getX(), 10_000, cell.getZ(), cell.getX(), 10_001, cell.getZ());
         try {
             executor.submit(JobRequest.system(world, new BoxFill("outside", outside, stone), null));
-            throw new GameTestException("a job above the build limit was admitted");
+            throw new GameTestAssertException("a job above the build limit was admitted");
         } catch (EditRejected e) {
             check(e.reason() == RejectReason.INVALID, "reason " + e.reason());
         }
-        context.complete();
+        context.succeed();
     }
 
-    static JobTicket submit(EngineRuntime runtime, JobRequest<ServerWorld> request) {
+    static JobTicket submit(EngineRuntime runtime, JobRequest<ServerLevel> request) {
         try {
             return runtime.executor().submit(request);
         } catch (EditRejected e) {
-            throw new GameTestException("rejected: " + e.getMessage());
+            throw new GameTestAssertException("rejected: " + e.getMessage());
         }
     }
 
-    private static long countFilled(ServerWorld world, long sectionKey, Block block) {
+    private static long countFilled(ServerLevel world, long sectionKey, Block block) {
         int ox = BlockBuffer.keyX(sectionKey) << 4, oy = BlockBuffer.keyY(sectionKey) << 4;
         int oz = BlockBuffer.keyZ(sectionKey) << 4;
         long count = 0;
-        BlockPos.Mutable pos = new BlockPos.Mutable();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         for (int y = 0; y < 16; y++) {
             for (int z = 0; z < 16; z++) {
                 for (int x = 0; x < 16; x++) {
-                    if (world.getBlockState(pos.set(ox + x, oy + y, oz + z)).isOf(block)) count++;
+                    if (world.getBlockState(pos.set(ox + x, oy + y, oz + z)).is(block)) count++;
                 }
             }
         }

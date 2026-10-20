@@ -1,9 +1,9 @@
 package dev.sculptory.fabric.client.mixin;
 
 import dev.sculptory.fabric.client.world.ClientBlockChanges;
-import net.minecraft.block.BlockState;
-import net.minecraft.client.world.ClientWorld;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -12,16 +12,16 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Bumps {@link ClientBlockChanges} whenever the client world changes a block.
  *
- * <p>Target checked with javap against yarn 1.21.1+build.3: {@code World.setBlockState(BlockPos, BlockState, int,
- * int)} calls {@code scheduleBlockRerenderIfNeeded(BlockPos, BlockState, BlockState)} whenever the stored state
- * actually changed, and {@code ClientWorld} overrides it. Hooking {@code handleBlockUpdate} or
- * {@code ClientWorld.setBlockState} instead would miss changes: {@code handleBlockUpdate} calls
- * {@code super.setBlockState} directly (server block and chunk-delta updates), and prediction rollbacks go through
- * {@code processPendingUpdate}. All three paths end in this method.
+ * <p>Target checked with javap against Minecraft 1.21.1 (Mojang names): {@code Level.setBlock(BlockPos, BlockState, int,
+ * int)} calls {@code setBlocksDirty(BlockPos, BlockState, BlockState)} whenever the stored state
+ * actually changed, and {@code ClientLevel} overrides it. Hooking {@code setServerVerifiedBlockState} or
+ * {@code ClientLevel.setBlock} instead would miss changes: {@code setServerVerifiedBlockState} calls
+ * {@code super.setBlock} directly (server block and chunk-delta updates), and prediction rollbacks go through
+ * {@code handleBlockChangedAck}. All three paths end in this method.
  */
-@Mixin(ClientWorld.class)
+@Mixin(ClientLevel.class)
 public abstract class ClientWorldMixin {
-    @Inject(method = "scheduleBlockRerenderIfNeeded", at = @At("HEAD"))
+    @Inject(method = "setBlocksDirty", at = @At("HEAD"))
     private void sculptory$blockChanged(BlockPos pos, BlockState old, BlockState updated, CallbackInfo ci) {
         ClientBlockChanges.bump(pos.getX(), pos.getY(), pos.getZ());
     }

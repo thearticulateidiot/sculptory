@@ -63,22 +63,22 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Block;
-import net.minecraft.block.Blocks;
-import net.minecraft.block.entity.ChestBlockEntity;
-import net.minecraft.block.entity.SignBlockEntity;
-import net.minecraft.block.entity.SignText;
-import net.minecraft.entity.Entity;
-import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestAssertException;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.server.world.ServerWorld;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.GameTestException;
-import net.minecraft.test.TestContext;
-import net.minecraft.text.Text;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.SignText;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,8 +113,8 @@ public final class DurableHistoryGameTest implements FabricGameTest {
     /** One run of the server's edit service: its own executor, and history saved in {@code dir}. */
     static final class Run {
         final Harness h;
-        final EditExecutor<ServerWorld> executor;
-        final EngineEditService<ServerPlayerEntity, ServerWorld> service;
+        final EditExecutor<ServerLevel> executor;
+        final EngineEditService<ServerPlayer, ServerLevel> service;
 
         Run(Harness h, Path dir, long cellsPerTick, StorageIo io) {
             this.h = h;
@@ -124,7 +124,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
                 store = HistoryStore.open(dir, new FabricHistoryCodec(h.runtime.states(),
                         FabricDataFixHook.currentDataVersion()), HistoryStore.Settings.DEFAULTS, io, STORE_LOG);
             } catch (IOException e) {
-                throw new GameTestException("the history store did not open: " + e);
+                throw new GameTestAssertException("the history store did not open: " + e);
             }
             this.service = new EngineEditService<>(h.runtime, executor, h.runtime.config().toHistoryLimits(),
                     p -> JobRequest.NO_LISTENER, h.acks, h.events, System::nanoTime,
@@ -132,10 +132,10 @@ public final class DurableHistoryGameTest implements FabricGameTest {
         }
 
         /** The player joins: their saved history is loaded. */
-        void load(ServerPlayerEntity player) {
-            service.playerJoined(player.getUuid());
+        void load(ServerPlayer player) {
+            service.playerJoined(player.getUUID());
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-            while (service.historyService().find(player.getUuid()).map(HistoryService.Session::loading).orElse(false)) {
+            while (service.historyService().find(player.getUUID()).map(HistoryService.Session::loading).orElse(false)) {
                 check(System.nanoTime() < deadline,
                         "the history of " + player.getGameProfile().getName() + " did not load");
                 service.tick();
@@ -143,13 +143,13 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             }
         }
 
-        JobResult fill(ServerPlayerEntity player, Box box, String state) {
+        JobResult fill(ServerPlayer player, Box box, String state) {
             RecordingListener listener = new RecordingListener();
             try {
                 service.run(player, new OpSpec.Fill(box, new Pattern.Single(h.state(state)), CellMask.ANY),
                         RunOptions.DEFAULT, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("the fill was refused: " + e.getMessage());
+                throw new GameTestAssertException("the fill was refused: " + e.getMessage());
             }
             tickUntil(executor, () -> listener.result != null, TICKS, "the fill");
             service.tick();
@@ -157,7 +157,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             return listener.result;
         }
 
-        JobResult step(ServerPlayerEntity player, boolean undo) {
+        JobResult step(ServerPlayer player, boolean undo) {
             RecordingListener listener = new RecordingListener();
             try {
                 if (undo) {
@@ -166,7 +166,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
                     service.redo(player, ConflictPolicy.SKIP_CONFLICTS, listener);
                 }
             } catch (EditRejected e) {
-                throw new GameTestException((undo ? "undo" : "redo") + " was refused: " + e.getMessage());
+                throw new GameTestAssertException((undo ? "undo" : "redo") + " was refused: " + e.getMessage());
             }
             tickUntil(executor, () -> listener.result != null, TICKS, undo ? "the undo" : "the redo");
             service.tick();
@@ -175,15 +175,15 @@ public final class DurableHistoryGameTest implements FabricGameTest {
         }
 
         /** Pastes {@code clipboard} (made the player's clipboard) at {@code origin}, run to its end. */
-        JobResult paste(ServerPlayerEntity player, Clipboard clipboard, BlockPos origin) {
-            UUID id = service.clipboards().install(player.getUuid(), clipboard).id();
+        JobResult paste(ServerPlayer player, Clipboard clipboard, BlockPos origin) {
+            UUID id = service.clipboards().install(player.getUUID(), clipboard).id();
             RecordingListener listener = new RecordingListener();
             try {
                 service.run(player, new OpSpec.Paste(new SourceRef.Clipboard(id), new dev.sculptory.core.BlockPos(
                         origin.getX(), origin.getY(), origin.getZ()), Transform.IDENTITY, PasteOptions.DEFAULT),
                         RunOptions.DEFAULT, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("the paste was refused: " + e.getMessage());
+                throw new GameTestAssertException("the paste was refused: " + e.getMessage());
             }
             tickUntil(executor, () -> listener.result != null, TICKS, "the paste");
             service.tick();
@@ -192,14 +192,14 @@ public final class DurableHistoryGameTest implements FabricGameTest {
         }
 
         /** Undo anyway of the player's run of undo steps, run to its end. */
-        JobResult undoAnyway(ServerPlayerEntity player) {
-            int steps = service.historyService().session(player.getUuid()).run()
-                    .orElseThrow(() -> new GameTestException("no Undo anyway offer")).entries().size();
+        JobResult undoAnyway(ServerPlayer player) {
+            int steps = service.historyService().session(player.getUUID()).run()
+                    .orElseThrow(() -> new GameTestAssertException("no Undo anyway offer")).entries().size();
             RecordingListener listener = new RecordingListener();
             try {
                 service.historyOverwrite(player, false, steps, listener);
             } catch (EditRejected e) {
-                throw new GameTestException("Undo anyway was refused: " + e.getMessage());
+                throw new GameTestAssertException("Undo anyway was refused: " + e.getMessage());
             }
             tickUntil(executor, () -> listener.result != null, TICKS, "Undo anyway");
             service.tick();
@@ -207,8 +207,8 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             return listener.result;
         }
 
-        List<HistoryEntry> undoEntries(ServerPlayerEntity player) {
-            return service.historyService().undoEntries(player.getUuid());
+        List<HistoryEntry> undoEntries(ServerPlayer player) {
+            return service.historyService().undoEntries(player.getUUID());
         }
 
         /** A clean stop, in the server's order: jobs end, open strokes become entries, the journal is written. */
@@ -227,7 +227,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
 
     /** One test's harness, region, folders and runs; {@link #close()} releases all of them, whatever happened. */
     static final class Scene implements AutoCloseable {
-        final TestContext context;
+        final GameTestHelper context;
         final Harness h;
         final int x;
         final int z;
@@ -236,7 +236,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
         final List<Run> runs = new ArrayList<>();
         Box region;
 
-        Scene(TestContext context, int slot) {
+        Scene(GameTestHelper context, int slot) {
             this.context = context;
             this.h = new Harness(context);
             int[] at = regionCorner(context, slot);
@@ -286,7 +286,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
                     }
                 }
             } catch (IOException e) {
-                throw new GameTestException("copying the history folder failed: " + e);
+                throw new GameTestAssertException("copying the history folder failed: " + e);
             }
             return copy;
         }
@@ -418,7 +418,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
         for (int y = box.min().y(); y <= box.max().y(); y++) {
             for (int z = box.min().z(); z <= box.max().z(); z++) {
                 for (int x = box.min().x(); x <= box.max().x(); x++) {
-                    if (h.world.getBlockState(pos(x, y, z)).isOf(block)) n++;
+                    if (h.world.getBlockState(pos(x, y, z)).is(block)) n++;
                 }
             }
         }
@@ -434,19 +434,19 @@ public final class DurableHistoryGameTest implements FabricGameTest {
     }
 
     /** A raise stroke of six dabs around (x + 12, z + 16), left open (the mouse still down). */
-    private static void stroke(Run run, ServerPlayerEntity player, int x, int z) {
+    private static void stroke(Run run, ServerPlayer player, int x, int z) {
         BrushSpec spec = new BrushSpec(BrushTool.RAISE, 4, 1f, Falloff.SMOOTH, Shape.CIRCLE, null, SurfaceMask.ANY, 0, 0,
                 1L);
         try {
             run.service.beginStroke(player, 1, spec);
         } catch (EditRejected e) {
-            throw new GameTestException("the stroke was refused: " + e.getMessage());
+            throw new GameTestAssertException("the stroke was refused: " + e.getMessage());
         }
         List<Dab> dabs = new ArrayList<>();
         for (int i = 0; i < 6; i++) dabs.add(dab(i, x + 10 + i, 101, z + 16));
         DabOutcome outcome = run.service.dabs(player, 1, 1, dabs);
         check(outcome.accepted(), "the dabs " + outcome);
-        tickUntil(run.executor, () -> run.service.queuedDabs(player.getUuid()) == 0, TICKS, "the dabs");
+        tickUntil(run.executor, () -> run.service.queuedDabs(player.getUUID()) == 0, TICKS, "the dabs");
     }
 
     // ---------------------------------------------------------------------------------------------- restarts
@@ -457,22 +457,22 @@ public final class DurableHistoryGameTest implements FabricGameTest {
      * brings the gold back, and undoing both restores the world exactly: the sign's text and the chest's diamonds come
      * back for her as they would have before the restart (the saved block entities kept their server origin).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_restart", tickLimit = LIMIT)
-    public void editsUndoAndRedoExactlyAfterARestart(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_restart", timeoutTicks = LIMIT)
+    public void editsUndoAndRedoExactlyAfterARestart(GameTestHelper context) {
         try (Scene s = new Scene(context, 580)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
-            ServerPlayerEntity carol = h.addPlayer(false);
+            ServerPlayer carol = h.addPlayer(false);
             EditTestSupport.grant(carol, Perm.USE, Perm.REGION);
             s.area(box(x, 96, z, x + 31, 111, z + 15), 100);
             BlockWriter writer = h.runtime.writer(h.world, new WriteOptions(false, true));
             BlockPos sign = pos(x + 2, 101, z + 2);
             writer.write(sign.getX(), sign.getY(), sign.getZ(), h.state("minecraft:oak_sign"), null);
             ((SignBlockEntity) h.world.getBlockEntity(sign))
-                    .setText(new SignText().withMessage(0, Text.literal("kept")), true);
+                    .setText(new SignText().setMessage(0, Component.literal("kept")), true);
             BlockPos chest = pos(x + 5, 101, z + 5);
             writer.write(chest.getX(), chest.getY(), chest.getZ(), h.state("minecraft:chest[facing=east]"), null);
-            ((ChestBlockEntity) h.world.getBlockEntity(chest)).setStack(0, new ItemStack(Items.DIAMOND, 5));
+            ((ChestBlockEntity) h.world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 5));
             WorldSnapshot original = capture(h.world, s.region);
 
             Run first = s.run();
@@ -500,20 +500,20 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             String text = ((SignBlockEntity) h.world.getBlockEntity(sign)).getText(true).getMessage(0, false)
                     .getString();
             check(text.equals("kept"), "the sign reads \"" + text + "\"");
-            ItemStack stack = ((ChestBlockEntity) h.world.getBlockEntity(chest)).getStack(0);
-            check(stack.isOf(Items.DIAMOND) && stack.getCount() == 5, "the chest holds " + stack);
+            ItemStack stack = ((ChestBlockEntity) h.world.getBlockEntity(chest)).getItem(0);
+            check(stack.is(Items.DIAMOND) && stack.getCount() == 5, "the chest holds " + stack);
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /** An undone edit is redone after a restart, exactly, and undoes again. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_redo", tickLimit = LIMIT)
-    public void redoWorksAfterARestart(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_redo", timeoutTicks = LIMIT)
+    public void redoWorksAfterARestart(GameTestHelper context) {
         try (Scene s = new Scene(context, 581)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(x, 96, z, x + 15, 107, z + 15), 99);
             WorldSnapshot original = capture(h.world, s.region);
 
@@ -535,17 +535,17 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(original, capture(h.world, s.region), "undo of the redo");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /** Alice and Bob each keep their own steps across a restart; each undo touches only its owner's area. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_players", tickLimit = LIMIT)
-    public void twoPlayersKeepTheirOwnHistoriesAcrossARestart(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_players", timeoutTicks = LIMIT)
+    public void twoPlayersKeepTheirOwnHistoriesAcrossARestart(GameTestHelper context) {
         try (Scene s = new Scene(context, 582)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
-            ServerPlayerEntity alice = h.player;
-            ServerPlayerEntity bob = h.addPlayer();
+            ServerPlayer alice = h.player;
+            ServerPlayer bob = h.addPlayer();
             s.area(box(x, 96, z, x + 31, 107, z + 15), 99);
             Box alicesArea = box(x, 96, z, x + 15, 107, z + 15);
             Box bobsArea = box(x + 16, 96, z, x + 31, 107, z + 15);
@@ -566,7 +566,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             second.load(bob);
             check(second.undoEntries(alice).size() == 2 && second.undoEntries(bob).size() == 1, "alice "
                     + second.undoEntries(alice).size() + " steps, bob " + second.undoEntries(bob).size());
-            check(second.undoEntries(bob).get(0).owner().equals(bob.getUuid()), "bob's step belongs to him");
+            check(second.undoEntries(bob).get(0).owner().equals(bob.getUUID()), "bob's step belongs to him");
             second.step(alice, true);
             second.step(alice, true);
             checkSame(aliceOriginal, capture(h.world, alicesArea), "alice's two undos");
@@ -575,15 +575,15 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(bobOriginal, capture(h.world, bobsArea), "bob's undo");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /** A brush stroke is one step after a restart too: undo restores the terrain exactly, redo raises it again. */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_stroke", tickLimit = LIMIT)
-    public void aBrushStrokeUndoesExactlyAfterARestart(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_stroke", timeoutTicks = LIMIT)
+    public void aBrushStrokeUndoesExactlyAfterARestart(GameTestHelper context) {
         try (Scene s = new Scene(context, 583)) {
             Harness h = s.h;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(s.x, 90, s.z, s.x + 31, 120, s.z + 31), 100);
             WorldSnapshot original = capture(h.world, s.region);
 
@@ -605,29 +605,29 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(raised, capture(h.world, s.region), "the stroke redone after the restart");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /** A stroke still open when its player leaves becomes a step of their saved history (no end-of-stroke message). */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_leave_stroke", tickLimit = LIMIT)
-    public void anOpenStrokeBecomesAStepWhenThePlayerLeaves(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_leave_stroke", timeoutTicks = LIMIT)
+    public void anOpenStrokeBecomesAStepWhenThePlayerLeaves(GameTestHelper context) {
         try (Scene s = new Scene(context, 588)) {
             Harness h = s.h;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(s.x, 90, s.z, s.x + 31, 120, s.z + 31), 100);
             WorldSnapshot original = capture(h.world, s.region);
 
             Run first = s.run();
             first.load(alice);
             stroke(first, alice, s.x, s.z);
-            first.service.playerLeft(alice.getUuid()); // the connection drops, the mouse still down
+            first.service.playerLeft(alice.getUUID()); // the connection drops, the mouse still down
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            while (first.service.historyService().find(alice.getUuid()).isPresent() && System.nanoTime() < deadline) {
+            while (first.service.historyService().find(alice.getUUID()).isPresent() && System.nanoTime() < deadline) {
                 first.service.tick();
                 pause();
             }
-            check(first.service.historyService().find(alice.getUuid()).isEmpty()
-                    && first.service.historyService().offline(alice.getUuid()).map(o -> o.size() == 1).orElse(false),
+            check(first.service.historyService().find(alice.getUUID()).isEmpty()
+                    && first.service.historyService().offline(alice.getUUID()).map(o -> o.size() == 1).orElse(false),
                     "the stroke became a step and the history was kept (unloaded)");
             first.stop();
 
@@ -639,15 +639,15 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(original, capture(h.world, s.region), "the stroke undone after leaving and a restart");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /** A stroke still open at a server stop becomes a step (the stop commits it before the world is saved). */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_stop_stroke", tickLimit = LIMIT)
-    public void anOpenStrokeBecomesAStepAtServerStop(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_stop_stroke", timeoutTicks = LIMIT)
+    public void anOpenStrokeBecomesAStepAtServerStop(GameTestHelper context) {
         try (Scene s = new Scene(context, 589)) {
             Harness h = s.h;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(s.x, 90, s.z, s.x + 31, 120, s.z + 31), 100);
             WorldSnapshot original = capture(h.world, s.region);
 
@@ -664,7 +664,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(original, capture(h.world, s.region), "the stroke undone after the stop");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------------------------------------- crashes
@@ -674,12 +674,12 @@ public final class DurableHistoryGameTest implements FabricGameTest {
      * what they held before it (that chunk was never saved after the fill). Undo changes only the other column, counts
      * no conflict and leaves the world as before the fill; redo then fills both again.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_older_world", tickLimit = LIMIT)
-    public void anEditWhoseCellsNeverReachedTheSavedWorldUndoesAsNothingToChange(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_older_world", timeoutTicks = LIMIT)
+    public void anEditWhoseCellsNeverReachedTheSavedWorldUndoesAsNothingToChange(GameTestHelper context) {
         try (Scene s = new Scene(context, 584)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(x, 96, z, x + 31, 107, z + 15), 99);
             WorldSnapshot original = capture(h.world, s.region);
 
@@ -708,7 +708,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(filled, capture(h.world, s.region), "redo after it");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -717,12 +717,12 @@ public final class DurableHistoryGameTest implements FabricGameTest {
      * disk right then is all the next run gets (the disk writes only while the server thread waits). One
      * "(interrupted)" step holds exactly the cells written, and undoing it restores the world before the fill.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_crash_job", tickLimit = LIMIT)
-    public void aJobInterruptedByACrashUndoesExactlyWhatItWrote(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_crash_job", timeoutTicks = LIMIT)
+    public void aJobInterruptedByACrashUndoesExactlyWhatItWrote(GameTestHelper context) {
         try (Scene s = new Scene(context, 585)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(x, 94, z, x + 47, 113, z + 15), 98);
             Box fill = box(x, 96, z, x + 47, 111, z + 15); // three whole sections
             WorldSnapshot original = capture(h.world, s.region);
@@ -735,7 +735,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
                 first.service.run(alice, new OpSpec.Fill(fill, new Pattern.Single(h.state("minecraft:glass")),
                         CellMask.ANY), RunOptions.DEFAULT, job);
             } catch (EditRejected e) {
-                throw new GameTestException("the fill was refused: " + e.getMessage());
+                throw new GameTestAssertException("the fill was refused: " + e.getMessage());
             }
             int written = 0;
             for (int tick = 0; tick < 50 && (written = count(h, fill, Blocks.GLASS)) <= 4096; tick++) {
@@ -761,19 +761,19 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(original, capture(h.world, s.region), "the interrupted fill undone");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
      * A brush stroke still open at a crash (the history folder taken as it is on disk when the game saved the
      * stroke's chunks) leaves an "(interrupted)" step that undoes exactly what it raised.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_crash_stroke", tickLimit = LIMIT)
-    public void anOpenStrokeInterruptedByACrashIsUndoable(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_crash_stroke", timeoutTicks = LIMIT)
+    public void anOpenStrokeInterruptedByACrashIsUndoable(GameTestHelper context) {
         try (Scene s = new Scene(context, 586)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(x, 90, z, x + 31, 120, z + 31), 100);
             WorldSnapshot original = capture(h.world, s.region);
 
@@ -798,7 +798,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(original, capture(h.world, s.region), "the interrupted stroke undone");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     // ---------------------------------------------------------------------------------------------- contents
@@ -810,12 +810,12 @@ public final class DurableHistoryGameTest implements FabricGameTest {
      * restored data of the sign, chest and furnace compares as the game holds it); undoing the fill keeps Bob's chest,
      * counted; Undo anyway removes it, and the world is as before both edits.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_contents", tickLimit = LIMIT)
-    public void restoredStepsKeepChestsFilledSinceAndUndoUntouchedOnesExactly(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_contents", timeoutTicks = LIMIT)
+    public void restoredStepsKeepChestsFilledSinceAndUndoUntouchedOnesExactly(GameTestHelper context) {
         try (Scene s = new Scene(context, 608)) {
             Harness h = s.h;
             int x = s.x, z = s.z;
-            ServerPlayerEntity alice = h.player;
+            ServerPlayer alice = h.player;
             s.area(box(x, 96, z, x + 15, 107, z + 15), 100);
             WorldSnapshot original = capture(h.world, s.region);
 
@@ -832,7 +832,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             second.load(alice);
             check(second.undoEntries(alice).size() == 2, "restored " + labels(second.undoEntries(alice)));
             BlockPos filled = pos(x + 3, 101, z + 2);
-            ((ChestBlockEntity) h.world.getBlockEntity(filled)).setStack(0, new ItemStack(Items.DIAMOND, 5));
+            ((ChestBlockEntity) h.world.getBlockEntity(filled)).setItem(0, new ItemStack(Items.DIAMOND, 5));
             JobResult paste = second.step(alice, true);
             check(paste.changed() == 6 && paste.skippedConflicts() == 0, "the paste's undo " + paste);
             WorldSnapshot withBobs = capture(h.world, s.region);
@@ -840,13 +840,13 @@ public final class DurableHistoryGameTest implements FabricGameTest {
             checkSame(chests, withBobs, "the paste undone after the restart");
             JobResult fill = second.step(alice, true);
             check(fill.changed() == 2 && fill.skippedConflicts() == 1, "the fill's undo " + fill);
-            check(h.world.getBlockEntity(filled) instanceof ChestBlockEntity chest && chest.getStack(0).getCount() == 5,
+            check(h.world.getBlockEntity(filled) instanceof ChestBlockEntity chest && chest.getItem(0).getCount() == 5,
                     "Bob's chest was not kept");
             check(second.undoAnyway(alice).changed() == 1, "Undo anyway");
             checkSame(original, capture(h.world, s.region), "Undo anyway after the restart");
             second.stop();
         }
-        context.complete();
+        context.succeed();
     }
 
     /**
@@ -855,27 +855,27 @@ public final class DurableHistoryGameTest implements FabricGameTest {
      * same data) back where they were and removes the moved ones, exactly; redo moves them again as the move left them.
      * Entities load a tick after their chunks, so the test waits for them before its synchronous part.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_entities", tickLimit = LIMIT)
-    public void movedEntitiesUndoAndRedoExactlyAfterARestart(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_entities", timeoutTicks = LIMIT)
+    public void movedEntitiesUndoAndRedoExactlyAfterARestart(GameTestHelper context) {
         Scene s = new Scene(context, 650);
         Harness h = s.h;
         int x = s.x, z = s.z;
         s.area(box(x, 96, z, x + 15, 107, z + 15), 100);
         Box source = box(x + 2, 101, z + 2, x + 5, 103, z + 5);
         Box destination = box(x + 10, 101, z + 2, x + 13, 103, z + 5);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(h.world, s.region))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(h.world, s.region))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     try (s) {
                         movedEntitiesAfterARestart(s, source, destination);
                     }
                 }))
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     private static void movedEntitiesAfterARestart(Scene s, Box source, Box destination) {
         Harness h = s.h;
-        ServerPlayerEntity alice = h.player;
+        ServerPlayer alice = h.player;
         Map<UUID, dev.sculptory.core.nbt.NbtCompound> before =
                 EntitiesGameTest.comparable(EntitiesGameTest.decorate(h, source.min().x(), 101, source.min().z()));
         check(before.size() == 4, "the fixture: " + before.size());
@@ -889,7 +889,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
                     new dev.sculptory.core.BlockPos(8, 0, 0), Transform.IDENTITY,
                     new Pattern.Single(h.state("minecraft:air")), EntityFilter.DECORATIONS), RunOptions.DEFAULT, move);
         } catch (EditRejected e) {
-            throw new GameTestException("the move was refused: " + e.getMessage());
+            throw new GameTestAssertException("the move was refused: " + e.getMessage());
         }
         tickUntil(first.executor, () -> move.result != null, TICKS, "the move");
         first.service.tick();
@@ -931,31 +931,31 @@ public final class DurableHistoryGameTest implements FabricGameTest {
      * undo puts the original back, once. Her redo is stopped the same way (after it took the original away): it counts
      * as done, and after the next restart her undo puts the original back, once.
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_entities_stop", tickLimit = LIMIT)
-    public void anUndoOfAMoveStoppedMidwayLosesNoEntity(TestContext context) {
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_entities_stop", timeoutTicks = LIMIT)
+    public void anUndoOfAMoveStoppedMidwayLosesNoEntity(GameTestHelper context) {
         Scene s = new Scene(context, 666);
         Harness h = s.h;
         int x = s.x, z = s.z;
         s.area(box(x, 96, z, x + 31, 107, z + 15), 100);
         Box source = box(x + 2, 101, z + 2, x + 5, 103, z + 5);
-        context.createTimedTaskRunner()
-                .createAndAdd(() -> EntitiesGameTest.ready(h.world, s.region))
-                .createAndAdd(EntitiesGameTest.once(() -> {
+        context.startSequence()
+                .thenWaitUntil(() -> EntitiesGameTest.ready(h.world, s.region))
+                .thenWaitUntil(EntitiesGameTest.once(() -> {
                     try (s) {
                         stoppedMidway(s, source);
                     }
                 }))
-                .completeIfSuccessful();
+                .thenSucceed();
     }
 
     private static void stoppedMidway(Scene s, Box source) {
         Harness h = s.h;
-        ServerPlayerEntity alice = h.player;
+        ServerPlayer alice = h.player;
         Box destination = source.offset(16, 0, 0);
         Entity stand = EntitiesGameTest.load(h.world, "minecraft:armor_stand", source.min().x() + 1.5, 101,
                 source.min().z() + 1.5, 0f, nbt -> nbt.putBoolean("NoGravity", true));
-        check(h.world.spawnEntity(stand), "the stand spawned");
-        UUID id = stand.getUuid();
+        check(h.world.addFreshEntity(stand), "the stand spawned");
+        UUID id = stand.getUUID();
 
         Run first = s.run(s.dir, 64, StorageIo.SYSTEM);
         first.load(alice);
@@ -965,7 +965,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
                     0), Transform.IDENTITY, new Pattern.Single(h.state("minecraft:air")), EntityFilter.DECORATIONS),
                     RunOptions.DEFAULT, move);
         } catch (EditRejected e) {
-            throw new GameTestException("the move was refused: " + e.getMessage());
+            throw new GameTestAssertException("the move was refused: " + e.getMessage());
         }
         tickUntil(first.executor, () -> move.result != null, TICKS, "the move");
         first.service.tick();
@@ -980,7 +980,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
         second.load(alice);
         second.step(alice, true);
         Set<UUID> all = new java.util.HashSet<>();
-        EntitiesGameTest.entitiesIn(h.world, s.region).forEach(e -> all.add(e.getUuid()));
+        EntitiesGameTest.entitiesIn(h.world, s.region).forEach(e -> all.add(e.getUUID()));
         check(all.equals(Set.of(id)), "the original is back, once: " + all);
 
         startStep(second, alice, false);
@@ -994,14 +994,14 @@ public final class DurableHistoryGameTest implements FabricGameTest {
         check(!third.undoEntries(alice).isEmpty(), "the redo that changed something can be undone");
         third.step(alice, true);
         all.clear();
-        EntitiesGameTest.entitiesIn(h.world, s.region).forEach(e -> all.add(e.getUuid()));
+        EntitiesGameTest.entitiesIn(h.world, s.region).forEach(e -> all.add(e.getUUID()));
         check(all.equals(Set.of(id)), "the original is back, once: " + all);
         EntitiesGameTest.entitiesIn(h.world, s.region).forEach(Entity::discard);
         third.stop();
     }
 
     /** Starts an undo ({@code undo}) or redo of the player's next step, without waiting for it. */
-    private static void startStep(Run run, ServerPlayerEntity player, boolean undo) {
+    private static void startStep(Run run, ServerPlayer player, boolean undo) {
         try {
             if (undo) {
                 run.service.undo(player, ConflictPolicy.SKIP_CONFLICTS, new RecordingListener());
@@ -1009,7 +1009,7 @@ public final class DurableHistoryGameTest implements FabricGameTest {
                 run.service.redo(player, ConflictPolicy.SKIP_CONFLICTS, new RecordingListener());
             }
         } catch (EditRejected e) {
-            throw new GameTestException((undo ? "undo" : "redo") + " was refused: " + e.getMessage());
+            throw new GameTestAssertException((undo ? "undo" : "redo") + " was refused: " + e.getMessage());
         }
     }
 
@@ -1019,20 +1019,20 @@ public final class DurableHistoryGameTest implements FabricGameTest {
      * The server itself saves undo history (in the GameTest server, in its temporary history folder), and the game's
      * chunk saves go through the hook that writes the journal first ({@code ServerChunkLoadingManagerMixin}).
      */
-    @GameTest(templateName = EMPTY_STRUCTURE, batchId = "sculptory_durable_wiring", tickLimit = LIMIT)
-    public void theServerSavesHistoryAndChunkSavesGoThroughTheHook(TestContext context) {
-        MinecraftServer server = context.getWorld().getServer();
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_durable_wiring", timeoutTicks = LIMIT)
+    public void theServerSavesHistoryAndChunkSavesGoThroughTheHook(GameTestHelper context) {
+        MinecraftServer server = context.getLevel().getServer();
         var host = EditServiceHost.find(server)
-                .orElseThrow(() -> new GameTestException("the mod did not install the edit service"));
+                .orElseThrow(() -> new GameTestAssertException("the mod did not install the edit service"));
         String status = host.historyService().storageStatus();
         check(host.historyService().persistent() && status.contains(EditServiceHost.historyDir(server).toString()),
                 "the server does not save undo history: " + status);
         long hooks = EditServiceHost.chunkSaveHooks();
-        context.getWorld().setBlockState(context.getAbsolutePos(new BlockPos(1, 2, 1)), Blocks.STONE.getDefaultState());
-        context.getWorld().getChunkManager().save(true);
+        context.getLevel().setBlockAndUpdate(context.absolutePos(new BlockPos(1, 2, 1)), Blocks.STONE.defaultBlockState());
+        context.getLevel().getChunkSource().save(true);
         check(EditServiceHost.chunkSaveHooks() > hooks, "no chunk save went through the history hook");
         check(EditServiceHost.chunkSaveHookStatus().startsWith("chunk-save hook active"),
                 EditServiceHost.chunkSaveHookStatus());
-        context.complete();
+        context.succeed();
     }
 }

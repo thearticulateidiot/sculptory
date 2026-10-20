@@ -21,7 +21,7 @@ import dev.sculptory.fabric.client.world.ResentChunks;
 import dev.sculptory.fabric.world.FabricStateSpace;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.Minecraft;
 
 /**
  * Client entrypoint: the block-change stamp, the client state space, protocol v2 networking, the editor (B) and builder
@@ -45,7 +45,7 @@ public final class SculptoryClientMod implements ClientModInitializer {
             SculptoryMod.LOG.warn("Sculptory editor is using the mock session (-D{}=true): edits are simulated",
                     SessionProvider.MOCK_PROPERTY);
         } else {
-            SessionProvider.set(new ClientEditorBackend(session, states, () -> MinecraftClient.getInstance().world));
+            SessionProvider.set(new ClientEditorBackend(session, states, () -> Minecraft.getInstance().level));
         }
         EditorClient editor = EditorClient.init();
         // Builder mode (hold G): the same session and state space as the editor.
