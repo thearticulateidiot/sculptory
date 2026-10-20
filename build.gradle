@@ -1,5 +1,7 @@
 plugins {
-    id 'fabric-loom' version '1.10.5' apply false
+    // The remapping Loom (Minecraft 1.21.1 is obfuscated). Needs Gradle 9.4+. 1.17 is the last Loom that runs the build
+    // on a JDK 21; 1.18+ needs a JDK 25 to run Gradle (its natives use Java 25's FFM API).
+    id 'net.fabricmc.fabric-loom-remap' version '1.17.21' apply false
 }
 
 // The build id. A dev build's id is mod_version plus the commit the build was
@@ -66,12 +68,19 @@ subprojects {
     }
     tasks.withType(Test).configureEach {
         useJUnitPlatform()
-        testLogging { events 'failed'; exceptionFormat 'full' }
+        testLogging {
+            events = ['failed']
+            exceptionFormat = 'full'
+        }
     }
+    // Every jar (the mod and its nested core, protocol and server jars) carries the licence texts NOTICE.md names.
+    // The files are resolved here, not inside the task (reading the project from a running task is going away).
+    def licence = rootProject.file('LICENSE')
+    def notice = rootProject.file('NOTICE.md')
+    def ccBySa = rootProject.file('LICENSES/CC-BY-SA-4.0.txt')
     tasks.named('jar') {
-        // Every jar (the mod and its nested core, protocol and server jars) carries the licence texts NOTICE.md names.
-        from(rootProject.file('LICENSE'))
-        from(rootProject.file('NOTICE.md'))
-        from(rootProject.file('LICENSES/CC-BY-SA-4.0.txt')) { into 'LICENSES' }
+        from(licence)
+        from(notice)
+        from(ccBySa) { into 'LICENSES' }
     }
 }

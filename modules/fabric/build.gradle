@@ -9,7 +9,7 @@ import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.BasicFileAttributes
 
-apply plugin: 'fabric-loom'
+apply plugin: 'net.fabricmc.fabric-loom-remap'
 
 base { archivesName = 'sculptory' }
 
@@ -126,8 +126,9 @@ tasks.named('test') {
 }
 
 processResources {
-    inputs.property 'version', project.version
-    filesMatching('fabric.mod.json') { expand version: project.version }
+    def version = project.version.toString()
+    inputs.property 'version', version
+    filesMatching('fabric.mod.json') { expand version: version }
 }
 
 // The jar is named after the build id (root build.gradle), so a new build leaves the older builds' jars behind: they
