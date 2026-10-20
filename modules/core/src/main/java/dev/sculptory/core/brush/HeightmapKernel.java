@@ -101,6 +101,23 @@ final class HeightmapKernel implements BrushKernel {
         return (value * heightBlocks + 127) / 255;
     }
 
+    /**
+     * The top of a dab's surface scan window: {@code radius + }{@value TerrainKernel#SCAN_MARGIN} above its block, and
+     * the stamp's height more when lowering; clamped to {@code [worldBottom, worldTop]}.
+     */
+    static int scanTop(BrushSpec spec, Dab dab, int worldBottom, int worldTop) {
+        HeightmapSpec stamp = spec.heightmap();
+        long top = dab.blockY() + (long) spec.radius() + TerrainKernel.SCAN_MARGIN + (stamp.lower() ? stamp.heightBlocks() : 0);
+        return (int) Math.max(worldBottom, Math.min(worldTop, top));
+    }
+
+    /** The bottom of a dab's surface scan window: as {@link #scanTop} below it, the stamp's height more when raising. */
+    static int scanBottom(BrushSpec spec, Dab dab, int worldBottom, int worldTop) {
+        HeightmapSpec stamp = spec.heightmap();
+        long bottom = dab.blockY() - (long) spec.radius() - TerrainKernel.SCAN_MARGIN - (stamp.lower() ? 0 : stamp.heightBlocks());
+        return (int) Math.max(worldBottom, Math.min(worldTop, bottom));
+    }
+
     /** One dab of a step: its footprint and where the image lies on it, and the snapshot of the columns it reads. */
     private static final class Area {
         private final Symmetry symmetry;
@@ -166,12 +183,8 @@ final class HeightmapKernel implements BrushKernel {
             gz0 = fz0 - 1;
             gw = fx1 - fx0 + 3;
             gd = fz1 - fz0 + 3;
-            HeightmapSpec stamp = spec.heightmap();
-            long reach = (long) r + TerrainKernel.SCAN_MARGIN;
-            long top = dab.blockY() + reach + (stamp.lower() ? stamp.heightBlocks() : 0);
-            long bottom = dab.blockY() - reach - (stamp.lower() ? 0 : stamp.heightBlocks());
-            yTop = (int) Math.max(worldBottom, Math.min(worldTop, top));
-            yBottom = (int) Math.max(worldBottom, Math.min(worldTop, bottom));
+            yTop = scanTop(spec, dab, worldBottom, worldTop);
+            yBottom = scanBottom(spec, dab, worldBottom, worldTop);
         }
 
         /** Whether the footprint meets the clip box's x/z range (always, without one). */

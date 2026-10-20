@@ -11,13 +11,13 @@ The **Heightmap** brush (`;`) stamps a height picture onto the terrain: white pa
 1. Press `;`.
 2. In Tool Settings, click **Picture** and pick one: Hill, Mountain, Crater, Mesa, Ridge, Dunes, Volcano or Terraces, or one of your own (below).
 3. Point at the ground. The stamp's square follows the cursor, tinted where the picture lifts the ground, with a tick pointing to the picture's top edge.
-4. Click to stamp it, or left-drag to paint.
+4. Click to stamp it (once, however long you hold the button), or left-drag to paint. A drag lays its stamps on the ground you point at, not on the hills it has just raised.
 
 Each press is one undo step. Changing a setting mid-press starts a new one; so does holding the button still for 5 seconds, and a very large stroke (around a million blocks) is saved as several steps: at radius 128 each tall stamp is a step of its own.
 
 | Key | What it does |
 |---|---|
-| Left-click | Stamp the picture once |
+| Left-click | Stamp the picture once, however long you hold it |
 | Left-drag | Paint: a ridge (or a trench) the height of the picture along the drag |
 | `R`, `Shift+R` | Turn the picture a quarter turn clockwise, or back |
 | `Ctrl+Scroll` | Size (radius 1–128; `Shift`: steps of 4) |

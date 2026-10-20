@@ -43,7 +43,6 @@ import dev.sculptory.fabric.client.editor.tool.WorldCursor;
 import dev.sculptory.fabric.client.editor.tool.WorldDraw;
 import dev.sculptory.fabric.client.editor.tools.generate.GenerateTool;
 import dev.sculptory.fabric.client.editor.tools.generate.LineDraft;
-import dev.sculptory.fabric.client.editor.world.Ray;
 import dev.sculptory.fabric.client.session.EditorSession;
 import dev.sculptory.fabric.client.session.FabricStrokeHandle;
 import dev.sculptory.fabric.client.session.Notice;
@@ -72,11 +71,11 @@ import java.util.function.Supplier;
  * ({@link ShapeAnchor#spacing}), each on the grid its box needs.
  *
  * <p><b>Click or drag.</b> A press places its first shape where it began, and paints along the cursor only once the
- * cursor has moved: its ray turned more than {@value #DRAG_START_DEGREES}° from the press's, or the camera moved more
- * than {@value #DRAG_START_BLOCKS} blocks. So a click held still, or with a shaking hand, places one shape however long
- * it is held. For the whole press the cursor ray sees the world as it was before the press wrote ({@link #rayOverlay},
- * {@link PressSnapshot}, taken just before each dab goes out): the shapes the press placed, copies included, predicted
- * or written by the server, never become the surface its next shape goes on.
+ * cursor has moved ({@link PressAim}): its ray turned more than {@value PressAim#DRAG_START_DEGREES}° from the press's,
+ * or the camera moved more than {@value PressAim#DRAG_START_BLOCKS} blocks. So a click held still, or with a shaking
+ * hand, places one shape however long it is held. For the whole press the cursor ray sees the world as it was before
+ * the press wrote ({@link #rayOverlay}, {@link PressSnapshot}, taken just before each dab goes out): the shapes the press
+ * placed, copies included, predicted or written by the server, never become the surface its next shape goes on.
  *
  * <p><b>Keys.</b> Ctrl+Scroll changes the radius (Shift ×4); Alt+Scroll the height of a cylinder, cone or cube (which
  * turns "Height = diameter" off); middle-click picks the active block, or with "Blocks: Mix" adds the block to the mix;
@@ -109,14 +108,6 @@ public final class ShapeBrushTool implements Tool {
     /** The Shape brush's colour (ARGB). */
     public static final int COLOR = TerrainBrushTool.color(BrushTool.SHAPE);
     public static final String CLICK = "LMB";
-    /**
-     * How far the cursor ray must turn from the press's (degrees) before a press paints along the drag: about 6 pixels
-     * of a 1600-pixel-high window at the default field of view, more than a hand shakes on a click.
-     */
-    public static final double DRAG_START_DEGREES = 0.25;
-    /** How far the camera must move during a press (blocks) before it paints along: flying with the button held. */
-    public static final double DRAG_START_BLOCKS = 0.25;
-    private static final double DRAG_START_COS = Math.cos(Math.toRadians(DRAG_START_DEGREES));
     /** Line mode: the confirmation's name, the notice once sent, the build hint. */
     public static final String OP_LINE = "sculptory.op.shape_line";
     public static final String SENT_LINE = "sculptory.notice.shape_line_sent";
@@ -164,13 +155,9 @@ public final class ShapeBrushTool implements Tool {
     private Facing pressFacing;
     /** The world as it was before the press wrote: what the press's cursor ray sees. */
     private final PressSnapshot before = new PressSnapshot();
-    /** The cursor ray when the press began, or {@code null} without one. */
-    private Ray pressRay;
-    /** The press's first hit, where it aims until the cursor moves; {@code null} until the cursor hits. */
-    private WorldCursor anchor;
-    /** Whether the cursor has moved since the press began: the press paints along the drag. */
-    private boolean dragging;
-    /** Whether the controller has the anchor's point: until the cursor moves, it keeps it. */
+    /** Where the press aims: its first hit until the cursor moves. */
+    private final PressAim pressAim;
+    /** Whether the controller has the press's first point: until the cursor moves, it keeps it. */
     private boolean anchorAimed;
     private long seed;
     private BrushSpec strokeSpec;
@@ -205,6 +192,7 @@ public final class ShapeBrushTool implements Tool {
                            ToolDescriptor descriptor, MaterialSource fixedMaterial) {
         this.services = Objects.requireNonNull(services);
         this.press = new BrushPress(Objects.requireNonNull(centre), services);
+        this.pressAim = new PressAim(services);
         this.gradientLine = centre.gradientLine();
         this.gradient = new GradientDrag(gradientLine);
         this.activeBlock = Objects.requireNonNull(activeBlock);
@@ -574,9 +562,7 @@ public final class ShapeBrushTool implements Tool {
         predictor = null;
         pressFacing = cursor.missed() ? null : ShapeAnchor.facing(values.get(ShapeSettings.FACING), cursor.face());
         before.clear();
-        pressRay = services.cursorRay().orElse(null);
-        anchor = cursor.missed() ? null : cursor;
-        dragging = false;
+        pressAim.begin(cursor);
         anchorAimed = false;
         Limits limits = limits(c);
         int radius = ShapeSettings.radius(values, limits);
@@ -594,18 +580,21 @@ public final class ShapeBrushTool implements Tool {
         predictor = null;
         pressFacing = null;
         before.clear();
-        pressRay = null;
-        anchor = null;
-        dragging = false;
+        pressAim.end();
         anchorAimed = false;
         press.end();
     }
 
-    /** Follows the cursor: the point a dab would take there goes to the stroke controller. */
+    /**
+     * Follows the cursor: the point a dab would take there goes to the stroke controller. While pressing, the press's
+     * first hit until the cursor moves ({@link PressAim}), so a click held still, or with a shaking hand, places one
+     * shape; the cursor sees the world as it was before the press wrote ({@link #rayOverlay}), so neither is ever on a
+     * shape of the press.
+     */
     private void aim(ToolContext c, WorldCursor next) {
         cursor = next;
-        WorldCursor target = controller.pressed() ? pressTarget(next) : next;
-        boolean holding = controller.pressed() && !dragging && target == anchor;
+        WorldCursor target = controller.pressed() ? pressAim.target(next) : next;
+        boolean holding = controller.pressed() && pressAim.holding(target);
         if (holding && anchorAimed && controller.stroke() != null) {
             // Held still after the first shape went out: the press keeps its point, whatever the settings (a radius)
             // do meanwhile. Before it goes out (waiting for earlier shapes to be written), the point follows them.
@@ -627,44 +616,6 @@ public final class ShapeBrushTool implements Tool {
         double[] point = ShapeAnchor.point(shapeOf(values, limits, facing), radius, facing,
                 values.get(ShapeSettings.ANCHOR), target.pos(), target.face());
         controller.aim(point[0], point[1], point[2]);
-    }
-
-    /**
-     * Where a press aims: its first hit until the cursor moves ({@link #moved}), so a click held still, or with a
-     * shaking hand, places one shape; the cursor from then on. The cursor sees the world as it was before the press
-     * wrote ({@link #rayOverlay}), so neither is ever on a shape of the press.
-     */
-    private WorldCursor pressTarget(WorldCursor next) {
-        if (!dragging && moved(next)) {
-            dragging = true;
-        }
-        if (dragging) {
-            return next;
-        }
-        if (anchor == null && !next.missed()) {
-            anchor = next;
-        }
-        return anchor == null ? next : anchor;
-    }
-
-    /**
-     * Whether the cursor has moved since the press began: its ray turned more than {@value #DRAG_START_DEGREES}° or
-     * moved more than {@value #DRAG_START_BLOCKS} blocks. A pick without a ray (no camera for a moment) is no move.
-     * Without a ray when the press began (tools built without the game) any hit other than the press's first is a move.
-     */
-    private boolean moved(WorldCursor next) {
-        Ray now = services.cursorRay().orElse(null);
-        if (pressRay == null) {
-            return anchor != null && !anchor.equals(next);
-        }
-        if (now == null) {
-            return false;
-        }
-        double turned = pressRay.dirX() * now.dirX() + pressRay.dirY() * now.dirY() + pressRay.dirZ() * now.dirZ();
-        double dx = now.originX() - pressRay.originX();
-        double dy = now.originY() - pressRay.originY();
-        double dz = now.originZ() - pressRay.originZ();
-        return turned < DRAG_START_COS || dx * dx + dy * dy + dz * dz > DRAG_START_BLOCKS * DRAG_START_BLOCKS;
     }
 
     /**

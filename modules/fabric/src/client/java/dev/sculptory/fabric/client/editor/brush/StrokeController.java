@@ -87,8 +87,8 @@ public final class StrokeController {
 
         /**
          * {@code dab} is about to go to the current server stroke (its spec is the last {@link #begin}'s): nothing it
-         * writes has been sent or predicted yet. The Shape brush keeps the world there for its cursor ray. Nothing by
-         * default.
+         * writes has been sent or predicted yet. The Shape and Heightmap brushes keep the world there for their cursor
+         * ray. Nothing by default.
          */
         default void beforeDab(Dab dab) {}
     }

@@ -10,7 +10,8 @@
 #   scripts/playtest.ps1 -Size 1600x900       # game window size
 #                                             # Plain playtests in every checkout share one set of settings (game
 #                                             #   options and the editor's settings files) in <main checkout>\.local\run\settings:
-#                                             #   the newer copy is used at start and the game's is kept when it closes.
+#                                             #   the shared copy is used at start and what the game changed is kept
+#                                             #   when it closes.
 #   scripts/playtest.ps1 -Tour                # dev-only screenshot tour of the editor UI:
 #                                             #   opens world "BS Tour", takes the pictures, quits; the pictures and
 #                                             #   index.txt go to <main checkout>\.local\tour\<yyyyMMdd-HHmmss>
@@ -163,14 +164,14 @@ $sharedSettingsFiles = @('options.txt') + @(
     'editor-ui.json', 'editor-layout.json', 'editor-keys.json', 'editor-presets.json', 'editor-tool-settings.json',
     'editor-sections.json', 'editor-mask.txt', 'editor-tutorial.json' | ForEach-Object { "config\sculptory\$_" })
 
-# Copies each shared settings file from one game directory to another where the source copy is newer (or the target
-# has none). Copy-Item keeps the time, so a file copied once is not copied back.
-function Sync-Settings([string]$From, [string]$To) {
+# Copies each shared settings file from one game directory to another: every one with -Always, otherwise only where the
+# source copy is newer (or the target has none). Copy-Item keeps the time, so a file copied once is not copied back.
+function Sync-Settings([string]$From, [string]$To, [switch]$Always) {
     foreach ($name in $sharedSettingsFiles) {
         $source = Join-Path $From $name
         if (-not (Test-Path -LiteralPath $source)) { continue }
         $target = Join-Path $To $name
-        if ((Test-Path -LiteralPath $target) -and
+        if (-not $Always -and (Test-Path -LiteralPath $target) -and
             (Get-Item -LiteralPath $target).LastWriteTimeUtc -ge (Get-Item -LiteralPath $source).LastWriteTimeUtc) { continue }
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
         Copy-Item -LiteralPath $source -Destination $target -Force
@@ -356,12 +357,13 @@ if ($Size) {
     $gradleArgs += "-PbsSize=$Size"
 }
 # A plain playtest (not the tour, check or demo, which need their own settings, nor a second player's game directory)
-# starts with the newest of the shared and this checkout's settings and hands its own back when the game closes.
+# starts with the shared settings, over whatever a tour or check left in this game directory, and hands back what the
+# game changed when it closes. Only plain playtests write the shared copy, so it always holds the developer's latest.
 $shareSettings = -not ($Tour -or $Check -or $Demo -or $RunDir)
 if ($shareSettings) {
     $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim()
     $sharedSettings = Join-Path (Split-Path -Parent $commonDir) '.local\run\settings'
-    Sync-Settings $sharedSettings $clientDir
+    Sync-Settings $sharedSettings $clientDir -Always
 }
 & (Join-Path $PSScriptRoot 'gradle.ps1') @gradleArgs
 $code = $LASTEXITCODE

@@ -38,6 +38,7 @@ import dev.sculptory.fabric.client.editor.tool.FrameInfo;
 import dev.sculptory.fabric.client.editor.tool.KeyHint;
 import dev.sculptory.fabric.client.editor.tool.Modifiers;
 import dev.sculptory.fabric.client.editor.tool.PointerEvent;
+import dev.sculptory.fabric.client.editor.tool.RayOverlay;
 import dev.sculptory.fabric.client.editor.tool.RaycastMode;
 import dev.sculptory.fabric.client.editor.tool.ScrollEvent;
 import dev.sculptory.fabric.client.editor.tool.Tool;
@@ -114,8 +115,13 @@ import java.util.Optional;
  * built-ins and the builder's folder, picked in Tool Settings): the picture is fitted to the brush's square
  * ({@code 2 × radius + 1} columns) and turned by the Angle setting ({@link HeightImage#stamp}) here on the client, and
  * sent as the stroke's {@link HeightmapSpec} with the Height and Raise or Lower. A click stamps once; a drag lays a ridge
- * ({@code HeightmapKernel}). R and Shift+R turn the stamp a quarter turn either way; Ctrl+Scroll sizes it, up to radius
- * 128 (a 257-wide stamp; every other brush stops at 32), within the server's {@code maxHeightmapRadius}, and the Height
+ * ({@code HeightmapKernel}). As the Shape brush's, a press stamps at its first hit until the cursor has moved
+ * ({@link PressAim}), and its cursor ray sees the ground as it was before the press stamped ({@link #rayOverlay},
+ * {@link PressSnapshot}, taken just before each dab goes out): so a click held still stamps once however its hill rises
+ * (or its pit sinks) under the cursor, predicted or written by the server, and a drag lays its ridge along the ground
+ * the cursor points at rather than climbing its own hills. The other brushes aim at the cursor as it is: the sculpting
+ * ones repeat while held (flow), and Paint, Palette Paint and Biome change no height the cursor meets. R and Shift+R
+ * turn the stamp a quarter turn either way; Ctrl+Scroll sizes it, up to radius 128 (a 257-wide stamp; every other brush stops at 32), within the server's {@code maxHeightmapRadius}, and the Height
  * within its {@code maxHeightmapHeight}. The cursor outlines the stamp's square on the ground and tints it by the
  * picture's value: each column up to radius 32, and past it each cell of a few columns by the picture stamped a pixel
  * a cell (at most 65 × 65 quads), with a tick pointing to the picture's top edge. A stamp over the prediction cap is
@@ -220,6 +226,10 @@ public final class TerrainBrushTool implements Tool {
     private boolean warnedMaskState;
     /** The press said its picture is missing (once a press, restarts included). */
     private boolean warnedPicture;
+    /** The Heightmap brush: the world as it was before the press stamped, what the press's cursor ray sees. */
+    private final PressSnapshot before = new PressSnapshot();
+    /** The Heightmap brush: where the press aims, its first hit until the cursor moves. */
+    private final PressAim pressAim;
 
     /** A brush with a symmetry centre of its own (tests and tool sets without the others). */
     public TerrainBrushTool(BrushTool kind, BrushServices services) {
@@ -233,6 +243,7 @@ public final class TerrainBrushTool implements Tool {
         if (kind == BrushTool.SHAPE) throw new IllegalArgumentException("The Shape brush has its own tool");
         this.centre = Objects.requireNonNull(centre);
         this.press = new BrushPress(centre, services);
+        this.pressAim = new PressAim(services);
         this.gradient = new GradientDrag(centre.gradientLine());
         this.settings = BrushSettings.forTool(kind);
         // The Biome brush needs the biome node instead of the brush node (protocol 6).
@@ -369,6 +380,12 @@ public final class TerrainBrushTool implements Tool {
     @Override
     public RaycastMode raycastMode(SettingsValues s) {
         return RaycastMode.TERRAIN;
+    }
+
+    /** The Heightmap brush while pressing: the world as it was before the press stamped, so the cursor looks through it. */
+    @Override
+    public RayOverlay rayOverlay() {
+        return controller.pressed() && !before.isEmpty() ? before : null;
     }
 
     @Override
@@ -640,6 +657,8 @@ public final class TerrainBrushTool implements Tool {
         if (kind == BrushTool.HEIGHTMAP) {
             refreshPictures(c);
         }
+        before.clear();
+        pressAim.begin(cursor);
         Limits limits = limits(c);
         controller.press(effectiveRadius(c.settings(), limits), limits.maxDabRate(), dabCost(c.settings(), limits));
         c.setPointerCapture(true);
@@ -653,19 +672,40 @@ public final class TerrainBrushTool implements Tool {
         flattenY = null;
         surfacePlane = null;
         invert = false;
+        before.clear();
+        pressAim.end();
         press.end();
     }
 
+    /**
+     * Follows the cursor: its hit goes to the stroke controller. A Heightmap press aims at its first hit until the
+     * cursor moves ({@link PressAim}): its stamp raises or cuts the ground under a cursor held still.
+     */
     private void aim(WorldCursor next) {
         cursor = next;
-        if (next.missed()) {
+        WorldCursor target = kind == BrushTool.HEIGHTMAP && controller.pressed() ? pressAim.target(next) : next;
+        if (target.missed()) {
             controller.clearAim();
         } else {
-            controller.aim(next.hitX(), next.hitY(), next.hitZ());
-            aimBlockY = next.pos().y();
-            aimPos = next.pos();
-            lastHit = next;
+            controller.aim(target.hitX(), target.hitY(), target.hitZ());
+            aimBlockY = target.pos().y();
+            aimPos = target.pos();
+            lastHit = target;
         }
+    }
+
+    /**
+     * {@code dab} of a Heightmap stroke is about to go out: the sections its stamp and copies can write are kept as they
+     * are now for the press's cursor ray ({@link PressSnapshot#coverHeightmap}), before anything of it is predicted or
+     * written.
+     */
+    private void keepBefore(Dab dab) {
+        ToolContext c = context;
+        WorldReader world = c == null ? null : worldOrNull(c);
+        if (kind != BrushTool.HEIGHTMAP || world == null || strokeSpec == null) {
+            return;
+        }
+        before.coverHeightmap(world, strokeSpec, dab);
     }
 
     /** Begins a server stroke with the settings as they are now (the controller calls this). */
@@ -1291,6 +1331,11 @@ public final class TerrainBrushTool implements Tool {
         @Override
         public int inFlightBeforeStroke() {
             return unwrittenBefore();
+        }
+
+        @Override
+        public void beforeDab(Dab dab) {
+            keepBefore(dab);
         }
     }
 
