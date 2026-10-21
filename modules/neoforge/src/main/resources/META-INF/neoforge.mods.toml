@@ -23,7 +23,11 @@ config = "sculptory.mixins.json"
 [[mixins]]
 config = "sculptory.client.mixins.json"
 
-# The NeoForge layer's own client hooks (interactions, render-state invalidation), where NeoForge has no event.
+# The NeoForge layer's own hooks where NeoForge has no event with Fabric API's meaning (server stopping and
+# after-save; client join, interactions and render-state invalidation).
+[[mixins]]
+config = "sculptory-neoforge.mixins.json"
+
 [[mixins]]
 config = "sculptory-neoforge.client.mixins.json"
 

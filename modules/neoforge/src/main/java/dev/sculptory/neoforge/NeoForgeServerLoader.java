@@ -8,10 +8,10 @@ import dev.sculptory.mc.net.Frame;
 import dev.sculptory.server.engine.Perm;
 import java.nio.file.Path;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import net.minecraft.commands.CommandBuildContext;
@@ -30,7 +30,6 @@ import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
-import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.LevelTickEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
 import net.neoforged.neoforge.network.event.RegisterPayloadHandlersEvent;
@@ -41,7 +40,7 @@ import net.neoforged.neoforge.server.permission.nodes.PermissionNode;
 import net.neoforged.neoforge.server.permission.nodes.PermissionTypes;
 
 /**
- * The {@link ServerLoader} on NeoForge: each hook is one listener on NeoForge's game bus ({@link NeoForge#EVENT_BUS}),
+ * The {@link ServerLoader} on NeoForge: most hooks are one listener on NeoForge's game bus ({@link NeoForge#EVENT_BUS}),
  * registered at the default priority when the hook is, so hooks run in the order they were registered (the engine
  * relies on it, see {@code EngineRuntime.install}).
  * <ul>
@@ -51,13 +50,13 @@ import net.neoforged.neoforge.server.permission.nodes.PermissionTypes;
  *       there, which nothing in the hooks reads;</li>
  *   <li>{@link #onServerStarted}, {@link #onServerStopped}: {@code ServerStartedEvent}, {@code ServerStoppedEvent}, at
  *       the same places as Fabric's;</li>
- *   <li>{@link #onServerStopping}: {@code ServerStoppingEvent}, when the tick loop ends normally. Unlike Fabric's
- *       {@code SERVER_STOPPING} (the head of {@code stopServer}) it does not fire when the tick loop crashed: then only
- *       {@link #onServerStopped} runs;</li>
- *   <li>{@link #onAfterSave}: NeoForge has no event for a finished full save. {@code LevelEvent.Save} fires once per
- *       world inside {@code saveAllChunks}; the hook runs after the last world's, while the server is running (so
- *       autosave and {@code /save-all}, like Fabric's {@code AFTER_SAVE} on {@code saveEverything}, and not the save
- *       during shutdown). A world saved with {@code /save-off} fires no event;</li>
+ *   <li>{@link #onServerStopping}: not {@code ServerStoppingEvent}, which NeoForge skips when the tick loop crashed,
+ *       while the stopping hooks close the undo history store before the worlds are saved. {@code MinecraftServerMixin}
+ *       runs them at the head of {@code MinecraftServer.stopServer}, where Fabric API fires {@code SERVER_STOPPING}
+ *       (fabric-lifecycle-events-v1 in Fabric API 0.116.4, read with javap): on every stop, crashed or not;</li>
+ *   <li>{@link #onAfterSave}: NeoForge has no event for a finished save. {@code MinecraftServerMixin} runs the hooks at
+ *       the tail of {@code MinecraftServer.saveAllChunks}, where Fabric API fires {@code AFTER_SAVE}: autosave,
+ *       {@code /save-all} and the save during shutdown;</li>
  *   <li>{@link #onStartServerTick}, {@link #onEndServerTick}: {@code ServerTickEvent.Pre} and {@code .Post}, at the
  *       start and end of {@code tickServer} (Pre after the tick counter went up, Fabric's before);</li>
  *   <li>{@link #onStartWorldTick}: {@code LevelTickEvent.Pre} for server worlds, just before {@code ServerLevel.tick};</li>
@@ -84,6 +83,9 @@ public final class NeoForgeServerLoader implements ServerLoader {
     private static final String PAYLOAD_VERSION = "1";
 
     private static NeoForgeServerLoader instance;
+    /** The hooks {@code MinecraftServerMixin} runs (NeoForge has no event with Fabric's meaning for them). */
+    private static final List<Consumer<MinecraftServer>> STOPPING = new CopyOnWriteArrayList<>();
+    private static final List<Consumer<MinecraftServer>> AFTER_SAVE = new CopyOnWriteArrayList<>();
 
     /**
      * The operator level the check in progress on this thread falls back to: {@link #hasPermission} sets it around
@@ -196,10 +198,10 @@ public final class NeoForgeServerLoader implements ServerLoader {
         NeoForge.EVENT_BUS.addListener((ServerStartedEvent event) -> hook.accept(event.getServer()));
     }
 
+    /** Runs from {@code MinecraftServerMixin} at the head of {@code stopServer} (see the class javadoc). */
     @Override
     public void onServerStopping(Consumer<MinecraftServer> hook) {
-        Objects.requireNonNull(hook);
-        NeoForge.EVENT_BUS.addListener((ServerStoppingEvent event) -> hook.accept(event.getServer()));
+        STOPPING.add(Objects.requireNonNull(hook));
     }
 
     @Override
@@ -208,23 +210,20 @@ public final class NeoForgeServerLoader implements ServerLoader {
         NeoForge.EVENT_BUS.addListener((ServerStoppedEvent event) -> hook.accept(event.getServer()));
     }
 
+    /** Runs from {@code MinecraftServerMixin} at the tail of {@code saveAllChunks} (see the class javadoc). */
     @Override
     public void onAfterSave(Consumer<MinecraftServer> hook) {
-        Objects.requireNonNull(hook);
-        NeoForge.EVENT_BUS.addListener((LevelEvent.Save event) -> {
-            if (!(event.getLevel() instanceof ServerLevel level)) return;
-            MinecraftServer server = level.getServer();
-            if (server.isRunning() && isLastLevel(server, level)) hook.accept(server);
-        });
+        AFTER_SAVE.add(Objects.requireNonNull(hook));
     }
 
-    /** Whether {@code level} is the last world {@code saveAllChunks} saves (it saves them in this order). */
-    private static boolean isLastLevel(MinecraftServer server, ServerLevel level) {
-        ServerLevel last = null;
-        for (Iterator<ServerLevel> it = server.getAllLevels().iterator(); it.hasNext(); ) {
-            last = it.next();
-        }
-        return last == level;
+    /** The head of {@code MinecraftServer.stopServer}: the stopping hooks, in registration order. */
+    public static void serverStopping(MinecraftServer server) {
+        STOPPING.forEach(hook -> hook.accept(server));
+    }
+
+    /** The tail of {@code MinecraftServer.saveAllChunks}: the after-save hooks, in registration order. */
+    public static void afterSave(MinecraftServer server) {
+        AFTER_SAVE.forEach(hook -> hook.accept(server));
     }
 
     @Override
