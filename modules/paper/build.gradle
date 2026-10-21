@@ -1,0 +1,219 @@
+// Sculptory for Paper (spike, Minecraft 1.21.1): a Bukkit plugin compiled against Paper's server in Mojang's names
+// (paperweight-userdev's dev bundle). Paper runs Mojang-named since 1.20.5, so the jar is used as javac wrote it:
+// nothing is reobfuscated, and the manifest says so (paperweight-mappings-namespace: mojang).
+apply plugin: 'io.papermc.paperweight.userdev'
+
+base { archivesName = 'sculptory-paper' }
+
+repositories {
+    maven { name = 'PaperMC'; url = 'https://repo.papermc.io/repository/maven-public/' }
+    // WorldGuard's and WorldEdit's APIs, compile only (the server has the plugins).
+    exclusiveContent {
+        forRepository { maven { name = 'EngineHub'; url = 'https://maven.enginehub.org/repo/' } }
+        filter {
+            includeGroupByRegex 'com\\.sk89q.*'
+            includeGroupByRegex 'org\\.enginehub.*'
+        }
+    }
+    // The Mixin annotations for the probe source set only.
+    exclusiveContent {
+        forRepository { maven { name = 'Fabric'; url = 'https://maven.fabricmc.net/' } }
+        filter { includeGroup 'net.fabricmc' }
+    }
+}
+
+// The plugin takes the loader-free Minecraft code of modules/common as source, like the loader modules do, but through
+// a copy (commonForPaper) that routes the few uses of access-widened members and the one physics-off write through
+// PaperAccess, and adds the methods Paper's patched level interfaces declare abstract. Every patch must match, so a
+// change in modules/common that moves one fails here instead of silently compiling the old behaviour.
+def commonSources = project(':common').file('src/main/java')
+// Not on Paper: the mixins (Paper has none), builder mode (mixin accessors), the Fabric/NeoForge engine wiring and the
+// command tree and edit events over it (the plugin wires the engine itself: PaperEngine, PaperEditHost, PaperCommands),
+// and the light batch (Paper's own light engine; src/commonReplacements has its stand-in).
+def commonExcludes = [
+        'dev/sculptory/mc/mixin/**',
+        'dev/sculptory/mc/builder/**',
+        'dev/sculptory/mc/command/**',
+        'dev/sculptory/mc/engine/impl/EngineRuntime.java',
+        'dev/sculptory/mc/engine/impl/EditServiceHost.java',
+        'dev/sculptory/mc/engine/impl/BuilderService.java',
+        'dev/sculptory/mc/engine/impl/TinkerEdits.java',
+        'dev/sculptory/mc/engine/impl/NavigateService.java',
+        'dev/sculptory/mc/net/NetEditEvents.java',
+        'dev/sculptory/mc/world/LightBatch.java',
+]
+// What Paper's level interfaces add as abstract methods (LevelReader, BlockGetter, LevelAccessor), for the common
+// classes that implement them over a ServerLevel field named world.
+def levelReaderMethods = """
+    // ---- Paper's additions to the level interfaces (added by the modules/paper build, task commonForPaper) ----
+    @Override
+    public net.minecraft.world.level.chunk.ChunkAccess getChunkIfLoadedImmediately(int x, int z) {
+        return world.getChunkIfLoadedImmediately(x, z);
+    }
+
+    @Override
+    public net.minecraft.world.level.block.state.BlockState getBlockStateIfLoaded(net.minecraft.core.BlockPos pos) {
+        return getBlockState(pos);
+    }
+
+    @Override
+    public net.minecraft.world.level.material.FluidState getFluidIfLoaded(net.minecraft.core.BlockPos pos) {
+        return getFluidState(pos);
+    }
+"""
+def levelAccessorMethods = levelReaderMethods + """
+    @Override
+    public net.minecraft.server.level.ServerLevel getMinecraftWorld() {
+        return world;
+    }
+"""
+def access = 'dev.sculptory.paper.nms.PaperAccess'
+def commonPatches = [
+        'dev/sculptory/mc/world/McStateSpace.java': [
+                ['plant.growthDirection', "${access}.growthDirection(plant)"],
+                ['((GrowingPlantHeadBlock) stem).growthDirection', "${access}.growthDirection((GrowingPlantHeadBlock) stem)"],
+        ],
+        'dev/sculptory/mc/world/McWorldReader.java': [
+                ['PalettedContainer.Data<BlockState> data = section.getStates().data;',
+                 "var data = ${access}.data(section.getStates());"],
+                ['PalettedContainer.Data<BlockState> data = container.data;', "var data = ${access}.data(container);"],
+        ],
+        'dev/sculptory/mc/world/BlockWriter.java': [
+                ['world.setBlock(pos, state, Block.UPDATE_KNOWN_SHAPE, 0);',
+                 "${access}.setBlockWithoutCallbacks(world, pos, state);"],
+        ],
+        'dev/sculptory/mc/world/McNeighbourShapes.java': [
+                ['static final class View implements LevelAccessor {',
+                 'static final class View implements LevelAccessor {\n' + levelAccessorMethods],
+        ],
+        'dev/sculptory/mc/engine/impl/LoadedOnlyView.java': [
+                ['final class LoadedOnlyView implements LevelReader {',
+                 'final class LoadedOnlyView implements LevelReader {\n' + levelReaderMethods],
+        ],
+        'dev/sculptory/mc/world/CapturingWorldAccess.java': [
+                ['public final class CapturingWorldAccess implements WorldGenLevel {',
+                 'public final class CapturingWorldAccess implements WorldGenLevel {\n' + levelAccessorMethods],
+        ],
+].collectEntries { k, v -> [k, v.collect { [it[0].toString(), it[1].toString()] }] }
+
+def commonForPaper = tasks.register('commonForPaper', CommonOverlay) {
+    description = 'Copies modules/common/src/main for the Paper plugin, with the Paper patches applied.'
+    source = commonSources
+    excludes = commonExcludes
+    patches = commonPatches
+    outputDir = layout.buildDirectory.dir('generated/commonForPaper')
+}
+
+sourceSets {
+    main {
+        java.srcDir commonForPaper
+        java.srcDir 'src/commonReplacements/java'
+    }
+}
+
+dependencies {
+    paperweight.paperDevBundle(rootProject.paper_dev_bundle_version)
+    // The engine (no Minecraft code), packed into the plugin jar as classes (see the jar task).
+    implementation project(':core')
+    implementation project(':protocol')
+    implementation project(':server')
+    compileOnly("com.sk89q.worldguard:worldguard-bukkit:${rootProject.paper_worldguard_api_version}") {
+        // The server provides Bukkit/Paper; WorldGuard's own Spigot API dependency would shadow paper-api.
+        exclude group: 'org.spigotmc'
+        exclude group: 'io.papermc.paper'
+    }
+}
+
+// paperweight 2.x: the plugin is used Mojang-named (Paper 1.20.5+), no reobfJar.
+paperweight.reobfArtifactConfiguration = io.papermc.paperweight.userdev.ReobfArtifactConfiguration.Companion.MOJANG_PRODUCTION
+
+tasks.named('jar') {
+    // The engine's classes go into the plugin jar itself. They are our own code, not published to Maven Central, so
+    // Paper's library loader (which resolves Maven coordinates when the server starts) can't supply them; their
+    // packages are all dev.sculptory.*, so nothing needs relocating. fastutil, Gson and SLF4J come with the server.
+    [':core', ':protocol', ':server'].each { path -> from(project(path).sourceSets.main.output) }
+    manifest.attributes('paperweight-mappings-namespace': 'mojang')
+    // The jar is named after the build id, so older builds' jars are removed when a new one is written.
+    def libs = layout.buildDirectory.dir('libs')
+    def keep = "sculptory-paper-${project.version}.jar".toString()
+    doFirst {
+        libs.get().asFile.listFiles()?.each { file ->
+            if (file.name.startsWith('sculptory-') && file.name.endsWith('.jar') && file.name != keep) file.delete()
+        }
+    }
+}
+
+processResources {
+    def version = project.version.toString()
+    def minecraft = rootProject.minecraft_version.toString()
+    inputs.property 'version', version
+    inputs.property 'minecraft', minecraft
+    filesMatching('plugin.yml') { expand version: version, minecraft: minecraft }
+}
+
+// The probe: all of modules/common/src/main (the mixin classes too, compiled but never applied: Paper has no mixins)
+// through the same patches, to show what compiles against Paper. Never part of the jar; `check` compiles it.
+def commonProbe = tasks.register('commonProbe', CommonOverlay) {
+    description = 'Copies all of modules/common/src/main with the Paper patches, for the compile probe.'
+    source = commonSources
+    // LightBatch is Paper's stand-in, so the mixin feeding the common one goes too.
+    excludes = ['dev/sculptory/mc/world/LightBatch.java', 'dev/sculptory/mc/mixin/LightBatchMixin.java']
+    patches = commonPatches
+    outputDir = layout.buildDirectory.dir('generated/commonProbe')
+}
+sourceSets {
+    probe {
+        java.srcDir commonProbe
+        java.srcDir 'src/commonReplacements/java'
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+    }
+}
+dependencies {
+    probeCompileOnly "net.fabricmc:sponge-mixin:${rootProject.sponge_mixin_version}"
+    probeCompileOnly "io.github.llamalad7:mixinextras-common:${rootProject.mixinextras_version}"
+}
+tasks.named('check') { dependsOn tasks.named('probeClasses') }
+
+/** Copies Java sources with literal patches; each patch must match at least once in its file. */
+abstract class CommonOverlay extends DefaultTask {
+    @InputDirectory
+    abstract DirectoryProperty getSource()
+
+    @Input
+    abstract ListProperty<String> getExcludes()
+
+    @Input
+    abstract MapProperty<String, List<List<String>>> getPatches()
+
+    @OutputDirectory
+    abstract DirectoryProperty getOutputDir()
+
+    @javax.inject.Inject
+    abstract FileSystemOperations getFs()
+
+    @TaskAction
+    void run() {
+        File out = outputDir.get().asFile
+        // Read before the closure: inside it, the copy spec's own source and excludes would be found first.
+        File from = source.get().asFile
+        List<String> skipped = excludes.get()
+        fs.sync { spec ->
+            spec.from(from)
+            spec.exclude(skipped)
+            spec.into(out)
+        }
+        patches.get().each { String path, List<List<String>> edits ->
+            File file = new File(out, path)
+            if (!new File(from, path).isFile()) throw new GradleException("Paper patch target ${path} is gone from modules/common")
+            if (!file.isFile()) return // excluded from this copy
+            String text = file.getText('UTF-8')
+            edits.each { List<String> edit ->
+                if (!text.contains(edit[0])) {
+                    throw new GradleException("Paper patch for ${path} no longer matches: ${edit[0]}")
+                }
+                text = text.replace(edit[0], edit[1])
+            }
+            file.setText(text, 'UTF-8')
+        }
+    }
+}
