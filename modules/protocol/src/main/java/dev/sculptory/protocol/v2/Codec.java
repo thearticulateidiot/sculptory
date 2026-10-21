@@ -463,6 +463,45 @@ public final class Codec {
         return out.toByteArray();
     }
 
+    // =================================================================== by protocol
+
+    /**
+     * {@link #encodeC2S(C2S, StateSpace)} for a session at {@code protocol}: refused ({@code INVALID}) when the
+     * message's type is newer than the protocol ({@link MessageType#since}). Where a later protocol changes a message's
+     * layout, this is where the older layout is written for older sessions.
+     */
+    public static byte[] encodeC2S(C2S message, StateSpace states, int protocol) throws ProtocolException {
+        requireSince(Objects.requireNonNull(message).type(), protocol);
+        return encodeC2S(message, states);
+    }
+
+    /** {@link #encodeS2C(S2C, StateSpace)} for a session at {@code protocol}; see {@link #encodeC2S(C2S, StateSpace, int)}. */
+    public static byte[] encodeS2C(S2C message, StateSpace states, int protocol) throws ProtocolException {
+        requireSince(Objects.requireNonNull(message).type(), protocol);
+        return encodeS2C(message, states);
+    }
+
+    /** {@link #decodeC2S(byte[], StateSpace)} for a session at {@code protocol}: a type newer than it is refused. */
+    public static C2S decodeC2S(byte[] frame, StateSpace states, int protocol) throws ProtocolException {
+        MessageType type = peekType(frame);
+        if (type != null) requireSince(type, protocol);
+        return decodeC2S(frame, states);
+    }
+
+    /** {@link #decodeS2C(byte[], StateSpace)} for a session at {@code protocol}: a type newer than it is refused. */
+    public static S2C decodeS2C(byte[] frame, StateSpace states, int protocol) throws ProtocolException {
+        MessageType type = peekType(frame);
+        if (type != null) requireSince(type, protocol);
+        return decodeS2C(frame, states);
+    }
+
+    private static void requireSince(MessageType type, int protocol) throws ProtocolException {
+        if (type.since() > protocol) {
+            throw new ProtocolException(ProtocolException.Reason.UNKNOWN_TYPE, type + " needs protocol "
+                    + type.since() + ", the session speaks " + protocol);
+        }
+    }
+
     // =================================================================== decode
 
     /**

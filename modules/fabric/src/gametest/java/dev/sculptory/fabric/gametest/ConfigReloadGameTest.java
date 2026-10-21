@@ -201,8 +201,8 @@ public final class ConfigReloadGameTest implements FabricGameTest {
 
             CapturedOutput version = new CapturedOutput();
             server.getCommands().performPrefixedCommand(userSource.withSource(version), "sculptory version");
-            check(version.all().contains("Sculptory " + Sculptory.buildId() + " on this server (protocol "
-                    + ProtocolV2.VERSION + ")") && version.all().contains("Your client: no Sculptory editor connected"),
+            check(version.all().contains("Sculptory " + Sculptory.buildId() + " on this server ("
+                    + Sculptory.productBuildId() + ", protocol " + ProtocolV2.VERSION + ")") && version.all().contains("Your client: no Sculptory editor connected"),
                     "version output: " + version.all());
             check(version.lines.size() == 1 && version.all().lines().count() == 2,
                     "a non-admin sees the server's build and their own client only: " + version.all());

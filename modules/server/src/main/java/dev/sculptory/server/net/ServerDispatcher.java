@@ -314,7 +314,7 @@ public final class ServerDispatcher<P> {
         }
         C2S message;
         try {
-            message = Codec.decodeC2S(frame, states.get());
+            message = Codec.decodeC2S(frame, states.get(), protocolOf(s));
         } catch (ProtocolException e) {
             refuseUndecodable(s, frame, e);
             return;
@@ -1666,7 +1666,7 @@ public final class ServerDispatcher<P> {
     private void refuseRateLimited(NetSession<P> s, MessageType type, byte[] frame) {
         if (type == MessageType.DABS) {
             try {
-                C2S dabs = Codec.decodeC2S(frame, null);
+                C2S dabs = Codec.decodeC2S(frame, null, protocolOf(s));
                 predicted(s);
                 refuse(s, dabs, RejectReason.RATE_LIMITED);
             } catch (ProtocolException e) {
@@ -1748,12 +1748,21 @@ public final class ServerDispatcher<P> {
         if (s.stage == Stage.CLOSED || !s.transport.canSend()) return;
         byte[] frame;
         try {
-            frame = Codec.encodeS2C(message, states.get());
+            frame = Codec.encodeS2C(message, states.get(), protocolOf(s));
         } catch (ProtocolException e) {
             ServerLog.LOG.error("Sculptory: cannot encode {}: {}", message.type(), e.getMessage());
             return;
         }
         s.transport.send(frame);
+    }
+
+    /**
+     * The protocol the session speaks: the negotiated one after {@code Welcome}, else this build's newest (the
+     * handshake itself, whose messages every protocol decodes). Message types newer than it are never sent to the
+     * session and refused from it (the codec checks {@link MessageType#since}).
+     */
+    private static int protocolOf(NetSession<?> s) {
+        return s.protocol > 0 ? s.protocol : Handshake.MAX_PROTOCOL;
     }
 
     /** Sends the history state from the {@link HistoryView} edit service, if it is one. */

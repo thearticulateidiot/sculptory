@@ -10,3 +10,10 @@ dependencies {
     testImplementation "org.slf4j:slf4j-api:${rootProject.slf4j_version}"
     testImplementation testFixtures(project(':core'))
 }
+
+// The engine build id for EngineVersion (the module's version: the root build's engine build id).
+processResources {
+    def version = project.version.toString()
+    inputs.property 'version', version
+    filesMatching('dev/sculptory/server/engine.properties') { expand version: version }
+}

@@ -36,18 +36,18 @@ public enum MessageType {
     LIBRARY_ACCESS_GET(25, Direction.C2S, C2S.LibraryAccessGet.class),
     LIBRARY_ACCESS_SET(26, Direction.C2S, C2S.LibraryAccessSet.class),
     // Generators (the stream's codes start at 30; other streams append below).
-    GENERATED_UPLOAD(30, Direction.C2S, C2S.GeneratedUpload.class),
+    GENERATED_UPLOAD(30, Direction.C2S, C2S.GeneratedUpload.class, 5),
     // Tinker, protocol 5 (the stream's codes start at 40).
-    TINKER_BLOCK(40, Direction.C2S, C2S.TinkerBlock.class),
-    TINKER_ENTITY(41, Direction.C2S, C2S.TinkerEntity.class),
+    TINKER_BLOCK(40, Direction.C2S, C2S.TinkerBlock.class, 5),
+    TINKER_ENTITY(41, Direction.C2S, C2S.TinkerEntity.class, 5),
     // Builder mode (protocol 5; codes 44-47, after Tinker's).
-    BUILDER_POWERS(44, Direction.C2S, C2S.BuilderPowers.class),
-    BUILDER_PLACE(45, Direction.C2S, C2S.BuilderPlace.class),
-    BUILDER_BREAK(46, Direction.C2S, C2S.BuilderBreak.class),
-    BUILDER_DRAG_END(47, Direction.C2S, C2S.BuilderDragEnd.class),
+    BUILDER_POWERS(44, Direction.C2S, C2S.BuilderPowers.class, 5),
+    BUILDER_PLACE(45, Direction.C2S, C2S.BuilderPlace.class, 5),
+    BUILDER_BREAK(46, Direction.C2S, C2S.BuilderBreak.class, 5),
+    BUILDER_DRAG_END(47, Direction.C2S, C2S.BuilderDragEnd.class, 5),
     // The WorldEdit-inspired batch (protocol 5): the global mask 48, Jump and Through 50; 49 and 51 spare.
-    SET_EDIT_MASK(48, Direction.C2S, C2S.SetEditMask.class),
-    NAVIGATE(50, Direction.C2S, C2S.Navigate.class),
+    SET_EDIT_MASK(48, Direction.C2S, C2S.SetEditMask.class, 5),
+    NAVIGATE(50, Direction.C2S, C2S.Navigate.class, 5),
 
     WELCOME(64, Direction.S2C, S2C.Welcome.class),
     INCOMPATIBLE(65, Direction.S2C, S2C.Incompatible.class),
@@ -70,10 +70,10 @@ public enum MessageType {
     SELECTION_READY(82, Direction.S2C, S2C.SelectionReady.class),
     LIBRARY_ACCESS(83, Direction.S2C, S2C.LibraryAccess.class),
     // Tinker, protocol 5 (the stream's codes start at 90).
-    TINKER_RESULT(90, Direction.S2C, S2C.TinkerResult.class),
+    TINKER_RESULT(90, Direction.S2C, S2C.TinkerResult.class, 5),
     // The WorldEdit-inspired batch (protocol 5): 91-92; 93-94 spare.
-    EDIT_MASK_STATE(91, Direction.S2C, S2C.EditMaskState.class),
-    NAVIGATE_RESULT(92, Direction.S2C, S2C.NavigateResult.class),
+    EDIT_MASK_STATE(91, Direction.S2C, S2C.EditMaskState.class, 5),
+    NAVIGATE_RESULT(92, Direction.S2C, S2C.NavigateResult.class, 5),
 
     STREAM_OPEN(100, Direction.BOTH, StreamOpen.class),
     STREAM_CHUNK(101, Direction.BOTH, StreamChunk.class),
@@ -97,14 +97,32 @@ public enum MessageType {
         }
     }
 
+    /** The oldest protocol of this wire format (the v1 rebuild); types without a later {@link #since} date from it. */
+    public static final int FIRST = 2;
+
     private final int code;
     private final Direction direction;
     private final Class<? extends Message> messageClass;
+    private final int since;
 
     MessageType(int code, Direction direction, Class<? extends Message> messageClass) {
+        this(code, direction, messageClass, FIRST);
+    }
+
+    MessageType(int code, Direction direction, Class<? extends Message> messageClass, int since) {
         this.code = code;
         this.direction = direction;
         this.messageClass = messageClass;
+        this.since = since;
+    }
+
+    /**
+     * The first protocol with this type. A session never carries a type newer than its negotiated protocol: the codec
+     * refuses to encode or decode one ({@code Codec.encodeS2C(message, states, protocol)}), so a server speaking a
+     * range of protocols keeps new types from older clients, and an older client never sends them.
+     */
+    public int since() {
+        return since;
     }
 
     public int code() {

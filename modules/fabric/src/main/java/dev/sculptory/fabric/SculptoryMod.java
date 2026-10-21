@@ -25,7 +25,8 @@ public final class SculptoryMod implements ModInitializer {
     @Override
     public void onInitialize() {
         FabricServerLoader.install();
-        Sculptory.LOG.info("Sculptory {} initializing (protocol {})", Sculptory.buildId(), ProtocolV2.VERSION);
+        Sculptory.LOG.info("Sculptory for Fabric {} initializing (engine {}, protocol {})", Sculptory.productBuildId(),
+                Sculptory.buildId(), ProtocolV2.VERSION);
         EngineRuntime.install();
         EditServiceHost.install(ServerNet::jobListener, ServerNet::predictionApplied, new NetEditEvents());
         ServerNet.install(EditServiceHost.service(), EditServiceHost.clipboards(), EditServiceHost.scatter(),

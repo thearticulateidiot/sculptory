@@ -6,15 +6,18 @@ import java.util.OptionalInt;
 
 /**
  * Protocol version negotiation for {@code Hello}/{@code Welcome}. Both sides support the inclusive range
- * {@link #MIN_PROTOCOL}..{@link #MAX_PROTOCOL}; the session uses the highest version in both ranges.
+ * {@link #MIN_PROTOCOL}..{@link #MAX_PROTOCOL}; the session uses the highest version in both ranges. The range is one
+ * version today; once a product keeps serving an older protocol next to a newer one, the session's protocol gates
+ * what crosses the wire ({@link MessageType#since}, the codec's protocol-aware entry points).
  *
  * <p>The {@code Hello} and {@code Incompatible} bodies must stay decodable by every future version, so that
  * an old client and a new server can still tell each other they don't match: {@code Hello} is
  * {@code min, max, modVersion, features}, {@code Incompatible} is {@code min, max} followed, for clients of protocol 5
  * or newer, by the server's build id.
  *
- * <p>Both sides carry their build id ({@code Hello.modVersion}, {@code Welcome.serverBuild}): builds of one protocol work
- * together, and a different build is only a notice ({@link #differentBuilds}).
+ * <p>Both sides carry their engine build id ({@code Hello.modVersion}, {@code Welcome.serverBuild}; the engine every
+ * product is built from, not the product's own version): builds of one protocol work together, and a different
+ * engine build is only a notice ({@link #differentBuilds}).
  */
 public final class Handshake {
     private Handshake() {}

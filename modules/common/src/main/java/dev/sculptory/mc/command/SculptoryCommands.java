@@ -207,9 +207,10 @@ public final class SculptoryCommands {
      */
     private static int version(CommandContext<CommandSourceStack> context) {
         CommandSourceStack source = context.getSource();
+        // The engine build id is what client and server compare; the product id says which mod this server runs.
         String server = Sculptory.buildId();
-        StringBuilder text = new StringBuilder("Sculptory ").append(server).append(" on this server (protocol ")
-                .append(ProtocolV2.VERSION).append(')');
+        StringBuilder text = new StringBuilder("Sculptory ").append(server).append(" on this server (")
+                .append(Sculptory.productBuildId()).append(", protocol ").append(ProtocolV2.VERSION).append(')');
         ServerPlayer caller = source.getPlayer();
         if (caller != null) text.append("\nYour client: ").append(describeClient(caller, server));
         if (admin(source)) {

@@ -632,7 +632,7 @@ public final class McEditorSession implements EditorSession {
     public void onFrame(byte[] frame) {
         S2C message;
         try {
-            message = Codec.decodeS2C(frame, states.get());
+            message = Codec.decodeS2C(frame, states.get(), protocol());
         } catch (ProtocolException e) {
             Sculptory.LOG.warn("Sculptory: ignoring a malformed server message: {}", e.getMessage());
             return;
@@ -697,6 +697,16 @@ public final class McEditorSession implements EditorSession {
     /** A protocol range as the notices show it: {@code 4}, or {@code 4-5}. */
     static String protocols(int min, int max) {
         return min == max ? Integer.toString(min) : min + "-" + max;
+    }
+
+    /**
+     * The protocol this session speaks: the negotiated one once the server welcomed it, else this build's newest
+     * (the handshake). The codec refuses message types newer than it, so a client on an older protocol never sends
+     * what the server would not understand.
+     */
+    int protocol() {
+        int negotiated = capabilities.protocol();
+        return negotiated > 0 ? negotiated : Handshake.MAX_PROTOCOL;
     }
 
     /** The server's build id from the handshake ({@code ""} before it, or when the server sent none). */
@@ -2027,7 +2037,7 @@ public final class McEditorSession implements EditorSession {
         if (masked != null) return masked;
         byte[] frame;
         try {
-            frame = Codec.encodeC2S(message, states.get());
+            frame = Codec.encodeC2S(message, states.get(), protocol());
         } catch (ProtocolException e) {
             return e.reason() + ": " + e.getMessage();
         } catch (RuntimeException e) {
