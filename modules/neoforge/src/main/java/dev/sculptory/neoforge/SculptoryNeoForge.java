@@ -4,8 +4,10 @@ import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.command.SculptoryCommands;
 import dev.sculptory.mc.engine.impl.EditServiceHost;
 import dev.sculptory.mc.engine.impl.EngineRuntime;
+import dev.sculptory.mc.loader.DevClasses;
 import dev.sculptory.mc.net.NetEditEvents;
 import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.mc.playtest.PlaytestSetup;
 import dev.sculptory.neoforge.client.SculptoryNeoForgeClient;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import net.neoforged.api.distmarker.Dist;
@@ -22,6 +24,9 @@ import net.neoforged.fml.common.Mod;
  */
 @Mod(Sculptory.MOD_ID)
 public final class SculptoryNeoForge {
+    /** The dev-only playtest setup, by name: the jar leaves its package out (NeoForgeJarClassesTest). */
+    static final String PLAYTEST_SETUP = "dev.sculptory.mc.playtest.PlaytestSetup";
+
     public SculptoryNeoForge(IEventBus modBus, Dist dist) {
         NeoForgeServerLoader.install(modBus);
         Sculptory.LOG.info("Sculptory for NeoForge {} initializing (engine {}, protocol {})", Sculptory.productBuildId(),
@@ -31,6 +36,11 @@ public final class SculptoryNeoForge {
         ServerNet.install(EditServiceHost.service(), EditServiceHost.clipboards(), EditServiceHost.scatter(),
                 EditServiceHost.tinker(), EditServiceHost.permissions(), EditServiceHost::limits, EditServiceHost::states);
         SculptoryCommands.register();
+        // The dev-only playtest setup (the tester is op, day is locked, mobs are off) with -Dsculptory.playtest=true,
+        // from a dev checkout only. The property constant is inlined, so without it no class of the setup is loaded.
+        if (DevClasses.wanted(SculptoryNeoForge.class.getClassLoader(), PlaytestSetup.PROPERTY, PLAYTEST_SETUP)) {
+            PlaytestSetup.install();
+        }
         if (dist.isClient()) SculptoryNeoForgeClient.init(modBus);
     }
 }

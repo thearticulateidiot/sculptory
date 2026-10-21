@@ -76,7 +76,8 @@
       "dev.sculptory.mc.gametest.ResamplingGameTest",
       "dev.sculptory.mc.gametest.AirPathsGameTest",
       "dev.sculptory.mc.gametest.PathPointsGameTest",
-      "dev.sculptory.mc.gametest.ExtendToGroundGameTest"
+      "dev.sculptory.mc.gametest.ExtendToGroundGameTest",
+      "dev.sculptory.mc.gametest.PlaytestSetupGameTest"
     ]
   },
   "mixins": ["sculptory-gametest.mixins.json"],

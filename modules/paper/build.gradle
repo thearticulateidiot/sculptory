@@ -41,6 +41,7 @@ def commonExcludes = [
         'dev/sculptory/mc/engine/impl/BuilderService.java',
         'dev/sculptory/mc/world/WidenedMcInternals.java',
         'dev/sculptory/mc/world/LightBatch.java',
+        'dev/sculptory/mc/playtest/**', // the dev-only playtest setup (PlaytestSetup), never in a jar
 ]
 // What Paper's level interfaces add as abstract methods (LevelReader, BlockGetter, LevelAccessor), for the common
 // classes that implement them over a ServerLevel field named world.

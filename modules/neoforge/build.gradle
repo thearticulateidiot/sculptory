@@ -65,12 +65,17 @@ neoForge {
                 programArgument '--quickPlayMultiplayer'
                 programArgument project.property('bsServer').toString()
             }
+            // -PbsPlaytest: the dev-only playtest setup (PlaytestSetup: the tester is op, day is locked, mobs are off) on the
+            // integrated server of every world this client opens, as in modules/fabric.
+            if (project.hasProperty('bsPlaytest')) systemProperty 'sculptory.playtest', 'true'
         }
         server {
             server()
             loadedMods = [mods.sculptory]
             gameDirectory = rootProject.file('.local/run/neoforge-server')
             programArgument '--nogui'
+            // -PbsPlaytest: the dev-only playtest setup; it ops BuilderDev (-Dsculptory.playtest.ops) when they join.
+            if (project.hasProperty('bsPlaytest')) systemProperty 'sculptory.playtest', 'true'
         }
     }
 }
@@ -102,6 +107,8 @@ dependencies {
 
 // The dev-only client harnesses run from a dev checkout, never from the jar (as in modules/fabric).
 def devHarnessPackages = ['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/mc/client/editor/${it}/**".toString() }
+// The dev-only server side, the playtest setup, which SculptoryNeoForge starts only when its class is there.
+def devServerPackages = ['dev/sculptory/mc/playtest/**']
 
 // The engine (core, protocol, server) is packed into the mod jar as classes. Its packages are all dev.sculptory.*, so
 // nothing needs relocating. Not jarJar: NeoForge would load each nested plain jar as its own module named after the
@@ -113,7 +120,7 @@ tasks.named('jar') {
     }
     // The Fabric widener is not read on NeoForge.
     exclude 'sculptory.accesswidener'
-    exclude devHarnessPackages
+    exclude devHarnessPackages + devServerPackages
     manifest.attributes('Automatic-Module-Name': 'dev.sculptory')
 }
 
@@ -128,6 +135,7 @@ tasks.named('test') {
     systemProperty 'sculptory.mainClassDirs', (sourceSets.main.output.classesDirs + serverClasses).asPath
     systemProperty 'sculptory.mainResourceDir', sourceSets.main.output.resourcesDir.absolutePath
     systemProperty 'sculptory.devHarnessPackages', devHarnessPackages.join(',')
+    systemProperty 'sculptory.devServerPackages', devServerPackages.join(',')
 }
 
 processResources {
