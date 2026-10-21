@@ -7,9 +7,10 @@ pluginManagement {
 rootProject.name = 'sculptory'
 
 // v1 layout. The old modules were removed; see tag v0-final.
-include 'core', 'protocol', 'server', 'common', 'fabric'
+include 'core', 'protocol', 'server', 'common', 'fabric', 'neoforge'
 project(':core').projectDir = file('modules/core')
 project(':protocol').projectDir = file('modules/protocol')
 project(':server').projectDir = file('modules/server')
 project(':common').projectDir = file('modules/common')
 project(':fabric').projectDir = file('modules/fabric')
+project(':neoforge').projectDir = file('modules/neoforge')

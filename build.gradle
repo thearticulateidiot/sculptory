@@ -2,6 +2,8 @@ plugins {
     // The remapping Loom (Minecraft 1.21.1 is obfuscated). Needs Gradle 9.4+. 1.17 is the last Loom that runs the build
     // on a JDK 21; 1.18+ needs a JDK 25 to run Gradle (its natives use Java 25's FFM API).
     id 'net.fabricmc.fabric-loom-remap' version '1.17.21' apply false
+    // ModDevGradle for the NeoForge mod (modules/neoforge): NeoForge runs on Mojang's names, so nothing is remapped.
+    id 'net.neoforged.moddev' version '2.0.148' apply false
 }
 
 // Versions and build ids (gradle.properties). The engine modules (core, protocol, server, common) carry the engine
@@ -25,6 +27,7 @@ def git = { List<String> args ->
 }
 ext.products = [
         fabric: [version: sculptory_fabric_version, minecraft: minecraft_version],
+        neoforge: [version: sculptory_neoforge_version, minecraft: minecraft_version],
 ]
 def ciTag = providers.environmentVariable('GITHUB_REF_TYPE').getOrElse('') == 'tag'
         ? providers.environmentVariable('GITHUB_REF_NAME').getOrElse('') : ''

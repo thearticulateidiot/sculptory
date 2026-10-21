@@ -1,0 +1,46 @@
+# NeoForge's mod metadata; ${version}, ${minNeoForge} and ${minecraft} come from the build (modules/neoforge/build.gradle).
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "AGPL-3.0-or-later"
+issueTrackerURL = "https://github.com/thearticulateidiot/sculptory/issues"
+
+[[mods]]
+modId = "sculptory"
+version = "${version}"
+displayName = "Sculptory"
+description = '''An open-source world editor for builders: an editor mode with terrain and shape brushes, selections, masks, copy and paste, schematics, scatter and undo, in singleplayer and on servers.'''
+authors = "Sculptory contributors"
+displayURL = "https://github.com/thearticulateidiot/sculptory"
+logoFile = "assets/sculptory/icon.png"
+# Clients without Sculptory join servers that have it, and the other way round (the payloads are optional), so the
+# server list doesn't mark a missing or different version.
+displayTest = "IGNORE_ALL_VERSION"
+
+# The client config lists its mixins under "client", which Mixin applies on the physical client only.
+[[mixins]]
+config = "sculptory.mixins.json"
+
+[[mixins]]
+config = "sculptory.client.mixins.json"
+
+# The NeoForge layer's own client hooks (interactions, render-state invalidation), where NeoForge has no event.
+[[mixins]]
+config = "sculptory-neoforge.client.mixins.json"
+
+# Generated from the common module's access widener at build time.
+[[accessTransformers]]
+file = "META-INF/accesstransformer.cfg"
+
+[[dependencies.sculptory]]
+modId = "neoforge"
+type = "required"
+versionRange = "[${minNeoForge},)"
+ordering = "NONE"
+side = "BOTH"
+
+[[dependencies.sculptory]]
+modId = "minecraft"
+type = "required"
+versionRange = "[${minecraft}]"
+ordering = "NONE"
+side = "BOTH"

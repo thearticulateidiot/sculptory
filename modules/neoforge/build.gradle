@@ -1,0 +1,197 @@
+// Sculptory for NeoForge: the loader-free Minecraft code (modules/common) and the engine behind NeoForge's events.
+// NeoForge runs on Mojang's names, so nothing is remapped: the jar holds the classes as javac wrote them.
+apply plugin: 'net.neoforged.moddev'
+
+base { archivesName = 'sculptory-neoforge' }
+
+// The access widener (modules/common, the Fabric format) as a NeoForge access transformer, generated at build time so
+// the two never drift. Both are in Mojang's names. See the task below for the mapping.
+def widener = rootProject.file('modules/common/src/main/resources/sculptory.accesswidener')
+// Entries NeoForge needs beyond the widener's (see the file).
+def atExtra = file('src/main/accesstransformer/neoforge-extra.cfg')
+def generatedAtDir = layout.buildDirectory.dir('generated/accesstransformer')
+def generateAccessTransformer = tasks.register('generateAccessTransformer') {
+    description = 'Writes META-INF/accesstransformer.cfg from the common module\'s access widener.'
+    inputs.files widener, atExtra
+    outputs.dir generatedAtDir
+    def out = generatedAtDir.map { it.file('META-INF/accesstransformer.cfg').asFile }
+    doLast {
+        out.get().parentFile.mkdirs()
+        out.get().setText(AccessWidenerToAt.convert(widener) + '\n' + atExtra.getText('UTF-8'), 'UTF-8')
+    }
+}
+def generatedAt = files(generatedAtDir.map { it.file('META-INF/accesstransformer.cfg') }).builtBy(generateAccessTransformer)
+
+neoForge {
+    version = rootProject.neoforge_version
+    // Parchment's parameter names and javadoc, as modules/common and modules/fabric get them.
+    parchment {
+        minecraftVersion = rootProject.minecraft_version
+        mappingsVersion = rootProject.parchment_version
+    }
+    // Applied to the Minecraft jar the mod compiles and runs against in development; the jar carries the same file
+    // (neoforge.mods.toml), which NeoForge applies to the installed game.
+    accessTransformers.from(generatedAt)
+    validateAccessTransformers = true
+
+    mods {
+        sculptory {
+            sourceSet sourceSets.main
+            // The engine is part of the mod (its classes are packed into the mod jar, see the jar task), so in
+            // development its class folders load as part of the mod too, not as a separate library.
+            sourceSet project(':core').sourceSets.main
+            sourceSet project(':protocol').sourceSets.main
+            sourceSet project(':server').sourceSets.main
+        }
+    }
+
+    runs {
+        client {
+            client()
+            gameDirectory = rootProject.file('.local/run/neoforge-client')
+            programArgument '--username'
+            programArgument((project.findProperty('bsUser') ?: 'BuilderDev').toString())
+            if (project.hasProperty('bsServer')) {
+                programArgument '--quickPlayMultiplayer'
+                programArgument project.property('bsServer').toString()
+            }
+        }
+        server {
+            server()
+            gameDirectory = rootProject.file('.local/run/neoforge-server')
+            programArgument '--nogui'
+        }
+    }
+}
+
+// The loader-free Minecraft code is compiled into this mod's one source set (NeoForge has no client/server source set
+// split; DedicatedServerClassesTest in modules/fabric and the common module's own split compile keep server code off
+// client classes).
+sourceSets {
+    main {
+        java.srcDir project(':common').sourceSets.main.java
+        java.srcDir project(':common').sourceSets.client.java
+        resources.srcDir project(':common').sourceSets.main.resources
+        resources.srcDir project(':common').sourceSets.client.resources
+        resources.srcDir generatedAtDir
+    }
+}
+
+dependencies {
+    // Compile against the engine without putting its jars on the run classpath: the mod's run folders hold its classes
+    // (neoForge.mods above), and two copies of a package would not load.
+    compileOnly project(':core')
+    compileOnly project(':protocol')
+    compileOnly project(':server')
+}
+
+// The engine (core, protocol, server) is packed into the mod jar as classes. Its packages are all dev.sculptory.*, so
+// nothing needs relocating. Not jarJar: NeoForge would load each nested plain jar as its own module named after the
+// file ("core", "server"), names another mod's library can share.
+def engineProjects = [':core', ':protocol', ':server']
+tasks.named('jar') {
+    engineProjects.each { path ->
+        from(project(path).sourceSets.main.output)
+    }
+    // The Fabric widener is not read on NeoForge.
+    exclude 'sculptory.accesswidener'
+    // The dev-only client harnesses run from a dev checkout, never from the jar (as in modules/fabric).
+    exclude(['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/mc/client/editor/${it}/**".toString() })
+    manifest.attributes('Automatic-Module-Name': 'dev.sculptory')
+}
+
+processResources {
+    def version = project.version.toString()
+    def minNeoForge = rootProject.neoforge_version.toString()
+    def minecraft = rootProject.minecraft_version.toString()
+    inputs.property 'version', version
+    inputs.property 'minNeoForge', minNeoForge
+    inputs.property 'minecraft', minecraft
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand version: version, minNeoForge: minNeoForge, minecraft: minecraft
+    }
+    dependsOn generateAccessTransformer
+    // The mod icon is the Fabric jar's (modules/fabric), not copied.
+    from(rootProject.file('modules/fabric/src/main/resources/assets/sculptory/icon.png')) {
+        into 'assets/sculptory'
+    }
+    // The wiki goes into the mod for the in-game reader, as in modules/fabric.
+    from(rootProject.file('docs/wiki')) {
+        include '*.md', 'images/*.png'
+        into 'assets/sculptory/wiki'
+    }
+}
+
+// The jar is named after the build id (root build.gradle), so a new build leaves the older builds' jars behind: they
+// are removed when the new jar is written, as in modules/fabric.
+tasks.named('jar') {
+    def libs = layout.buildDirectory.dir('libs')
+    def keep = "sculptory-neoforge-${project.version}.jar".toString()
+    doFirst {
+        libs.get().asFile.listFiles()?.each { file ->
+            if (file.name.startsWith('sculptory-') && file.name.endsWith('.jar') && file.name != keep) file.delete()
+        }
+    }
+}
+
+/**
+ * Fabric access widener (v1/v2, named namespace) to NeoForge access transformer. accessible: public. extendable: public
+ * and not final (a widened class can be subclassed, a widened method overridden). mutable (fields): not final; AT has
+ * no "keep the access" level, but it never lowers access, so "private-f" only drops final. Entries for one member are
+ * merged. Fields carry no descriptor in an AT; methods keep theirs (internal names, as the widener writes them).
+ */
+class AccessWidenerToAt {
+    static String convert(File widener) {
+        def lines = widener.readLines('UTF-8')
+        if (lines.isEmpty() || !(lines[0] ==~ /accessWidener\s+v[12]\s+named\s*/)) {
+            throw new IllegalArgumentException("${widener}: not a named-namespace access widener: ${lines ? lines[0] : ''}")
+        }
+        // target -> [public: bool, definal: bool], in widener order
+        Map<String, Map<String, Boolean>> entries = new LinkedHashMap<>()
+        lines.drop(1).eachWithIndex { String raw, int i ->
+            String line = raw.replaceFirst(/#.*$/, '').trim()
+            if (line.isEmpty()) return
+            def parts = line.split(/\s+/)
+            String access = parts[0].replaceFirst(/^transitive-/, '')
+            String kind = parts[1]
+            String owner = parts[2].replace('/', '.')
+            String target
+            switch (kind) {
+                case 'class':
+                    if (parts.length != 3) throw bad(widener, i, raw)
+                    target = owner
+                    break
+                case 'method':
+                    if (parts.length != 5) throw bad(widener, i, raw)
+                    target = "${owner} ${parts[3]}${parts[4]}"
+                    break
+                case 'field':
+                    if (parts.length != 5) throw bad(widener, i, raw)
+                    target = "${owner} ${parts[3]}"
+                    break
+                default:
+                    throw bad(widener, i, raw)
+            }
+            def entry = entries.computeIfAbsent(target) { [public: false, definal: false] }
+            switch (access) {
+                case 'accessible': entry.public = true; break
+                case 'extendable': entry.public = true; entry.definal = true; break
+                case 'mutable':
+                    if (kind != 'field') throw bad(widener, i, raw)
+                    entry.definal = true
+                    break
+                default: throw bad(widener, i, raw)
+            }
+        }
+        def out = new StringBuilder('# Generated from sculptory.accesswidener (modules/common) at build time; edit that file.\n')
+        entries.each { target, entry ->
+            String modifier = (entry.public ? 'public' : 'private') + (entry.definal ? '-f' : '')
+            out.append(modifier).append(' ').append(target).append('\n')
+        }
+        out.toString()
+    }
+
+    private static IllegalArgumentException bad(File widener, int index, String line) {
+        new IllegalArgumentException("${widener}:${index + 2}: unsupported access widener entry: ${line}")
+    }
+}

@@ -1,0 +1,11 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.sculptory.neoforge.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "LevelRendererMixin",
+    "MultiPlayerGameModeMixin"
+  ],
+  "injectors": { "defaultRequire": 1 }
+}
