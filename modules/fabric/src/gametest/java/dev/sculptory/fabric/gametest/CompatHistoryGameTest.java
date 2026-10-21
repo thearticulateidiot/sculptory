@@ -11,13 +11,13 @@ import com.mojang.authlib.GameProfile;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.history.store.HistoryStore;
 import dev.sculptory.core.history.store.StorageIo;
-import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.FabricHistoryCodec;
+import dev.sculptory.mc.engine.impl.EditServiceHost;
+import dev.sculptory.mc.engine.impl.McHistoryCodec;
 import dev.sculptory.fabric.gametest.DurableHistoryGameTest.Run;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.schem.McDataFixHook;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.platform.WorldBiomes;
@@ -174,8 +174,8 @@ public final class CompatHistoryGameTest implements FabricGameTest {
         Harness h = new Harness(context);
         Path folder = folder("0.4.0");
         try {
-            HistoryStore store = HistoryStore.open(folder, new FabricHistoryCodec(h.runtime.states(),
-                    FabricDataFixHook.currentDataVersion() + 1), HistoryStore.Settings.DEFAULTS, StorageIo.SYSTEM,
+            HistoryStore store = HistoryStore.open(folder, new McHistoryCodec(h.runtime.states(),
+                    McDataFixHook.currentDataVersion() + 1), HistoryStore.Settings.DEFAULTS, StorageIo.SYSTEM,
                     HistoryStore.Log.NONE);
             try {
                 store.load(PLAYER);

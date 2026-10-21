@@ -19,7 +19,7 @@ import dev.sculptory.core.tinker.TinkerProperties;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.RunOptions;
@@ -63,7 +63,7 @@ public final class FidelityTinkerGameTest implements FabricGameTest {
     }
 
     /** Every modded property's values, as Tinker lists them, are the property's own values in its own order. */
-    private static void checkModdedProperties(FabricStateSpace states, String... specs) {
+    private static void checkModdedProperties(McStateSpace states, String... specs) {
         for (String spec : specs) {
             int h = states.parse(spec);
             check(h >= 0, "unknown state " + spec);

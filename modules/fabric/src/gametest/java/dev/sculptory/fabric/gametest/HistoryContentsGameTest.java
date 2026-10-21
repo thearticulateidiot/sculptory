@@ -27,7 +27,7 @@ import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;

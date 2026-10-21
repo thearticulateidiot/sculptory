@@ -29,12 +29,12 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.engine.impl.EditServiceHost;
+import dev.sculptory.mc.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -720,8 +720,8 @@ public final class MultiplayerGameTest implements FabricGameTest {
         int[] far2 = regionCorner(context, 134);
         Box loaded = box(near[0], 112, near[1], near[0] + 15, 127, near[1] + 15);
         loadAndForce(h.world, loaded);
-        check(!dev.sculptory.fabric.world.WorldChecks.isChunkLoaded(h.world, far[0] >> 4, far[1] >> 4)
-                && !dev.sculptory.fabric.world.WorldChecks.isChunkLoaded(h.world, far2[0] >> 4, far2[1] >> 4),
+        check(!dev.sculptory.mc.world.WorldChecks.isChunkLoaded(h.world, far[0] >> 4, far[1] >> 4)
+                && !dev.sculptory.mc.world.WorldChecks.isChunkLoaded(h.world, far2[0] >> 4, far2[1] >> 4),
                 "the far regions are loaded");
         long limit = h.runtime.config().limits.maxOpVolume;
         Box huge = box(far[0], 0, far[1], far[0] + 128, 127, far[1] + 127); // 129 × 128 × 128

@@ -12,7 +12,7 @@ import java.util.UUID;
  * dropped when the player leaves. Server thread only.
  *
  * <p>Trust travels with the tiles, not the clipboard: a copy of world blocks holds server-captured
- * {@code FabricTile}s (operator NBT kept when pasted), while clipboards read from files hold plain
+ * {@code McTile}s (operator NBT kept when pasted), while clipboards read from files hold plain
  * {@code NbtBytes} (operator NBT stripped for players without the right).
  */
 public final class PlayerClipboards {

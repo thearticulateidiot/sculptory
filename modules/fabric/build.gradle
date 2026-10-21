@@ -15,13 +15,18 @@ base { archivesName = 'sculptory' }
 
 loom {
     splitEnvironmentSourceSets()
+    // The Mixin annotation processor and refmaps, the format 0.4.0-beta shipped and the one checked on a real server
+    // install with the minimum loader (Loom 1.12+ would rewrite the mixin annotations statically instead). Check the
+    // release jar on the minimum loader before every release: the compile-time Mixin library decides what loads there.
+    mixin { useLegacyMixinAp = true }
     mods {
         sculptory {
             sourceSet sourceSets.main
             sourceSet sourceSets.client
         }
     }
-    accessWidenerPath = file('src/main/resources/sculptory.accesswidener')
+    // The widener lives with the code that needs it (modules/common); its resources are folded in below.
+    accessWidenerPath = rootProject.file('modules/common/src/main/resources/sculptory.accesswidener')
     runs {
         client {
             // -PbsRunDir=<dir relative to modules/fabric>: a second client's own game directory (the two-client play check).
@@ -109,6 +114,20 @@ dependencies {
     testImplementation testFixtures(project(':core'))
 }
 
+// The loader-free Minecraft code (modules/common) is compiled into this mod's own source sets, so the Fabric jar carries
+// it remapped like the rest and Loom's Mixin processing covers its mixins. The common module compiles the same sources
+// on its own, with no loader API, to prove they need none.
+sourceSets {
+    main {
+        java.srcDir project(':common').sourceSets.main.java
+        resources.srcDir project(':common').sourceSets.main.resources
+    }
+    client {
+        java.srcDir project(':common').sourceSets.client.java
+        resources.srcDir project(':common').sourceSets.client.resources
+    }
+}
+
 // JUnit tests may exercise pure client-side classes (UI layout, input routing, math).
 sourceSets {
     test {
@@ -122,7 +141,9 @@ sourceSets {
 // scripts/playtest.ps1) and never from the jar, so the jar leaves them out. SculptoryClientMod starts them only when
 // their class is there (DevHarnessClassesTest checks that nothing else refers to them). Their sources stay in the
 // sources jar.
-def devHarnessPackages = ['check', 'demo', 'devtools', 'tour', 'ui/demo'].collect { "dev/sculptory/fabric/client/editor/${it}/**".toString() }
+// The development-only /bsclient commands are typed on Fabric's client command API, so they live in the Fabric layer.
+def devHarnessPackages = ['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/mc/client/editor/${it}/**".toString() } +
+        ['dev/sculptory/fabric/client/editor/devtools/**']
 tasks.named('jar') { exclude devHarnessPackages }
 
 // DedicatedServerClassesTest scans the common/server output and the shared server module (what a dedicated server

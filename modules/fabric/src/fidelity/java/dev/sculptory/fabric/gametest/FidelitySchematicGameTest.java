@@ -31,7 +31,7 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
+import dev.sculptory.mc.schem.McDataFixHook;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.engine.ClipboardService;
@@ -188,7 +188,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
                     Schematic read;
                     try {
                         read = SchematicFiles.read(new ByteArrayInputStream(out.payload()), h.runtime.states(),
-                                SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
+                                SchematicCodec.Limits.DEFAULT, McDataFixHook.get());
                     } catch (IOException e) {
                         throw new GameTestAssertException("unreadable " + format + " file: " + e);
                     }
@@ -251,7 +251,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
         content.set(2, 0, 0, h.state("minecraft:oak_sign[rotation=0,waterlogged=false]"));
         content.setTile(2, 0, 0, signTile("minecraft:sign"));
         ByteArrayOutputStream file = new ByteArrayOutputStream();
-        SchematicCodec.write(file, content.build(), SchematicMetadata.EMPTY, FabricDataFixHook.currentDataVersion());
+        SchematicCodec.write(file, content.build(), SchematicMetadata.EMPTY, McDataFixHook.currentDataVersion());
         Path root = ClipTestSupport.libraryRoot(context);
         var clips = ClipTestSupport.clipboards(h, root);
         Captured<ClipboardService.ClipboardInfo> fromOp = new Captured<>();
@@ -419,7 +419,7 @@ public final class FidelitySchematicGameTest implements FabricGameTest {
     private static Schematic read(Harness h, byte[] bytes) {
         try {
             return SchematicCodec.read(new ByteArrayInputStream(bytes), h.runtime.states(), SchematicCodec.Limits.DEFAULT,
-                    FabricDataFixHook.get());
+                    McDataFixHook.get());
         } catch (IOException e) {
             throw new GameTestAssertException("unreadable file: " + e);
         }

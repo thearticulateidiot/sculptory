@@ -16,8 +16,8 @@ import dev.sculptory.core.generate.PathExtrudeKernel;
 import dev.sculptory.core.generate.RoadKernel;
 import dev.sculptory.core.path.PathKind;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
@@ -49,7 +49,7 @@ public final class AirPathsGameTest implements FabricGameTest {
                 new Pattern.Single(bricks), null, RoadKernel.HeightMode.STRAIGHT, true, 3, 0, h.state("minecraft:air"));
         RoadKernel.Path path = RoadKernel.path(spec);
         // What the fill meets, read as the client reads it: down from the deck in the real world.
-        GroundMap ground = RoadKernel.deckGround(spec, path, new FabricWorldReader(h.world, h.runtime.states()));
+        GroundMap ground = RoadKernel.deckGround(spec, path, new McWorldReader(h.world, h.runtime.states()));
         RoadKernel.Result result = RoadKernel.generate(spec, path, ground, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight(), 1 << 16);
         check(result.unloaded().isEmpty() && result.bareColumns() == 0, "every column is loaded: " + result.unloaded());
         GeneratedSource source = result.source();

@@ -11,7 +11,7 @@ import dev.sculptory.core.palette.BlockPalette;
 import dev.sculptory.core.scatter.ScatterPlan;
 import dev.sculptory.core.scatter.ScatterSettings;
 import dev.sculptory.core.scatter.ScatterSource;
-import dev.sculptory.fabric.engine.impl.EditServiceHost;
+import dev.sculptory.mc.engine.impl.EditServiceHost;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.protocol.v2.RejectReason;

@@ -5,7 +5,7 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.check;
 import dev.sculptory.core.Box;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
+import dev.sculptory.mc.schem.McDataFixHook;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.impl.ServerClipboards;
@@ -81,7 +81,7 @@ final class ClipTestSupport {
     /** A clipboard service over the harness's edit service and a private library, with its own bounded executor. */
     static ServerClipboards<ServerPlayer, ServerLevel> clipboards(Harness h, Path libraryRoot) {
         return new ServerClipboards<>(h.service, new Library(libraryRoot, Library.Settings.DEFAULTS),
-                ServerClipboards.newExecutor(), FabricDataFixHook.get());
+                ServerClipboards.newExecutor(), McDataFixHook.get());
     }
 
     /** Begins and completes an upload in one go (the network part is the dispatcher's, unit-tested). */

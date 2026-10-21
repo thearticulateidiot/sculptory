@@ -34,9 +34,9 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricEntities;
+import dev.sculptory.mc.schem.McDataFixHook;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
@@ -127,7 +127,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                     check(carts.size() == 1 && carts.get(0).getVehicle() != null, "the minecart rides the boat: " + carts);
                     check(((MinecartCommandBlock) carts.get(0)).getCommandBlock().getCommand().isEmpty(),
                             "the file's command survived, for an operator");
-                    check(placed.stream().noneMatch(e -> FabricEntities.kind(e) == FabricEntities.Kind.NEVER
+                    check(placed.stream().noneMatch(e -> McEntities.kind(e) == McEntities.Kind.NEVER
                             || e.getType() == EntityType.WITHER || e.getType() == EntityType.TNT
                             || e.getType() == EntityType.FIREBALL), "something never placed was: " + placed);
                     check(placed.size() == 1 + EntityNbt.MAX_RIDERS + 2, "entities placed: " + placed.size());
@@ -183,7 +183,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
 
         CompoundTag schematic = new CompoundTag();
         schematic.putInt("Version", 3);
-        schematic.putInt("DataVersion", FabricDataFixHook.currentDataVersion());
+        schematic.putInt("DataVersion", McDataFixHook.currentDataVersion());
         schematic.putShort("Width", (short) 6);
         schematic.putShort("Height", (short) 3);
         schematic.putShort("Length", (short) 6);
@@ -338,7 +338,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                 .thenWaitUntil(() -> check(erase.result != null && cut.finished(), "cut running"))
                 .thenWaitUntil(once(() -> {
                     check(cut.get("cut").entities() == 1, "cut " + cut.value);
-                    check(FabricEntities.find(world, cutStand[0]) == null, "the stand was cut");
+                    check(McEntities.find(world, cutStand[0]) == null, "the stand was cut");
                     // Another entity takes the stand's UUID meanwhile.
                     int[] uuid = net.minecraft.core.UUIDUtil.uuidToIntArray(cutStand[0]);
                     squatter[0] = load(world, "minecraft:pig", x0 + 20.5, y0 + 1, z0 + 1.5, 0f, nbt -> {
@@ -351,7 +351,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                 .thenWaitUntil(() -> check(undoCut.result != null, "undo running"))
                 .thenWaitUntil(() -> {
                     check(undoCut.result.skippedConflicts() == 1, "the stand is kept out: " + undoCut.result);
-                    check(FabricEntities.find(world, cutStand[0]) == squatter[0], "the pig keeps its UUID");
+                    check(McEntities.find(world, cutStand[0]) == squatter[0], "the pig keeps its UUID");
                     check(entitiesIn(world, cutArea).isEmpty(), "no second entity with that UUID");
                     check(world.getBlockState(EngineTestSupport.pos(x0 + 9, y0, z0 + 1)).is(
                             net.minecraft.world.level.block.Blocks.STONE), "the floor is back");
@@ -599,18 +599,18 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                     check(world.addFreshEntity(fixture[0]) && world.addFreshEntity(heavy), "spawned");
 
                     // The history's decoder takes it; the game's loader does not: so it is never recorded.
-                    CompoundTag whole = FabricEntities.save(heavy, EntityFilter.ALL);
-                    byte[] bytes = FabricEntities.bytes(whole);
+                    CompoundTag whole = McEntities.save(heavy, EntityFilter.ALL);
+                    byte[] bytes = McEntities.bytes(whole);
                     try {
-                        FabricEntities.fromBytes(bytes);
+                        McEntities.fromBytes(bytes);
                     } catch (IOException e) {
                         throw new GameTestAssertException("the fixture is too large even for the history's decoder: " + e);
                     }
-                    check(!FabricEntities.restorable(bytes), "the game's loader takes the fixture after all");
-                    check(FabricEntities.state(heavy, EntityFilter.ALL) == null, "an entity that cannot be put back "
+                    check(!McEntities.restorable(bytes), "the game's loader takes the fixture after all");
+                    check(McEntities.state(heavy, EntityFilter.ALL) == null, "an entity that cannot be put back "
                             + "was recorded");
-                    dev.sculptory.core.history.EntityState plain = FabricEntities.state(fixture[0], EntityFilter.ALL);
-                    check(plain != null && FabricEntities.restorable(plain.nbt()), "the plain stand is recorded");
+                    dev.sculptory.core.history.EntityState plain = McEntities.state(fixture[0], EntityFilter.ALL);
+                    check(plain != null && McEntities.restorable(plain.nbt()), "the plain stand is recorded");
                     check(refusal(() -> clips.copy(h.player, new Region.Cuboid(source), source.min(), false,
                             CellMask.ANY, EntityFilter.DECORATIONS, null, new Captured<>())) == RejectReason.TOO_LARGE,
                             "a copy took what it could not paste");
@@ -632,7 +632,7 @@ public final class EntitySafetyGameTest implements FabricGameTest {
                 .thenWaitUntil(() -> check(undo.result != null, "undo running"))
                 .thenWaitUntil(() -> {
                     check(undo.result.skippedConflicts() == 0, "undo " + undo.result);
-                    check(FabricEntities.find(world, fixture[0].getUUID()) != null, "the plain stand is back");
+                    check(McEntities.find(world, fixture[0].getUUID()) != null, "the plain stand is back");
                     check(entitiesIn(world, source).size() == 2, "both stands where they were: "
                             + entitiesIn(world, source));
                     entitiesIn(world, all).forEach(Entity::discard);

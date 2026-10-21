@@ -25,8 +25,8 @@ import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricEntities;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
@@ -269,8 +269,8 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     ready(world, second);
                 })
                 .thenWaitUntil(once(() -> {
-                    check(!FabricEntities.loaded(world, (x0 >> 4) + 10, z0 >> 4), "a chunk between them is loaded");
-                    check(FabricEntities.firstUnloaded(world, set.bounds()) != null, "the bounds are all loaded");
+                    check(!McEntities.loaded(world, (x0 >> 4) + 10, z0 >> 4), "a chunk between them is loaded");
+                    check(McEntities.firstUnloaded(world, set.bounds()) != null, "the bounds are all loaded");
                     stand(world, x0 + 6.5, y0 + 1, z0 + 6.5);
                     stand(world, x0 + far + 7.5, y0 + 1, z0 + 7.5);
                     copy(clips, h, set, false, CellMask.ANY, null, copied);
@@ -282,7 +282,7 @@ public final class EntityRegionGameTest implements FabricGameTest {
                     check(stack.result.outcome() == JobOutcome.COMPLETED, "stack " + stack.result);
                     check(entitiesIn(world, first).size() == 2 && entitiesIn(world, second).size() == 2,
                             "each stand and its copy: " + entitiesIn(world, first) + " " + entitiesIn(world, second));
-                    check(!FabricEntities.loaded(world, (x0 >> 4) + 10, z0 >> 4), "the chunk between was loaded");
+                    check(!McEntities.loaded(world, (x0 >> 4) + 10, z0 >> 4), "the chunk between was loaded");
                     entitiesIn(world, first).forEach(Entity::discard);
                     entitiesIn(world, second).forEach(Entity::discard);
                     forceChunks(world, first, false);

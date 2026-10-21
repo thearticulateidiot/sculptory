@@ -21,7 +21,7 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.impl.ServerClipboards;
@@ -60,7 +60,7 @@ public final class FidelityFlipGameTest implements FabricGameTest {
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_flip_states")
     public void moddedStatesFlipByTheirVanillaNamedProperties(GameTestHelper context) {
-        FabricStateSpace space = EngineTestSupport.runtime(context).states();
+        McStateSpace space = EngineTestSupport.runtime(context).states();
         Map<String, int[]> counts = new TreeMap<>();
         for (int h = 0; h < space.size(); h++) {
             String namespace = space.blockId(h).value().substring(0, space.blockId(h).value().indexOf(':'));
@@ -110,18 +110,18 @@ public final class FidelityFlipGameTest implements FabricGameTest {
         context.succeed();
     }
 
-    private static int h(FabricStateSpace space, String spec) {
+    private static int h(McStateSpace space, String spec) {
         int handle = space.parse(spec);
         check(handle >= 0, "unknown " + spec);
         return handle;
     }
 
-    private static void flips(FabricStateSpace space, String from, String to) {
+    private static void flips(McStateSpace space, String from, String to) {
         check(space.flip(h(space, from)) == h(space, to), from + " flips to " + space.format(space.flip(h(space, from))));
         check(space.flipKind(h(space, from)) == VerticalFlip.FLIPS, from + " kind " + space.flipKind(h(space, from)));
     }
 
-    private static void kind(FabricStateSpace space, String spec, int expected) {
+    private static void kind(McStateSpace space, String spec, int expected) {
         check(space.flipKind(h(space, spec)) == expected, spec + " kind " + space.flipKind(h(space, spec)));
     }
 

@@ -25,8 +25,8 @@ import dev.sculptory.core.tinker.SignText;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricEntities;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
@@ -183,8 +183,8 @@ public final class TinkerGameTest implements FabricGameTest {
     /** An entity's data as a Tinker step compares it: without volatile keys, but with where it stands and looks. */
     private static dev.sculptory.core.nbt.NbtCompound placed(Entity entity) {
         try {
-            return EntityNbt.withoutVolatileKeepingPlacement(FabricEntities.fromBytes(
-                    FabricEntities.bytes(FabricEntities.save(entity, EntityFilter.ALL))));
+            return EntityNbt.withoutVolatileKeepingPlacement(McEntities.fromBytes(
+                    McEntities.bytes(McEntities.save(entity, EntityFilter.ALL))));
         } catch (IOException e) {
             throw new GameTestAssertException("entity NBT: " + e);
         }
@@ -597,7 +597,7 @@ public final class TinkerGameTest implements FabricGameTest {
                 // An entity edit puts the edited entity back only where the chunk's entities are loaded, which the
                 // game does a few ticks after the chunk (later under load): wait for it, so no edit below is refused
                 // for it (each step would retry, but a slow load then decided which check ran when).
-                .thenWaitUntil(() -> check(FabricEntities.loaded(h.world, x0 >> 4, z0 >> 4),
+                .thenWaitUntil(() -> check(McEntities.loaded(h.world, x0 >> 4, z0 >> 4),
                         "the stand's chunk has its entities loaded"))
                 .thenWaitUntil(() -> {
                     dev.sculptory.core.nbt.NbtCompound standBefore = placed(live(h, stand.getUUID(), "the stand"));

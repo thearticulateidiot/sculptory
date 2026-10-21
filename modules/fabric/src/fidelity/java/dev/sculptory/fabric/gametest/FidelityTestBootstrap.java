@@ -1,6 +1,7 @@
 package dev.sculptory.fabric.gametest;
 
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.fabric.FabricServerLoader;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.world.level.GameRules;
@@ -12,6 +13,7 @@ import net.minecraft.world.level.GameRules;
 public final class FidelityTestBootstrap implements ModInitializer {
     @Override
     public void onInitialize() {
+        FabricServerLoader.install(); // entrypoints run in no set order: this one may run before the mod's
         EngineRuntime.install();
         ServerLifecycleEvents.SERVER_STARTED.register(server ->
                 server.getGameRules().getRule(GameRules.RULE_RANDOMTICKING).set(0, server));

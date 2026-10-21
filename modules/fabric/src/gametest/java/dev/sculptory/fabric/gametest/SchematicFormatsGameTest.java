@@ -32,10 +32,10 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
-import dev.sculptory.fabric.schem.NbtBridge;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.schem.McDataFixHook;
+import dev.sculptory.mc.schem.NbtBridge;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.protocol.v2.StreamKind;
@@ -146,7 +146,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
                         check(SchematicFormat.detect(file) == format, "detected as " + SchematicFormat.detect(file));
                         layout.accept(file);
                         Schematic read = SchematicFiles.read(new ByteArrayInputStream(bytes), h.runtime.states(),
-                                SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
+                                SchematicCodec.Limits.DEFAULT, McDataFixHook.get());
                         check(read.format() == format && read.report().isLossless()
                                 && read.report().blockEntities() == 4, "report " + read.report());
                         Clipboard original = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
@@ -308,7 +308,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
     public void multiRegionLitematicPlacesEachRegionAndUndoes(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
         ServerLevel world = h.world;
-        FabricStateSpace states = h.runtime.states();
+        McStateSpace states = h.runtime.states();
         int[] at = regionCorner(context, 1014);
         Box area = box(at[0], 100, at[1], at[0] + 15, 104, at[1] + 7);
         loadAndForce(world, area);
@@ -484,7 +484,7 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_formats_every_state", timeoutTicks = LIMIT)
     public void everyVanillaStateRoundTripsThroughEveryFormat(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
-        FabricStateSpace states = h.runtime.states();
+        McStateSpace states = h.runtime.states();
         int n = states.size();
         int width = 256;
         Clipboard.Builder builder = Clipboard.builder(states, new BlockPos(width, 1, (n + width - 1) / width));
@@ -493,9 +493,9 @@ public final class SchematicFormatsGameTest implements FabricGameTest {
         Clipboard every = builder.build();
         for (SchematicFormat format : SchematicFormat.values()) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            SchematicFiles.write(format, out, every, SchematicMetadata.EMPTY, FabricDataFixHook.currentDataVersion());
+            SchematicFiles.write(format, out, every, SchematicMetadata.EMPTY, McDataFixHook.currentDataVersion());
             Schematic read = SchematicFiles.read(new ByteArrayInputStream(out.toByteArray()), states,
-                    SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
+                    SchematicCodec.Limits.DEFAULT, McDataFixHook.get());
             check(read.format() == format && read.report().isLossless(), format + " report " + read.report());
             String difference = SchematicLibraryGameTest.difference(every, read.clipboard());
             check(difference == null, format + " read back differently: " + difference);

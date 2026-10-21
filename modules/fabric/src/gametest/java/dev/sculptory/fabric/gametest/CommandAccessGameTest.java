@@ -7,7 +7,7 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
-import dev.sculptory.fabric.engine.impl.EditServiceHost;
+import dev.sculptory.mc.engine.impl.EditServiceHost;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;

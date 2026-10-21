@@ -72,7 +72,7 @@ By making a contribution to this project, I certify that:
 
 ## Where the code lives
 
-The code is in four Gradle modules under `modules/`:
+The code is in five Gradle modules under `modules/`:
 
 - `core`: the editing engine without Minecraft: regions, masks, brushes, edit programs, scatter planning, undo
   history and its saved format, schematic and NBT reading. Plain Java, tested with JUnit.
@@ -82,9 +82,16 @@ The code is in four Gradle modules under `modules/`:
   clipboard and scatter services, the job executor, undo history, the library, config, permission and protection
   rules and file sanitizing. No Minecraft imports either: it reaches the game through the interfaces in
   `dev.sculptory.server.platform`, which each platform implements.
-- `fabric`: the mod itself. `src/main` is the Fabric side of the server (the platform those interfaces describe: world
-  access, builder mode, Tinker, commands, networking), `src/client` the editor (windows, tools, rendering, the tutorial
-  and the wiki reader), `src/test` the JUnit tests, and `src/gametest` and `src/fidelity` the GameTests.
+- `common`: the Minecraft side that needs no mod loader, in Mojang's official names (`dev.sculptory.mc`): `src/main`
+  is the server platform those interfaces describe (world access, builder mode, Tinker, the command tree, the payload
+  codecs, the server mixins), `src/client` the editor (windows, tools, rendering, the tutorial and the wiki reader,
+  the client mixins). It compiles against vanilla Minecraft with no loader API on its classpath, so the compiler
+  proves it is loader-free; the game's events, networking, key bindings and folders reach it through the small
+  `dev.sculptory.mc.loader` interfaces (`ServerLoader`, `ClientLoader`), which each loader implements. This module
+  ships no jar: each loader module compiles these sources into its own.
+- `fabric`: the Fabric mod: the entrypoints, `FabricServerLoader` and `FabricClientLoader` (Fabric API events,
+  networking, permissions api, key bindings), the client commands typed on Fabric's command source, `fabric.mod.json`;
+  `src/test` the JUnit tests (for the common code too), and `src/gametest` and `src/fidelity` the GameTests.
 
 The wiki lives in `docs/wiki/` and is bundled into the mod for the in-game reader. Its page ids are frozen
 (`WikiPages`); `scripts/check-wiki.ps1` checks its links, pictures and Markdown subset, and `check` runs the same

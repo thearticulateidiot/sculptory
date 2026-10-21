@@ -9,10 +9,11 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.client.editor.render.ghost.GhostPlacement;
-import dev.sculptory.fabric.client.editor.render.ghost.GhostRenderer;
-import dev.sculptory.fabric.client.editor.render.ghost.GhostStates;
-import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
+import dev.sculptory.mc.client.editor.render.ghost.GhostPlacement;
+import dev.sculptory.mc.client.editor.render.ghost.GhostRenderer;
+import dev.sculptory.mc.client.editor.render.ghost.GhostStates;
+import dev.sculptory.mc.client.editor.render.ghost.GhostVolume;
+import dev.sculptory.mc.loader.WorldFrame;
 import java.util.List;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
@@ -165,7 +166,9 @@ public final class GhostDebug {
         if (placement == null) {
             return;
         }
-        String text = renderer.render(context, placement).hudText();
+        WorldFrame frame = new WorldFrame(context.camera(), context.positionMatrix(), context.projectionMatrix(),
+                context.frustum(), context.world());
+        String text = renderer.render(frame, placement).hudText();
         if (!text.equals(lastHudText)) {
             lastHudText = text;
             if (!text.isEmpty()) {

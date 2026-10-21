@@ -28,8 +28,8 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.net.FabricTransport;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.net.McTransport;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
 import dev.sculptory.protocol.v2.Features;
@@ -623,7 +623,7 @@ public final class RegionGameTest implements FabricGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded. */
-    private static final class Transport implements FabricTransport {
+    private static final class Transport implements McTransport {
         final Harness h;
         final List<S2C> sent = new ArrayList<>();
 

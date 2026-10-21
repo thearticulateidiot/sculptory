@@ -19,8 +19,8 @@ import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
-import dev.sculptory.fabric.net.FabricTransport;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.net.McTransport;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
 import dev.sculptory.protocol.v2.Features;
@@ -255,7 +255,7 @@ public final class ToolLabelGameTest implements FabricGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded (as GenerateGameTest's). */
-    private static final class Transport implements FabricTransport {
+    private static final class Transport implements McTransport {
         final Harness h;
         final ServerPlayer player;
         final List<S2C> sent = new ArrayList<>();

@@ -9,12 +9,12 @@ import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.NbtBytes;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.state.StateFlags;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.EditScope;
-import dev.sculptory.fabric.world.FabricStateSpace;
-import dev.sculptory.fabric.world.FabricTile;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.EditScope;
+import dev.sculptory.mc.world.McStateSpace;
+import dev.sculptory.mc.world.McTile;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -59,7 +59,7 @@ public final class WriterGameTest implements FabricGameTest {
     public void waterloggedRoundTrip(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
-        FabricStateSpace states = runtime.states();
+        McStateSpace states = runtime.states();
         String[] specs = {
             "minecraft:oak_stairs[facing=east,half=top,shape=straight,waterlogged=true]",
             "minecraft:stone_slab[type=bottom,waterlogged=true]",
@@ -72,7 +72,7 @@ public final class WriterGameTest implements FabricGameTest {
             "minecraft:tall_seagrass[half=lower]",
         };
         BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
-        FabricWorldReader reader = runtime.reader(world);
+        McWorldReader reader = runtime.reader(world);
         List<BlockPos> positions = new ArrayList<>();
         int[] handles = new int[specs.length];
         for (int i = 0; i < specs.length; i++) {
@@ -114,8 +114,8 @@ public final class WriterGameTest implements FabricGameTest {
     public void blockEntityNbtRoundTrip(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
-        FabricStateSpace states = runtime.states();
-        FabricWorldReader reader = runtime.reader(world);
+        McStateSpace states = runtime.states();
+        McWorldReader reader = runtime.reader(world);
 
         BlockPos chest = context.absolutePos(new BlockPos(1, 1, 1));
         BlockPos sign = context.absolutePos(new BlockPos(3, 1, 1));
@@ -153,7 +153,7 @@ public final class WriterGameTest implements FabricGameTest {
         BlockWriter writer = runtime.writer(world, new WriteOptions(false, true));
         for (BlockPos source : List.of(chest, sign, banner, furnace)) {
             BlockEntityData captured = reader.tile(source.getX(), source.getY(), source.getZ());
-            check(captured instanceof FabricTile, "no tile captured at " + source.toShortString());
+            check(captured instanceof McTile, "no tile captured at " + source.toShortString());
             SectionBuffer section = new SectionBuffer();
             reader.copySection(source.getX() >> 4, source.getY() >> 4, source.getZ() >> 4, section);
             BlockEntityData inSection = section.tile(SectionBuffer.index(source.getX() & 15, source.getY() & 15,
@@ -189,7 +189,7 @@ public final class WriterGameTest implements FabricGameTest {
         int signHandle = states.handle(world.getBlockState(sign));
         check((states.flags(signHandle) & StateFlags.OPERATOR_NBT) != 0, "oak_sign should be OPERATOR_NBT");
         BlockEntityData signTile = reader.tile(sign.getX(), sign.getY(), sign.getZ());
-        check(FabricTile.isServerCaptured(signTile), "reader tiles should be server-captured");
+        check(McTile.isServerCaptured(signTile), "reader tiles should be server-captured");
         BlockWriter nonOp = runtime.writer(world, WriteOptions.DEFAULT);
         BlockPos trusted = context.absolutePos(new BlockPos(3, 4, 5));
         check(nonOp.write(trusted.getX(), trusted.getY(), trusted.getZ(), signHandle, signTile) != null
@@ -226,7 +226,7 @@ public final class WriterGameTest implements FabricGameTest {
     public void physicsOffNoUpdates(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
-        FabricStateSpace states = runtime.states();
+        McStateSpace states = runtime.states();
         BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         BlockPos sand = context.absolutePos(new BlockPos(1, 4, 1));
         BlockPos torch = context.absolutePos(new BlockPos(3, 4, 3));
@@ -259,7 +259,7 @@ public final class WriterGameTest implements FabricGameTest {
     public void physicsOnAllowsUpdates(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
-        FabricStateSpace states = runtime.states();
+        McStateSpace states = runtime.states();
         // Contain everything: a glass floor under the sand, and a glass cup under the water.
         BlockPos sand = context.absolutePos(new BlockPos(1, 5, 1));
         world.setBlockAndUpdate(context.absolutePos(new BlockPos(1, 0, 1)), Blocks.GLASS.defaultBlockState());
@@ -355,7 +355,7 @@ public final class WriterGameTest implements FabricGameTest {
 
     @GameTest(template = EMPTY_STRUCTURE, batch = BATCH)
     public void stateSpaceUsesBoundTags(GameTestHelper context) {
-        FabricStateSpace states = runtime(context).states();
+        McStateSpace states = runtime(context).states();
         // Built at SERVER_STARTING: tag-only vegetation (glow lichen is only in #replaceable_by_trees) is flagged.
         check(StateFlags.has(states.flags(handle(states, "minecraft:glow_lichen")), StateFlags.VEGETATION),
                 "tags were not bound when the state space was built");
@@ -400,7 +400,7 @@ public final class WriterGameTest implements FabricGameTest {
     public void tileLoadReplacesGameEventListener(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
-        FabricWorldReader reader = runtime.reader(world);
+        McWorldReader reader = runtime.reader(world);
         BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
         for (Block block : List.of(Blocks.SCULK_CATALYST, Blocks.SCULK_SENSOR)) {
             int row = block == Blocks.SCULK_CATALYST ? 1 : 5;
@@ -427,7 +427,7 @@ public final class WriterGameTest implements FabricGameTest {
     public void failedWriteIsStillRecorded(GameTestHelper context) throws InterruptedException {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
-        FabricStateSpace states = runtime.states();
+        McStateSpace states = runtime.states();
         BlockPos chest = context.absolutePos(new BlockPos(3, 1, 3));
         world.setBlockAndUpdate(chest, Blocks.CHEST.defaultBlockState());
         ((ChestBlockEntity) world.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 7));

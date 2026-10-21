@@ -11,7 +11,7 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.runtime;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.fabric.gametest.EngineTestSupport.CountingSink;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;

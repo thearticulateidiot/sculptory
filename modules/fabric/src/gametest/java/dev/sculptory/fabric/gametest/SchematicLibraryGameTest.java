@@ -37,9 +37,9 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.schem.McDataFixHook;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
@@ -123,7 +123,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         Captured<ClipboardService.Outbound> exported = new Captured<>();
         Captured<ClipboardService.ClipboardInfo> uploaded = new Captured<>();
         RecordingListener paste = new RecordingListener();
-        check(FabricDataFixHook.currentDataVersion() == 3955, "data version " + FabricDataFixHook.currentDataVersion());
+        check(McDataFixHook.currentDataVersion() == 3955, "data version " + McDataFixHook.currentDataVersion());
         context.startSequence()
                 .thenWaitUntil(() -> {
                     ClipboardService.ClipboardInfo info = copied.get("copy");
@@ -144,7 +144,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
                                 "not a v3 file: " + (schem == null ? file.keys() : schem.keys()));
                         check(Arrays.equals(schem.getIntArray("Offset"), new int[] {-1, 0, -2}), "offset");
                         Schematic read = SchematicCodec.read(new ByteArrayInputStream(bytes), h.runtime.states(),
-                                SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
+                                SchematicCodec.Limits.DEFAULT, McDataFixHook.get());
                         check(read.report().isLossless() && read.report().blockEntities() == 4, "report " + read.report());
                         Clipboard original = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                         String difference = difference(original, read.clipboard());
@@ -181,8 +181,8 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
     public void schemOldDataVersionFixed(GameTestHelper context) throws IOException {
         Harness h = new Harness(context);
         ServerLevel world = h.world;
-        FabricStateSpace states = h.runtime.states();
-        check("minecraft:dirt_path".equals(FabricDataFixHook.get().fixBlockState("minecraft:grass_path", 2586)),
+        McStateSpace states = h.runtime.states();
+        check("minecraft:dirt_path".equals(McDataFixHook.get().fixBlockState("minecraft:grass_path", 2586)),
                 "the hook did not rename grass_path");
         NbtCompound palette = NbtCompound.builder()
                 .putInt("minecraft:grass_path", 0)
@@ -213,7 +213,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         NbtIo.writeGzip(bytes, "Schematic", v2);
         Schematic read = SchematicCodec.read(new ByteArrayInputStream(bytes.toByteArray()), states,
-                SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
+                SchematicCodec.Limits.DEFAULT, McDataFixHook.get());
         check(read.formatVersion() == 2 && read.dataVersion() == 2586, "read " + read.formatVersion() + " " + read.dataVersion());
         check(read.report().unknownStates().isEmpty(), "unknown states " + read.report().unknownStates());
         check(states.format(read.clipboard().get(0, 0, 0)).equals("minecraft:dirt_path"),
@@ -446,7 +446,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
             content.setTile(i, 0, 0, forgedSign(signTypes.get(i)));
         }
         ByteArrayOutputStream file = new ByteArrayOutputStream();
-        SchematicCodec.write(file, content.build(), SchematicMetadata.EMPTY, FabricDataFixHook.currentDataVersion());
+        SchematicCodec.write(file, content.build(), SchematicMetadata.EMPTY, McDataFixHook.currentDataVersion());
         Box target = box(at[0] + 2, 100, at[1] + 2, at[0] + 1 + n, 100, at[1] + 2);
         WorldSnapshot before = capture(world, target);
         // A command block with its default block entity, to compare against.
@@ -576,7 +576,7 @@ public final class SchematicLibraryGameTest implements FabricGameTest {
     private static String commandIn(Harness h, byte[] file) {
         try {
             Schematic read = SchematicCodec.read(new ByteArrayInputStream(file), h.runtime.states(),
-                    SchematicCodec.Limits.DEFAULT, FabricDataFixHook.get());
+                    SchematicCodec.Limits.DEFAULT, McDataFixHook.get());
             BlockEntityData tile = read.clipboard().tile(1, 3, 6);
             return tile == null ? null : BlockEntityNbt.decode(tile).getString("Command");
         } catch (IOException e) {

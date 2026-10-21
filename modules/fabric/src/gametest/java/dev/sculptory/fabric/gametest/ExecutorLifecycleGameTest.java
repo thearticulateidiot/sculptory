@@ -15,16 +15,16 @@ import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.ComputeContext;
 import dev.sculptory.core.edit.EditProgram;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.fabric.gametest.EngineTestSupport.CountingSink;
 import dev.sculptory.fabric.gametest.EngineTestSupport.MapSink;
 import dev.sculptory.fabric.gametest.EngineTestSupport.Rec;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricStateSpace;
-import dev.sculptory.fabric.world.FabricWorldReader;
-import dev.sculptory.fabric.world.WorldChecks;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McStateSpace;
+import dev.sculptory.mc.world.McWorldReader;
+import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -188,7 +188,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
     public void sourcesAreSnapshottedBeforeWrites(GameTestHelper context) {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
-        FabricStateSpace states = runtime.states();
+        McStateSpace states = runtime.states();
         EditExecutor<ServerLevel> executor = privateExecutor(runtime, world);
         int[] at = regionCorner(context, 10);
         Box source = box(at[0], 0, at[1], at[0] + 47, 15, at[1] + 15); // 3 sections along x
@@ -208,7 +208,7 @@ public final class ExecutorLifecycleGameTest implements FabricGameTest {
         for (int i = 0; i < 20 && listener.result == null; i++) executor.tick();
         check(listener.result != null && listener.result.outcome() == JobOutcome.COMPLETED, "outcome " + listener.result);
         check(listener.count(Phase.SNAPSHOT_SOURCES) == 1, "SNAPSHOT_SOURCES not reported");
-        FabricWorldReader reader = runtime.reader(world);
+        McWorldReader reader = runtime.reader(world);
         for (int x = source.min().x(); x <= source.max().x(); x++) {
             for (int y = 0; y <= 15; y++) {
                 for (int z = source.min().z(); z <= source.max().z(); z++) {

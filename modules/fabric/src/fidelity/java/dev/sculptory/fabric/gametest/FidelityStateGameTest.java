@@ -25,13 +25,13 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.SculptoryMod;
-import dev.sculptory.fabric.client.session.FabricEditorSession;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.mc.Sculptory;
+import dev.sculptory.mc.client.session.McEditorSession;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
-import dev.sculptory.fabric.net.ServerNet;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
 import dev.sculptory.protocol.v2.Handshake;
@@ -77,16 +77,16 @@ public final class FidelityStateGameTest implements FabricGameTest {
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_states", timeoutTicks = LIMIT)
     public void everyModdedStateRoundTripsAndTransformsLikeVanilla(GameTestHelper context) {
-        FabricStateSpace server = EngineTestSupport.runtime(context).states();
+        McStateSpace server = EngineTestSupport.runtime(context).states();
         check(server.moddedFacingFallback(), "the fidelity server runs with the default config (fallback on)");
         // What the client builds on every join (SculptoryClientMod), after registry sync, following the handshake.
-        S2C answer = Handshake.answer(Handshake.hello("test", FabricEditorSession.CLIENT_FEATURES),
+        S2C answer = Handshake.answer(Handshake.hello("test", McEditorSession.CLIENT_FEATURES),
                 ServerNet.offered(server), Limits.DEFAULTS, PermissionMask.NONE, 1L);
-        FabricStateSpace client = FabricStateSpace.build().followingServer(((S2C.Welcome) answer).features());
+        McStateSpace client = McStateSpace.build().followingServer(((S2C.Welcome) answer).features());
         // A server with transform.moddedFacingFallback off, built as the engine builds it.
         SculptoryConfig offConfig = SculptoryConfig.defaults();
         offConfig.transform.moddedFacingFallback = false;
-        FabricStateSpace off = EngineRuntime.buildStates(offConfig);
+        McStateSpace off = EngineRuntime.buildStates(offConfig);
         check(server.size() == Block.BLOCK_STATE_REGISTRY.size() && client.size() == server.size() && off.size() == server.size(),
                 "sizes: server " + server.size() + ", client " + client.size() + ", registry " + Block.BLOCK_STATE_REGISTRY.size());
         check(client.moddedFacingFallback() && !off.moddedFacingFallback(), "the client does not follow the server");
@@ -131,7 +131,7 @@ public final class FidelityStateGameTest implements FabricGameTest {
         int turnedStates = turnedByFallback.values().stream().mapToInt(Integer::intValue).sum();
         check(turnedStates == server.moddedFacingFallbackTables().turnedStates(), "the fallback's tables turn "
                 + server.moddedFacingFallbackTables().turnedStates() + " states, the reference " + turnedStates);
-        SculptoryMod.LOG.info("Sculptory fidelity: the modded facing fallback turns {} states of {} blocks: {}",
+        Sculptory.LOG.info("Sculptory fidelity: the modded facing fallback turns {} states of {} blocks: {}",
                 turnedStates, turnedByFallback.size(), turnedByFallback.keySet());
 
         Map<String, Integer> perMod = new TreeMap<>();
@@ -164,8 +164,8 @@ public final class FidelityStateGameTest implements FabricGameTest {
     public void moddedStatesCrossTheWire(GameTestHelper context) throws ProtocolException {
         Harness h = new Harness(context);
         ServerLevel world = h.world;
-        FabricStateSpace server = h.runtime.states();
-        FabricStateSpace client = FabricStateSpace.build();
+        McStateSpace server = h.runtime.states();
+        McStateSpace client = McStateSpace.build();
         int pot = h.state("farmersdelight:cooking_pot[facing=south,support=none,waterlogged=true]");
         int lantern = h.state("chipped:big_lantern[facing=east,waterlogged=true]");
         int farmland = h.state("farmersdelight:rich_soil_farmland[moisture=7]");

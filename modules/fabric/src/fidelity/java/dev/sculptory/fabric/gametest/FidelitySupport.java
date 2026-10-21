@@ -9,7 +9,7 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.List;
 import java.util.Objects;

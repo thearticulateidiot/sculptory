@@ -26,7 +26,7 @@ import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
 import dev.sculptory.fabric.gametest.ScatterGameTest.Reply;
-import dev.sculptory.fabric.world.WorldChecks;
+import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;

@@ -30,8 +30,8 @@ import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricTile;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McTile;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ClipboardService;
@@ -705,7 +705,7 @@ public final class ClipboardGameTest implements FabricGameTest {
                     Clipboard clipboard = h.service.clipboards().get(h.player.getUUID()).orElseThrow().clipboard();
                     BlockEntityData tile = clipboard.tile(12, 1, 3);
                     check(tile != null && tile.typeId().equals("minecraft:command_block"), "tile " + tile);
-                    check(!FabricTile.isServerCaptured(tile), "a bypass copy of a protected area kept trusted tiles");
+                    check(!McTile.isServerCaptured(tile), "a bypass copy of a protected area kept trusted tiles");
                     forceChunks(world, all, false);
                     h.close();
                 })

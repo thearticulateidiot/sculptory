@@ -33,7 +33,7 @@ import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -300,7 +300,7 @@ public final class HeightmapGameTest implements FabricGameTest {
             for (int x = 0; x < 24; x++) picture[z * 24 + x] = (byte) Math.min(255, (x * 11 + z * 5) % 300);
         }
         HeightmapAreaKernel.Spec spec = new HeightmapAreaKernel.Spec(selection, 100, 118, picture);
-        FabricWorldReader reader = new FabricWorldReader(world, h.runtime.states());
+        McWorldReader reader = new McWorldReader(world, h.runtime.states());
         int bottom = world.getMinBuildHeight(), top = world.getMaxBuildHeight();
         int[] range = HeightmapAreaKernel.range(spec, bottom, top);
         HeightmapAreaKernel.Result imported = HeightmapAreaKernel.generate(spec,
@@ -388,7 +388,7 @@ public final class HeightmapGameTest implements FabricGameTest {
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 112, 80);
         try {
-            FabricWorldReader reader = new FabricWorldReader(world, h.runtime.states());
+            McWorldReader reader = new McWorldReader(world, h.runtime.states());
             Dab dab = new Dab(0, (x0 + 40) * 16 + 8, 112 * 16, (z0 + 40) * 16 + 8, 255);
             StringBuilder report = new StringBuilder();
             for (int round = 0; round < 2; round++) {

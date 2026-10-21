@@ -14,7 +14,7 @@ import dev.sculptory.core.edit.PasteOptions;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.Perm;

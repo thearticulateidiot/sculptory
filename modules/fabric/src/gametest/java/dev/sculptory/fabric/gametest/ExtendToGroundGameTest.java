@@ -16,8 +16,8 @@ import dev.sculptory.core.generate.LineKernel;
 import dev.sculptory.core.path.PathKind;
 import dev.sculptory.core.path.PathSpec;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
@@ -65,7 +65,7 @@ public final class ExtendToGroundGameTest implements FabricGameTest {
                 h.world.getMinBuildHeight(), h.world.getMaxBuildHeight());
         // As the client does it: each column's lowest cell, the ground read under it within the budget, the fill.
         Long2IntMap lowest = GroundFill.lowest(line);
-        FabricWorldReader reader = new FabricWorldReader(h.world, h.runtime.states());
+        McWorldReader reader = new McWorldReader(h.world, h.runtime.states());
         check(GroundFill.lookedThrough(h.runtime.states(), h.state(LEAVES))
                 && GroundFill.lookedThrough(h.runtime.states(), h.state("minecraft:oak_log[axis=y]")),
                 "leaves and logs are looked through");

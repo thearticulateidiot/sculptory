@@ -9,9 +9,9 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.regionCorner;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.SectionBuffer;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +27,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.PalettedContainer;
 
 /**
- * {@link FabricWorldReader#copySection}, {@link FabricWorldReader#get} and {@link FabricWorldReader#getColumn} (which read
+ * {@link McWorldReader#copySection}, {@link McWorldReader#get} and {@link McWorldReader#getColumn} (which read
  * the section's palette and packed indices directly) return exactly what {@code world.getBlockState} reads, cell for
  * cell, for every kind of vanilla section storage.
  */
@@ -70,7 +70,7 @@ public final class WorldReaderGameTest implements FabricGameTest {
         check(global.data.palette().getSize() > SectionBuffer.SIZE, "the many-state section does not use the global palette: "
                 + global.data.palette().getSize() + " entries");
 
-        FabricWorldReader reader = runtime.reader(world);
+        McWorldReader reader = runtime.reader(world);
         PalettedContainer<BlockState> hashed = world.getChunk(x0 + 96 >> 4, z0 >> 4)
                 .getSection(world.getSectionIndexFromSectionY(6)).getStates();
         int hashedSize = hashed.data.palette().getSize();
@@ -98,8 +98,8 @@ public final class WorldReaderGameTest implements FabricGameTest {
     }
 
     /**
-     * {@link FabricWorldReader#getColumn} (the palette-direct column read Surface Smooth uses) gives exactly what
-     * {@link FabricWorldReader#get} gives cell by cell: columns across uniform, mixed, stale, global-palette, hash-map
+     * {@link McWorldReader#getColumn} (the palette-direct column read Surface Smooth uses) gives exactly what
+     * {@link McWorldReader#get} gives cell by cell: columns across uniform, mixed, stale, global-palette, hash-map
      * palette and all-air sections, starting and ending mid-section, and the whole build height with cells beyond it.
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_reader_columns",
@@ -136,7 +136,7 @@ public final class WorldReaderGameTest implements FabricGameTest {
                 for (int z = 0; z < 16; z++) writer.write(x0 + 16 + x, y, z0 + z, many.get(20 + (x + y) % 2), null);
             }
         }
-        FabricWorldReader reader = runtime.reader(world);
+        McWorldReader reader = runtime.reader(world);
         int bottom = world.getMinBuildHeight(), top = world.getMaxBuildHeight();
         int columns = 0;
         for (int x = x0; x < x0 + 80; x++) {
@@ -152,7 +152,7 @@ public final class WorldReaderGameTest implements FabricGameTest {
         context.succeed();
     }
 
-    private static void checkColumn(ServerLevel world, FabricWorldReader reader, int x, int z, int y0, int count) {
+    private static void checkColumn(ServerLevel world, McWorldReader reader, int x, int z, int y0, int count) {
         int[] into = new int[count + 4];
         java.util.Arrays.fill(into, -7);
         reader.getColumn(x, z, y0, count, into, 2);

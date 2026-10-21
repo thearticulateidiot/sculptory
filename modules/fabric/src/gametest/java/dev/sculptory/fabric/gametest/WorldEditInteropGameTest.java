@@ -17,9 +17,9 @@ import dev.sculptory.core.schem.Schematic;
 import dev.sculptory.core.schem.SchematicCodec;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.schem.McDataFixHook;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.impl.ServerClipboards;
@@ -74,7 +74,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         }
         Harness h = new Harness(context);
         ServerLevel world = h.world;
-        FabricStateSpace states = h.runtime.states();
+        McStateSpace states = h.runtime.states();
         int[] at = regionCorner(context, 60);
         Box source = box(at[0], 100, at[1], at[0] + 5, 102, at[1] + 4);
         Box all = box(at[0], 100, at[1], at[0] + 15, 102, at[1] + 15);
@@ -94,7 +94,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         // (1) WorldEdit writes, we read.
         byte[] theirs = worldEditWrite(world, source, origin);
         Schematic read = SchematicCodec.read(new ByteArrayInputStream(theirs), states, SchematicCodec.Limits.DEFAULT,
-                FabricDataFixHook.get());
+                McDataFixHook.get());
         Clipboard ours = read.clipboard();
         check(read.formatVersion() == 3, "WorldEdit wrote version " + read.formatVersion());
         check(ours.size().equals(new BlockPos(6, 3, 5)), "size " + ours.size());
@@ -166,7 +166,7 @@ public final class WorldEditInteropGameTest implements FabricGameTest {
         return out.toByteArray();
     }
 
-    private static void checkWorldEditRead(byte[] bytes, ServerLevel world, FabricStateSpace states, Box box,
+    private static void checkWorldEditRead(byte[] bytes, ServerLevel world, McStateSpace states, Box box,
                                            BlockPos anchor) throws ReflectiveOperationException, IOException {
         Object reader = call(format(), "getReader", new ByteArrayInputStream(bytes));
         Object clipboard;

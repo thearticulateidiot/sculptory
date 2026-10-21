@@ -7,10 +7,10 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.runtime;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.history.ConflictPolicy;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.EngineTestSupport.BoxFill;
-import dev.sculptory.fabric.net.ServerNet;
-import dev.sculptory.fabric.perm.FabricPermissionService;
+import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.mc.perm.McPermissionService;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
@@ -39,7 +39,7 @@ public final class PermissionGameTest implements FabricGameTest {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
         MinecraftServer server = world.getServer();
-        FabricPermissionService permissions = runtime.permissions();
+        McPermissionService permissions = runtime.permissions();
         ServerPlayer player = context.makeMockServerPlayerInLevel();
         try {
             // Fabric's GameTest server reports itself as dedicated; either way the mock player is not a host.

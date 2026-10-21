@@ -16,12 +16,12 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.transform.Orientation;
 import dev.sculptory.core.transform.Resampling;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.client.net.ClientNet;
-import dev.sculptory.fabric.client.session.ClipboardCache;
-import dev.sculptory.fabric.client.session.FabricEditorSession;
-import dev.sculptory.fabric.client.session.Reply;
-import dev.sculptory.fabric.client.session.ToolAction;
-import dev.sculptory.fabric.client.session.ToolResult;
+import dev.sculptory.mc.client.net.ClientNet;
+import dev.sculptory.mc.client.session.ClipboardCache;
+import dev.sculptory.mc.client.session.McEditorSession;
+import dev.sculptory.mc.client.session.Reply;
+import dev.sculptory.mc.client.session.ToolAction;
+import dev.sculptory.mc.client.session.ToolResult;
 import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.List;
@@ -62,7 +62,7 @@ public final class RotationCompare {
     }
 
     private int compare(FabricClientCommandSource source, boolean slopes) {
-        FabricEditorSession session = ClientNet.session();
+        McEditorSession session = ClientNet.session();
         StateSpace space;
         try {
             space = states.get();

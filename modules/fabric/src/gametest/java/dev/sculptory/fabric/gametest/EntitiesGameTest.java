@@ -26,8 +26,8 @@ import dev.sculptory.core.transform.Transform;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricEntities;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ClipboardService;
@@ -134,14 +134,14 @@ public final class EntitiesGameTest implements FabricGameTest {
         return EntityType.create(nbt, world).orElseThrow(() -> new GameTestAssertException("no " + type));
     }
 
-    /** The entities (players never) belonging to {@code area} as the server decides it: by {@link FabricEntities#cell}. */
+    /** The entities (players never) belonging to {@code area} as the server decides it: by {@link McEntities#cell}. */
     static List<Entity> entitiesIn(ServerLevel world, Box area) {
         int margin = EntityColumns.MARGIN + 1;
         net.minecraft.world.phys.AABB box = new net.minecraft.world.phys.AABB(area.min().x() - margin,
                 area.min().y() - margin, area.min().z() - margin, area.max().x() + 1 + margin,
                 area.max().y() + 1 + margin, area.max().z() + 1 + margin);
         Region region = new Region.Cuboid(area);
-        return world.getEntities((Entity) null, box, e -> !e.isAlwaysTicking() && !e.isRemoved() && FabricEntities.in(region, e));
+        return world.getEntities((Entity) null, box, e -> !e.isAlwaysTicking() && !e.isRemoved() && McEntities.in(region, e));
     }
 
     /** Each entity's data as undo compares it (without volatile keys), by UUID. */
@@ -149,8 +149,8 @@ public final class EntitiesGameTest implements FabricGameTest {
         Map<UUID, dev.sculptory.core.nbt.NbtCompound> out = new HashMap<>();
         for (Entity entity : entities) {
             try {
-                out.put(entity.getUUID(), EntityNbt.withoutVolatile(FabricEntities.fromBytes(
-                        FabricEntities.bytes(FabricEntities.save(entity, EntityFilter.ALL)))));
+                out.put(entity.getUUID(), EntityNbt.withoutVolatile(McEntities.fromBytes(
+                        McEntities.bytes(McEntities.save(entity, EntityFilter.ALL)))));
             } catch (IOException e) {
                 throw new GameTestAssertException("entity NBT: " + e);
             }
@@ -214,7 +214,7 @@ public final class EntitiesGameTest implements FabricGameTest {
      * chunk's entities some ticks after the chunk, and copies refuse what they cannot see.
      */
     static void ready(ServerLevel world, Box area) {
-        String unloaded = FabricEntities.firstUnloaded(world, area);
+        String unloaded = McEntities.firstUnloaded(world, area);
         check(unloaded == null, "the entities of chunk " + unloaded + " are not loaded yet");
     }
 
@@ -745,7 +745,7 @@ public final class EntitiesGameTest implements FabricGameTest {
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         boolean[] checked = {false};
         Captured<ClipboardService.ClipboardInfo> blocksOnly = new Captured<>();
-        if (FabricEntities.firstUnloaded(world, source) != null) {
+        if (McEntities.firstUnloaded(world, source) != null) {
             // The same tick the chunks were made: their entities are still being read.
             checked[0] = true;
             check(refusal(() -> clips.copy(h.player, new Region.Cuboid(source), source.min(), false, CellMask.ANY,
@@ -917,7 +917,7 @@ public final class EntitiesGameTest implements FabricGameTest {
                         dev.sculptory.core.schem.Schematic read = dev.sculptory.core.schem.SchematicCodec.read(
                                 new java.io.ByteArrayInputStream(bytes), h.runtime.states(),
                                 dev.sculptory.core.schem.SchematicCodec.Limits.DEFAULT,
-                                dev.sculptory.fabric.schem.FabricDataFixHook.get());
+                                dev.sculptory.mc.schem.McDataFixHook.get());
                         check(read.report().entities() == 4 && read.report().entitiesSkipped() == 0,
                                 "report " + read.report());
                     } catch (IOException e) {

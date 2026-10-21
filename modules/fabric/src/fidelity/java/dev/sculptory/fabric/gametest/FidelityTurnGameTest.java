@@ -18,19 +18,19 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.transform.Mirror;
 import dev.sculptory.core.transform.Transform;
-import dev.sculptory.fabric.client.editor.render.ghost.GhostVolume;
-import dev.sculptory.fabric.client.editor.tools.place.GhostBaker;
-import dev.sculptory.fabric.client.session.ClipboardCache;
-import dev.sculptory.fabric.client.session.FabricEditorSession;
-import dev.sculptory.fabric.client.session.PreviewDecoder;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.mc.client.editor.render.ghost.GhostVolume;
+import dev.sculptory.mc.client.editor.tools.place.GhostBaker;
+import dev.sculptory.mc.client.session.ClipboardCache;
+import dev.sculptory.mc.client.session.McEditorSession;
+import dev.sculptory.mc.client.session.PreviewDecoder;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.ClipTestSupport.Captured;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.net.ServerNet;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.protocol.v2.Features;
 import dev.sculptory.protocol.v2.Handshake;
 import dev.sculptory.protocol.v2.JobOutcome;
@@ -117,7 +117,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
         Box all = box(x0 - 8, y0, z0 - 8, x0 + spacing * (transforms.size() + 1) + 8, y0, z0 + 8);
         loadAndForce(world, all);
         build(h, world, x0, y0, z0);
-        FabricStateSpace client = following(FabricStateSpace.build(), h.runtime.states());
+        McStateSpace client = following(McStateSpace.build(), h.runtime.states());
         check(client.moddedFacingFallback(), "the client does not follow the server's fallback");
         var clips = ClipTestSupport.clipboards(h, ClipTestSupport.libraryRoot(context));
         WorldSnapshot[] before = new WorldSnapshot[2];
@@ -244,16 +244,16 @@ public final class FidelityTurnGameTest implements FabricGameTest {
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fidelity_turn_config", timeoutTicks = LIMIT)
     public void theClientFollowsTheServersFallbackSetting(GameTestHelper context) {
-        FabricStateSpace on = EngineTestSupport.runtime(context).states();
+        McStateSpace on = EngineTestSupport.runtime(context).states();
         SculptoryConfig offConfig = SculptoryConfig.defaults();
         offConfig.transform.moddedFacingFallback = false;
-        FabricStateSpace off = EngineRuntime.buildStates(offConfig);
+        McStateSpace off = EngineRuntime.buildStates(offConfig);
         check(on.moddedFacingFallback() && !off.moddedFacingFallback(), "config not applied");
         check(ServerNet.offered(on).has(Features.MODDED_FACING_FALLBACK)
                 && !ServerNet.offered(off).has(Features.MODDED_FACING_FALLBACK), "the handshake offers the wrong setting");
-        FabricStateSpace built = FabricStateSpace.build();
-        FabricStateSpace clientOn = following(built, on);
-        FabricStateSpace clientOff = following(built, off);
+        McStateSpace built = McStateSpace.build();
+        McStateSpace clientOn = following(built, on);
+        McStateSpace clientOff = following(built, off);
         check(clientOn.moddedFacingFallback() && !clientOff.moddedFacingFallback(), "the client does not follow");
         // An older client's Hello (the features before this one) is answered without it: its previews turn as vanilla.
         S2C older = Handshake.answer(Handshake.hello("older", ServerDispatcher.SERVER_FEATURES), ServerNet.offered(on),
@@ -374,7 +374,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
      * the fallback off, the same ghost would differ at the non-rotating blocks for a quarter turn.
      */
     private static void checkGhost(ServerLevel world, ClipboardCache.Preview preview, Box target, Transform t,
-                                   FabricStateSpace client, String what) {
+                                   McStateSpace client, String what) {
         GhostVolume source = preview.volume();
         GhostVolume ghost = GhostBaker.bake(source.frame(), source.sections(), t, client);
         GhostVolume vanillaOnly = GhostBaker.bake(source.frame(), source.sections(), t,
@@ -402,7 +402,7 @@ public final class FidelityTurnGameTest implements FabricGameTest {
     }
 
     /** A one-block ghost of {@code h} turned by {@code t}, baked as the Place tool bakes. */
-    private static int bakeOne(int h, Transform t, FabricStateSpace client) {
+    private static int bakeOne(int h, Transform t, McStateSpace client) {
         BlockBuffer cells = new BlockBuffer();
         cells.set(0, 0, 0, h);
         GhostVolume volume = GhostVolume.of(cells, GhostBaker.air(client));
@@ -414,13 +414,13 @@ public final class FidelityTurnGameTest implements FabricGameTest {
      * The editor's view of {@code built} (the space a client builds on join) after the handshake with a server whose
      * space is {@code server}: this client's Hello, the features that server offers, and the view they select.
      */
-    private static FabricStateSpace following(FabricStateSpace built, FabricStateSpace server) {
-        S2C answer = Handshake.answer(Handshake.hello("fidelity", FabricEditorSession.CLIENT_FEATURES),
+    private static McStateSpace following(McStateSpace built, McStateSpace server) {
+        S2C answer = Handshake.answer(Handshake.hello("fidelity", McEditorSession.CLIENT_FEATURES),
                 ServerNet.offered(server), Limits.DEFAULTS, PermissionMask.NONE, 1L);
         return built.followingServer(((S2C.Welcome) answer).features());
     }
 
-    private static ClipboardCache.Preview decode(byte[] payload, FabricStateSpace client) {
+    private static ClipboardCache.Preview decode(byte[] payload, McStateSpace client) {
         try {
             return PreviewDecoder.decode("fidelity", payload, client);
         } catch (IOException e) {

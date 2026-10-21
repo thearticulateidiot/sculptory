@@ -25,8 +25,8 @@ import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.DabOutcome;
@@ -357,7 +357,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
         loadAndForce(world, area);
         StrokeGameTest.terrain(h, x0, z0, 80, 80);
         wallAndOverhang(h, x0, z0);
-        FabricWorldReader reader = new FabricWorldReader(world, h.runtime.states());
+        McWorldReader reader = new McWorldReader(world, h.runtime.states());
         // On the wall's west face, halfway up: the ball takes in the wall, the overhang and the ground.
         Dab dab = new Dab(0, (x0 + 44) * 16, 120 * 16 + 8, (z0 + 40) * 16 + 8, 255);
         StringBuilder report = new StringBuilder();
@@ -386,7 +386,7 @@ public final class BrushSurfaceGameTest implements FabricGameTest {
     }
 
     /** Times one step of {@code spec} twenty times as one stroke; reports the best in round 1. */
-    private static void time(int round, String what, BrushSpec spec, List<Dab> step, FabricWorldReader reader,
+    private static void time(int round, String what, BrushSpec spec, List<Dab> step, McWorldReader reader,
                              StringBuilder report) {
         long best = Long.MAX_VALUE;
         int[] cells = {0};

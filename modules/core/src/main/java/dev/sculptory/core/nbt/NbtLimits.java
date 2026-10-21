@@ -28,7 +28,7 @@ public record NbtLimits(int maxDepth, long maxBytes, int maxArrayLength, int max
     /** For trusted schematic files (server-owned folders): 64 MiB uncompressed, 4M tags, 128 MiB heap. */
     public static final NbtLimits DEFAULT = new NbtLimits(512, 64L << 20, 1 << 25, 1 << 22, 1L << 22);
 
-    /** For one block entity's NBT: 8 MiB (like {@code FabricTile.MAX_DECODE_BYTES}), 256k tags, 32 MiB heap. */
+    /** For one block entity's NBT: 8 MiB (like {@code McTile.MAX_DECODE_BYTES}), 256k tags, 32 MiB heap. */
     public static final NbtLimits BLOCK_ENTITY = new NbtLimits(512, 8L << 20, 1 << 21, 1 << 18, 1L << 18, 32L << 20);
 
     public NbtLimits {

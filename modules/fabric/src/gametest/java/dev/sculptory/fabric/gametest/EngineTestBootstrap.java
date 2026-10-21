@@ -1,7 +1,8 @@
 package dev.sculptory.fabric.gametest;
 
-import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.fabric.FabricServerLoader;
+import dev.sculptory.mc.engine.impl.EditServiceHost;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,8 +12,9 @@ import net.fabricmc.api.ModInitializer;
 import org.slf4j.LoggerFactory;
 
 /**
- * Makes sure the engine runs on the GameTest server. {@link EngineRuntime#install()} is idempotent, so this stays
- * harmless once the mod initializer installs it too.
+ * Makes sure the engine runs on the GameTest server. {@link FabricServerLoader#install()} and
+ * {@link EngineRuntime#install()} are idempotent, so this stays harmless once the mod initializer installs them too;
+ * Fabric Loader runs the entrypoints in no set order, so this may also run first.
  *
  * <p>It also moves the server's own undo history ({@link EditServiceHost#historyDir}) into a temporary folder deleted
  * when the JVM exits, so tests that edit through the server's service (mock players come and go with every run) never
@@ -21,6 +23,7 @@ import org.slf4j.LoggerFactory;
 public final class EngineTestBootstrap implements ModInitializer {
     @Override
     public void onInitialize() {
+        FabricServerLoader.install();
         EngineRuntime.install();
         if (System.getProperty(EditServiceHost.HISTORY_DIR_PROPERTY) != null) return;
         try {

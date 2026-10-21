@@ -13,12 +13,12 @@ import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryLimits;
-import dev.sculptory.fabric.SculptoryMod;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.mc.Sculptory;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.EditTestSupport.CapturedOutput;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.net.ServerNet;
+import dev.sculptory.mc.net.ServerNet;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -201,7 +201,7 @@ public final class ConfigReloadGameTest implements FabricGameTest {
 
             CapturedOutput version = new CapturedOutput();
             server.getCommands().performPrefixedCommand(userSource.withSource(version), "sculptory version");
-            check(version.all().contains("Sculptory " + SculptoryMod.buildId() + " on this server (protocol "
+            check(version.all().contains("Sculptory " + Sculptory.buildId() + " on this server (protocol "
                     + ProtocolV2.VERSION + ")") && version.all().contains("Your client: no Sculptory editor connected"),
                     "version output: " + version.all());
             check(version.lines.size() == 1 && version.all().lines().count() == 2,

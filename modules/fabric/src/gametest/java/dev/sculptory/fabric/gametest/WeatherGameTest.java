@@ -25,7 +25,7 @@ import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.SculptoryConfig;
@@ -292,7 +292,7 @@ public final class WeatherGameTest implements FabricGameTest {
         StrokeGameTest.terrain(h, x0, z0, 80, 80);
         BrushSurfaceGameTest.wallAndOverhang(h, x0, z0);
         try {
-            FabricWorldReader reader = new FabricWorldReader(world, h.runtime.states());
+            McWorldReader reader = new McWorldReader(world, h.runtime.states());
             // On the wall's west face below the overhang: the ball takes in the wall, the overhang and the ground.
             Dab dab = new Dab(0, (x0 + 44) * 16 - 4, 120 * 16 + 8, (z0 + 40) * 16 + 8, 255);
             StringBuilder report = new StringBuilder();
@@ -373,7 +373,7 @@ public final class WeatherGameTest implements FabricGameTest {
     }
 
     /** Times one step of {@code spec} twenty times as one stroke, GC pauses left out; reports best and median in round 1. */
-    private static void time(int round, String what, BrushSpec spec, List<Dab> step, FabricWorldReader reader,
+    private static void time(int round, String what, BrushSpec spec, List<Dab> step, McWorldReader reader,
                              StringBuilder report) {
         long[] took = new long[20];
         int[] cells = {0};

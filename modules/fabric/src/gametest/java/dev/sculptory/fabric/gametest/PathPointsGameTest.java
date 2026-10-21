@@ -25,8 +25,8 @@ import dev.sculptory.core.path.PathSpec;
 import dev.sculptory.core.state.StairSlabVariants;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricWorldReader;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.protocol.v2.OpLabel;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.Perm;
@@ -81,7 +81,7 @@ public final class PathPointsGameTest implements FabricGameTest {
         GeneratedSource line = line(h, x0, z0);
         // As the client does it: each column's lowest cell, the ground read under it, the fill made from that.
         Long2IntMap lowest = GroundFill.lowest(line);
-        GroundMap ground = GroundFill.groundUnder(lowest, new FabricWorldReader(h.world, h.runtime.states()));
+        GroundMap ground = GroundFill.groundUnder(lowest, new McWorldReader(h.world, h.runtime.states()));
         GeneratedSource wall = GroundFill.extend(line, lowest, ground, (x, y, z, low) -> stone, 1 << 16,
                 h.world.getMinBuildHeight());
         for (Long2IntMap.Entry column : lowest.long2IntEntrySet()) {
@@ -109,7 +109,7 @@ public final class PathPointsGameTest implements FabricGameTest {
         int stone = h.state("minecraft:stone");
         GeneratedSource line = line(h, x0, z0);
         Long2IntMap lowest = GroundFill.lowest(line);
-        GroundMap ground = GroundFill.groundUnder(lowest, new FabricWorldReader(h.world, h.runtime.states()));
+        GroundMap ground = GroundFill.groundUnder(lowest, new McWorldReader(h.world, h.runtime.states()));
         boolean refused = false;
         try {
             GroundFill.extend(line, lowest, ground, (x, y, z, low) -> stone, line.cells() + 10, h.world.getMinBuildHeight());
@@ -188,7 +188,7 @@ public final class PathPointsGameTest implements FabricGameTest {
         RoadKernel.Spec spec = new RoadKernel.Spec(List.of(new BlockPos(x0, 99, z0), new BlockPos(x0 + 12, 105, z0)), 3,
                 new Pattern.Single(bricks), null, RoadKernel.HeightMode.STRAIGHT, true, 0, 2, h.state("minecraft:air"));
         RoadKernel.Path laid = RoadKernel.path(spec);
-        GroundMap ground = RoadKernel.deckGround(spec, laid, new FabricWorldReader(h.world, h.runtime.states()));
+        GroundMap ground = RoadKernel.deckGround(spec, laid, new McWorldReader(h.world, h.runtime.states()));
         GeneratedSource road = RoadKernel.generate(spec, laid, ground, h.world.getMinBuildHeight(), h.world.getMaxBuildHeight(), 1 << 16)
                 .source();
         GeneratedSource stepped = SlopeSteps.apply(road, SlopeSteps.byColumn(laid.climbAxes()), steps(h),

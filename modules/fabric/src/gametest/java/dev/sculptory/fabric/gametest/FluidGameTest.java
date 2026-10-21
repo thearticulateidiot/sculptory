@@ -26,8 +26,8 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricStateSpace;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McStateSpace;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.EditRejected;
@@ -154,7 +154,7 @@ public final class FluidGameTest implements FabricGameTest {
     /** Waterlog and Dry evaluated against the real state space (the unit tests use the fake). */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_fluid_patterns", timeoutTicks = LIMIT)
     public void thePatternsWorkOnRealStates(GameTestHelper context) {
-        FabricStateSpace states = EngineTestSupport.runtime(context).states();
+        McStateSpace states = EngineTestSupport.runtime(context).states();
         int air = states.air();
         int water = EngineTestSupport.handle(states, "minecraft:water[level=0]");
         int flowing = EngineTestSupport.handle(states, "minecraft:water[level=5]");

@@ -156,8 +156,8 @@ public final class BenchGameTest implements FabricGameTest {
         long[] copyStart = new long[1];
         bench.runQuiet("mixed fill of the source", listener -> run(h, new OpSpec.Fill(source, mixed, CellMask.ANY), listener));
         bench.then(() -> {
-            // The section capture alone (FabricWorldReader.copySection), which copies and every job section use.
-            dev.sculptory.fabric.world.FabricWorldReader reader = h.runtime.reader(world);
+            // The section capture alone (McWorldReader.copySection), which copies and every job section use.
+            dev.sculptory.mc.world.McWorldReader reader = h.runtime.reader(world);
             it.unimi.dsi.fastutil.longs.LongArrayList keys = new it.unimi.dsi.fastutil.longs.LongArrayList();
             source.forEachSectionKey(keys::add);
             for (int round = 0; round < 3; round++) {

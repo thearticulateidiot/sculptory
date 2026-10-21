@@ -1,0 +1,44 @@
+// The Minecraft-touching code that needs no mod loader: compiled here against vanilla Minecraft 1.21.1 (Mojang names)
+// with no loader API on the classpath, so the compiler proves it is loader-free. Server and common code in src/main,
+// client-only code in src/client. This module ships no jar: each loader module (modules/fabric now; NeoForge and
+// Forge later) compiles these sources into its own jar, so its remapping and Mixin processing cover them.
+apply plugin: 'net.fabricmc.fabric-loom-remap'
+
+loom {
+    splitEnvironmentSourceSets()
+    accessWidenerPath = file('src/main/resources/sculptory.accesswidener')
+    runs.configureEach { ideConfigGenerated = false }
+}
+
+repositories {
+    exclusiveContent {
+        forRepository { maven { name = 'ParchmentMC'; url = 'https://maven.parchmentmc.org' } }
+        filter { includeGroup 'org.parchmentmc.data' }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${rootProject.minecraft_version}"
+    mappings loom.layered {
+        officialMojangMappings()
+        parchment("org.parchmentmc.data:parchment-${rootProject.minecraft_version}:${rootProject.parchment_version}@zip")
+    }
+    // The Mixin and MixinExtras annotations only; every loader ships the libraries themselves.
+    compileOnly "net.fabricmc:sponge-mixin:${rootProject.sponge_mixin_version}"
+    compileOnly "io.github.llamalad7:mixinextras-common:${rootProject.mixinextras_version}"
+
+    implementation project(':core')
+    implementation project(':protocol')
+    implementation project(':server')
+}
+
+// Loom's merged Minecraft jar carries Fabric's @Environment annotations; without the loader on the classpath javac
+// warns "unknown enum constant EnvType.CLIENT" for every client class it reads (not a lint category, so -nowarn).
+// Nothing here needs those annotations, and modules/fabric compiles the same sources with warnings on.
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs << '-nowarn'
+}
+
+// Nothing to publish or run from here.
+tasks.named('jar') { enabled = false }
+tasks.named('remapJar') { enabled = false }

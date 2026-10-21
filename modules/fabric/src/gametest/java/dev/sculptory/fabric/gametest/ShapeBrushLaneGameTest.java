@@ -26,14 +26,14 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.store.HistoryStore;
 import dev.sculptory.core.history.store.StorageIo;
 import dev.sculptory.core.region.Facing;
-import dev.sculptory.fabric.engine.impl.EditServiceHost;
-import dev.sculptory.fabric.engine.impl.FabricHistoryCodec;
+import dev.sculptory.mc.engine.impl.EditServiceHost;
+import dev.sculptory.mc.engine.impl.McHistoryCodec;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.SnapshotWorld;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.schem.FabricDataFixHook;
-import dev.sculptory.fabric.world.BlockWriter;
+import dev.sculptory.mc.schem.McDataFixHook;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.config.SculptoryConfig;
@@ -103,8 +103,8 @@ public final class ShapeBrushLaneGameTest implements FabricGameTest {
             this.executor = executor;
             HistoryStore store;
             try {
-                store = HistoryStore.open(dir, new FabricHistoryCodec(h.runtime.states(),
-                        FabricDataFixHook.currentDataVersion()), HistoryStore.Settings.DEFAULTS, StorageIo.SYSTEM, STORE_LOG);
+                store = HistoryStore.open(dir, new McHistoryCodec(h.runtime.states(),
+                        McDataFixHook.currentDataVersion()), HistoryStore.Settings.DEFAULTS, StorageIo.SYSTEM, STORE_LOG);
             } catch (IOException e) {
                 throw new GameTestAssertException("the history store did not open: " + e);
             }

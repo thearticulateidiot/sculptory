@@ -36,10 +36,10 @@ import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
 import dev.sculptory.fabric.gametest.ScatterGameTest.Reply;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.FabricTile;
-import dev.sculptory.fabric.world.FeatureGrower;
-import dev.sculptory.fabric.world.WorldChecks;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.McTile;
+import dev.sculptory.mc.world.FeatureGrower;
+import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.RejectReason;
@@ -341,7 +341,7 @@ public final class ScatterFeatureGameTest implements FabricGameTest {
                                     + "," + cluster.z(i));
                             bees += ((BeehiveBlockEntity) entity).getOccupantCount();
                             String changed = nestChange(entity.saveWithId(h.world.registryAccess()),
-                                    ((FabricTile) cluster.tile(i)).copyNbt(), h.world.getGameTime() - committedAt + 1,
+                                    ((McTile) cluster.tile(i)).copyNbt(), h.world.getGameTime() - committedAt + 1,
                                     gained);
                             check(changed == null, "a nest's block entity changed at " + cluster.x(i) + ","
                                     + cluster.y(i) + "," + cluster.z(i) + ": " + changed);

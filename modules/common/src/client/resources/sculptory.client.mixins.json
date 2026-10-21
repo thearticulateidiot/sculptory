@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "dev.sculptory.mc.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClientAbilitiesMixin",
+    "ClientBiomeDataMixin",
+    "ClientCommandTreeMixin",
+    "ClientWorldMixin",
+    "InGameHudAccessor",
+    "InGameHudMixin",
+    "MouseAccessor",
+    "MouseScrollMixin"
+  ],
+  "injectors": { "defaultRequire": 1 }
+}

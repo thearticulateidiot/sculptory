@@ -10,14 +10,14 @@ import static dev.sculptory.fabric.gametest.EngineTestSupport.pos;
 import static dev.sculptory.fabric.gametest.EngineTestSupport.regionCorner;
 
 import dev.sculptory.core.Box;
-import dev.sculptory.fabric.engine.impl.EngineRuntime;
+import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.fabric.gametest.BenchSupport.LightWait;
 import dev.sculptory.fabric.gametest.BenchSupport.Watcher;
 import dev.sculptory.fabric.gametest.EditTestSupport.Harness;
 import dev.sculptory.fabric.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.fabric.gametest.EngineTestSupport.RecordingListener;
-import dev.sculptory.fabric.world.BlockWriter;
-import dev.sculptory.fabric.world.ClientSync;
+import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.mc.world.ClientSync;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.ChunkPermit;
