@@ -42,15 +42,8 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.EngineEditService;
-import dev.sculptory.server.engine.impl.EngineHost;
-import dev.sculptory.server.engine.impl.JobRequest;
 import dev.sculptory.server.engine.impl.ServerClipboards;
-import dev.sculptory.server.perm.ChunkPermits;
-import dev.sculptory.server.platform.PlatformPermissions;
 import dev.sculptory.server.platform.WorldBiomes;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -254,41 +247,6 @@ public final class BiomesGameTest {
     }
 
     /**
-     * The edit service over the live engine with protection that differs with height (as a region-based producer on
-     * Paper gives; a GameTest can set none up): every cell at {@code y <= protectedTop} of {@code area} is denied to
-     * every player, judged cell by cell ({@code ChunkPermits.rasterize}). Everything else is the runtime's.
-     */
-    @SuppressWarnings("unchecked")
-    private static EngineEditService<ServerPlayer, ServerLevel> serviceProtectedUpTo(Harness h,
-                                                                                     EditExecutor<ServerLevel> executor,
-                                                                                     Box area, int protectedTop) {
-        PlatformPermissions<ServerPlayer, ServerLevel> real = h.runtime.permissions();
-        PlatformPermissions<ServerPlayer, ServerLevel> protectedBelow = (PlatformPermissions<ServerPlayer, ServerLevel>)
-                Proxy.newProxyInstance(PlatformPermissions.class.getClassLoader(),
-                        new Class<?>[] {PlatformPermissions.class}, (proxy, method, args) -> {
-                            if (method.getName().equals("chunk") && args.length == 5) {
-                                return ChunkPermits.rasterize((int) args[2], (int) args[3], (Box) args[4],
-                                        (x, y, z) -> y > protectedTop || !area.contains(x, y, z));
-                            }
-                            return invoke(method, real, args);
-                        });
-        EngineHost<ServerPlayer, ServerLevel> host = (EngineHost<ServerPlayer, ServerLevel>) Proxy.newProxyInstance(
-                EngineHost.class.getClassLoader(), new Class<?>[] {EngineHost.class},
-                (proxy, method, args) -> method.getName().equals("permissions") && (args == null || args.length == 0)
-                        ? protectedBelow : invoke(method, h.runtime, args));
-        return new EngineEditService<>(host, executor, h.runtime.config().toHistoryLimits(), p -> JobRequest.NO_LISTENER,
-                h.acks, h.events, System::nanoTime);
-    }
-
-    private static Object invoke(Method method, Object target, Object[] args) throws Throwable {
-        try {
-            return method.invoke(target, args);
-        } catch (InvocationTargetException e) {
-            throw e.getCause();
-        }
-    }
-
-    /**
      * The Biome brush under protection limited in height: a 3D dab's ball reaches the quart below its centre quart,
      * whose centre (y 98) is protected, while the others' centres (y 102 and 106) are not. The stroke paints the six
      * others, keeps that one and is not refused; its undo puts back exactly what it painted. The permits are per cell,
@@ -303,8 +261,10 @@ public final class BiomesGameTest {
             paintAll(h, s.region, DESERT);
             Map<Long, String> original = biomes(h, s.region);
             EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
-            EngineEditService<ServerPlayer, ServerLevel> service = serviceProtectedUpTo(h, executor,
-                    box(x, -64, z, x + 31, 319, z + 31), 99);
+            // Every cell of the area at y 99 and below is protected, judged cell by cell.
+            Box protectedArea = box(x, -64, z, x + 31, 99, z + 31);
+            EngineEditService<ServerPlayer, ServerLevel> service = EditTestSupport.protectedService(h, executor,
+                    (px, py, pz) -> !protectedArea.contains(px, py, pz));
             try {
                 ServerPlayer player = h.player;
                 // 3D, radius 4 around the corner point (x + 18, 102, z + 18), the centre of quart (x/4 + 4, 25, z/4 + 4):

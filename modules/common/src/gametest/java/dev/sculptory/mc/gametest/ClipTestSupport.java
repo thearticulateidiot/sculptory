@@ -80,7 +80,13 @@ final class ClipTestSupport {
 
     /** A clipboard service over the harness's edit service and a private library, with its own bounded executor. */
     static ServerClipboards<ServerPlayer, ServerLevel> clipboards(Harness h, Path libraryRoot) {
-        return new ServerClipboards<>(h.service, new Library(libraryRoot, Library.Settings.DEFAULTS),
+        return clipboards(h.service, libraryRoot);
+    }
+
+    /** A clipboard service over {@code service} (its permissions included) and a private library. */
+    static ServerClipboards<ServerPlayer, ServerLevel> clipboards(
+            dev.sculptory.server.engine.impl.EngineEditService<ServerPlayer, ServerLevel> service, Path libraryRoot) {
+        return new ServerClipboards<>(service, new Library(libraryRoot, Library.Settings.DEFAULTS),
                 ServerClipboards.newExecutor(), McDataFixHook.get());
     }
 

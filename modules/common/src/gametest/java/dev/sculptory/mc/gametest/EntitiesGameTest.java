@@ -36,6 +36,8 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.EntityColumns;
 import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WriteOptions;
@@ -685,6 +687,63 @@ public final class EntitiesGameTest {
                     check(carrying == 1, "ALL keeps the minecart's rider");
                     check(held.entities().stream().noneMatch(e -> e.typeId().equals("minecraft:item")
                             || e.typeId().equals("minecraft:player")), "no dropped item, no player");
+                    forceChunks(world, all, false);
+                    h.close();
+                })
+                .thenSucceed();
+    }
+
+    /**
+     * A sphere copied with its entities beside protection limited in height: the cell above the sphere's cap in one of
+     * its columns is protected, and an armor stand stands in it, inside the sphere's bounds but not in the sphere. The
+     * copy judges protection only at the sphere's cells, so it is not refused, and it takes entities only from the
+     * sphere's cells: the stand inside is copied, the one in the protected cell is not.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_entities_selection_protection", timeoutTicks = LIMIT)
+    public void aSelectionsCopyTakesNoEntityFromAProtectedCellOutsideIt(GameTestHelper context) {
+        Harness h = new Harness(context);
+        ServerLevel world = h.world;
+        int[] at = regionCorner(context, 653);
+        int x0 = at[0], y0 = 100, z0 = at[1];
+        Box bounds = box(x0, y0, z0, x0 + 8, y0 + 8, z0 + 8);
+        Region sphere = new Region.Shape(bounds, dev.sculptory.core.region.ShapeKind.ELLIPSOID,
+                dev.sculptory.core.region.Facing.UP);
+        // Column (x0 + 1, z0 + 4) holds sphere cells but not its top cell in the bounds.
+        int px = x0 + 1, py = y0 + 8, pz = z0 + 4;
+        boolean used = false;
+        for (int y = y0; y <= y0 + 8; y++) used |= sphere.contains(px, y, pz);
+        check(used && !sphere.contains(px, py, pz) && sphere.contains(x0 + 4, y0 + 4, z0 + 4), "the sphere's cells");
+        Box all = box(x0 - 16, y0 - 2, z0 - 16, x0 + 24, y0 + 12, z0 + 24);
+        loadAndForce(world, all);
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
+        EngineEditService<ServerPlayer, ServerLevel> service = EditTestSupport.protectedService(h, executor,
+                (x, y, z) -> !(x == px && y == py && z == pz));
+        var clips = ClipTestSupport.clipboards(service, ClipTestSupport.libraryRoot(context));
+        Captured<ClipboardService.ClipboardInfo> copied = new Captured<>();
+        List<Entity> stands = new ArrayList<>();
+        context.startSequence()
+                .thenWaitUntil(() -> ready(world, all))
+                .thenWaitUntil(once(() -> {
+                    ArmorStand inside = new ArmorStand(world, x0 + 4.5, y0 + 4, z0 + 4.5);
+                    ArmorStand protectedOne = new ArmorStand(world, px + 0.5, py, pz + 0.5);
+                    for (ArmorStand stand : List.of(inside, protectedOne)) {
+                        stand.setNoGravity(true);
+                        check(world.addFreshEntity(stand), "spawned " + stand);
+                        stands.add(stand);
+                    }
+                    try {
+                        clips.copy(h.player, sphere, new BlockPos(x0, y0, z0), false, CellMask.ANY,
+                                EntityFilter.DECORATIONS, null, copied);
+                    } catch (EditRejected e) {
+                        throw new GameTestAssertException("the copy was refused: " + e.getMessage());
+                    }
+                }))
+                .thenWaitUntil(() -> {
+                    ClipboardService.ClipboardInfo info = copied.get("the copy");
+                    check(info.entities() == 1, "the copy took " + info.entities() + " entities, not just the one inside");
+                    for (Entity stand : stands) stand.discard();
+                    executor.shutdown();
+                    service.shutdown();
                     forceChunks(world, all, false);
                     h.close();
                 })
