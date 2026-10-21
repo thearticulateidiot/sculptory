@@ -85,6 +85,9 @@ dependencies {
     compileOnly project(':server')
 }
 
+// The dev-only client harnesses run from a dev checkout, never from the jar (as in modules/fabric).
+def devHarnessPackages = ['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/mc/client/editor/${it}/**".toString() }
+
 // The engine (core, protocol, server) is packed into the mod jar as classes. Its packages are all dev.sculptory.*, so
 // nothing needs relocating. Not jarJar: NeoForge would load each nested plain jar as its own module named after the
 // file ("core", "server"), names another mod's library can share.
@@ -95,9 +98,21 @@ tasks.named('jar') {
     }
     // The Fabric widener is not read on NeoForge.
     exclude 'sculptory.accesswidener'
-    // The dev-only client harnesses run from a dev checkout, never from the jar (as in modules/fabric).
-    exclude(['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/mc/client/editor/${it}/**".toString() })
+    exclude devHarnessPackages
     manifest.attributes('Automatic-Module-Name': 'dev.sculptory')
+}
+
+// NeoForgeJarClassesTest: what a dedicated server loads names no client-only class, and the jar leaves the dev
+// harnesses out. It scans the compiled classes and the built jar, so it runs after the jar is made.
+tasks.named('test') {
+    def jar = tasks.named('jar').flatMap { it.archiveFile }
+    def serverClasses = project(':server').sourceSets.main.output.classesDirs
+    dependsOn tasks.named('jar'), ':server:classes'
+    inputs.file jar
+    doFirst { systemProperty 'sculptory.jar', jar.get().asFile.absolutePath }
+    systemProperty 'sculptory.mainClassDirs', (sourceSets.main.output.classesDirs + serverClasses).asPath
+    systemProperty 'sculptory.mainResourceDir', sourceSets.main.output.resourcesDir.absolutePath
+    systemProperty 'sculptory.devHarnessPackages', devHarnessPackages.join(',')
 }
 
 processResources {
