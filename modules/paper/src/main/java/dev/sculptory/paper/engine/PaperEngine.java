@@ -108,6 +108,8 @@ public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>,
     }
 
     void tickEnd() {
+        // The fluid changes Bukkit's events announced this tick go into their entries' trails (PaperFluidTrails).
+        FluidTrails.finishEventChanges();
         executor.endTick();
     }
 
@@ -234,9 +236,26 @@ public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>,
         return player.serverLevel();
     }
 
+    /**
+     * The dev self-test's fake player (a ServerPlayer with no connection, never in the player list), counted as online
+     * for the engine while a run lasts, so work that drops a player who left (a scatter preview) keeps it. Empty
+     * otherwise.
+     */
+    private final Map<UUID, ServerPlayer> devPlayers = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Dev only (the self-test): {@code player} counts as online until {@link #removeDevPlayer}. */
+    public void addDevPlayer(ServerPlayer player) {
+        devPlayers.put(player.getUUID(), player);
+    }
+
+    public void removeDevPlayer(ServerPlayer player) {
+        devPlayers.remove(player.getUUID());
+    }
+
     @Override
     public ServerPlayer online(UUID id) {
-        return server.getPlayerList().getPlayer(id);
+        ServerPlayer player = server.getPlayerList().getPlayer(id);
+        return player != null || devPlayers.isEmpty() ? player : devPlayers.get(id);
     }
 
     @Override

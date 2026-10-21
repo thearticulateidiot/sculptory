@@ -136,6 +136,8 @@ dependencies {
     implementation project(':core')
     implementation project(':protocol')
     implementation project(':server')
+    // LuckPerms' API, compile only (a soft dependency; the server has the plugin when it is used).
+    compileOnly "net.luckperms:api:${rootProject.paper_luckperms_api_version}"
     compileOnly("com.sk89q.worldguard:worldguard-bukkit:${rootProject.paper_worldguard_api_version}") {
         // The server provides Bukkit/Paper; WorldGuard's own Spigot API dependency would shadow paper-api.
         exclude group: 'org.spigotmc'

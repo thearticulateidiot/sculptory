@@ -82,6 +82,9 @@ public final class SelfTest {
                 new Group("builder mode", BuilderChecks::run),
                 new Group("tinker", TinkerNavigateChecks::tinker),
                 new Group("navigate", TinkerNavigateChecks::navigate),
+                new Group("fluid trails", FluidChecks::run),
+                new Group("scatter", ScatterChecks::run),
+                new Group("permissions", PermissionChecks::run),
                 new Group("history saving", HistoryChecks::saveHooks),
                 new Group("network", NetChecks::joinRace));
     }
@@ -198,6 +201,7 @@ public final class SelfTest {
                             "SculptoryTest"), ClientInformation.createDefault());
             PermissionAttachment attachment = player.getBukkitEntity().addAttachment(SculptoryPlugin.instance());
             for (Perm perm : Perm.values()) attachment.setPermission(perm.node(), true);
+            host.engine().addDevPlayer(player);
             return new SelfTestRun(host, player, attachment);
         }
         ServerPlayer player = server.getPlayerList().getPlayerByName(playerName);
