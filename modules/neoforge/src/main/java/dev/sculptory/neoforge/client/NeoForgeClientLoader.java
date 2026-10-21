@@ -35,6 +35,8 @@ import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.level.ChunkEvent;
 import net.neoforged.neoforge.network.payload.MinecraftRegisterPayload;
 import org.joml.Matrix4fStack;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The {@link ClientLoader} on NeoForge. Most hooks are one listener on NeoForge's game bus, registered at the default
@@ -68,8 +70,9 @@ import org.joml.Matrix4fStack;
  *       at the method's RETURN; NeoForge 21.1's patched method has the one return, checked with javap): after registry
  *       sync and the configuration phase's tags, with the local player added to the client world. NeoForge's
  *       {@code LoggingIn} event comes earlier, before the player has its entity id and is in the world;</li>
- *   <li>{@link #onDisconnect}: {@code ClientPlayerNetworkEvent.LoggingOut} from {@code Minecraft.disconnect}, on the
- *       render thread, only after a join (NeoForge fires it for every disconnect, also one before the play phase);</li>
+ *   <li>{@link #onDisconnect}: {@code ClientPlayerNetworkEvent.LoggingOut} from {@code Minecraft.disconnect}, only
+ *       after a join (NeoForge fires it for every disconnect, also one before the play phase). Each hook is queued as
+ *       its own task on the render thread, as Fabric's {@code DISCONNECT} hooks reach it (see the listener);</li>
  *   <li>{@link #onClientTagsLoaded}: {@code TagsUpdatedEvent} with cause {@code CLIENT_PACKET_RECEIVED}, fired by the
  *       client's {@code TagCollector} for the configuration phase's tags and for each {@code /reload};</li>
  *   <li>{@link #onChunkLoad}: {@code ChunkEvent.Load} for client worlds, posted at the end of
@@ -97,6 +100,7 @@ import org.joml.Matrix4fStack;
  * </ul>
  */
 public final class NeoForgeClientLoader implements ClientLoader {
+    private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** The join hooks, which {@code ClientPacketListenerMixin} runs ({@link #joined}). */
     private static final List<Runnable> JOIN_HOOKS = new CopyOnWriteArrayList<>();
     /** The chunk unload hooks, run from NeoForge's event and from {@code ClientChunkCacheMixin} ({@link #chunkUnloaded}). */
@@ -115,10 +119,21 @@ public final class NeoForgeClientLoader implements ClientLoader {
         server = (NeoForgeServerLoader) Loaders.server();
         this.keys = Objects.requireNonNull(keys);
         // One listener, so a disconnect pairs up with a join whatever order the hooks are registered in.
+        //
+        // The hooks are queued on the render thread, not run in the event: Minecraft.disconnect posts LoggingOut on the
+        // render thread before it waits for the integrated server to stop, and an exception escaping a listener would
+        // end disconnect there (at quit, Minecraft.destroy catches it and exits while a singleplayer world may still be
+        // saving). Fabric API fires DISCONNECT from the connection (channelInactive on the network thread, or
+        // Connection.handleDisconnection) and FabricClientLoader hands each hook to Minecraft.execute, so the hooks run
+        // later as render-thread tasks, each on its own (BlockableEventLoop.doRunTask logs a task's exception and goes
+        // on); at quit they run only if the integrated server's wait still processes tasks. Minecraft.execute itself
+        // would run them at once here (already on the render thread, outside a task), so they are queued with tell.
+        // Queued in order, they still run before the task that delivers a later login (and so before its join hooks).
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
             if (!joined) return;
             joined = false;
-            disconnectHooks.forEach(Runnable::run);
+            Minecraft minecraft = Minecraft.getInstance();
+            disconnectHooks.forEach(minecraft::tell);
         });
         NeoForge.EVENT_BUS.addListener((ChunkEvent.Unload event) -> {
             if (event.getLevel() instanceof ClientLevel world && event.getChunk() instanceof LevelChunk chunk) {
@@ -139,13 +154,29 @@ public final class NeoForgeClientLoader implements ClientLoader {
      * and sends nothing in play; so a Fabric server never saw {@code sculptory:s2c} and never answered the handshake.
      * It is sent before the join hooks, so it reaches the server ahead of the handshake's Hello. A vanilla server
      * discards the unknown payload; a NeoForge server negotiated the channel already and is not sent it.
+     *
+     * <p>Nothing here may throw out of {@code handleLogin}: vanilla would turn it into a packet error, and a server
+     * that disconnects on those would drop the player. As Fabric's {@code ClientPlayNetworkAddon.onServerReady} does
+     * for {@code JOIN}, failures are logged: a failed announcement (a {@code LinkageError} if a NeoForge update changes
+     * the internal payload's constructor) leaves the join hooks to run, and a failing hook leaves the next one to run.
      */
     public static void joined(ClientPacketListener connection) {
         if (!connection.getConnectionType().isNeoForge()) {
-            connection.send(new MinecraftRegisterPayload(Set.of(Frame.S2C_ID.id())));
+            try {
+                connection.send(new MinecraftRegisterPayload(Set.of(Frame.S2C_ID.id())));
+            } catch (RuntimeException | LinkageError e) {
+                LOG.warn("Sculptory: could not announce {} to the server; Fabric and vanilla servers will not see the "
+                        + "s2c channel, so editing is unavailable on them this session", Frame.S2C_ID.id(), e);
+            }
         }
         joined = true;
-        JOIN_HOOKS.forEach(Runnable::run);
+        for (Runnable hook : JOIN_HOOKS) {
+            try {
+                hook.run();
+            } catch (RuntimeException e) {
+                LOG.error("Sculptory: a join hook failed", e);
+            }
+        }
     }
 
     /** The client side is wired: {@code RegisterKeyMappingsEvent} is over, later keys are refused. */
