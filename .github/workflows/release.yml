@@ -1,14 +1,18 @@
-# Release workflow for tags v<mod_version>, e.g. v0.3.0-alpha:
-#   1. build:      the full check, then the release jar (sculptory-<version>.jar, no commit suffix);
-#   2. github:     a GitHub Release (a pre-release for versions with a "-") with the jar and the CHANGELOG.md entry;
+# Release workflow, one product per run, for tags <product>/v<build id>, e.g. fabric/v0.5.0+1.21.1 (the build id is the
+# product's version plus the Minecraft version, gradle.properties):
+#   1. build:      the full check, then the product's release jar (sculptory-fabric-<build id>.jar, no commit suffix);
+#   2. github:     a GitHub Release (a pre-release for versions with a "-"; "Latest" only for the Fabric mod) with the
+#                  jar and the CHANGELOG.md entry headed "## <Product> <build id>";
 #   3. modrinth,   uploads to Modrinth and CurseForge, each only when its token secret (MODRINTH_TOKEN,
-#      curseforge: CURSEFORGE_TOKEN) and its project id variable (MODRINTH_PROJECT_ID, CURSEFORGE_PROJECT_ID) are set.
+#      curseforge: CURSEFORGE_TOKEN) and the product's project id variable (MODRINTH_PROJECT_ID, CURSEFORGE_PROJECT_ID
+#                  for the Fabric mod) are set.
 # The build job sees no secret and no write token. Actions are pinned to full commit SHAs; the comment names the release.
+# Adding a product: a tag pattern below, a case in "The product from the tag", and its store variables.
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["fabric/v*"]
 
 permissions:
   contents: read
@@ -22,7 +26,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      product: ${{ steps.product.outputs.product }}
+      product_name: ${{ steps.product.outputs.product_name }}
+      version: ${{ steps.product.outputs.version }}
+      jar: ${{ steps.product.outputs.jar }}
+      version_type: ${{ steps.product.outputs.version_type }}
+      loaders: ${{ steps.product.outputs.loaders }}
+      game_versions: ${{ steps.product.outputs.game_versions }}
+      dependencies: ${{ steps.product.outputs.dependencies }}
+      latest: ${{ steps.product.outputs.latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -37,44 +49,70 @@ jobs:
         with:
           cache-read-only: true
 
-      - name: Version from the tag
-        id: version
+      - name: The product from the tag
+        id: product
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          declared="$(sed -n 's/^mod_version=//p' gradle.properties)"
+          product="${GITHUB_REF_NAME%%/*}"
+          version="${GITHUB_REF_NAME#*/v}"
+          minecraft="$(sed -n 's/^minecraft_version=//p' gradle.properties)"
+          case "$product" in
+            fabric)
+              declared="$(sed -n 's/^sculptory_fabric_version=//p' gradle.properties)+$minecraft"
+              echo "product_name=Fabric" >> "$GITHUB_OUTPUT"
+              echo "jar=sculptory-fabric-$version.jar" >> "$GITHUB_OUTPUT"
+              echo "loaders=fabric" >> "$GITHUB_OUTPUT"
+              echo "game_versions=$minecraft" >> "$GITHUB_OUTPUT"
+              echo "dependencies=fabric-api(required)" >> "$GITHUB_OUTPUT"
+              echo "latest=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "::error::No release recipe for the product '$product' (tag $GITHUB_REF_NAME)"
+              exit 1
+              ;;
+          esac
           if [ "$version" != "$declared" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match mod_version=$declared in gradle.properties"
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match gradle.properties (expected $product/v$declared)"
             exit 1
           fi
+          case "$version" in
+            *-alpha*) type=alpha ;;
+            *-beta*) type=beta ;;
+            *) type=release ;;
+          esac
+          echo "product=$product" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version_type=$type" >> "$GITHUB_OUTPUT"
 
-      # Gradle makes a release build for a v* tag in GitHub Actions; -Prelease says so explicitly.
+      # Gradle makes a release build of the tagged product from the tag itself (root build.gradle).
       - name: Check
-        run: ./gradlew check -Prelease --stacktrace
+        run: ./gradlew check --stacktrace
 
       - name: Release jar
-        run: ./gradlew :fabric:remapJar -Prelease --stacktrace
+        run: ./gradlew :${{ steps.product.outputs.product }}:remapJar --stacktrace
 
       - name: Collect the jar and the release notes
         env:
-          VERSION: ${{ steps.version.outputs.version }}
+          PRODUCT: ${{ steps.product.outputs.product }}
+          PRODUCT_NAME: ${{ steps.product.outputs.product_name }}
+          VERSION: ${{ steps.product.outputs.version }}
+          JAR: ${{ steps.product.outputs.jar }}
         run: |
           mkdir dist
-          jar="modules/fabric/build/libs/sculptory-$VERSION.jar"
+          jar="modules/$PRODUCT/build/libs/$JAR"
           if [ ! -f "$jar" ]; then
             echo "::error::$jar was not built"
-            ls -l modules/fabric/build/libs
+            ls -l "modules/$PRODUCT/build/libs"
             exit 1
           fi
           cp "$jar" dist/
-          # The CHANGELOG.md section whose heading starts with "## <version>", up to the next "## " heading.
-          awk -v v="## $VERSION" 'index($0, v) == 1 { found = 1; next } found && /^## / { exit } found' CHANGELOG.md \
-            > dist/release-notes.md
+          # The CHANGELOG.md section whose heading starts with "## <Product> <version>", up to the next "## " heading.
+          awk -v v="## $PRODUCT_NAME $VERSION" 'index($0, v) == 1 { found = 1; next } found && /^## / { exit } found' \
+            CHANGELOG.md > dist/release-notes.md
           if [ ! -s dist/release-notes.md ]; then
-            echo "::error::CHANGELOG.md has no section headed '## $VERSION'"
+            echo "::error::CHANGELOG.md has no section headed '## $PRODUCT_NAME $VERSION'"
             exit 1
           fi
-          (cd dist && sha256sum "sculptory-$VERSION.jar" > "sculptory-$VERSION.jar.sha256")
+          (cd dist && sha256sum "$JAR" > "$JAR.sha256")
           ls -l dist
 
       - name: Upload the release files
@@ -111,15 +149,21 @@ jobs:
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          PRODUCT_NAME: ${{ needs.build.outputs.product_name }}
           VERSION: ${{ needs.build.outputs.version }}
+          JAR: ${{ needs.build.outputs.jar }}
+          LATEST: ${{ needs.build.outputs.latest }}
         run: |
           prerelease=""
           case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease \
-            --title "Sculptory $VERSION" --notes-file dist/release-notes.md \
-            "dist/sculptory-$VERSION.jar" "dist/sculptory-$VERSION.jar.sha256"
+          # Only the Fabric mod's releases may become "Latest"; the other products' never take that badge from it.
+          latest="--latest=false"
+          if [ "$LATEST" = "true" ] && [ -z "$prerelease" ]; then latest="--latest=true"; fi
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $prerelease $latest \
+            --title "Sculptory for $PRODUCT_NAME $VERSION" --notes-file dist/release-notes.md \
+            "dist/$JAR" "dist/$JAR.sha256"
 
-  # Optional: runs only when the MODRINTH_TOKEN secret and the MODRINTH_PROJECT_ID variable exist.
+  # Optional: runs only when the MODRINTH_TOKEN secret and the product's MODRINTH_PROJECT_ID variable exist.
   modrinth:
     needs: build
     runs-on: ubuntu-latest
@@ -144,18 +188,18 @@ jobs:
         with:
           modrinth-id: ${{ env.MODRINTH_PROJECT_ID }}
           modrinth-token: ${{ env.MODRINTH_TOKEN }}
-          files: dist/sculptory-${{ needs.build.outputs.version }}.jar
-          name: Sculptory ${{ needs.build.outputs.version }}
+          files: dist/${{ needs.build.outputs.jar }}
+          name: Sculptory for ${{ needs.build.outputs.product_name }} ${{ needs.build.outputs.version }}
           version: ${{ needs.build.outputs.version }}
-          version-type: beta
+          version-type: ${{ needs.build.outputs.version_type }}
           changelog-file: dist/release-notes.md
-          loaders: fabric
-          game-versions: 1.21.1
+          loaders: ${{ needs.build.outputs.loaders }}
+          game-versions: ${{ needs.build.outputs.game_versions }}
           java: 21
-          dependencies: fabric-api(required)
+          dependencies: ${{ needs.build.outputs.dependencies }}
           fail-mode: fail
 
-  # Optional: runs only when the CURSEFORGE_TOKEN secret and the CURSEFORGE_PROJECT_ID variable exist.
+  # Optional: runs only when the CURSEFORGE_TOKEN secret and the product's CURSEFORGE_PROJECT_ID variable exist.
   curseforge:
     needs: build
     runs-on: ubuntu-latest
@@ -180,13 +224,13 @@ jobs:
         with:
           curseforge-id: ${{ env.CURSEFORGE_PROJECT_ID }}
           curseforge-token: ${{ env.CURSEFORGE_TOKEN }}
-          files: dist/sculptory-${{ needs.build.outputs.version }}.jar
-          name: Sculptory ${{ needs.build.outputs.version }}
+          files: dist/${{ needs.build.outputs.jar }}
+          name: Sculptory for ${{ needs.build.outputs.product_name }} ${{ needs.build.outputs.version }}
           version: ${{ needs.build.outputs.version }}
-          version-type: beta
+          version-type: ${{ needs.build.outputs.version_type }}
           changelog-file: dist/release-notes.md
-          loaders: fabric
-          game-versions: 1.21.1
+          loaders: ${{ needs.build.outputs.loaders }}
+          game-versions: ${{ needs.build.outputs.game_versions }}
           java: 21
-          dependencies: fabric-api(required)
+          dependencies: ${{ needs.build.outputs.dependencies }}
           fail-mode: fail

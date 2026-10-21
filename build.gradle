@@ -4,12 +4,14 @@ plugins {
     id 'net.fabricmc.fabric-loom-remap' version '1.17.21' apply false
 }
 
-// The build id. A dev build's id is mod_version plus the commit the build was
-// made from, e.g. 0.3.0-alpha+6a043a85, with ".dirty" when the checkout had uncommitted changes (new files that git
-// doesn't ignore included), and "+nogit" where git or the repository is missing (a copy of the source without .git).
-// A release build's id is mod_version alone (e.g. 0.3.0-alpha): built with -Prelease, or in GitHub Actions from a
-// v<mod_version> tag (CONTRIBUTING.md "Releases"). The id names the jar, is the version in the mod list, and client
-// and server compare it at the handshake.
+// Versions and build ids (gradle.properties). The engine modules (core, protocol, server, common) carry the engine
+// version; each product module (fabric now; neoforge, paper and forge later) carries its own version plus the
+// Minecraft version it is built for. A dev build adds the commit it was made from: 0.5.0-dev+1.21.1.6a043a85, with
+// ".dirty" when the checkout had uncommitted changes (new files git doesn't ignore included) and "nogit" where git or
+// the repository is missing. A release build is the version and the Minecraft version alone, 0.5.0+1.21.1: every
+// product at once with -Prelease, or one product in GitHub Actions from its tag <product>/v<build id>
+// (fabric/v0.5.0+1.21.1; CONTRIBUTING.md "Versions and releases"). A product's build id names its jar
+// (sculptory-fabric-<id>.jar), is the version in the mod list, and client and server show it at the handshake.
 def git = { List<String> args ->
     try {
         def result = providers.exec {
@@ -21,31 +23,45 @@ def git = { List<String> args ->
         return null
     }
 }
+ext.products = [
+        fabric: [version: sculptory_fabric_version, minecraft: minecraft_version],
+]
 def ciTag = providers.environmentVariable('GITHUB_REF_TYPE').getOrElse('') == 'tag'
         ? providers.environmentVariable('GITHUB_REF_NAME').getOrElse('') : ''
-def release = providers.gradleProperty('release').map { it != 'false' }.getOrElse(false) || ciTag.startsWith('v')
-if (ciTag.startsWith('v') && ciTag != "v${mod_version}") {
-    throw new GradleException("The release tag ${ciTag} doesn't match mod_version ${mod_version} in gradle.properties; " +
-            "tag v${mod_version}, or change mod_version first")
+def tagMatch = ciTag =~ /^([a-z]+)\/v(.+)$/
+def releaseProduct = tagMatch ? tagMatch[0][1] : null
+def releaseTagId = tagMatch ? tagMatch[0][2] : null
+if (ciTag.startsWith('v') || (releaseProduct != null && !products.containsKey(releaseProduct))) {
+    throw new GradleException("A release tag names its product and build id, e.g. fabric/v${sculptory_fabric_version}+" +
+            "${minecraft_version} (products: ${products.keySet()}), not ${ciTag}")
 }
-if (release) {
-    ext.buildId = mod_version.toString()
-    def changes = git(['status', '--porcelain'])
-    if (changes) {
-        logger.warn("Release build ${mod_version} from a checkout with ${changes.readLines().size()} uncommitted " +
-                "changes (git status); the jar's version doesn't show them")
+def releaseAll = providers.gradleProperty('release').map { it != 'false' }.getOrElse(false)
+def commit = git(['rev-parse', '--short=8', 'HEAD'])
+def changes = git(['status', '--porcelain'])
+def commitMetadata = commit == null || commit.isEmpty() ? 'nogit' : commit + (changes ? '.dirty' : '')
+if ((releaseAll || releaseProduct != null) && changes) {
+    logger.warn("Release build from a checkout with ${changes.readLines().size()} uncommitted changes (git status); " +
+            "the jar's version doesn't show them")
+}
+ext.engineBuildId = releaseAll || releaseProduct != null ? sculptory_engine_version.toString()
+        : "${sculptory_engine_version}+${commitMetadata}".toString()
+ext.buildIdFor = { String product ->
+    def p = products[product]
+    if (p == null) throw new GradleException("No product ${product} (gradle.properties, root build.gradle products)")
+    boolean release = releaseAll || product == releaseProduct
+    String id = release ? "${p.version}+${p.minecraft}" : "${p.version}+${p.minecraft}.${commitMetadata}"
+    if (product == releaseProduct && id != releaseTagId) {
+        throw new GradleException("The tag ${ciTag} doesn't match sculptory_${product}_version=${p.version} and " +
+                "minecraft_version=${p.minecraft} in gradle.properties (expected ${product}/v${id})")
     }
-} else {
-    def commit = git(['rev-parse', '--short=8', 'HEAD'])
-    def buildMetadata = commit == null || commit.isEmpty() ? 'nogit'
-            : commit + (git(['status', '--porcelain']) ? '.dirty' : '')
-    ext.buildId = "${mod_version}+${buildMetadata}"
+    id
 }
 
 subprojects {
     apply plugin: 'java-library'
     group = rootProject.maven_group
-    version = rootProject.buildId
+    // A product's version is its build id; the engine modules carry the engine version.
+    version = rootProject.products.containsKey(name) ? rootProject.buildIdFor(name) : rootProject.engineBuildId
 
     repositories {
         mavenCentral()

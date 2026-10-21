@@ -145,20 +145,27 @@ bundled.
 
 ## Versions and releases
 
-The version is `mod_version` in `gradle.properties` (for example `0.4.0-beta`). Every build has a build id, which
-names the jar, is the version in the mod list and is compared by client and server when a player joins
-(`/sculptory version` shows both):
+Sculptory is one engine with a product per platform, each released on its own schedule. `gradle.properties` holds the
+engine's version (`sculptory_engine_version`, for the `core`, `protocol`, `server` and `common` modules) and one
+version per product (`sculptory_fabric_version` for the Fabric mod; NeoForge, Paper and Forge get their own when they
+exist). A product's **build id** is its version plus the Minecraft version it is built for; it names the jar, is the
+version in the mod list and is shown by client and server when a player joins (`/sculptory version`):
 
-- A **dev build** (any ordinary build) adds the commit: `0.4.0-beta+6a043a85`, with `.dirty` for uncommitted
-  changes and `+nogit` without git. Its jar is `sculptory-0.4.0-beta+6a043a85.jar`.
-- A **release build** is `mod_version` alone: `0.4.0-beta`, in `sculptory-0.4.0-beta.jar`. Gradle makes one when
-  it is given `-Prelease` (`scripts/gradle.ps1 :fabric:remapJar -Prelease`), or when it runs in GitHub Actions for a
-  tag that starts with `v`. Such a tag must be `v` plus `mod_version` (`v0.4.0-beta`), or the build stops. A local
-  release build from a checkout with uncommitted changes warns, since its id no longer says so.
+- A **dev build** (any ordinary build) adds the commit: `0.5.0-dev+1.21.1.6a043a85`, with `.dirty` for uncommitted
+  changes and `nogit` without git. Its jar is `sculptory-fabric-0.5.0-dev+1.21.1.6a043a85.jar`.
+- A **release build** is the version and the Minecraft version alone: `0.5.0+1.21.1`, in
+  `sculptory-fabric-0.5.0+1.21.1.jar`. Gradle makes one of every product with `-Prelease`
+  (`scripts/gradle.ps1 :fabric:remapJar -Prelease`), and one of a single product when it runs in GitHub Actions for
+  that product's tag, `<product>/v<build id>` (`fabric/v0.5.0+1.21.1`). The tag must match `gradle.properties`, or
+  the build stops; a bare `v…` tag stops it too. A local release build from a checkout with uncommitted changes
+  warns, since its id no longer says so.
 
-To release: set `mod_version`, update `CHANGELOG.md`, commit, and push the tag `v<mod_version>`. The release workflow
-(`.github/workflows/release.yml`) runs `check`, builds the release jar, attaches it to a GitHub Release with the
-changelog entry, and uploads it to Modrinth and CurseForge when their tokens are set up.
+To release a product: set its version in `gradle.properties`, add a `CHANGELOG.md` section headed
+`## <Product> <build id>` (for example `## Fabric 0.5.0+1.21.1`), commit, and push the tag `<product>/v<build id>`.
+The release workflow (`.github/workflows/release.yml`) runs `check`, builds that product's release jar, attaches it
+to a GitHub Release with the changelog entry (only the Fabric mod's releases become "Latest"), and uploads it to the
+product's Modrinth and CurseForge projects when their tokens are set up. A client and a server need the same
+protocol, not the same product version: a Fabric client can edit on any server whose Sculptory speaks its protocol.
 
 ## Pull requests
 

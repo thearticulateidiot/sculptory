@@ -11,7 +11,7 @@ import java.nio.file.attribute.BasicFileAttributes
 
 apply plugin: 'net.fabricmc.fabric-loom-remap'
 
-base { archivesName = 'sculptory' }
+base { archivesName = 'sculptory-fabric' }
 
 loom {
     splitEnvironmentSourceSets()
@@ -98,7 +98,7 @@ dependencies {
         parchment("org.parchmentmc.data:parchment-${rootProject.minecraft_version}:${rootProject.parchment_version}@zip")
     }
     modImplementation "net.fabricmc:fabric-loader:${rootProject.loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${rootProject.fabric_api_version}"
 
     implementation project(':core')
     include project(':core')
@@ -168,7 +168,8 @@ processResources {
 // are removed from build/libs when the new jar is written, and only the current build is there to pick up.
 tasks.named('remapJar') {
     def libs = layout.buildDirectory.dir('libs')
-    def keep = ["sculptory-${project.version}.jar".toString(), "sculptory-${project.version}-sources.jar".toString()]
+    def keep = ["sculptory-fabric-${project.version}.jar".toString(),
+                "sculptory-fabric-${project.version}-sources.jar".toString()]
     doFirst {
         libs.get().asFile.listFiles()?.each { file ->
             if (file.name.startsWith('sculptory-') && file.name.endsWith('.jar') && !keep.contains(file.name)) {

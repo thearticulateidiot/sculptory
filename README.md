@@ -134,7 +134,7 @@ and limit is in [Server configuration](docs/wiki/config.md).
 You need a JDK 21; the Gradle wrapper fetches everything else.
 
 ```sh
-./gradlew build        # Linux and macOS: compile, test, and build modules/fabric/build/libs/sculptory-<build id>.jar
+./gradlew build        # Linux and macOS: compile, test, and build modules/fabric/build/libs/sculptory-fabric-<build id>.jar
 ./gradlew assemble     # the jar only, without tests
 ```
 

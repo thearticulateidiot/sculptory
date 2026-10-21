@@ -1,7 +1,8 @@
 # Changelog
 
-All notable changes to Sculptory. Versions follow `mod_version` in `gradle.properties`; client and server need the
-same build.
+All notable changes to Sculptory. From 0.5.0 on, each product has its own version and section, headed
+`## <Product> <version>+<Minecraft version>` (`## Fabric 0.5.0+1.21.1`); the releases up to 0.4.0-beta are the Fabric
+mod's. Client and server need the same network protocol (each section says which).
 
 ## 0.4.0-beta — first beta
 
