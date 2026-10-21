@@ -60,6 +60,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.boss.EnderDragonPart;
+import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.decoration.HangingEntity;
 import net.minecraft.world.entity.decoration.ItemFrame;
@@ -1075,6 +1076,13 @@ public final class EntitiesGameTest {
                     Entity dragon = load(world, "minecraft:ender_dragon", x0 + 0.5, y0, z0 + 0.5, 0f,
                             nbt -> nbt.putBoolean("NoAI", true));
                     check(world.addFreshEntity(dragon), "the dragon spawned");
+                    // NoAI keeps the dragon in place, and also keeps it from placing its parts, which stay at the
+                    // world origin. Vanilla's getEntities returns a dragon's parts wherever they are; NeoForge's (parts
+                    // are its PartEntity there) only the parts inside the box. So the parts go onto the dragon, where
+                    // its first AI tick would put them, and the copies below see them on every loader.
+                    for (EnderDragonPart part : ((EnderDragon) dragon).getSubEntities()) {
+                        part.moveTo(dragon.getX(), dragon.getY(), dragon.getZ());
+                    }
                 }))
                 .thenWaitUntil(() -> {
                     net.minecraft.world.phys.AABB near = new net.minecraft.world.phys.AABB(x0 - 6, y0 - 4, z0 - 6, x0 + 7,

@@ -782,11 +782,13 @@ public final class BuilderModeGameTest {
     public void unloadedTargetsAreRefused(GameTestHelper context) {
         Harness h = new Harness(context);
         int[] at = regionCorner(context, 1069);
-        // A place no chunk of which is loaded: the player stands there only for this tick.
-        int x = at[0] + 4096 * 3 + 8, z = at[1] + 8;
+        // A place no chunk of which is loaded: the player stands there only for this tick, at the east edge of a chunk,
+        // and the target (3 blocks east) is in the next one. Moving an entity loads its chunk on NeoForge (a patch in
+        // Entity.setPosRaw), so only the target's chunk is unloaded on every loader.
+        int x = at[0] + 4096 * 3 + 14, z = at[1] + 8;
         stand(h.player, x, z, -90f);
         hold(h.player, Items.STONE);
-        boolean loadedBefore = h.world.hasChunk(x >> 4, z >> 4);
+        boolean loadedBefore = h.world.hasChunk((x + 3) >> 4, z >> 4);
         BuilderOutcome outcome = place(h, h.player, x + 3, FLOOR, z, Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE);
         check(!loadedBefore, "the far chunk was loaded before the test");
         check(outcome.refusal() == Refusal.UNLOADED, "unloaded: " + outcome);

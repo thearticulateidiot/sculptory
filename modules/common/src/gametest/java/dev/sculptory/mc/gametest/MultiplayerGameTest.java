@@ -35,6 +35,7 @@ import dev.sculptory.mc.gametest.ClipTestSupport.Captured;
 import dev.sculptory.mc.gametest.EditTestSupport.Harness;
 import dev.sculptory.mc.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.mc.gametest.EngineTestSupport.RecordingListener;
+import dev.sculptory.mc.gametest.mixin.PlayerListAccessor;
 import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
@@ -951,7 +952,9 @@ public final class MultiplayerGameTest {
             // The target is no longer online (the edit service not told): the name recorded on the job finds them.
             RecordingListener second = new RecordingListener();
             host.run(target, fill, RunOptions.DEFAULT, second);
-            server.getPlayerList().remove(target);
+            // Off the online list only: PlayerList.remove would run the loader's leave hook on NeoForge (its logout
+            // event fires there; Fabric's disconnect event fires from the connection), which tells the service.
+            ((PlayerListAccessor) server.getPlayerList()).sculptory$players().remove(target);
             targetOnline[0] = false;
             check(server.getPlayerList().getPlayerByName(name) == null, "the target is still online");
             out.lines.clear();
@@ -981,7 +984,10 @@ public final class MultiplayerGameTest {
             for (ServerPlayer p : List.of(target, admin, other)) {
                 host.cancelAll(p.getUUID());
                 host.playerLeft(p.getUUID());
-                if (p == target && !targetOnline[0]) continue;
+                // The target only left the online list (above): back on it, so remove() takes it out of the world too.
+                if (p == target && !targetOnline[0]) {
+                    ((PlayerListAccessor) server.getPlayerList()).sculptory$players().add(p);
+                }
                 try {
                     server.getPlayerList().remove(p);
                 } catch (RuntimeException e) {

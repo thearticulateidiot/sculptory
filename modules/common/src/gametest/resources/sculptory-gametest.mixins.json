@@ -3,6 +3,7 @@
   "minVersion": "0.8",
   "package": "dev.sculptory.mc.gametest.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": ["ChunkUnloadAccessor", "SpawnProtectionHookMixin", "TestServerChunkWritesMixin", "TestServerFilterMixin"],
+  "mixins": ["ChunkUnloadAccessor", "PlayerListAccessor", "SpawnProtectionHookMixin", "TestServerChunkWritesMixin",
+    "TestServerFilterMixin"],
   "injectors": { "defaultRequire": 1 }
 }
