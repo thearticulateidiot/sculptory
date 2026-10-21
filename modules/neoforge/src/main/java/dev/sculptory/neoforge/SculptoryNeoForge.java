@@ -10,7 +10,6 @@ import dev.sculptory.neoforge.client.SculptoryNeoForgeClient;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
-import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 
 /**
@@ -23,7 +22,7 @@ import net.neoforged.fml.common.Mod;
  */
 @Mod(Sculptory.MOD_ID)
 public final class SculptoryNeoForge {
-    public SculptoryNeoForge(IEventBus modBus, ModContainer container, Dist dist) {
+    public SculptoryNeoForge(IEventBus modBus, Dist dist) {
         NeoForgeServerLoader.install(modBus);
         Sculptory.LOG.info("Sculptory for NeoForge {} initializing (engine {}, protocol {})", Sculptory.productBuildId(),
                 Sculptory.buildId(), ProtocolV2.VERSION);

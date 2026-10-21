@@ -56,7 +56,9 @@ import net.neoforged.neoforge.server.permission.nodes.PermissionTypes;
  *       the tail of {@code MinecraftServer.saveAllChunks}, where Fabric API fires {@code AFTER_SAVE}: autosave,
  *       {@code /save-all} and the save during shutdown;</li>
  *   <li>{@link #onStartServerTick}, {@link #onEndServerTick}: {@code ServerTickEvent.Pre} and {@code .Post}, at the
- *       start and end of {@code tickServer} (Pre after the tick counter went up, Fabric's before);</li>
+ *       start and end of {@code tickServer}. Both starts come after {@code tickCount++}; NeoForge's Pre comes before
+ *       {@code tickRateManager.tick()}, Fabric's {@code START_SERVER_TICK} after it (at the {@code tickChildren}
+ *       call);</li>
  *   <li>{@link #onStartWorldTick}: {@code LevelTickEvent.Pre} for server worlds, just before {@code ServerLevel.tick};</li>
  *   <li>{@link #onWorldUnload}: {@code LevelEvent.Unload} for server worlds, in {@code stopServer} before each world
  *       closes (the client's world unloads fire it too and are skipped);</li>
@@ -68,8 +70,10 @@ import net.neoforged.neoforge.server.permission.nodes.PermissionTypes;
  *       {@code RegisterPayloadHandlersEvent}, so a client without Sculptory joins and a Sculptory client joins servers
  *       without it. Handlers run on the main thread ({@code HandlerThread.MAIN}, the registrar's default): the server
  *       thread for {@code sculptory:c2s}, the render thread for {@code sculptory:s2c}. {@code canSendS2C} asks
- *       NeoForge's negotiated channels ({@code hasChannel}, which also knows channels another loader announced with
- *       {@code minecraft:register});</li>
+ *       {@code hasChannel}: the channels negotiated with a NeoForge client, and for another loader's client the
+ *       channels it announced, with {@code c:register} in the configuration phase (Fabric API's client answers
+ *       NeoForge's with its play receivers) or {@code minecraft:register} (ad hoc, Fabric's client sends one when play
+ *       starts). NeoForge accepts an optional payload from any client whatever it announced;</li>
  *   <li>{@link #hasPermission}: {@code PermissionAPI}, which a permissions mod (LuckPerms) backs. Its nodes must be
  *       registered up front, so every {@link Perm} node is ({@code PermissionGatherEvent.Nodes}); a node's default,
  *       used when no permissions mod decides, is the operator level the caller passes, like
