@@ -1,6 +1,12 @@
 # Runs the project-owned Sculptory test server on port 25580, under .local/run/server.
 # Offline mode so dev clients can join; "BuilderDev" is op, other names are not.
+# The dev-only playtest setup runs by default (PlaytestSetup): the time is locked at day, mob spawning is off and
+# hostile mobs are removed; "Sculptory playtest setup:" lines in the console show it.
 #   scripts/playtest-server.ps1
+#   scripts/playtest-server.ps1 -NoSetup      # without it (the world's own time, game rules and mobs)
+param(
+    [switch]$NoSetup
+)
 $ErrorActionPreference = 'Stop'
 $Port = 25580
 $root = Split-Path -Parent $PSScriptRoot
@@ -30,6 +36,8 @@ $uuid = '{0}-{1}-{2}-{3}-{4}' -f $hex.Substring(0,8), $hex.Substring(8,4), $hex.
 $ops = "[{`"uuid`":`"$uuid`",`"name`":`"BuilderDev`",`"level`":4,`"bypassesPlayerLimit`":false}]"
 Set-Content -Path (Join-Path $runDir 'ops.json') -Value $ops -Encoding ascii
 
+$gradleArgs = @(':fabric:runServer', '--console=plain')
+if (-not $NoSetup) { $gradleArgs += '-PbsPlaytest' }
 Write-Host "Starting test server on localhost:$Port (Ctrl+C or 'stop' to quit)."
-& (Join-Path $PSScriptRoot 'gradle.ps1') ':fabric:runServer' '--console=plain'
+& (Join-Path $PSScriptRoot 'gradle.ps1') @gradleArgs
 exit $LASTEXITCODE

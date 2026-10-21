@@ -8,6 +8,13 @@
 #                                             #   Options > Video Settings > Shader Packs (packs go in
 #                                             #   .local/run/client/shaderpacks)
 #   scripts/playtest.ps1 -Size 1600x900       # game window size
+#                                             # Plain playtests and -Server joins run the dev-only playtest setup
+#                                             #   (PlaytestSetup): the player is op (level 4, even in a world without
+#                                             #   cheats), the time is locked at day, mob spawning is off and hostile
+#                                             #   mobs are removed. With -Server the test server applies it
+#                                             #   (scripts/playtest-server.ps1). "Sculptory playtest setup:" lines in
+#                                             #   the log show it.
+#   scripts/playtest.ps1 -NoSetup             # without it (the world's own time, game rules and mobs)
 #                                             # Plain playtests in every checkout share one set of settings (game
 #                                             #   options and the editor's settings files) in <main checkout>\.local\run\settings:
 #                                             #   the shared copy is used at start and what the game changed is kept
@@ -68,7 +75,8 @@ param(
     [switch]$DemoMaximize,
     [int]$DemoAutoStart = 0,
     [switch]$NoCaptions,
-    [string]$RunDir = ''
+    [string]$RunDir = '',
+    [switch]$NoSetup
 )
 $root = Split-Path -Parent $PSScriptRoot
 
@@ -355,6 +363,11 @@ if ($Tour) {
 }
 if ($Size) {
     $gradleArgs += "-PbsSize=$Size"
+}
+# The dev-only playtest setup (op, day, no mobs) for plain playtests and -Server joins; the tour, the check and the demo
+# run without it, as before.
+if (-not ($Tour -or $Check -or $Demo -or $NoSetup)) {
+    $gradleArgs += '-PbsPlaytest'
 }
 # A plain playtest (not the tour, check or demo, which need their own settings, nor a second player's game directory)
 # starts with the shared settings, over whatever a tour or check left in this game directory, and hands back what the

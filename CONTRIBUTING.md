@@ -123,11 +123,15 @@ scripts/gradle.ps1 build          # compile, test and assemble: modules/fabric/b
 scripts/gradle.ps1 assemble       # the jar only, without tests
 scripts/gradle.ps1 runClient      # dev client (singleplayer); add -PbsWorld="<world>" to open a world directly
 scripts/gradle.ps1 runServer      # dev server in .local/run/server
+scripts/gradle.ps1 :neoforge:runClient -PbsPlaytest -PbsWorld="<world>"  # NeoForge dev client, with the playtest setup
 ```
 
 `scripts/playtest.ps1` and `scripts/playtest-server.ps1` wrap the dev client and a dev server on port 25580; their
-headers list the options (the screenshot tour, the play check, the scripted demo). Those dev-only harnesses run from
-the source sets and are left out of the mod jar.
+headers list the options (the screenshot tour, the play check, the scripted demo). By default both apply the playtest
+setup: the player is op at level 4 (even in a singleplayer world without cheats), the time is locked at day, mob spawning
+is off and hostile mobs are removed; `-NoSetup` leaves the world as it is. On the run tasks it is `-PbsPlaytest`
+(`:fabric:` or `:neoforge:` `runClient` and `runServer`), and the log shows "Sculptory playtest setup:" lines. These
+dev-only harnesses and the setup run from the source sets and are left out of every jar.
 
 Each loader module has two GameTest runs: `runGameTest` (vanilla tests) and `runFidelityGameTest` (Chipped/Farmer's
 Delight tests), as `:fabric:runGameTest`, `:neoforge:runGameTest` and so on; a task name without the module runs both
