@@ -403,6 +403,9 @@ public final class ExecutorLifecycleGameTest {
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_exec_height_permit", timeoutTicks = 400)
     public void aPermitLimitedInHeightIsHonouredCellByCell(GameTestHelper context) {
+        // The GameTest runs fail any permit asked outside its bounds (PermitBounds); this run must have the check on.
+        check(Boolean.getBoolean("sculptory.checkPermitBounds"),
+                "the GameTest run does not set sculptory.checkPermitBounds");
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
         EditExecutor<ServerLevel> executor = privateExecutor(runtime, world);
@@ -413,7 +416,7 @@ public final class ExecutorLifecycleGameTest {
         int cx = at[0] >> 4, cz = at[1] >> 4;
         ChunkPermits.CellTest lowerLayers = (x, y, z) -> y < 10;
         PermitSource permits = (px, pz) -> px == cx && pz == cz
-                ? ChunkPermits.forChunk(px, pz, region, lowerLayers) : ChunkPermit.ALLOW;
+                ? ChunkPermits.rasterize(px, pz, region, lowerLayers) : ChunkPermit.ALLOW;
         check(permits.chunk(cx, cz) instanceof ChunkPermit.Cells, "not a per-cell permit: " + permits.chunk(cx, cz));
         int smooth = handle(runtime.states(), "minecraft:smooth_stone");
         RecordBuilder record = new RecordBuilder();
