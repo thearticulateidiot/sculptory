@@ -194,6 +194,17 @@ class EntityNbtTest {
         assertEquals("", EntityNbt.loadedId(null));
     }
 
+    /** On Paper (CraftBukkit) every entity saves its age; an armor stand left alone is still the one a step placed. */
+    @Test
+    void craftBukkitsTickAgeIsVolatile() {
+        NbtCompound stand = NbtCompound.builder().putString("id", "minecraft:armor_stand").putInt("Spigot.ticksLived", 1)
+                .putString("CustomName", "\"Stand\"").build();
+        NbtCompound later = stand.toBuilder().putInt("Spigot.ticksLived", 60).build();
+        assertEquals(EntityNbt.withoutVolatile(stand), EntityNbt.withoutVolatile(later));
+        NbtCompound renamed = stand.toBuilder().putString("CustomName", "\"Other\"").build();
+        assertNotEquals(EntityNbt.withoutVolatile(stand), EntityNbt.withoutVolatile(renamed), "names stay compared");
+    }
+
     @Test
     void countersMobsKeepByThemselvesAreVolatile() {
         NbtCompound chicken = NbtCompound.builder().putString("id", "minecraft:chicken").putInt("EggLayTime", 6000)

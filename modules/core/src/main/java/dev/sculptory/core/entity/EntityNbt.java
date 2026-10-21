@@ -55,6 +55,8 @@ public final class EntityNbt {
      */
     public static final Set<String> VOLATILE_KEYS = Set.of(
             "Pos", "Motion", "Rotation", "FallDistance", "Fire", "Air", "OnGround", "PortalCooldown", "TicksFrozen",
+            // CraftBukkit (Paper, Spigot) saves every entity's age in ticks, which grows each tick by itself.
+            "Spigot.ticksLived",
             // Living entities.
             "HurtTime", "HurtByTimestamp", "DeathTime", "FallFlying", "Brain", "Health", "AbsorptionAmount", "attributes",
             "active_effects", "SleepingX", "SleepingY", "SleepingZ",
