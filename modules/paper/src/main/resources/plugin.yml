@@ -1,0 +1,9 @@
+name: Sculptory
+version: '${version}'
+main: dev.sculptory.paper.SculptoryPlugin
+api-version: '1.21'
+description: In-game world editor engine for the Sculptory client mod (Minecraft ${minecraft}).
+website: https://github.com/thearticulateidiot/sculptory
+# WorldGuard (a soft dependency) loads first, so its regions are known when the engine starts.
+softdepend: [WorldGuard, WorldEdit]
+load: POSTWORLD

@@ -28,7 +28,7 @@ repositories {
 // change in modules/common that moves one fails here instead of silently compiling the old behaviour.
 def commonSources = project(':common').file('src/main/java')
 // Not on Paper: the mixins (Paper has none), builder mode (mixin accessors), the Fabric/NeoForge engine wiring and the
-// command tree and edit events over it (the plugin wires the engine itself: PaperEngine, PaperEditHost, PaperCommands),
+// command tree over it (the plugin wires the engine itself: PaperEngine, PaperEditHost, PaperCommands),
 // and the light batch (Paper's own light engine; src/commonReplacements has its stand-in).
 def commonExcludes = [
         'dev/sculptory/mc/mixin/**',
@@ -39,7 +39,6 @@ def commonExcludes = [
         'dev/sculptory/mc/engine/impl/BuilderService.java',
         'dev/sculptory/mc/engine/impl/TinkerEdits.java',
         'dev/sculptory/mc/engine/impl/NavigateService.java',
-        'dev/sculptory/mc/net/NetEditEvents.java',
         'dev/sculptory/mc/world/LightBatch.java',
 ]
 // What Paper's level interfaces add as abstract methods (LevelReader, BlockGetter, LevelAccessor), for the common
@@ -93,6 +92,11 @@ def commonPatches = [
         'dev/sculptory/mc/world/CapturingWorldAccess.java': [
                 ['public final class CapturingWorldAccess implements WorldGenLevel {',
                  'public final class CapturingWorldAccess implements WorldGenLevel {\n' + levelAccessorMethods],
+        ],
+        // The history-state conversion lives on the loaders' EditServiceHost, which the plugin replaces.
+        'dev/sculptory/mc/net/NetEditEvents.java': [
+                ['import dev.sculptory.mc.engine.impl.EditServiceHost;', ''],
+                ['EditServiceHost.toHistoryState(snapshot)', 'dev.sculptory.paper.engine.PaperEditHost.toHistoryState(snapshot)'],
         ],
 ].collectEntries { k, v -> [k, v.collect { [it[0].toString(), it[1].toString()] }] }
 

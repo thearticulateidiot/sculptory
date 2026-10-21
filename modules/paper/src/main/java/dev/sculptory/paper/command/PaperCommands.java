@@ -1,0 +1,164 @@
+package dev.sculptory.paper.command;
+
+import static net.minecraft.commands.Commands.argument;
+import static net.minecraft.commands.Commands.literal;
+
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.context.CommandContext;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import dev.sculptory.core.edit.CellMask;
+import dev.sculptory.core.edit.OpSpec;
+import dev.sculptory.core.history.ConflictPolicy;
+import dev.sculptory.core.edit.Pattern;
+import dev.sculptory.mc.Sculptory;
+import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.paper.devtest.NetTest;
+import dev.sculptory.paper.devtest.SelfTest;
+import dev.sculptory.paper.engine.PaperEditHost;
+import dev.sculptory.protocol.v2.Phase;
+import dev.sculptory.server.engine.EditRejected;
+import dev.sculptory.server.engine.JobListener;
+import dev.sculptory.server.engine.JobResult;
+import dev.sculptory.server.engine.JobTicket;
+import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.engine.RunOptions;
+import java.util.UUID;
+import java.util.function.Supplier;
+import net.minecraft.commands.CommandBuildContext;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.arguments.EntityArgument;
+import net.minecraft.commands.arguments.blocks.BlockStateArgument;
+import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
+import net.minecraft.core.BlockPos;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.state.BlockState;
+
+/**
+ * {@code /sculptory} on Paper (spike): fill, undo, redo and version as the loaders' command has them, plus the dev
+ * self-test and network test. Registered on the server's Brigadier dispatcher, so {@code execute as <player> run
+ * sculptory ...} acts as that player. Fill, undo and redo run as a player and through that player's permissions and
+ * protection, like an editor request; their outcome is logged.
+ */
+public final class PaperCommands {
+    private final Supplier<PaperEditHost> host;
+
+    public PaperCommands(Supplier<PaperEditHost> host) {
+        this.host = host;
+    }
+
+    public void register(CommandDispatcher<CommandSourceStack> dispatcher, CommandBuildContext context) {
+        dispatcher.register(literal("sculptory")
+                .then(literal("fill").requires(source -> allowed(source, Perm.ADMIN))
+                        .then(argument("from", BlockPosArgument.blockPos())
+                                .then(argument("to", BlockPosArgument.blockPos())
+                                        .then(argument("block", BlockStateArgument.block(context))
+                                                .executes(this::fill)))))
+                .then(literal("undo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, true)))
+                .then(literal("redo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, false)))
+                .then(literal("version").executes(this::version))
+                // Dev only, from the console (permission level 4): the adapter checks and the frame-size probe.
+                .then(literal("selftest").requires(source -> source.hasPermission(4))
+                        .executes(c -> SelfTest.run(host.get(), c.getSource(), "")))
+                .then(literal("selftest").requires(source -> source.hasPermission(4))
+                        .then(argument("player", EntityArgument.player())
+                                .executes(c -> SelfTest.run(host.get(), c.getSource(),
+                                        EntityArgument.getPlayer(c, "player").getGameProfile().getName()))))
+                .then(literal("nettest").requires(source -> source.hasPermission(4))
+                        .then(argument("player", EntityArgument.player())
+                                .then(argument("bytes", IntegerArgumentType.integer(1, 4 * 1024 * 1024))
+                                        .then(argument("route", StringArgumentType.word())
+                                                .executes(c -> NetTest.send(c.getSource(),
+                                                        EntityArgument.getPlayer(c, "player"),
+                                                        IntegerArgumentType.getInteger(c, "bytes"),
+                                                        StringArgumentType.getString(c, "route"))))))));
+    }
+
+    private boolean allowed(CommandSourceStack source, Perm node) {
+        ServerPlayer player = source.getPlayer();
+        if (player == null) return source.hasPermission(4);
+        PaperEditHost running = host.get();
+        return running != null && running.engine().permissions().has(player, node);
+    }
+
+    private int fill(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
+        CommandSourceStack source = context.getSource();
+        ServerPlayer player = source.getPlayerOrException();
+        BlockPos from = BlockPosArgument.getBlockPos(context, "from");
+        BlockPos to = BlockPosArgument.getBlockPos(context, "to");
+        BlockState state = BlockStateArgument.getBlock(context, "block").getState();
+        dev.sculptory.core.Box box = dev.sculptory.core.Box.of(
+                new dev.sculptory.core.BlockPos(from.getX(), from.getY(), from.getZ()),
+                new dev.sculptory.core.BlockPos(to.getX(), to.getY(), to.getZ()));
+        OpSpec.Fill op = new OpSpec.Fill(box, new Pattern.Single(Block.getId(state)), CellMask.ANY);
+        try {
+            JobTicket ticket = host.get().service().run(player, op, RunOptions.DEFAULT, logging(player, "Fill"));
+            Sculptory.LOG.info("Sculptory fill by {}: {} {} -> {} started, job {}, {} cells", name(player), state,
+                    from.toShortString(), to.toShortString(), ticket.jobId(), ticket.estimatedCells());
+            source.sendSuccess(() -> Component.literal("Fill started: job " + ticket.jobId()), false);
+            return 1;
+        } catch (EditRejected e) {
+            Sculptory.LOG.info("Sculptory fill by {} refused: {}", name(player), e.getMessage());
+            source.sendFailure(Component.literal("Fill refused: " + e.getMessage()));
+            return 0;
+        }
+    }
+
+    private int undoRedo(CommandContext<CommandSourceStack> context, boolean undo) throws CommandSyntaxException {
+        CommandSourceStack source = context.getSource();
+        ServerPlayer player = source.getPlayerOrException();
+        String what = undo ? "Undo" : "Redo";
+        try {
+            JobListener log = logging(player, what);
+            JobTicket ticket = undo
+                    ? host.get().service().undo(player, ConflictPolicy.SKIP_CONFLICTS, log)
+                    : host.get().service().redo(player, ConflictPolicy.SKIP_CONFLICTS, log);
+            Sculptory.LOG.info("Sculptory {} by {} started: {} (job {})", what.toLowerCase(), name(player),
+                    ticket.label(), ticket.jobId());
+            source.sendSuccess(() -> Component.literal(what + ": " + ticket.label()), false);
+            return 1;
+        } catch (EditRejected e) {
+            Sculptory.LOG.info("Sculptory {} by {} refused: {}", what.toLowerCase(), name(player), e.getMessage());
+            source.sendFailure(Component.literal(what + " refused: " + e.getMessage()));
+            return 0;
+        }
+    }
+
+    private int version(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        StringBuilder text = new StringBuilder("Sculptory for Paper ").append(Sculptory.productBuildId())
+                .append(" (engine ").append(Sculptory.buildId()).append(")");
+        ServerPlayer player = source.getPlayer();
+        if (player != null) {
+            text.append("; your client: ").append(ServerNet.clientBuild(player).orElse("no Sculptory handshake"));
+        }
+        source.sendSuccess(() -> Component.literal(text.toString()), false);
+        return 1;
+    }
+
+    /** The job's progress to the player's client (ServerNet's listener) and its outcome to the server log. */
+    private static JobListener logging(ServerPlayer player, String what) {
+        JobListener client = ServerNet.jobListener(player);
+        return new JobListener() {
+            @Override
+            public void progress(UUID job, long done, long total, Phase phase) {
+                client.progress(job, done, total, phase);
+            }
+
+            @Override
+            public void finished(JobResult result) {
+                client.finished(result);
+                Sculptory.LOG.info("Sculptory {} job {} finished: {}, {} changed, {} skipped (protected), {} skipped "
+                        + "(conflicts)", what.toLowerCase(), result.jobId(), result.outcome(), result.changed(),
+                        result.skippedProtected(), result.skippedConflicts());
+            }
+        };
+    }
+
+    private static String name(ServerPlayer player) {
+        return player.getGameProfile().getName();
+    }
+}
