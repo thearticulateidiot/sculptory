@@ -7,9 +7,7 @@ import dev.sculptory.mc.loader.ServerLoader;
 import dev.sculptory.mc.net.Frame;
 import dev.sculptory.server.engine.Perm;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
@@ -87,33 +85,20 @@ public final class NeoForgeServerLoader implements ServerLoader {
     private static final List<Consumer<MinecraftServer>> STOPPING = new CopyOnWriteArrayList<>();
     private static final List<Consumer<MinecraftServer>> AFTER_SAVE = new CopyOnWriteArrayList<>();
 
-    /**
-     * The operator level the check in progress on this thread falls back to: {@link #hasPermission} sets it around
-     * {@code PermissionAPI.getPermission}, whose default resolver reads it (a permissions mod asks the resolver only
-     * when it has no answer itself, on the same call).
-     */
-    private static final ThreadLocal<Integer> FALLBACK_OP_LEVEL = new ThreadLocal<>();
-    /** One permission node per {@link Perm}, by node name. */
-    private final Map<String, PermissionNode<Boolean>> nodes = new HashMap<>();
+    /** One PermissionAPI node per {@link Perm}, and the operator level each check falls back to (see there). */
+    private final PermissionMapping<ServerPlayer, PermissionNode<Boolean>> permissions;
 
     private volatile BiConsumer<ServerPlayer, byte[]> c2sHandler;
     private volatile Consumer<byte[]> s2cHandler;
 
     private NeoForgeServerLoader(IEventBus modBus) {
         modBus.addListener(this::registerPayloads);
-        for (Perm perm : Perm.values()) {
-            String name = perm.node();
-            String prefix = Sculptory.MOD_ID + ".";
-            if (!name.startsWith(prefix)) throw new IllegalStateException("permission node outside the mod: " + name);
-            nodes.put(name, new PermissionNode<>(Sculptory.MOD_ID, name.substring(prefix.length()),
-                    PermissionTypes.BOOLEAN, (player, uuid, context) -> {
-                        Integer level = FALLBACK_OP_LEVEL.get();
-                        // An offline player (no ServerPlayer) has no operator level to compare.
-                        return player != null && level != null && player.hasPermissions(level);
-                    }));
-        }
+        permissions = new PermissionMapping<>(Sculptory.MOD_ID,
+                (path, fallback) -> new PermissionNode<>(Sculptory.MOD_ID, path, PermissionTypes.BOOLEAN,
+                        (player, uuid, context) -> fallback.test(player)),
+                ServerPlayer::hasPermissions);
         NeoForge.EVENT_BUS.addListener((PermissionGatherEvent.Nodes event) ->
-                event.addNodes(List.<PermissionNode<?>>copyOf(nodes.values())));
+                event.addNodes(List.<PermissionNode<?>>copyOf(permissions.nodes())));
     }
 
     /** Makes the loader (once per JVM) and installs it in {@link Loaders}; idempotent. */
@@ -121,13 +106,6 @@ public final class NeoForgeServerLoader implements ServerLoader {
         if (instance == null) instance = new NeoForgeServerLoader(modBus);
         Loaders.installServer(instance);
         return instance;
-    }
-
-    /** The installed loader (the client loader hands it the {@code sculptory:s2c} receiver). */
-    static NeoForgeServerLoader instance() {
-        NeoForgeServerLoader loader = instance;
-        if (loader == null) throw new IllegalStateException("the NeoForge server loader is not installed");
-        return loader;
     }
 
     private void registerPayloads(RegisterPayloadHandlersEvent event) {
@@ -300,20 +278,9 @@ public final class NeoForgeServerLoader implements ServerLoader {
 
     @Override
     public boolean hasPermission(ServerPlayer player, String node, int fallbackOpLevel) {
-        PermissionNode<Boolean> permission = nodes.get(node);
-        if (permission == null) {
-            throw new IllegalArgumentException("not a registered Sculptory permission node: " + node);
-        }
-        Integer outer = FALLBACK_OP_LEVEL.get();
-        FALLBACK_OP_LEVEL.set(fallbackOpLevel);
-        try {
-            return Boolean.TRUE.equals(PermissionAPI.getPermission(player, permission));
-        } finally {
-            if (outer == null) {
-                FALLBACK_OP_LEVEL.remove();
-            } else {
-                FALLBACK_OP_LEVEL.set(outer);
-            }
-        }
+        // Throws for an unknown node, and passes on what the PermissionAPI throws (an unregistered node, a failing
+        // permissions mod): the caller decides what a failure means.
+        return permissions.check(player, node, fallbackOpLevel,
+                (target, permission) -> PermissionAPI.getPermission(target, permission));
     }
 }

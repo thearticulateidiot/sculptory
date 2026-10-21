@@ -83,6 +83,8 @@ dependencies {
     compileOnly project(':core')
     compileOnly project(':protocol')
     compileOnly project(':server')
+    // PermissionMappingTest: the mapping walks the engine's Perm nodes.
+    testImplementation project(':server')
 }
 
 // The dev-only client harnesses run from a dev checkout, never from the jar (as in modules/fabric).
