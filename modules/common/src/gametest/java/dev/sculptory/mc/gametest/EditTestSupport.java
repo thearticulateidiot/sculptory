@@ -27,9 +27,15 @@ import dev.sculptory.server.engine.impl.AckSink;
 import dev.sculptory.server.engine.impl.EditEvents;
 import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.EngineEditService;
+import dev.sculptory.server.engine.impl.EngineHost;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.engine.impl.JobRequest;
+import dev.sculptory.server.perm.ChunkPermits;
+import dev.sculptory.server.platform.PlatformPermissions;
 import io.netty.channel.embedded.EmbeddedChannel;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -389,6 +395,40 @@ final class EditTestSupport {
 
         int get(int x, int y, int z) {
             return states[index(x, y, z)];
+        }
+    }
+
+    /**
+     * An edit service over the live engine (with {@code executor}) whose players are protected wherever
+     * {@code allowed} says no, judged cell by cell ({@code ChunkPermits.rasterize}), as a region-based producer on Paper
+     * protects (a GameTest can set no such protection up); everything else is the runtime's. Its clipboards
+     * ({@code ClipTestSupport.clipboards(EngineEditService, Path)}) check the same protection.
+     */
+    @SuppressWarnings("unchecked")
+    static EngineEditService<ServerPlayer, ServerLevel> protectedService(Harness h, EditExecutor<ServerLevel> executor,
+                                                                         ChunkPermits.CellTest allowed) {
+        PlatformPermissions<ServerPlayer, ServerLevel> real = h.runtime.permissions();
+        PlatformPermissions<ServerPlayer, ServerLevel> perCell = (PlatformPermissions<ServerPlayer, ServerLevel>)
+                Proxy.newProxyInstance(PlatformPermissions.class.getClassLoader(),
+                        new Class<?>[] {PlatformPermissions.class}, (proxy, method, args) -> {
+                            if (method.getName().equals("chunk") && args != null && args.length == 5) {
+                                return ChunkPermits.rasterize((int) args[2], (int) args[3], (Box) args[4], allowed);
+                            }
+                            return invoke(method, real, args);
+                        });
+        EngineHost<ServerPlayer, ServerLevel> host = (EngineHost<ServerPlayer, ServerLevel>) Proxy.newProxyInstance(
+                EngineHost.class.getClassLoader(), new Class<?>[] {EngineHost.class},
+                (proxy, method, args) -> method.getName().equals("permissions") && (args == null || args.length == 0)
+                        ? perCell : invoke(method, h.runtime, args));
+        return new EngineEditService<>(host, executor, h.runtime.config().toHistoryLimits(), p -> JobRequest.NO_LISTENER,
+                h.acks, h.events, System::nanoTime);
+    }
+
+    private static Object invoke(Method method, Object target, Object[] args) throws Throwable {
+        try {
+            return method.invoke(target, args);
+        } catch (InvocationTargetException e) {
+            throw e.getCause();
         }
     }
 

@@ -1,5 +1,6 @@
 package dev.sculptory.server.engine.impl;
 
+import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.ComputeContext;
@@ -65,6 +66,15 @@ final class BulkJob<W> {
     final UUID id;
     final JobRequest<W> request;
     final EditProgram program;
+    /** The program's bounds. */
+    private final Box bounds;
+    /**
+     * What the job's chunk permits are asked for ({@link PermitSource#bounds}, else the program's bounds): every cell they
+     * are asked about must lie inside ({@link PermitBounds}).
+     */
+    private final Box permitBounds;
+    /** Names the job in a {@link PermitBounds} failure (its label, built only then). */
+    private final Object asker;
     final long[] order;
     /** Source sections read from the world (inside the world border). */
     final long[] sources;
@@ -113,7 +123,15 @@ final class BulkJob<W> {
     private SectionWork current;
     private long permitColumn = Long.MIN_VALUE;
     private ChunkPermit permit;
-    /** Permits asked through {@link ComputeContext#mayWrite} during one slice (a decision may span chunks). */
+    /**
+     * Permits asked through {@link ComputeContext#mayWrite} during one slice (a decision may span chunks), cleared at
+     * the start of every slice. They must be as fresh as the writes': a scatter commit rechecks a placement through
+     * {@code mayWrite} right before its first cell is written, possibly slices after the decision, and protection grown
+     * since must skip it whole there, not let it start and be denied cell by cell (half built); protection shrunk since
+     * must let chunks dropped as denied ({@link #worthLoading}) be reconsidered. The cost is accepted: a chunk whose
+     * protection differs with height is asked again (a producer rasterizes it again, at most the job's box in that
+     * chunk) in each slice that decides about it, and a slice decides only the placements of the section it computes.
+     */
     private final Long2ObjectOpenHashMap<ChunkPermit> decisionPermits = new Long2ObjectOpenHashMap<>();
     private long waitingSince = NOT_WAITING;
     /** The section index whose read columns ({@link #reads}) are known, or -1. */
@@ -161,6 +179,14 @@ final class BulkJob<W> {
         this.id = id;
         this.request = request;
         this.program = request.program();
+        this.bounds = program.bounds();
+        this.permitBounds = request.permits().bounds() != null ? request.permits().bounds() : bounds;
+        this.asker = new Object() {
+            @Override
+            public String toString() {
+                return "job " + id + " (" + program.label() + ")";
+            }
+        };
         this.order = order;
         this.sources = sources;
         this.airSources = airSources;
@@ -200,8 +226,10 @@ final class BulkJob<W> {
 
             /** The same rule {@link #writeCell} applies: the player's chunk permit and the world border. */
             @Override
-            public boolean mayWrite(int x, int z) {
-                return decisionPermit(x >> 4, z >> 4).allows(x, z) && host.insideBorder(world, x, z);
+            public boolean mayWrite(int x, int y, int z) {
+                ChunkPermit decided = decisionPermit(x >> 4, z >> 4);
+                PermitBounds.check(permitBounds, decided, x, y, z, asker);
+                return decided.allows(x, y, z) && host.insideBorder(world, x, z);
             }
         };
         this.guard = (live, liveTile) -> program.mayReplace(guardKey, guardIndex, live, liveTile, context);
@@ -265,7 +293,8 @@ final class BulkJob<W> {
         }
         if (biomeWork != null) {
             biomes = new BiomeWork.Context(host.biomes(world), request.permits(), request.records(),
-                    (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z));
+                    (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z),
+                    BiomeWork.quarts(bounds, host.bottomY(world), host.topY(world)));
         }
         if (entityWork != null) {
             entities = EntityWork.Context.of(host.entities(world), request.writeOptions(), request.permits(),
@@ -697,7 +726,8 @@ final class BulkJob<W> {
         int x = s.ox + SectionBuffer.localX(i);
         int y = s.oy + SectionBuffer.localY(i);
         int z = s.oz + SectionBuffer.localZ(i);
-        if (!s.permit.allows(x, z) || (!s.insideBorder && !host.insideBorder(world, x, z))) {
+        PermitBounds.check(permitBounds, s.permit, x, y, z, asker);
+        if (!s.permit.allows(x, y, z) || (!s.insideBorder && !host.insideBorder(world, x, z))) {
             skippedProtected++;
             return;
         }

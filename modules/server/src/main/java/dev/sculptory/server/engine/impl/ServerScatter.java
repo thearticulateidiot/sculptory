@@ -608,27 +608,32 @@ public final class ServerScatter<P, W> implements ScatterService<P> {
     }
 
     /**
-     * The player's protection as a planner column guard: one {@code PermissionService.chunk} permit per chunk,
-     * cached (never loads chunks).
+     * The player's protection as a planner guard: one {@code PermissionService.chunk} permit per chunk, cached (never
+     * loads chunks), each cell answered at its own height.
      */
-    public static <P, W> ScatterPlanner.ColumnGuard protectionGuard(Platform<P, W> platform, P p, W world) {
+    public static <P, W> ScatterPlanner.ProtectionGuard protectionGuard(Platform<P, W> platform, P p, W world) {
         return protectionGuard(platform, p, world, new Long2ObjectOpenHashMap<>());
     }
 
     /** {@link #protectionGuard(Platform, Object, Object)} caching into {@code permits}. */
-    static <P, W> ScatterPlanner.ColumnGuard protectionGuard(Platform<P, W> platform, P p, W world,
-                                                             Long2ObjectOpenHashMap<ChunkPermit> permits) {
-        return (x, z) -> chunkPermit(platform, p, world, permits, x >> 4, z >> 4).allows(x, z);
+    static <P, W> ScatterPlanner.ProtectionGuard protectionGuard(Platform<P, W> platform, P p, W world,
+                                                                 Long2ObjectOpenHashMap<ChunkPermit> permits) {
+        return (x, y, z) -> chunkPermit(platform, p, world, permits, x >> 4, z >> 4).allows(x, y, z);
     }
 
-    /** The player's permit for chunk (cx, cz) ({@link Platform#permissions}), asked once, kept in {@code permits}. */
+    /**
+     * The player's permit for chunk (cx, cz) ({@link Platform#permissions}) over the whole build height (a scatter's
+     * surfaces may lie at any height), asked once, kept in {@code permits}. Under protection that differs with height a
+     * chunk's permit may be per cell: 16 × 16 × 384 bits, 12 KB in the overworld, so at most about 48 MB for the
+     * {@value #MAX_HELD_COLUMNS} chunks a preview may hold (uniform chunks cost nothing, ALLOW and DENY being shared).
+     */
     private static <P, W> ChunkPermit chunkPermit(Platform<P, W> platform, P p, W world,
                                                   Long2ObjectOpenHashMap<ChunkPermit> permits, int cx, int cz) {
         long key = ColumnPlan.pack(cx, cz);
         ChunkPermit permit = permits.get(key);
         if (permit == null) {
-            int y = platform.bottomY(world);
-            Box chunk = new Box(new BlockPos(cx << 4, y, cz << 4), new BlockPos((cx << 4) + 15, y, (cz << 4) + 15));
+            int y0 = platform.bottomY(world), y1 = platform.topY(world) - 1;
+            Box chunk = new Box(new BlockPos(cx << 4, y0, cz << 4), new BlockPos((cx << 4) + 15, y1, (cz << 4) + 15));
             permit = platform.permissions().chunk(p, world, cx, cz, chunk);
             if (permit == null) permit = ChunkPermit.DENY;
             permits.put(key, permit);

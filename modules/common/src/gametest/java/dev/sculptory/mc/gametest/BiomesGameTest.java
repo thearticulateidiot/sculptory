@@ -40,6 +40,8 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.platform.WorldBiomes;
 import java.util.ArrayList;
@@ -59,7 +61,8 @@ import net.minecraft.server.level.ServerPlayer;
  * kept and counted, and Undo anyway takes it back; biome history survives a restart; a player without the biome node, or
  * an unknown biome, is refused with nothing written; copy and paste with Biomes on (off pastes none), move and stack
  * carry biomes with their Biomes box ticked (unticked they leave biomes where they are; ticked without the biome node
- * they are refused); and a watching client receives the game's biome packets. Region slots 1500-1512 and 1800-1802.
+ * they are refused); a watching client receives the game's biome packets; and the brush keeps a quart whose centre is
+ * protected at its height. Region slots 1500-1513 and 1800-1802.
  */
 public final class BiomesGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
@@ -239,6 +242,69 @@ public final class BiomesGameTest {
             run.step(h.player, true);
             checkBiomes(original, biomes(h, s.region), "after undoing both strokes");
             run.stop();
+        }
+        context.succeed();
+    }
+
+    /**
+     * The Biome brush under protection limited in height: a 3D dab's ball reaches the quart below its centre quart,
+     * whose centre (y 98) is protected, while the others' centres (y 102 and 106) are not. The stroke paints the six
+     * others, keeps that one and is not refused; its undo puts back exactly what it painted. The permits are per cell,
+     * asked for the dab's box widened to whole quarts (the GameTest runs check that every quart is asked inside them).
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_biome_height_permit", timeoutTicks = LIMIT)
+    public void theBrushKeepsQuartsWhoseCentreIsProtectedAtTheirHeight(GameTestHelper context) {
+        try (Scene s = new Scene(context, 1513)) {
+            Harness h = s.h;
+            int x = s.x, z = s.z;
+            s.area(box(x, 96, z, x + 31, 107, z + 31), 99);
+            paintAll(h, s.region, DESERT);
+            Map<Long, String> original = biomes(h, s.region);
+            EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
+            // Every cell of the area at y 99 and below is protected, judged cell by cell.
+            Box protectedArea = box(x, -64, z, x + 31, 99, z + 31);
+            EngineEditService<ServerPlayer, ServerLevel> service = EditTestSupport.protectedService(h, executor,
+                    (px, py, pz) -> !protectedArea.contains(px, py, pz));
+            try {
+                ServerPlayer player = h.player;
+                // 3D, radius 4 around the corner point (x + 18, 102, z + 18), the centre of quart (x/4 + 4, 25, z/4 + 4):
+                // that quart and its six neighbours, the one below (y 96..99, centre 98) protected.
+                try {
+                    service.beginStroke(player, 1, brush(4, false));
+                } catch (EditRejected e) {
+                    throw new GameTestAssertException("the stroke was refused: " + e.getMessage());
+                }
+                DabOutcome outcome = service.dabs(player, 1, 1, List.of(new Dab(0, (x + 18) * 16, 102 * 16,
+                        (z + 18) * 16, Dab.FULL_PRESSURE)));
+                check(outcome.accepted(), "the dab " + outcome);
+                tickUntil(executor, () -> service.queuedDabs(player.getUUID()) == 0, TICKS, "the dab");
+                service.endStroke(player, 1);
+                tickUntil(executor, () -> !service.historyService().undoEntries(player.getUUID()).isEmpty(), TICKS,
+                        "the stroke's commit");
+                service.tick();
+                int cx = (x >> 2) + 4, cz = (z >> 2) + 4;
+                check(biome(h, cx, 25, cz).equals(CHERRY) && biome(h, cx, 26, cz).equals(CHERRY)
+                        && biome(h, cx + 1, 25, cz).equals(CHERRY), "the allowed quarts of the ball");
+                check(biome(h, cx, 24, cz).equals(DESERT), "the quart whose centre is protected was painted");
+                List<String> labels = service.historyService().undoEntries(player.getUUID()).stream()
+                        .map(HistoryEntry::label).toList();
+                check(labels.equals(List.of("Biome stroke · 6 biome cells")), "labels " + labels);
+
+                RecordingListener undone = new RecordingListener();
+                try {
+                    service.undo(player, dev.sculptory.core.history.ConflictPolicy.SKIP_CONFLICTS, undone);
+                } catch (EditRejected e) {
+                    throw new GameTestAssertException("the undo was refused: " + e.getMessage());
+                }
+                tickUntil(executor, () -> undone.result != null, TICKS, "the undo");
+                service.tick();
+                check(undone.result.outcome() == JobOutcome.COMPLETED && undone.result.skippedProtected() == 0,
+                        "the undo " + undone.result);
+                checkBiomes(original, biomes(h, s.region), "after the undo");
+            } finally {
+                executor.shutdown();
+                service.shutdown();
+            }
         }
         context.succeed();
     }

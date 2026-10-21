@@ -674,7 +674,7 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
         if (!neighbourhoodLoaded(world, pos)) return Refusal.UNLOADED;
         Box cell = Box.of(new dev.sculptory.core.BlockPos(pos.getX(), pos.getY(), pos.getZ()));
         ChunkPermit permit = permissions.chunk(p, world, pos.getX() >> 4, pos.getZ() >> 4, cell);
-        if (permit == null || !permit.allows(pos.getX(), pos.getZ())) return Refusal.PROTECTED;
+        if (permit == null || !permit.allows(pos.getX(), pos.getY(), pos.getZ())) return Refusal.PROTECTED;
         if (executor.isLockedFor(world, cell, p.getUUID())) return Refusal.AREA_BUSY;
         return null;
     }

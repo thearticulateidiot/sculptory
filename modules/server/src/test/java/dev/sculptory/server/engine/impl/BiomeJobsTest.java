@@ -1,6 +1,8 @@
 package dev.sculptory.server.engine.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -95,11 +97,16 @@ class BiomeJobsTest {
         }
     }
 
+    /** Bounds holding every quart these tests visit: the jobs' permits answer for all of them. */
+    private static final Box WHOLE_WORLD = new Box(new BlockPos(-30_000_000, -64, -30_000_000),
+            new BlockPos(30_000_000, 319, 30_000_000));
+
     /** Columns with x below 0 are protected. */
     private static final PermitSource EAST_ONLY = (cx, cz) -> cx < 0 ? ChunkPermit.DENY : ChunkPermit.ALLOW;
 
     private static BiomeWork.Context context(FakeBiomes world, RecordBuilder record) {
-        return new BiomeWork.Context(world, EAST_ONLY, RecordSink.into(record), (x, y, z) -> y >= -64 && y < 320);
+        return new BiomeWork.Context(world, EAST_ONLY, RecordSink.into(record), (x, y, z) -> y >= -64 && y < 320,
+                WHOLE_WORLD);
     }
 
     /** The biome stage: every read column, then every write column. */
@@ -360,7 +367,7 @@ class BiomeJobsTest {
     /** A context allowing every column (the image tests write at negative x). */
     private static BiomeWork.Context open(FakeBiomes world, RecordBuilder record) {
         return new BiomeWork.Context(world, (cx, cz) -> ChunkPermit.ALLOW, RecordSink.into(record),
-                (x, y, z) -> y >= -64 && y < 320);
+                (x, y, z) -> y >= -64 && y < 320, WHOLE_WORLD);
     }
 
     private static final Symmetry MIRROR_AT_HALF = new Symmetry(Symmetry.Mode.MIRROR_X, 2, 0);
@@ -456,5 +463,94 @@ class BiomeJobsTest {
         EditRecord fill = new EditRecord(new BlockBuffer(), new BlockBuffer(), List.of(),
                 List.of(new BiomeChange(0, 0, 0, "minecraft:plains", "minecraft:desert")));
         assertEquals(" · 1 biome cell", EngineEditService.contents(fill));
+    }
+
+    // ------------------------------------------------------------------ protection limited in height
+
+    /** Protection denying every cell at y 70 and below (a region limited in height), judged cell by cell. */
+    private static final dev.sculptory.server.engine.PermissionService<Object, Object> UP_TO_70 =
+            new dev.sculptory.server.engine.PermissionService<>() {
+                @Override
+                public boolean has(Object p, Perm node) {
+                    return true;
+                }
+
+                @Override
+                public ChunkPermit chunk(Object p, Object w, int cx, int cz, Box bounds) {
+                    return dev.sculptory.server.perm.ChunkPermits.rasterize(cx, cz, bounds, (x, y, z) -> y > 70);
+                }
+            };
+
+    @Test
+    void biomeBoundsAreWidenedToWholeQuarts() {
+        Box dab = new Box(new BlockPos(5, 63, -7), new BlockPos(9, 65, -2));
+        Box quarts = BiomeWork.quarts(dab, -64, 320);
+        assertEquals(new Box(new BlockPos(4, 60, -8), new BlockPos(11, 67, -1)), quarts);
+        assertTrue(quarts.contains(6, 62, -6) && quarts.contains(10, 66, -2), "both quarts' centres");
+        assertEquals(new Box(new BlockPos(0, -64, 0), new BlockPos(3, -61, 3)),
+                BiomeWork.quarts(new Box(new BlockPos(1, -70, 1), new BlockPos(2, -63, 2)), -64, 320), "clipped below");
+        assertEquals(319, BiomeWork.quarts(new Box(new BlockPos(0, 318, 0), new BlockPos(0, 400, 0)), -64, 320).max().y());
+        // The Biome brush asks its permits for quart-wide boxes; any other brush for its boxes as they are.
+        BrushSpec biome3d = new BrushSpec(BrushTool.BIOME, 2, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
+                0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null, null,
+                new BiomeSpec("minecraft:desert", false));
+        assertEquals(List.of(quarts), EngineEditService.permitBoxes(biome3d, List.of(dab), -64, 320));
+        BrushSpec raise = new BrushSpec(BrushTool.RAISE, 2, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
+                0, 1L);
+        assertEquals(List.of(dab), EngineEditService.permitBoxes(raise, List.of(dab), -64, 320));
+    }
+
+    /**
+     * The Biome brush on Fabric and NeoForge (protection the same at every height, a claim up to column x 5): a column
+     * permit is mixed over the part of the box it was asked for and denies every column outside that part. A quart
+     * centred on column x 10, just outside a dab box ending at x 9, was so denied without any claim on it; asked for the
+     * box widened to whole quarts, its centre column is inside and judged as it is.
+     */
+    @Test
+    void anEdgeQuartsCentreColumnIsJudgedUnderAMixedColumnPermit() {
+        BrushSpec biome3d = new BrushSpec(BrushTool.BIOME, 2, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
+                0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null, null,
+                new BiomeSpec("minecraft:desert", false));
+        Box dab = new Box(new BlockPos(5, 63, 1), new BlockPos(9, 65, 6));
+        dev.sculptory.server.perm.ChunkPermits.ColumnTest claim = (x, z) -> x > 5;
+        Box asIs = EngineEditService.permitBounds(List.of(dab), 0, 0);
+        ChunkPermit narrow = dev.sculptory.server.perm.ChunkPermits.forChunk(0, 0, asIs, claim);
+        assertInstanceOf(ChunkPermit.Columns.class, narrow);
+        assertFalse(narrow.allows(10, 66, 2), "without the widening: an unclaimed edge quart denied");
+        Box widened = EngineEditService.permitBounds(EngineEditService.permitBoxes(biome3d, List.of(dab), -64, 320), 0, 0);
+        ChunkPermit permit = dev.sculptory.server.perm.ChunkPermits.forChunk(0, 0, widened, claim);
+        assertTrue(widened.contains(10, 66, 2) && widened.contains(6, 62, 2), "every touched quart's centre");
+        assertTrue(permit.allows(10, 66, 2), "the edge quart's centre column, unclaimed");
+        assertTrue(permit.allows(6, 62, 2));
+        assertFalse(permit.allows(5, 64, 2), "the claimed column");
+    }
+
+    /**
+     * A paste over y 71..75 under protection of y 70 and below: it carries the quarts its box touches, y 68..71 (centre
+     * 70) and 72..75 (centre 74). The lower quart's centre is denied, so it keeps its biome and is counted; the upper one
+     * changes. The permits are asked for the box widened to whole quarts, so both centres are inside what was asked.
+     */
+    @Test
+    void aQuartWhoseCentreLiesBelowTheBoxIsJudgedAtItsCentre() {
+        Box paste = new Box(new BlockPos(0, 71, 0), new BlockPos(3, 75, 3));
+        PermitSource permits = PermitSource.forPlayer(UP_TO_70, null, null, paste);
+        FakeBiomes world = new FakeBiomes();
+        RecordBuilder record = new RecordBuilder();
+        BiomeWork.Context ctx = new BiomeWork.Context(world, permits, RecordSink.into(record),
+                (x, y, z) -> y >= -64 && y < 320, BiomeWork.quarts(paste, -64, 320));
+        BiomeWork fill = BiomeJobs.fill(QuartSelection.touched(new Region.Cuboid(paste), false, -64, 320),
+                "minecraft:desert");
+        run(fill, ctx);
+        assertEquals(0, world.get(0, 17, 0), "the quart centred at y 70 keeps its biome");
+        assertEquals(1, world.get(0, 18, 0), "the quart centred at y 74 changes");
+        assertEquals(1, ctx.changed);
+        assertEquals(1, ctx.protectedQuarts);
+        assertEquals(List.of(new BiomeChange(0, 18, 0, "minecraft:plains", "minecraft:desert")), record.build().biomes());
+
+        // Asked for the box as it is, the lower quart's centre lies outside what the permit was asked for: the check
+        // the tests run with fails it loudly instead of judging it by a permit that says nothing about it.
+        BiomeWork.Context unwidened = new BiomeWork.Context(new FakeBiomes(), permits, RecordSink.NONE,
+                (x, y, z) -> y >= -64 && y < 320, paste);
+        assertThrows(IllegalStateException.class, () -> run(fill, unwidened));
     }
 }

@@ -18,7 +18,6 @@ import com.sk89q.worldguard.protection.regions.RegionQuery;
 import dev.sculptory.core.Box;
 import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -34,8 +33,9 @@ import net.minecraft.server.level.ServerPlayer;
  * <p>Cost: per chunk part, one region lookup ({@code getApplicableRegions}) finds the regions touching it. With none,
  * one query answers the whole part. Otherwise a cell's answer depends only on which of those regions contain it, so
  * WorldGuard is asked once per distinct combination (at a cell that has it) and the answers are kept for the part; each
- * cell is then placed from the regions' geometry (integer bounds for cuboids, WorldGuard's own test for other shapes),
- * and a column (the 2D permits' question) is split at the regions' heights rather than walked cell by cell.
+ * cell is then placed from the regions' geometry: which regions cover its column is worked out once per column
+ * (integer bounds for cuboids, WorldGuard's own test for other shapes), and then only their heights are compared. No
+ * {@code Location} and no query per cell, so {@code ChunkPermits.rasterize} can ask every cell of the part.
  */
 final class WorldGuardProtection implements Protection {
     private static final String PROBE_ID = "__sculptory_probe__";
@@ -99,6 +99,9 @@ final class WorldGuardProtection implements Protection {
         private final LocalPlayer local;
         /** Answers per combination of containing regions (bit i: region i). */
         private final Long2BooleanOpenHashMap answers = new Long2BooleanOpenHashMap();
+        /** Per column of the chunk ((z & 15) << 4 | (x & 15)): the regions covering it, once known. */
+        private final long[] footprints = new long[256];
+        private final boolean[] footprintKnown = new boolean[256];
 
         RegionCells(List<ProtectedRegion> regions, RegionQuery query, World world, LocalPlayer local) {
             this.regions = regions.toArray(new ProtectedRegion[0]);
@@ -118,39 +121,28 @@ final class WorldGuardProtection implements Protection {
 
         @Override
         public boolean allowed(int x, int y, int z) {
+            long footprint = footprint(x, z);
             long key = 0;
-            for (int i = 0; i < regions.length; i++) {
-                if (y < bounds[i * 6 + 1] || y > bounds[i * 6 + 4]) continue;
-                if (inFootprint(i, x, z)) key |= 1L << i;
+            while (footprint != 0) {
+                int i = Long.numberOfTrailingZeros(footprint);
+                footprint &= footprint - 1;
+                if (y >= bounds[i * 6 + 1] && y <= bounds[i * 6 + 4]) key |= 1L << i;
             }
             return answer(key, x, y, z);
         }
 
-        /** The column split at the heights where a region containing it starts or ends; one answer per piece. */
-        @Override
-        public boolean columnAllowed(int x, int z, int y0, int y1) {
-            int[] edges = new int[regions.length * 2 + 2];
-            int n = 0;
-            long inColumn = 0;
-            for (int i = 0; i < regions.length; i++) {
-                int min = bounds[i * 6 + 1], max = bounds[i * 6 + 4];
-                if (max < y0 || min > y1 || !inFootprint(i, x, z)) continue;
-                inColumn |= 1L << i;
-                if (min > y0) edges[n++] = min;
-                if (max < y1) edges[n++] = max + 1;
-            }
-            edges[n++] = y0;
-            Arrays.sort(edges, 0, n);
-            for (int e = 0; e < n; e++) {
-                int y = edges[e];
-                if (e > 0 && y == edges[e - 1]) continue;
-                long key = 0;
+        /** The regions whose shape covers column (x, z), worked out once per column of the chunk. */
+        private long footprint(int x, int z) {
+            int column = ((z & 15) << 4) | (x & 15);
+            if (!footprintKnown[column]) {
+                long mask = 0;
                 for (int i = 0; i < regions.length; i++) {
-                    if ((inColumn & (1L << i)) != 0 && y >= bounds[i * 6 + 1] && y <= bounds[i * 6 + 4]) key |= 1L << i;
+                    if (inFootprint(i, x, z)) mask |= 1L << i;
                 }
-                if (!answer(key, x, y, z)) return false;
+                footprints[column] = mask;
+                footprintKnown[column] = true;
             }
-            return true;
+            return footprints[column];
         }
 
         /** Whether region i's shape covers column (x, z) (at a height inside the region). */

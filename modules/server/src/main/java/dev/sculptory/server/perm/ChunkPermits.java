@@ -2,6 +2,7 @@ package dev.sculptory.server.perm;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.server.engine.ChunkPermit;
+import java.util.Arrays;
 
 /**
  * The per-chunk protection rule, independent of Minecraft: test the four corner columns
@@ -13,6 +14,10 @@ import dev.sculptory.server.engine.ChunkPermit;
  * sit inside the rectangle (or straddle one edge) without covering any corner. The rectangle column nearest the
  * spawn lies inside the square whenever the square and the rectangle intersect, so sampling it catches every such
  * case. Other protected areas (claims) that touch neither a corner nor the focus are still not detected.
+ *
+ * <p>Protection that may differ with height (a {@link CellTest}) has no sampling rule: corners and focus points miss
+ * nested regions with priorities and thin shapes. A producer either knows the part's answer is uniform
+ * ({@link #uniform}) or asks every cell ({@link #rasterize}).
  */
 public final class ChunkPermits {
     private ChunkPermits() {}
@@ -21,6 +26,12 @@ public final class ChunkPermits {
     @FunctionalInterface
     public interface ColumnTest {
         boolean allowed(int x, int z);
+    }
+
+    /** Whether the player may modify cell (x, y, z). */
+    @FunctionalInterface
+    public interface CellTest {
+        boolean allowed(int x, int y, int z);
     }
 
     /** Four-corner rule without a focus point. */
@@ -77,6 +88,57 @@ public final class ChunkPermits {
             }
         }
         return new ChunkPermit.Columns(bits);
+    }
+
+    /**
+     * The permit of a producer that knows the answer is the same for every cell of the part of {@code bounds} inside
+     * chunk (cx, cz) (for example, no protected region intersects that part): one cell of the part is asked and its
+     * answer given as {@link ChunkPermit#ALLOW} or {@link ChunkPermit#DENY}. Nothing here checks the claim; a producer
+     * that cannot vouch for it uses {@link #rasterize}. A chunk the box does not touch gets {@link ChunkPermit#ALLOW}:
+     * nothing there is written.
+     */
+    public static ChunkPermit uniform(int cx, int cz, Box bounds, CellTest test) {
+        int[] rect = rectangle(cx, cz, bounds);
+        if (rect == null) return ChunkPermit.ALLOW;
+        return test.allowed(rect[0], bounds.min().y(), rect[1]) ? ChunkPermit.ALLOW : ChunkPermit.DENY;
+    }
+
+    /**
+     * The exact permit for the part of {@code bounds} inside chunk (cx, cz): every cell of the part is asked once (up to
+     * 16 × 16 × its height), and the answers are kept as compactly as they allow: {@link ChunkPermit#ALLOW} or
+     * {@link ChunkPermit#DENY} when all agree, {@link ChunkPermit.Columns} when no column changes with height, else
+     * {@link ChunkPermit.Cells} over the part's heights. Sound whatever the protection's shape (nested regions with
+     * priorities, polygons, thin strips), unlike any sampling. The compact forms answer the same at every height, which
+     * is right because consumers ask only within the bounds they asked the permit for (see
+     * {@code PermissionService.chunk}). A chunk the box does not touch gets {@link ChunkPermit#ALLOW}.
+     */
+    public static ChunkPermit rasterize(int cx, int cz, Box bounds, CellTest test) {
+        int[] rect = rectangle(cx, cz, bounds);
+        if (rect == null) return ChunkPermit.ALLOW;
+        int x0 = rect[0], z0 = rect[1], x1 = rect[2], z1 = rect[3];
+        int y0 = bounds.min().y(), y1 = bounds.max().y();
+        long[] bits = new long[(y1 - y0 + 1) * 4];
+        boolean anyAllowed = false, anyDenied = false;
+        for (int y = y0; y <= y1; y++) {
+            for (int z = z0; z <= z1; z++) {
+                for (int x = x0; x <= x1; x++) {
+                    if (test.allowed(x, y, z)) {
+                        int bit = ((z & 15) << 4) | (x & 15);
+                        bits[ChunkPermit.Cells.word(y0, y, bit >>> 6)] |= 1L << bit;
+                        anyAllowed = true;
+                    } else {
+                        anyDenied = true;
+                    }
+                }
+            }
+        }
+        if (!anyDenied) return ChunkPermit.ALLOW;
+        if (!anyAllowed) return ChunkPermit.DENY;
+        // The same answer at every height of every column (protection that is not limited in height): 256 bits do.
+        for (int i = 4; i < bits.length; i++) {
+            if (bits[i] != bits[i & 3]) return new ChunkPermit.Cells(y0, y1, bits);
+        }
+        return new ChunkPermit.Columns(Arrays.copyOf(bits, 4));
     }
 
     /** {x0, z0, x1, z1} of the part of {@code bounds} inside chunk (cx, cz), or {@code null}. */

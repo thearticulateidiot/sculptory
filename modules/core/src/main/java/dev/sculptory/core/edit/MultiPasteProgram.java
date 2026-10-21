@@ -354,7 +354,7 @@ final class MultiPasteProgram implements EditProgram {
      */
     private boolean cellOpen(int p, ComputeContext ctx, WorldReader world, int x, int y, int z, long[] loadedChunk,
                              boolean recheck) {
-        if (!ctx.mayWrite(x, z)) return false;
+        if (!ctx.mayWrite(x, y, z)) return false;
         long chunk = EditProgram.column(x >> 4, z >> 4);
         if (chunk != loadedChunk[0]) {
             if (!world.isLoaded(x >> 4, z >> 4)) return recheck;

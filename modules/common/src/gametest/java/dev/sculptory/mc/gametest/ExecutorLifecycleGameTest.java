@@ -1,5 +1,7 @@
 package dev.sculptory.mc.gametest;
 
+import static dev.sculptory.mc.gametest.EditTestSupport.capture;
+import static dev.sculptory.mc.gametest.EditTestSupport.checkSame;
 import static dev.sculptory.mc.gametest.EngineTestSupport.box;
 import static dev.sculptory.mc.gametest.EngineTestSupport.check;
 import static dev.sculptory.mc.gametest.EngineTestSupport.checkNoEditTickets;
@@ -16,7 +18,13 @@ import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.ComputeContext;
 import dev.sculptory.core.edit.EditProgram;
+import dev.sculptory.core.history.ConflictPolicy;
+import dev.sculptory.core.history.EditRecord;
+import dev.sculptory.core.history.HistoryEntry;
+import dev.sculptory.core.history.HistoryPrograms;
+import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.mc.engine.impl.EngineRuntime;
+import dev.sculptory.mc.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.mc.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.mc.gametest.EngineTestSupport.CountingSink;
 import dev.sculptory.mc.gametest.EngineTestSupport.MapSink;
@@ -35,8 +43,12 @@ import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.impl.BrushWork;
 import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.JobRequest;
+import dev.sculptory.server.engine.impl.PermitSource;
+import dev.sculptory.server.engine.impl.RecordSink;
+import dev.sculptory.server.perm.ChunkPermits;
 import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestAssertException;
@@ -379,6 +391,60 @@ public final class ExecutorLifecycleGameTest {
         BlockWriter cleanup = runtime.writer(world, WriteOptions.DEFAULT);
         cleanup.write(skipped.getX(), skipped.getY(), skipped.getZ(), runtime.states().air(), null);
         cleanup.clearTicksAtWrittenCells();
+        executor.shutdown();
+        context.succeed();
+    }
+
+    /**
+     * Protection limited in height (a per-cell permit, as a region-based producer gives; a GameTest can set up no such
+     * protection, so the permit is given to the executor directly): the first of two chunks allows y 0..9 and denies
+     * y 10..19. The fill writes exactly the allowed cells and counts every denied one, its record holds only what it
+     * wrote, and its undo puts back exactly that.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_exec_height_permit", timeoutTicks = 400)
+    public void aPermitLimitedInHeightIsHonouredCellByCell(GameTestHelper context) {
+        // The GameTest runs fail any permit asked outside its bounds (PermitBounds); this run must have the check on.
+        check(Boolean.getBoolean("sculptory.checkPermitBounds"),
+                "the GameTest run does not set sculptory.checkPermitBounds");
+        EngineRuntime runtime = runtime(context);
+        ServerLevel world = context.getLevel();
+        EditExecutor<ServerLevel> executor = privateExecutor(runtime, world);
+        int[] at = regionCorner(context, 31);
+        Box region = box(at[0], 0, at[1], at[0] + 31, 19, at[1] + 15); // two chunks, two sections tall
+        loadChunks(world, region);
+        WorldSnapshot original = capture(world, region);
+        int cx = at[0] >> 4, cz = at[1] >> 4;
+        ChunkPermits.CellTest lowerLayers = (x, y, z) -> y < 10;
+        PermitSource permits = (px, pz) -> px == cx && pz == cz
+                ? ChunkPermits.rasterize(px, pz, region, lowerLayers) : ChunkPermit.ALLOW;
+        check(permits.chunk(cx, cz) instanceof ChunkPermit.Cells, "not a per-cell permit: " + permits.chunk(cx, cz));
+        int smooth = handle(runtime.states(), "minecraft:smooth_stone");
+        RecordBuilder record = new RecordBuilder();
+        RecordingListener filled = new RecordingListener();
+        submitTo(executor, JobRequest.system(world, new BoxFill("height", region, smooth), filled).withPermits(permits)
+                .withRecords(RecordSink.into(record)));
+        for (int i = 0; i < 20 && filled.result == null; i++) executor.tick();
+        check(filled.result != null && filled.result.outcome() == JobOutcome.COMPLETED, "fill " + filled.result);
+        long denied = 16L * 16 * 10;
+        check(filled.result.skippedProtected() == denied, "skipped " + filled.result.skippedProtected());
+        check(filled.result.changed() == region.volume() - denied, "changed " + filled.result.changed());
+        WorldSnapshot expected = MultiplayerGameTest.with(
+                MultiplayerGameTest.with(original, box(at[0], 0, at[1], at[0] + 15, 9, at[1] + 15), smooth),
+                box(at[0] + 16, 0, at[1], at[0] + 31, 19, at[1] + 15), smooth);
+        checkSame(expected, capture(world, region), "the allowed cells, and only those");
+        EditRecord edit = record.build();
+        check(edit.before().cellCount() == region.volume() - denied, "recorded " + edit.before().cellCount());
+
+        HistoryEntry entry = new HistoryEntry(UUID.randomUUID(), UUID.randomUUID(),
+                world.dimension().location().toString(), "Fill", edit, System.currentTimeMillis());
+        RecordingListener undone = new RecordingListener();
+        submitTo(executor, JobRequest.system(world, HistoryPrograms.undo(entry, ConflictPolicy.SKIP_CONFLICTS), undone)
+                .withPermits(permits));
+        for (int i = 0; i < 20 && undone.result == null; i++) executor.tick();
+        check(undone.result != null && undone.result.outcome() == JobOutcome.COMPLETED, "undo " + undone.result);
+        check(undone.result.changed() == region.volume() - denied && undone.result.skippedProtected() == 0
+                && undone.result.skippedConflicts() == 0, "undo " + undone.result);
+        checkSame(original, capture(world, region), "after the undo");
         executor.shutdown();
         context.succeed();
     }

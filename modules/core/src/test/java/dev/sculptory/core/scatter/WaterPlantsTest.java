@@ -89,7 +89,7 @@ class WaterPlantsTest {
 
     private ScatterPlanner planner(Spec spec, FakeWorld world, int... blocks) {
         return new ScatterPlanner(spec.build(), sources(blocks), world, Long.MAX_VALUE, ScatterPlanner.DEFAULT_MAX_WORK,
-                ScatterPlanner.ColumnGuard.ALLOW_ALL, null, ScatterPlanner.SurvivalCheck.ALWAYS, blocks);
+                ScatterPlanner.ProtectionGuard.ALLOW_ALL, null, ScatterPlanner.SurvivalCheck.ALWAYS, blocks);
     }
 
     private ScatterPlan plan(Spec spec, FakeWorld world, int... blocks) {
@@ -491,7 +491,7 @@ class WaterPlantsTest {
         };
         int[] blocks = {kelp};
         ScatterPlan plan = new ScatterPlanner(all().columns(1, 4).build(), sources(blocks), world, Long.MAX_VALUE,
-                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ColumnGuard.ALLOW_ALL, null, check, blocks).finish();
+                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ProtectionGuard.ALLOW_ALL, null, check, blocks).finish();
         ScatterFixture.assertBalanced(plan);
         assertEquals(8 * 16, asked.size());
         assertTrue(asked.contains(2) && plan.count(Outcome.SURVIVAL) > 0, plan.toString());

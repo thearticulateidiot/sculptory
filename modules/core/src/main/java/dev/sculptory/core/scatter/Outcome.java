@@ -58,8 +58,9 @@ public enum Outcome {
     /** Acceptance used up its work budget ({@link ScatterPlanner#DEFAULT_MAX_WORK}) before reaching the candidate. */
     WORK_LIMIT,
     /**
-     * A footprint cell lies in a column the planner's {@link ScatterPlanner.ColumnGuard} denies (the requester's
-     * protection: spawn protection, claims, the world border). Checked after {@link #UNLOADED}.
+     * A footprint cell is one the planner's {@link ScatterPlanner.ProtectionGuard} denies (the requester's
+     * protection: spawn protection, claims, regions limited in height, the world border). Checked after
+     * {@link #UNLOADED}.
      */
     PROTECTED,
     /**

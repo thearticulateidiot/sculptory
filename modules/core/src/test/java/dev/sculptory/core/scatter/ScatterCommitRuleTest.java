@@ -172,7 +172,7 @@ class ScatterCommitRuleTest {
         ScatterPlan plan = slabs(world, Fit.DEFAULT);
         FakeExecutor.Result result = FakeExecutor.run(compile(plan.toMultiPaste()), world, new FakeExecutor.Hooks() {
             @Override
-            public boolean mayWrite(int x, int z) {
+            public boolean mayWrite(int x, int y, int z) {
                 return x != 21;
             }
         });

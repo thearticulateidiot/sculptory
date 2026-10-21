@@ -1,6 +1,7 @@
 package dev.sculptory.paper.perm;
 
 import dev.sculptory.core.Box;
+import dev.sculptory.server.perm.ChunkPermits;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -25,7 +26,8 @@ public interface Protection {
 
     /**
      * The cells of {@code part} (inside one chunk) the player may change. {@link CellTest#ALLOW} and
-     * {@link CellTest#DENY} when the whole part has one answer (the caller then skips the per-cell work).
+     * {@link CellTest#DENY} only when the producer knows the whole part has one answer (no region touches it): the
+     * caller then asks one cell ({@code ChunkPermits.uniform}); otherwise every cell ({@code ChunkPermits.rasterize}).
      */
     CellTest cells(ServerPlayer player, ServerLevel world, Box part);
 
@@ -34,21 +36,11 @@ public interface Protection {
 
     /** Whether the player may change cell (x, y, z), world coordinates. */
     @FunctionalInterface
-    interface CellTest {
+    interface CellTest extends ChunkPermits.CellTest {
         CellTest ALLOW = (x, y, z) -> true;
         CellTest DENY = (x, y, z) -> false;
 
+        @Override
         boolean allowed(int x, int y, int z);
-
-        /**
-         * Whether every cell of column (x, z) from {@code y0} to {@code y1} (inclusive) is allowed: the 2D permits'
-         * question. Implementations that know their geometry answer it without asking cell by cell.
-         */
-        default boolean columnAllowed(int x, int z, int y0, int y1) {
-            for (int y = y0; y <= y1; y++) {
-                if (!allowed(x, y, z)) return false;
-            }
-            return true;
-        }
     }
 }

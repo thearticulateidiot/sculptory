@@ -217,6 +217,44 @@ public final class ShapeBrushGameTest {
     }
 
     /**
+     * Spheres centred on the highest and on the lowest layer of the world: the kernel emits no cell outside the build
+     * height, so every cell the brush asks a permit about lies in the box the permit was asked for (the GameTest runs
+     * fail any other ask, which refuses the dab). Both clicks write, are refused nothing, and undo exactly.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_shape_world_edges", timeoutTicks = LIMIT)
+    public void spheresAtTheTopAndBottomOfTheWorldAskOnlyInsideTheirBounds(GameTestHelper context) {
+        check(Boolean.getBoolean("sculptory.checkPermitBounds"), "the GameTest run does not check permit bounds");
+        EditExecutor<ServerLevel> executor = MultiplayerGameTest.executor(context, 0);
+        Harness h = new Harness(context, null, System::nanoTime, executor);
+        ServerLevel world = h.world;
+        int[] corner = regionCorner(context, 2500);
+        int x0 = corner[0], z0 = corner[1];
+        int bottom = world.getMinBuildHeight(), top = world.getMaxBuildHeight() - 1;
+        Box upper = box(x0, top - 10, z0, x0 + 20, top, z0 + 20);
+        Box lower = box(x0, bottom, z0, x0 + 20, bottom + 10, z0 + 20);
+        loadAndForce(world, upper);
+        loadAndForce(world, lower);
+        WorldSnapshot beforeUpper = capture(world, upper), beforeLower = capture(world, lower);
+        BrushSpec sphere = shape(4, ShapeSpec.Kind.SPHERE, 9, Facing.UP, ShapeSpec.Mode.PLACE, 0,
+                new Pattern.Single(h.state("minecraft:glass")), Symmetry.NONE);
+        int seq = stroke(h, executor, 1, sphere, List.of(at(0, x0 + 10, top, z0 + 10)), 1);
+        stroke(h, executor, 2, sphere, List.of(at(0, x0 + 10, bottom, z0 + 10)), seq);
+        check(h.events.dabRejections.isEmpty(), "dabs rejected: " + h.events.dabRejections);
+        check(world.getBlockState(EngineTestSupport.pos(x0 + 10, top, z0 + 10)).is(Blocks.GLASS), "the top sphere");
+        check(world.getBlockState(EngineTestSupport.pos(x0 + 10, bottom + 3, z0 + 10)).is(Blocks.GLASS), "the bottom sphere");
+        int entries = h.service.historyService().undoEntries(h.player.getUUID()).size();
+        check(entries == 2, "one entry per click, got " + entries);
+        undoAll(h, executor, entries);
+        checkSame(beforeUpper, capture(world, upper), "the top after the undo");
+        checkSame(beforeLower, capture(world, lower), "the bottom after the undo");
+        executor.shutdown();
+        forceChunks(world, upper, false);
+        forceChunks(world, lower, false);
+        h.close();
+        context.succeed();
+    }
+
+    /**
      * A drag of ten hollow spheres of a mix, turned a half turn about the area's centre, and a two-dab carving of
      * radius-20 spheres (too large for the client to predict): the server's result equals the shared kernel's on a
      * snapshot, cell for cell; each drag is one history entry; undoing both restores the area exactly.
