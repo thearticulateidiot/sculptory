@@ -395,6 +395,41 @@ public final class WriterGameTest {
         });
     }
 
+    /**
+     * The tile load of a physics-off write leaves comparators alone too: writing a lectern with its book next to a
+     * comparator that reads air schedules no comparator tick, and the comparator stays off. (Replacing the default
+     * block entity on NeoForge goes through a patched {@code Level.removeBlockEntity} that updates comparators.)
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = BATCH, timeoutTicks = 100)
+    public void physicsOffTileLoadLeavesComparatorsAlone(GameTestHelper context) {
+        EngineRuntime runtime = runtime(context);
+        ServerLevel world = context.getLevel();
+        BlockState lecternState = Blocks.LECTERN.defaultBlockState().setValue(LecternBlock.HAS_BOOK, true);
+        BlockPos source = context.absolutePos(new BlockPos(6, 1, 6));
+        world.setBlockAndUpdate(source, lecternState);
+        ((LecternBlockEntity) world.getBlockEntity(source)).setBook(new ItemStack(Items.WRITABLE_BOOK));
+        BlockEntityData tile = runtime.reader(world).tile(source.getX(), source.getY(), source.getZ());
+
+        BlockPos target = context.absolutePos(new BlockPos(2, 1, 2));
+        BlockPos comparator = target.east();
+        world.setBlockAndUpdate(comparator.below(), Blocks.STONE.defaultBlockState());
+        world.setBlockAndUpdate(comparator, Blocks.COMPARATOR.defaultBlockState().setValue(ComparatorBlock.FACING, Direction.WEST));
+        context.runAtTickTime(8, () -> {
+            check(!world.getBlockState(comparator).getValue(ComparatorBlock.POWERED), "setup: comparator is on");
+            check(!world.getBlockTicks().hasScheduledTick(comparator, Blocks.COMPARATOR), "setup: comparator tick pending");
+            BlockWriter writer = runtime.writer(world, WriteOptions.DEFAULT);
+            check(writer.write(target.getX(), target.getY(), target.getZ(), runtime.states().handle(lecternState), tile) != null,
+                    "tile not applied");
+            writer.clearTicksAtWrittenCells();
+            check(!world.getBlockTicks().hasScheduledTick(comparator, Blocks.COMPARATOR), "comparator was updated");
+            check(world.getBlockEntity(target) instanceof LecternBlockEntity l && l.hasBook(), "the book was not loaded");
+            context.runAfterDelay(10, () -> {
+                check(!world.getBlockState(comparator).getValue(ComparatorBlock.POWERED), "comparator reacted to the write");
+                context.succeed();
+            });
+        });
+    }
+
     /** M4: loading a tile replaces the default block entity's game-event listener instead of adding a second. */
     @GameTest(template = EMPTY_STRUCTURE, batch = BATCH)
     public void tileLoadReplacesGameEventListener(GameTestHelper context) {

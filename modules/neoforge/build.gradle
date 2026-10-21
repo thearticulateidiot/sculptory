@@ -220,7 +220,7 @@ class AccessWidenerToAt {
 //   gametest: the GameTests, mod sculptory_gametest (src/gametest: its @Mod class and neoforge.mods.toml).
 //   fidelity: the mod-fidelity GameTests against the NeoForge builds of Chipped and Farmer's Delight, mod
 //             sculptory_fidelity (src/fidelity). It compiles the shared GameTest sources again instead of loading the
-//             gametest mod's classes, so the GameTest mod and its 464 tests stay out of that run.
+//             gametest mod's classes, so the GameTest mod and its tests stay out of that run.
 // Both compile src/gametestSupport: the NeoForge GameTestLoader, the test permission handler and the registration of
 // the shared test classes (NeoForgeGameTests says why they are not registered through NeoForge's annotations).
 // ================================================================================================================

@@ -307,12 +307,12 @@ public final class BlockWriter implements WorldWriter {
                             Clearable.tryClear(entity);
                         }
                     }
-                    world.removeBlockEntity(pos);
+                    removeBlockEntity(pos);
                 }
                 world.setBlock(pos, state, Block.UPDATE_ALL, Level.LONG_PARTICLE_CLIP_RANGE);
             } else {
                 try (EditScope scope = EditScope.suppressPhysics()) {
-                    if (old.hasBlockEntity()) world.removeBlockEntity(pos);
+                    if (old.hasBlockEntity()) removeBlockEntity(pos);
                     try (LightBatch.Scope batch = light == null ? null : light.collect()) {
                         world.setBlock(pos, state, Block.UPDATE_KNOWN_SHAPE, 0);
                     }
@@ -458,11 +458,28 @@ public final class BlockWriter implements WorldWriter {
             return false;
         }
         // Unregisters the default block entity's game-event listener and ticker before the replacement is added.
-        world.removeBlockEntity(pos);
+        removeBlockEntity(pos);
         world.setBlockEntity(entity);
         // No markDirty(): it would update comparators. The state may be unchanged, so flag the chunk directly.
         world.getChunkAt(pos).setUnsaved(true);
         return true;
+    }
+
+    /**
+     * Removes the block entity at {@code pos}. With physics off it goes to the chunk directly: NeoForge patches
+     * {@code Level.removeBlockEntity} to also call {@code updateNeighbourForOutputSignal}, so comparators next to the
+     * cell would get a neighbour update and schedule a tick, which a physics-off write must not cause and an
+     * {@link EditScope} does not suppress. Vanilla's {@code Level.removeBlockEntity} is exactly this chunk call behind
+     * the build-height check, so nothing changes on Fabric. Physics-on writes keep the loader's method: they update
+     * neighbours and comparators anyway ({@code UPDATE_ALL}), and on NeoForge that notification is what other mods
+     * expect when a block entity goes.
+     */
+    private void removeBlockEntity(BlockPos pos) {
+        if (options.physics()) {
+            world.removeBlockEntity(pos);
+        } else if (!world.isOutsideBuildHeight(pos)) {
+            world.getChunkAt(pos).removeBlockEntity(pos);
+        }
     }
 
     private void fail(BlockPos pos, String typeId, String reason) {
