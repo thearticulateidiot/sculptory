@@ -77,6 +77,10 @@ def commonPatches = [
                  "var data = ${access}.data(section.getStates());"],
                 ['PalettedContainer.Data<BlockState> data = container.data;', "var data = ${access}.data(container);"],
         ],
+        'dev/sculptory/mc/world/ClientSync.java': [
+                // Paper's (Moonrise's) light engine throws UnsupportedOperationException here.
+                ['light.waitForPendingTasks(cx + dx, cz + dz)', "${access}.lightMarker(light, cx + dx, cz + dz)"],
+        ],
         'dev/sculptory/mc/world/BlockWriter.java': [
                 ['world.setBlock(pos, state, Block.UPDATE_KNOWN_SHAPE, 0);',
                  "${access}.setBlockWithoutCallbacks(world, pos, state);"],

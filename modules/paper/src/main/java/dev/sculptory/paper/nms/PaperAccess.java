@@ -1,13 +1,19 @@
 package dev.sculptory.paper.nms;
 
+import ca.spottedleaf.concurrentutil.executor.standard.PrioritisedExecutor;
+import ca.spottedleaf.moonrise.patches.starlight.light.StarLightInterface;
+import ca.spottedleaf.moonrise.patches.starlight.light.StarLightLightingProvider;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.invoke.VarHandle;
+import java.util.concurrent.CompletableFuture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ThreadedLevelLightEngine;
 import net.minecraft.util.BitStorage;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.GrowingPlantBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -51,6 +57,21 @@ public final class PaperAccess {
     }
 
     private PaperAccess() {
+    }
+
+    /**
+     * A future that completes once Paper's light engine has worked through what is queued for chunk (x, z) so far: the
+     * stand-in for {@code ThreadedLevelLightEngine.waitForPendingTasks}, which Paper (Moonrise's Starlight) replaces
+     * with an UnsupportedOperationException. An empty light task joins the chunk's pending tasks, and the future
+     * completes when those have all run (on the light thread).
+     */
+    public static CompletableFuture<?> lightMarker(ThreadedLevelLightEngine light, int x, int z) {
+        CompletableFuture<Void> done = new CompletableFuture<>();
+        StarLightInterface.ServerLightQueue queue =
+                ((StarLightLightingProvider) light).starlight$getLightEngine().getServerLightQueue();
+        queue.queueChunkLightTask(new ChunkPos(x, z), () -> false, PrioritisedExecutor.Priority.NORMAL)
+                .queueOrRunTask(() -> done.complete(null));
+        return done;
     }
 
     /** {@code GrowingPlantBlock.growthDirection} (protected). */

@@ -205,8 +205,6 @@ public final class SelfTest {
         if (level.getBlockEntity(chestPos) instanceof ChestBlockEntity box) box.setItem(0, new ItemStack(Items.DIAMOND, 7));
         int sandId = Block.getId(Blocks.SAND.defaultBlockState());
         int stone = Block.getId(Blocks.STONE.defaultBlockState());
-        // Item entities already there (an earlier run, a player) do not count against the overwrite below.
-        int itemsBefore = level.getEntitiesOfClass(ItemEntity.class, aabb(chest).inflate(3)).size();
         return fill(sand, sandId)
                 .thenCompose(result -> ticks(10).thenApply(v -> result))
                 .thenCompose(result -> {
@@ -227,7 +225,9 @@ public final class SelfTest {
                 })
                 .thenCompose(result -> ticks(5).thenApply(v -> result))
                 .thenCompose(result -> {
-                    int items = level.getEntitiesOfClass(ItemEntity.class, aabb(chest).inflate(3)).size() - itemsBefore;
+                    // Only items that appeared during the check (younger than 40 ticks): others may be left from earlier runs.
+                    int items = level.getEntitiesOfClass(ItemEntity.class, aabb(chest).inflate(3), item -> item.tickCount < 40)
+                            .size();
                     boolean isStone = level.getBlockState(chestPos).is(Blocks.STONE);
                     record("physics-off: chest overwritten without drops", isStone && items == 0,
                             "stone=" + isStone + ", " + items + " new item entities nearby");
