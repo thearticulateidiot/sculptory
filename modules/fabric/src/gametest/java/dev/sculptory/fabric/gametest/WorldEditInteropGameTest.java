@@ -49,7 +49,7 @@ import org.slf4j.LoggerFactory;
  * committed dependency: a local init script adds the jar, e.g.
  * <pre>
  * allprojects { pluginManager.withPlugin('fabric-loom') {
- *     dependencies { modLocalRuntime files('.../.local/worldedit-mod-7.3.8.jar') } } }
+ *     dependencies { modLocalRuntime files('.../.local/mods/fabric-1.21.1/worldedit-mod-7.3.8.jar') } } }
  * </pre>
  * run as {@code scripts/gradle.ps1 :fabric:runGameTest --init-script <that file>}. WorldEdit is reached by reflection,
  * so this compiles without it. Otherwise the test logs that it was skipped and passes.
