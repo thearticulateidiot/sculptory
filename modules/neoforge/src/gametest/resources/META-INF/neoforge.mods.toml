@@ -1,0 +1,19 @@
+# The GameTest mod (modules/neoforge, runGameTest only; never in a jar).
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "AGPL-3.0-or-later"
+
+[[mods]]
+modId = "sculptory_gametest"
+version = "1.0.0"
+displayName = "Sculptory game tests"
+
+[[mixins]]
+config = "sculptory-gametest.mixins.json"
+
+[[dependencies.sculptory_gametest]]
+modId = "sculptory"
+type = "required"
+versionRange = "*"
+ordering = "AFTER"
+side = "BOTH"

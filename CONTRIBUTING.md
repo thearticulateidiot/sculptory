@@ -88,10 +88,14 @@ The code is in five Gradle modules under `modules/`:
   the client mixins). It compiles against vanilla Minecraft with no loader API on its classpath, so the compiler
   proves it is loader-free; the game's events, networking, key bindings and folders reach it through the small
   `dev.sculptory.mc.loader` interfaces (`ServerLoader`, `ClientLoader`), which each loader implements. This module
-  ships no jar: each loader module compiles these sources into its own.
+  ships no jar: each loader module compiles these sources into its own. `src/gametest` holds the GameTests every
+  loader runs (compiled here with no loader API too; what they need from a loader is `GameTestLoader`), and
+  `src/fidelity` the mod-fidelity GameTests, which only the loader modules compile, each against its own build of the
+  tested mods.
 - `fabric`: the Fabric mod: the entrypoints, `FabricServerLoader` and `FabricClientLoader` (Fabric API events,
   networking, permissions api, key bindings), the client commands typed on Fabric's command source, `fabric.mod.json`;
-  `src/test` the JUnit tests (for the common code too), and `src/gametest` and `src/fidelity` the GameTests.
+  `src/test` the JUnit tests (for the common code too), and `src/gametest` and `src/fidelity` the Fabric test mods
+  that run the shared GameTests.
 
 The wiki lives in `docs/wiki/` and is bundled into the mod for the in-game reader. Its page ids are frozen
 (`WikiPages`); `scripts/check-wiki.ps1` checks its links, pictures and Markdown subset, and `check` runs the same
@@ -105,12 +109,12 @@ You need JDK 21. Nothing else needs installing: the Gradle wrapper fetches the r
 - Windows: `scripts/gradle.ps1 check`. The script finds a JDK 21 in `$env:SCULPTORY_JDK`, then in a
   `toolchains\jdk-21*` folder beside the repository (or beside one of its parent folders), then in `JAVA_HOME`.
 
-`check` runs the JUnit tests and the headless Fabric GameTests (vanilla, and mod fidelity with Chipped and Farmer's
-Delight, which it downloads) and must pass before a pull request is merged. GitHub Actions runs it on every push and
-pull request (`.github/workflows/ci.yml`). Logic in `core`, `protocol` and `server` gets JUnit tests and stays free
-of Minecraft imports; anything that changes a world gets a GameTest. Changes to world edits, undo and redo, saved formats, the
-network protocol or permissions need tests for the failure cases too (a refused edit, a partial failure, an exact
-undo).
+`check` runs the JUnit tests and the headless GameTests on Fabric and on NeoForge (vanilla, and mod fidelity with
+Chipped and Farmer's Delight, which it downloads) and must pass before a pull request is merged. GitHub Actions runs it
+on every push and pull request (`.github/workflows/ci.yml`). Logic in `core`, `protocol` and `server` gets JUnit tests
+and stays free of Minecraft imports; anything that changes a world gets a GameTest. Changes to world edits, undo and
+redo, saved formats, the network protocol or permissions need tests for the failure cases too (a refused edit, a partial
+failure, an exact undo).
 
 Useful tasks (the examples use `scripts/gradle.ps1`; `./gradlew` takes the same arguments):
 
@@ -125,19 +129,21 @@ scripts/gradle.ps1 runServer      # dev server in .local/run/server
 headers list the options (the screenshot tour, the play check, the scripted demo). Those dev-only harnesses run from
 the source sets and are left out of the mod jar.
 
-To run only some GameTests, pass `-PgameTestFilter` to `runGameTest` (vanilla tests) or `runFidelityGameTest`
-(Chipped/Farmer's Delight tests). It takes comma-separated text matched, ignoring case, against each test's name
-(`<class>.<method>`, as the log shows it) and its batch id. A filter that matches nothing fails the run.
+Each loader module has two GameTest runs: `runGameTest` (vanilla tests) and `runFidelityGameTest` (Chipped/Farmer's
+Delight tests), as `:fabric:runGameTest`, `:neoforge:runGameTest` and so on; a task name without the module runs both
+loaders'. To run only some GameTests, pass `-PgameTestFilter` to them. It takes comma-separated text matched, ignoring
+case, against each test's name (`<class>.<method>`, as the log shows it) and its batch id. A filter that matches nothing
+fails the run.
 
 ```powershell
-scripts/gradle.ps1 runGameTest -PgameTestFilter=CommandAccessGameTest                # one test class
-scripts/gradle.ps1 runGameTest "-PgameTestFilter=scattergametest,sculptory_sync"     # a class and a batch-id prefix
-scripts/gradle.ps1 runFidelityGameTest -PgameTestFilter=FidelityStateGameTest
+scripts/gradle.ps1 :fabric:runGameTest -PgameTestFilter=CommandAccessGameTest              # one test class
+scripts/gradle.ps1 :neoforge:runGameTest "-PgameTestFilter=scattergametest,sculptory_sync" # a class, a batch-id prefix
+scripts/gradle.ps1 runFidelityGameTest -PgameTestFilter=FidelityStateGameTest               # on both loaders
 ```
 
-In PowerShell, quote a filter that contains a comma. `test` also runs the whole vanilla GameTest suite (Loom makes it
-depend on `runGameTest`), and `-PgameTestFilter` narrows that too. One filter applies to both runs, so with `check`
-it must match tests in both, or one run fails. A filtered run is never the full `check`.
+In PowerShell, quote a filter that contains a comma. On Fabric, `test` also runs the whole vanilla GameTest suite (Loom
+makes it depend on `runGameTest`), and `-PgameTestFilter` narrows that too. One filter applies to every run, so with
+`check` it must match tests in each, or one run fails. A filtered run is never the full `check`.
 
 For render-mod checks, `runClient -PbsSodium` adds Sodium and `-PbsIris` adds Iris with Sodium
 (`scripts/playtest.ps1 -Sodium` or `-Iris`). Their versions are pinned in `gradle.properties`, and neither is

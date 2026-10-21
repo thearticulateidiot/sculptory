@@ -1,4 +1,5 @@
-# Runs the full check (JUnit and the headless Fabric GameTests) on every push to a branch and every pull request.
+# Runs the full check (JUnit and the headless Fabric and NeoForge GameTests) on every push to a branch and every
+# pull request.
 # Actions are pinned to full commit SHAs; the comment names the release.
 name: CI
 
@@ -31,11 +32,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
 
       # check = JUnit (core, protocol, server, fabric, neoforge) + runGameTest (vanilla) + runFidelityGameTest (Chipped,
-      # Farmer's Delight). The GameTests run on a headless dedicated server, so no display is needed. :neoforge is
-      # configured and compiled too (its JUnit tests scan the built jar): on a runner without a cached Gradle home that
-      # first makes NeoForge's Minecraft (ModDevGradle downloads it and runs the NeoForm decompile, recompile and
-      # patches), an estimated 3 to 5 extra minutes, not measured on CI; much less when the restored Gradle cache
-      # already holds that work (~/.gradle/caches/neoformruntime).
+      # Farmer's Delight), on Fabric and on NeoForge, one GameTest server at a time. The GameTests run on a headless
+      # dedicated server, so no display is needed. On a runner without a cached Gradle home, NeoForge's Minecraft is
+      # made first (ModDevGradle downloads it and runs the NeoForm decompile, recompile and patches): an estimated 3 to 5
+      # extra minutes, not measured on CI; much less when the restored Gradle cache already holds that work
+      # (~/.gradle/caches/neoformruntime).
       - name: Check
         run: ./gradlew check --stacktrace
 
@@ -49,5 +50,7 @@ jobs:
             modules/*/build/test-results/
             modules/fabric/build/run/gameTest/logs/
             modules/fabric/build/run/fidelityGameTest/logs/
+            modules/neoforge/build/run/gameTest/logs/
+            modules/neoforge/build/run/fidelityGameTest/logs/
           if-no-files-found: ignore
           retention-days: 14

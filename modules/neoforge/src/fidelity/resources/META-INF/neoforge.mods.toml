@@ -1,0 +1,33 @@
+# The mod-fidelity GameTest mod (modules/neoforge, runFidelityGameTest only; never in a jar).
+modLoader = "javafml"
+loaderVersion = "[4,)"
+license = "AGPL-3.0-or-later"
+
+[[mods]]
+modId = "sculptory_fidelity"
+version = "1.0.0"
+displayName = "Sculptory mod-fidelity game tests"
+
+[[mixins]]
+config = "sculptory-fidelity.mixins.json"
+
+[[dependencies.sculptory_fidelity]]
+modId = "sculptory"
+type = "required"
+versionRange = "*"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.sculptory_fidelity]]
+modId = "chipped"
+type = "required"
+versionRange = "*"
+ordering = "AFTER"
+side = "BOTH"
+
+[[dependencies.sculptory_fidelity]]
+modId = "farmersdelight"
+type = "required"
+versionRange = "*"
+ordering = "AFTER"
+side = "BOTH"

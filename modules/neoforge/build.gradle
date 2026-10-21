@@ -212,3 +212,124 @@ class AccessWidenerToAt {
         new IllegalArgumentException("${widener}:${index + 2}: unsupported access widener entry: ${line}")
     }
 }
+
+// ================================================================================================================
+// GameTests on NeoForge: the shared tests (modules/common, src/gametest and src/fidelity) in two test mods, each with
+// its own headless GameTest server run, like modules/fabric's runGameTest and runFidelityGameTest. Nothing here reaches
+// the mod jar.
+//   gametest: the GameTests, mod sculptory_gametest (src/gametest: its @Mod class and neoforge.mods.toml).
+//   fidelity: the mod-fidelity GameTests against the NeoForge builds of Chipped and Farmer's Delight, mod
+//             sculptory_fidelity (src/fidelity). It compiles the shared GameTest sources again instead of loading the
+//             gametest mod's classes, so the GameTest mod and its 464 tests stay out of that run.
+// Both compile src/gametestSupport: the NeoForge GameTestLoader, the test permission handler and the registration of
+// the shared test classes (NeoForgeGameTests says why they are not registered through NeoForge's annotations).
+// ================================================================================================================
+repositories {
+    exclusiveContent {
+        forRepository { maven { name = 'Modrinth'; url = 'https://api.modrinth.com/maven' } }
+        filter { includeGroup 'maven.modrinth' }
+    }
+}
+
+sourceSets {
+    gametest {
+        java.srcDir project(':common').sourceSets.gametest.java
+        java.srcDir 'src/gametestSupport/java'
+        resources.srcDir project(':common').sourceSets.gametest.resources
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+    fidelity {
+        java.srcDir project(':common').sourceSets.gametest.java
+        java.srcDir project(':common').file('src/fidelity/java')
+        java.srcDir 'src/gametestSupport/java'
+        resources.srcDir project(':common').file('src/fidelity/resources')
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+neoForge.addModdingDependenciesTo(sourceSets.gametest)
+neoForge.addModdingDependenciesTo(sourceSets.fidelity)
+// The fidelity tests are placed on the shared empty structure too.
+tasks.named('processFidelityResources') {
+    from(project(':common').sourceSets.gametest.resources.srcDirs) { include 'data/**' }
+}
+
+dependencies {
+    // The engine as for the main source set: compiled against, loaded as part of the sculptory mod.
+    ['gametestCompileOnly', 'fidelityCompileOnly'].each { configuration ->
+        add(configuration, project(':core'))
+        add(configuration, project(':protocol'))
+        add(configuration, project(':server'))
+    }
+    // NeoForge mods are built on Mojang's names like this one, so they are used as they are, with no remapping.
+    fidelityImplementation "maven.modrinth:farmers-delight:${rootProject.fidelity_neoforge_farmersdelight}"
+    fidelityRuntimeOnly "maven.modrinth:chipped:${rootProject.fidelity_neoforge_chipped}"
+    fidelityRuntimeOnly "maven.modrinth:athena-ctm:${rootProject.fidelity_neoforge_athena}"
+    fidelityRuntimeOnly "maven.modrinth:resourceful-lib:${rootProject.fidelity_neoforge_resourcefullib}"
+}
+
+neoForge {
+    mods {
+        sculptory_gametest { sourceSet sourceSets.gametest }
+        sculptory_fidelity { sourceSet sourceSets.fidelity }
+    }
+    runs {
+        gameTest {
+            type = 'gameTestServer'
+            sourceSet = sourceSets.gametest
+            loadedMods = [mods.sculptory, mods.sculptory_gametest]
+            gameDirectory = file('build/run/gameTest')
+        }
+        fidelityGameTest {
+            type = 'gameTestServer'
+            sourceSet = sourceSets.fidelity
+            loadedMods = [mods.sculptory, mods.sculptory_fidelity]
+            gameDirectory = file('build/run/fidelityGameTest')
+        }
+    }
+}
+
+def gameTestRuns = ['gameTest', 'fidelityGameTest']
+neoForge.runs.matching { it.name in gameTestRuns }.configureEach { run ->
+    // Only the shared tests' template namespace (NeoForge's filter; other mods' own GameTests stay out).
+    run.systemProperty 'neoforge.enabledGameTestNamespaces', 'sculptory-gametest'
+    // A JUnit-style report of the run, as Fabric API writes one.
+    run.systemProperty 'sculptory.gametest.report', file("build/run/${run.name}/junit.xml").absolutePath
+    // The heap a GitHub Actions runner gives the GameTest server by default, on every machine (modules/fabric).
+    run.jvmArgument '-Xmx4G'
+    run.disableIdeRun()
+    // -PgameTestFilter=<text>[,<text>...]: only the GameTests whose name or batch contains an entry (GameTestFilter).
+    if (project.hasProperty('gameTestFilter')) {
+        run.systemProperty 'sculptory.gametest.filter', project.property('gameTestFilter').toString()
+    }
+}
+
+// Each run starts from a fresh world (gradle/fresh-gametest-world.gradle), with the EULA accepted and the test
+// permission handler selected (TestPermissionHandler): NeoForge reads config/neoforge-server.toml when the server
+// starts.
+apply from: rootProject.file('gradle/fresh-gametest-world.gradle')
+gameTestRuns.each { runName ->
+    def taskSuffix = runName.capitalize()
+    def runDir = file("build/run/${runName}")
+    def prepare = tasks.register("prepare${taskSuffix}Dir") {
+        description = "Starts ${runName} from a fresh world, with the EULA accepted and the test permission handler."
+        outputs.upToDateWhen { false }
+        doLast {
+            freshGameTestWorld(runDir)
+            new File(runDir, 'eula.txt').with { parentFile.mkdirs(); text = 'eula=true\n' }
+            new File(runDir, 'config/neoforge-server.toml').with {
+                parentFile.mkdirs()
+                text = '# Written by modules/neoforge/build.gradle for the GameTest runs.\n' +
+                        'permissionHandler = "sculptory-gametest:permissions"\n'
+            }
+        }
+    }
+    tasks.named("run${taskSuffix}") { dependsOn prepare }
+}
+tasks.named('runFidelityGameTest') { mustRunAfter tasks.named('runGameTest') }
+// One GameTest server at a time when a build runs both loaders' (check with org.gradle.parallel): each takes 4 GB.
+tasks.named('runGameTest') { mustRunAfter ':fabric:runGameTest', ':fabric:runFidelityGameTest' }
+tasks.named('check') {
+    dependsOn tasks.named('runGameTest'), tasks.named('runFidelityGameTest')
+}
