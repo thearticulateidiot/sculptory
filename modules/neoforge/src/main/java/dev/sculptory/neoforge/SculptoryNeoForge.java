@@ -16,9 +16,10 @@ import net.neoforged.fml.common.Mod;
 /**
  * The mod's entrypoint on NeoForge, on dedicated servers and clients alike: the same wiring as the Fabric mod's
  * {@code SculptoryMod} (the NeoForge seam first, then the engine, the edit service, the network layer and the commands),
- * then, on a client, the client side ({@link SculptoryNeoForgeClient}). One entrypoint calls the other so the client
- * side always starts after the server side, as Fabric's {@code main} and {@code client} entrypoints run; the client
- * class is only loaded when that call runs, so a dedicated server never loads it.
+ * then, on a client, the client side ({@link SculptoryNeoForgeClient}), which waits for {@code RegisterKeyMappingsEvent}
+ * on the render thread (see there). One entrypoint calls the other so the client side always starts after the server
+ * side, as Fabric's {@code main} and {@code client} entrypoints run; the client class is only loaded when that call
+ * runs, so a dedicated server never loads it.
  */
 @Mod(Sculptory.MOD_ID)
 public final class SculptoryNeoForge {

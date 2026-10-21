@@ -21,6 +21,7 @@ import dev.sculptory.mc.loader.ClientLoaders;
 import dev.sculptory.mc.world.McStateSpace;
 import net.minecraft.client.Minecraft;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 
 /**
  * The client side on NeoForge, started by {@code SculptoryNeoForge} on a client after the server side: the same wiring
@@ -28,21 +29,39 @@ import net.neoforged.bus.api.IEventBus;
  * networking, the editor, builder mode, {@code /flyspeed} and the dev-only harnesses). The Fabric layer's
  * development-only {@code /bsclient} commands are typed on Fabric's client command API and are not ported.
  *
- * <p>Thread: NeoForge constructs mods on a mod-loading worker thread, not on the render thread where Fabric runs its
- * client entrypoint. That is fine for this wiring as it stands: it registers hooks and keys (keys are only collected
- * here and registered in {@code RegisterKeyMappingsEvent}), creates plain objects and executors, and only stores
- * {@code Minecraft.getInstance()}; the window, GL, fonts and options are first touched by the hooks, which run on the
- * render thread (the editor builds its UI on first use, {@code McWorldDraw} its buffers on its first frame). Anything
- * added here that needs the render thread belongs in a hook or in {@code FMLClientSetupEvent.enqueueWork}.
+ * <p>When and on which thread: in {@code RegisterKeyMappingsEvent}, not while the mod is constructed. FML constructs
+ * mods in parallel on mod-loading worker threads, and the wiring makes {@code KeyMapping}s, whose constructor writes
+ * the game's static key maps (vanilla's {@code KeyMapping.ALL} and NeoForge's lookup), which are not thread-safe.
+ * NeoForge 21.1 posts {@code RegisterKeyMappingsEvent} once, from {@code ClientHooks.initClientHooks} in the
+ * {@code Minecraft} constructor: on the render thread, after every mod was constructed, before the first resource load
+ * and before {@code FMLClientSetupEvent} (which comes from that load, on worker threads; key registration is over by
+ * then). FML's {@code ModLoader.postEvent} hands it to one mod after another on that thread, so no other mod's
+ * listener runs at the same time. Fabric runs its client entrypoint on the render thread in the {@code Minecraft}
+ * constructor too, a little earlier.
  */
 public final class SculptoryNeoForgeClient {
     private SculptoryNeoForgeClient() {
     }
 
+    /** Called from the mod's constructor on a client: starts the client side once keys can be registered. */
     public static void init(IEventBus modBus) {
+        modBus.addListener(SculptoryNeoForgeClient::start);
+    }
+
+    private static void start(RegisterKeyMappingsEvent keys) {
         Sculptory.LOG.info("Sculptory client initializing (thread {})", Thread.currentThread().getName());
-        // The seam the loader-free client code registers its hooks through: installed before any of it runs.
-        ClientLoaders.install(new NeoForgeClientLoader(modBus));
+        // The seam the loader-free client code registers its hooks through: installed before any of it runs. Keys are
+        // registered with the event while the wiring below runs; registering one later fails.
+        NeoForgeClientLoader loader = new NeoForgeClientLoader(keys);
+        ClientLoaders.install(loader);
+        try {
+            wire();
+        } finally {
+            loader.closeKeyRegistration();
+        }
+    }
+
+    private static void wire() {
         ClientBlockChanges.install();
         // Biome view (protocol 6) takes its snapshot again when chunks arrive (biome packets: ClientBiomeDataMixin).
         ClientLoaders.get().onChunkLoad((world, chunk) -> BiomeView.changed());

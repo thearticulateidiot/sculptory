@@ -8,7 +8,6 @@ import dev.sculptory.mc.loader.WorldFrame;
 import dev.sculptory.mc.net.Frame;
 import dev.sculptory.neoforge.NeoForgeServerLoader;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -23,7 +22,6 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.multiplayer.ClientPacketListener;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.neoforged.bus.api.EventPriority;
-import net.neoforged.bus.api.IEventBus;
 import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
@@ -79,8 +77,9 @@ import org.joml.Matrix4fStack;
  *       {@code ClientChunkCache.drop}; {@code ClientChunkCacheMixin} adds the two other places Fabric API fires
  *       {@code CHUNK_UNLOAD} (a slot's column replaced by one at another position, columns outside a smaller view
  *       radius). One list of hooks serves all three, in registration order;</li>
- *   <li>{@link #registerKey}: collected and registered in {@code RegisterKeyMappingsEvent} (mod bus), which NeoForge
- *       fires after the mods are constructed, so keys must be registered during construction;
+ *   <li>{@link #registerKey}: registered with {@code RegisterKeyMappingsEvent} (mod bus), the event the client side
+ *       is wired in ({@code SculptoryNeoForgeClient}); NeoForge posts it once, so a key registered after the wiring
+ *       fails;
  *       {@link #boundKey}: NeoForge's public {@code KeyMapping.getKey()};</li>
  *   <li>{@link #onUseBlock}, {@link #onUseItem}, {@link #onAttackBlock}, {@link #onAttackEntity}: NeoForge's
  *       interaction events cannot say "nothing happens and no packet is sent": {@code RightClickBlock} and
@@ -102,13 +101,13 @@ public final class NeoForgeClientLoader implements ClientLoader {
     private static boolean joined;
 
     private final NeoForgeServerLoader server;
-    /** Keys registered before {@code RegisterKeyMappingsEvent}; null once it ran. */
-    private List<KeyMapping> pendingKeys = new ArrayList<>();
+    /** The event keys are registered with while the client side is wired; null after ({@link #closeKeyRegistration}). */
+    private RegisterKeyMappingsEvent keys;
     private final List<Runnable> disconnectHooks = new CopyOnWriteArrayList<>();
 
-    NeoForgeClientLoader(IEventBus modBus) {
+    NeoForgeClientLoader(RegisterKeyMappingsEvent keys) {
         server = (NeoForgeServerLoader) Loaders.server();
-        modBus.addListener(this::registerKeys);
+        this.keys = Objects.requireNonNull(keys);
         // One listener, so a disconnect pairs up with a join whatever order the hooks are registered in.
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
             if (!joined) return;
@@ -128,9 +127,9 @@ public final class NeoForgeClientLoader implements ClientLoader {
         JOIN_HOOKS.forEach(Runnable::run);
     }
 
-    private void registerKeys(RegisterKeyMappingsEvent event) {
-        pendingKeys.forEach(event::register);
-        pendingKeys = null;
+    /** The client side is wired: {@code RegisterKeyMappingsEvent} is over, later keys are refused. */
+    void closeKeyRegistration() {
+        keys = null;
     }
 
     // ---- LoaderInfo: the server loader's answers ----
@@ -291,11 +290,11 @@ public final class NeoForgeClientLoader implements ClientLoader {
     @Override
     public KeyMapping registerKey(KeyMapping key) {
         Objects.requireNonNull(key);
-        if (pendingKeys == null) {
+        if (keys == null) {
             throw new IllegalStateException("key " + key.getName() + " registered after RegisterKeyMappingsEvent; "
-                    + "NeoForge registers keys while the mods are constructed");
+                    + "NeoForge registers keys only while the client side is wired");
         }
-        pendingKeys.add(key);
+        keys.register(key);
         return key;
     }
 
