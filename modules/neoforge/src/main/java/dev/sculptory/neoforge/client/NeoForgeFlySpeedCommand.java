@@ -22,18 +22,12 @@ import net.neoforged.neoforge.common.NeoForge;
  * operator rights, works on any server), the counterpart of the Fabric layer's {@code FabricFlySpeedCommand}. NeoForge
  * builds its client commands anew each time the server sends a command tree ({@code RegisterClientCommandsEvent}, from
  * {@code ClientCommandHandler.mergeServerCommands}), and like Fabric it sends a command the client tree does not know
- * (or whose requirement fails) on to the server, so on a server with its own {@code /flyspeed} that one runs.
- *
- * <p>NeoForge's {@code handleCommands} stores the command tree twice: the server's tree, then the tree with the client
- * commands merged in. {@code ClientCommandTreeMixin} (modules/common) injects after every store, so the listener here
- * sees both, in that order, within the one call; it reads only the first of each pair. (With {@code ordinal = 0} on
- * that injection it would see only the server's tree on both loaders.) Client thread only.
+ * (or whose requirement fails) on to the server, so on a server with its own {@code /flyspeed} that one runs. Client
+ * thread only.
  */
 public final class NeoForgeFlySpeedCommand implements FlySpeedCommand.Handler<CommandSourceStack> {
     /** Whether the server's last command tree has a root {@code flyspeed}; false until one arrives. */
     private static boolean serverHasFlySpeed;
-    /** The next tree the mixin hands over is NeoForge's merged tree, not the server's. */
-    private static boolean mergedTreeNext;
 
     private final Flight flight;
     private final BooleanSupplier editing;
@@ -53,17 +47,13 @@ public final class NeoForgeFlySpeedCommand implements FlySpeedCommand.Handler<Co
     }
 
     /**
-     * A command tree was stored: the server's (notes whether it has a {@code /flyspeed} and readies it for the merge,
-     * {@link FlySpeedCommand#prepareServerTree}), or right after it NeoForge's merged one (ignored).
+     * The server's command tree arrived, as the server sent it ({@code ClientCommandTreeMixin} reads only the first store
+     * in {@code handleCommands}, before NeoForge merges its client commands in): notes whether it has a {@code /flyspeed}
+     * and readies it for the merge ({@link FlySpeedCommand#prepareServerTree}).
      */
-    private static void serverTree(CommandDispatcher<SharedSuggestionProvider> tree) {
-        if (mergedTreeNext) {
-            mergedTreeNext = false;
-            return;
-        }
-        mergedTreeNext = true;
-        serverHasFlySpeed = tree.getRoot().getChild(FlySpeedCommand.NAME) != null;
-        FlySpeedCommand.prepareServerTree(tree.getRoot());
+    private static void serverTree(CommandDispatcher<SharedSuggestionProvider> server) {
+        serverHasFlySpeed = server.getRoot().getChild(FlySpeedCommand.NAME) != null;
+        FlySpeedCommand.prepareServerTree(server.getRoot());
     }
 
     @Override

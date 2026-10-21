@@ -14,13 +14,15 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * {@link ServerCommandTree} right after the handler stores it, before the loader's client command API merges the client
  * commands into it (Fabric's does at the method's RETURN). Target verified with javap against Minecraft 1.21.1 (Mojang names): {@code handleCommands(ClientboundCommandsPacket)} ends
  * with {@code this.commands = new CommandDispatcher<>(packet.getRoot(...))}; the client thread only
- * reaches it (the handler first hands the packet over).
+ * reaches it (the handler first hands the packet over). Only the first store: NeoForge 21.1's patched method stores the
+ * field a second time with its client commands merged in ({@code ClientCommandHandler.mergeServerCommands}), which is
+ * not the server's tree.
  */
 @Mixin(ClientPacketListener.class)
 public abstract class ClientCommandTreeMixin {
     @Inject(method = "handleCommands", at = @At(value = "FIELD", opcode = Opcodes.PUTFIELD,
             target = "Lnet/minecraft/client/multiplayer/ClientPacketListener;commands:Lcom/mojang/brigadier/CommandDispatcher;",
-            shift = At.Shift.AFTER), require = 1)
+            ordinal = 0, shift = At.Shift.AFTER), require = 1)
     private void sculptory$serverCommandTree(ClientboundCommandsPacket packet, CallbackInfo ci) {
         ServerCommandTree.received(((ClientPacketListener) (Object) this).getCommands());
     }
