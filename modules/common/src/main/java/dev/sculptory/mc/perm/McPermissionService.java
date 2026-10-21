@@ -8,7 +8,6 @@ import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.perm.ChunkPermits;
-import dev.sculptory.server.platform.PlatformPermissions;
 import java.util.EnumSet;
 import java.util.Map;
 import java.util.Objects;
@@ -31,7 +30,7 @@ import org.slf4j.LoggerFactory;
  * requests are refused {@code NO_PERMISSION}); {@link #check} reports it as unknown instead, so re-checks of work
  * already admitted can leave that work alone. Failures are logged at most once a minute per player.
  */
-public final class McPermissionService implements PlatformPermissions<ServerPlayer, ServerLevel> {
+public final class McPermissionService implements McPermissions {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Failed permission checks are logged at most this often per player. */
     static final long FAILURE_LOG_INTERVAL_NANOS = 60_000_000_000L;

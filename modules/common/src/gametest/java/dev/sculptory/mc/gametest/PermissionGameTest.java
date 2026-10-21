@@ -11,7 +11,7 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.mc.gametest.EngineTestSupport.BoxFill;
 import dev.sculptory.mc.net.ServerNet;
-import dev.sculptory.mc.perm.McPermissionService;
+import dev.sculptory.mc.perm.McPermissions;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
@@ -39,7 +39,7 @@ public final class PermissionGameTest {
         EngineRuntime runtime = runtime(context);
         ServerLevel world = context.getLevel();
         MinecraftServer server = world.getServer();
-        McPermissionService permissions = runtime.permissions();
+        McPermissions permissions = runtime.permissions();
         ServerPlayer player = context.makeMockServerPlayerInLevel();
         try {
             // The GameTest server reports itself as dedicated; either way the mock player is not a host.

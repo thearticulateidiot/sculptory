@@ -11,6 +11,7 @@ import dev.sculptory.mc.config.FolderMigration;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.loader.ServerLoader;
 import dev.sculptory.mc.perm.McPermissionService;
+import dev.sculptory.mc.perm.McPermissions;
 import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.mc.world.ClientSync;
 import dev.sculptory.mc.world.EntityTypeRules;
@@ -50,6 +51,7 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
 import net.minecraft.server.MinecraftServer;
@@ -80,6 +82,9 @@ public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel
     private final java.util.Map<ServerLevel, McWorldBiomes> worldBiomes = new java.util.IdentityHashMap<>();
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     private static boolean installed;
+    /** What makes the running server's permissions ({@link #install(Function)}). */
+    private static volatile Function<SculptoryConfig, ? extends McPermissions> permissionsFactory =
+            McPermissionService::new;
     private static volatile EngineRuntime current;
 
     /** Region-op chunk ticket: radius 0, expires after 600 ticks unless refreshed ({@link #chunkTickets}). */
@@ -97,17 +102,23 @@ public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel
     /** The settings in effect: replaced as a whole by {@link #reload}, so a reader sees one config or the other. */
     private volatile SculptoryConfig config;
     private final McStateSpace states;
-    private final McPermissionService permissions;
+    private final McPermissions permissions;
     private final EditExecutor<ServerLevel> executor;
     private final FluidTrails fluidTrails;
     /** Told the new config after a reload has applied it (server thread). */
     private final List<Consumer<SculptoryConfig>> reloadListeners = new CopyOnWriteArrayList<>();
 
     public EngineRuntime(MinecraftServer server, SculptoryConfig config) {
+        this(server, config, McPermissionService::new);
+    }
+
+    /** With the permissions {@code permissions} makes from the config ({@link McPermissionService} by default). */
+    public EngineRuntime(MinecraftServer server, SculptoryConfig config,
+                         Function<SculptoryConfig, ? extends McPermissions> permissions) {
         this.server = Objects.requireNonNull(server);
         this.config = Objects.requireNonNull(config);
         this.states = buildStates(config);
-        this.permissions = new McPermissionService(config);
+        this.permissions = Objects.requireNonNull(permissions.apply(config));
         this.executor = new EditExecutor<>(this, EditExecutor.Settings.from(config, server.isDedicatedServer()));
         this.fluidTrails = new FluidTrails(server.getRunningThread());
     }
@@ -126,8 +137,18 @@ public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel
      * engine this one creates.
      */
     public static synchronized void install() {
+        install(McPermissionService::new);
+    }
+
+    /**
+     * {@link #install()}, with the permissions each server's engine gets made by {@code permissions} from its config
+     * (the first call decides; later calls change nothing).
+     */
+    public static synchronized void install(Function<SculptoryConfig, ? extends McPermissions> permissions) {
+        Objects.requireNonNull(permissions);
         if (installed) return;
         installed = true;
+        permissionsFactory = permissions;
         ServerLoader loader = Loaders.server();
         loader.onServerStarting(EngineRuntime::start);
         // Every entity type is known once the worlds exist: scanned before any player can send a file.
@@ -257,7 +278,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel
     }
 
     @Override
-    public McPermissionService permissions() {
+    public McPermissions permissions() {
         return permissions;
     }
 
@@ -559,7 +580,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel
 
     private static void start(MinecraftServer server) {
         SculptoryConfig config = SculptoryConfig.load(configFile());
-        current = new EngineRuntime(server, config);
+        current = new EngineRuntime(server, config, permissionsFactory);
         current.fluidTrails.install();
         ModdedFacingFallback fallback = current.states.moddedFacingFallbackTables();
         VerticalFlip flip = current.states.verticalFlipTables();

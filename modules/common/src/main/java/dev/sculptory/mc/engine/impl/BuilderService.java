@@ -12,7 +12,7 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.mc.builder.BuilderCapture;
 import dev.sculptory.mc.builder.BuilderPlacement;
 import dev.sculptory.mc.builder.BuilderPlacementContext;
-import dev.sculptory.mc.perm.McPermissionService;
+import dev.sculptory.mc.perm.McPermissions;
 import dev.sculptory.mc.perm.Tri;
 import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.mc.world.EditScope;
@@ -124,7 +124,7 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
     private final MinecraftServer server;
     /** The config in effect ({@code /sculptory reload} replaces it): read whenever a check runs. */
     private final Supplier<SculptoryConfig> configs;
-    private final McPermissionService permissions;
+    private final McPermissions permissions;
     private final EditExecutor<ServerLevel> executor;
     private final HistoryService history;
     private final FluidTrails trails;
