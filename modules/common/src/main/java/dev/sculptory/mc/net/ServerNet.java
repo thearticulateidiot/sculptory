@@ -60,7 +60,20 @@ public final class ServerNet {
     private ServerNet() {}
 
     /**
-     * Installs the server networking. Call once from the common initializer.
+     * Undoes {@link #install}: every session is closed and the dispatcher dropped, so {@code install} may run again.
+     * Only for a platform whose loader also forgets the hooks {@code install} registered (Paper's, when the plugin
+     * is disabled and may be enabled again); the Fabric and NeoForge loaders keep hooks for the JVM's life and never
+     * call this.
+     */
+    public static synchronized void uninstall() {
+        if (dispatcher == null) return;
+        SESSIONS.values().forEach(dispatcher::close);
+        SESSIONS.clear();
+        dispatcher = null;
+    }
+
+    /**
+     * Installs the server networking. Call once from the common initializer (again only after {@link #uninstall}).
      *
      * @param states the server's {@code StateSpace}; read when frames are decoded, so it may be built later
      *     (e.g. on server start). While it returns {@code null}, messages carrying block states are refused.
