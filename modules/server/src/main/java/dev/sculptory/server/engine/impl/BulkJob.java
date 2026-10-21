@@ -66,8 +66,15 @@ final class BulkJob<W> {
     final UUID id;
     final JobRequest<W> request;
     final EditProgram program;
-    /** The program's bounds: what the job's permits are asked for, and so every cell they may be asked about. */
+    /** The program's bounds. */
     private final Box bounds;
+    /**
+     * What the job's chunk permits are asked for ({@link PermitSource#bounds}, else the program's bounds): every cell they
+     * are asked about must lie inside ({@link PermitBounds}).
+     */
+    private final Box permitBounds;
+    /** Names the job in a {@link PermitBounds} failure (its label, built only then). */
+    private final Object asker;
     final long[] order;
     /** Source sections read from the world (inside the world border). */
     final long[] sources;
@@ -117,10 +124,13 @@ final class BulkJob<W> {
     private long permitColumn = Long.MIN_VALUE;
     private ChunkPermit permit;
     /**
-     * Permits asked through {@link ComputeContext#mayWrite} (a decision may span chunks), kept for the job's life: a
-     * producer that asks every cell ({@code ChunkPermits.rasterize}) is not asked again for each slice of a scatter
-     * commit. Protection changed while the job runs still reaches the writes ({@link #permitFor} asks again for each
-     * section's column). At most one per chunk column the job reads, each no larger than the job's box in that chunk.
+     * Permits asked through {@link ComputeContext#mayWrite} during one slice (a decision may span chunks), cleared at
+     * the start of every slice. They must be as fresh as the writes': a scatter commit rechecks a placement through
+     * {@code mayWrite} right before its first cell is written, possibly slices after the decision, and protection grown
+     * since must skip it whole there, not let it start and be denied cell by cell (half built); protection shrunk since
+     * must let chunks dropped as denied ({@link #worthLoading}) be reconsidered. The cost is accepted: a chunk whose
+     * protection differs with height is asked again (a producer rasterizes it again, at most the job's box in that
+     * chunk) in each slice that decides about it, and a slice decides only the placements of the section it computes.
      */
     private final Long2ObjectOpenHashMap<ChunkPermit> decisionPermits = new Long2ObjectOpenHashMap<>();
     private long waitingSince = NOT_WAITING;
@@ -170,6 +180,13 @@ final class BulkJob<W> {
         this.request = request;
         this.program = request.program();
         this.bounds = program.bounds();
+        this.permitBounds = request.permits().bounds() != null ? request.permits().bounds() : bounds;
+        this.asker = new Object() {
+            @Override
+            public String toString() {
+                return "job " + id + " (" + program.label() + ")";
+            }
+        };
         this.order = order;
         this.sources = sources;
         this.airSources = airSources;
@@ -210,8 +227,9 @@ final class BulkJob<W> {
             /** The same rule {@link #writeCell} applies: the player's chunk permit and the world border. */
             @Override
             public boolean mayWrite(int x, int y, int z) {
-                PermitBounds.check(bounds, x, y, z, program.label());
-                return decisionPermit(x >> 4, z >> 4).allows(x, y, z) && host.insideBorder(world, x, z);
+                ChunkPermit decided = decisionPermit(x >> 4, z >> 4);
+                PermitBounds.check(permitBounds, decided, x, y, z, asker);
+                return decided.allows(x, y, z) && host.insideBorder(world, x, z);
             }
         };
         this.guard = (live, liveTile) -> program.mayReplace(guardKey, guardIndex, live, liveTile, context);
@@ -424,6 +442,7 @@ final class BulkJob<W> {
     long run(long maxUnits, EditExecutor.Budget budget) {
         long used = 0;
         reader.invalidate();
+        decisionPermits.clear();
         while (used < maxUnits && !budget.exhausted()) {
             if (current == null && cancelRequested) {
                 executor.finish(this, JobOutcome.CANCELLED);
@@ -680,7 +699,7 @@ final class BulkJob<W> {
         return permit;
     }
 
-    /** A chunk's permit for {@link ComputeContext#mayWrite}, asked once per job. */
+    /** A chunk's permit for {@link ComputeContext#mayWrite}, asked once per slice. */
     private ChunkPermit decisionPermit(int cx, int cz) {
         long column = ColumnPlan.pack(cx, cz);
         ChunkPermit found = decisionPermits.get(column);
@@ -707,7 +726,7 @@ final class BulkJob<W> {
         int x = s.ox + SectionBuffer.localX(i);
         int y = s.oy + SectionBuffer.localY(i);
         int z = s.oz + SectionBuffer.localZ(i);
-        PermitBounds.check(bounds, x, y, z, program.label());
+        PermitBounds.check(permitBounds, s.permit, x, y, z, asker);
         if (!s.permit.allows(x, y, z) || (!s.insideBorder && !host.insideBorder(world, x, z))) {
             skippedProtected++;
             return;

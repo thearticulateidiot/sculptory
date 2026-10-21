@@ -18,13 +18,26 @@ public interface PermitSource {
     ChunkPermit chunk(int cx, int cz);
 
     /**
+     * The bounds {@link #chunk} permits are asked for, so a job checks its cells against them
+     * ({@code -Dsculptory.checkPermitBounds}), or {@code null} when unknown (the job checks against its program's
+     * bounds). {@code null} by default.
+     */
+    default Box bounds() {
+        return null;
+    }
+
+    /**
      * The permit for column (x, z) alone between heights {@code minY} and {@code maxY}, wherever the column lies, also
      * outside the chunks the job was admitted for: for work that visits one column at several heights (biome quarts)
-     * and asks once per column. Only cells of that column within those heights may be asked about. The default is the
-     * column's chunk's {@link #chunk} permit.
+     * and asks once per column. It must answer every one of those heights: a source of its own overrides this so, or
+     * makes {@link #chunk} answer them. The default is the column's chunk's {@link #chunk} permit; with the bounds check
+     * on, a per-cell permit from it without layers for all of those heights fails loudly instead of silently denying
+     * the heights it lacks.
      */
     default ChunkPermit column(int x, int z, int minY, int maxY) {
-        return chunk(x >> 4, z >> 4);
+        ChunkPermit permit = chunk(x >> 4, z >> 4);
+        PermitBounds.checkLayers(permit, minY, maxY, "a permit source's column()");
+        return permit;
     }
 
     /**
@@ -48,6 +61,11 @@ public interface PermitSource {
             @Override
             public ChunkPermit chunk(int cx, int cz) {
                 return permissions.chunk(player, world, cx, cz, bounds);
+            }
+
+            @Override
+            public Box bounds() {
+                return bounds;
             }
 
             @Override

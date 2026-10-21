@@ -3071,7 +3071,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         /** Whether the player's permit allows cell (x, y, z), which must lie in the bounds it was asked for. */
         private boolean permitted(int x, int y, int z) {
             ChunkPermit chunkPermit = permitFor(x >> 4, z >> 4);
-            PermitBounds.check(permitBox, x, y, z, "a " + stroke.spec.tool() + " stroke");
+            // The tool names the stroke in a failure message, built only then.
+            PermitBounds.check(permitBox, chunkPermit, x, y, z, stroke.spec.tool());
             return chunkPermit.allows(x, y, z);
         }
 

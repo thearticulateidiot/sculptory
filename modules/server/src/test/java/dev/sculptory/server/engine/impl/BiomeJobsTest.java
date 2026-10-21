@@ -1,6 +1,8 @@
 package dev.sculptory.server.engine.impl;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -496,6 +498,31 @@ class BiomeJobsTest {
         BrushSpec raise = new BrushSpec(BrushTool.RAISE, 2, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
                 0, 1L);
         assertEquals(List.of(dab), EngineEditService.permitBoxes(raise, List.of(dab), -64, 320));
+    }
+
+    /**
+     * The Biome brush on Fabric and NeoForge (protection the same at every height, a claim up to column x 5): a column
+     * permit is mixed over the part of the box it was asked for and denies every column outside that part. A quart
+     * centred on column x 10, just outside a dab box ending at x 9, was so denied without any claim on it; asked for the
+     * box widened to whole quarts, its centre column is inside and judged as it is.
+     */
+    @Test
+    void anEdgeQuartsCentreColumnIsJudgedUnderAMixedColumnPermit() {
+        BrushSpec biome3d = new BrushSpec(BrushTool.BIOME, 2, 1f, Falloff.CONSTANT, Shape.CIRCLE, null, SurfaceMask.ANY, 0,
+                0, 1L, null, Symmetry.NONE, null, SculptMode.TERRAIN, null, null, null,
+                new BiomeSpec("minecraft:desert", false));
+        Box dab = new Box(new BlockPos(5, 63, 1), new BlockPos(9, 65, 6));
+        dev.sculptory.server.perm.ChunkPermits.ColumnTest claim = (x, z) -> x > 5;
+        Box asIs = EngineEditService.permitBounds(List.of(dab), 0, 0);
+        ChunkPermit narrow = dev.sculptory.server.perm.ChunkPermits.forChunk(0, 0, asIs, claim);
+        assertInstanceOf(ChunkPermit.Columns.class, narrow);
+        assertFalse(narrow.allows(10, 66, 2), "without the widening: an unclaimed edge quart denied");
+        Box widened = EngineEditService.permitBounds(EngineEditService.permitBoxes(biome3d, List.of(dab), -64, 320), 0, 0);
+        ChunkPermit permit = dev.sculptory.server.perm.ChunkPermits.forChunk(0, 0, widened, claim);
+        assertTrue(widened.contains(10, 66, 2) && widened.contains(6, 62, 2), "every touched quart's centre");
+        assertTrue(permit.allows(10, 66, 2), "the edge quart's centre column, unclaimed");
+        assertTrue(permit.allows(6, 62, 2));
+        assertFalse(permit.allows(5, 64, 2), "the claimed column");
     }
 
     /**

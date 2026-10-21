@@ -40,6 +40,7 @@ import dev.sculptory.server.platform.BorderBounds;
 import dev.sculptory.server.platform.ClientUpdates;
 import dev.sculptory.server.platform.LiveReader;
 import dev.sculptory.server.platform.WorldWriter;
+import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.lang.reflect.Proxy;
 import java.util.List;
@@ -201,33 +202,12 @@ class HeightPermitJobTest {
     void aScatterPlacementReachingADeniedLayerIsSkippedWhole() throws EditRejected {
         world.fill(new Box(new BlockPos(0, 0, 0), new BlockPos(31, 0, 15)), stone);
         EditExecutor<Object> executor = new EditExecutor<>(host(), settings());
-        // Pillars three cells tall, standing on the floor (y 1..3).
-        BlockBuffer pillar = new BlockBuffer();
-        for (int y = 0; y < 3; y++) pillar.set(0, y, 0, dirt);
-        SourceBlocks source = new SourceBlocks(pillar, new BlockPos(1, 3, 1), BlockPos.ORIGIN);
-        // Chunk (0, 0) is denied from y 3 up: the two pillars there reach it with their top cell.
+        // Pillars three cells tall, standing on the floor (y 1..3). Chunk (0, 0) is denied from y 3 up: the two pillars
+        // there reach it with their top cell.
         List<MultiPaste.Placement> placements = List.of(new MultiPaste.Placement(new BlockPos(4, 1, 4), 0,
                 Transform.IDENTITY), new MultiPaste.Placement(new BlockPos(20, 1, 4), 0, Transform.IDENTITY),
                 new MultiPaste.Placement(new BlockPos(9, 1, 11), 0, Transform.IDENTITY));
-        MultiPaste plan = new MultiPaste(List.of(source), placements, MultiPaste.Replace.OPEN);
-        UUID planId = UUID.randomUUID();
-        EditProgram compiled = OpCompiler.compile(new OpSpec.ScatterCommit(planId), new CompileContext() {
-            @Override
-            public StateSpace states() {
-                return states;
-            }
-
-            @Override
-            public Optional<SourceBlocks> source(SourceRef ref) {
-                return Optional.empty();
-            }
-
-            @Override
-            public Optional<MultiPaste> scatterPlan(UUID id) {
-                return id.equals(planId) ? Optional.of(plan) : Optional.empty();
-            }
-        });
-        ConflictCountingProgram commit = new ConflictCountingProgram(compiled);
+        ConflictCountingProgram commit = commit(new MultiPaste(List.of(pillar(3)), placements, MultiPaste.Replace.OPEN));
         Region region = new Region(-64, 3);
         JobResult result = run(executor, JobRequest.system(WORLD, commit, null)
                 .withPermits(PermitSource.forPlayer(region, null, WORLD, commit.bounds())));
@@ -240,6 +220,58 @@ class HeightPermitJobTest {
             assertEquals(states.air(), world.get(4, y, 4), "nothing of a skipped pillar at y " + y);
             assertEquals(states.air(), world.get(9, y, 11), "nothing of a skipped pillar at y " + y);
         }
+    }
+
+    /**
+     * A source whose permits were asked for less than the job writes (heights 0..9 of a fill up to 19): the first cell
+     * above them fails the job loudly under the check the tests run with, rather than being judged by a permit that
+     * says nothing about it. The check compares against the bounds the source asked for, not the program's.
+     */
+    @Test
+    void aCellOutsideTheBoundsThePermitsWereAskedForFailsTheJob() throws EditRejected {
+        world.fill(AREA, stone);
+        EditExecutor<Object> executor = new EditExecutor<>(host(), settings());
+        Box lower = new Box(AREA.min(), new BlockPos(31, 9, 15));
+        JobResult result = run(executor, JobRequest.system(WORLD, new Fill(AREA, dirt), null)
+                .withPermits(PermitSource.forPlayer(new Region(-64, 5), null, WORLD, lower)));
+        assertEquals(JobOutcome.FAILED, result.outcome());
+    }
+
+    /**
+     * Protection grown between two slices of a scatter commit: a placement decided while its cells were all open, and
+     * not started yet, is checked again right before its first write, against protection as it is then (the decision
+     * permits are asked afresh each slice), so it is skipped whole and counted once, never half built with its denied
+     * cells counted one by one. Its section is written one cell per tick, so decision and first write fall in
+     * different slices.
+     */
+    @Test
+    void protectionGrownBetweenSlicesSkipsAPlacementWholeBeforeItStarts() throws EditRejected {
+        world.fill(new Box(new BlockPos(0, 0, 0), new BlockPos(31, 0, 15)), stone);
+        EditExecutor<Object> executor = new EditExecutor<>(host(), settings(1));
+        // In one section: a single block (index 324, written first) and a pillar of three (first index 441).
+        List<MultiPaste.Placement> placements = List.of(
+                new MultiPaste.Placement(new BlockPos(4, 1, 4), 0, Transform.IDENTITY),
+                new MultiPaste.Placement(new BlockPos(9, 1, 11), 1, Transform.IDENTITY));
+        ConflictCountingProgram commit = commit(new MultiPaste(List.of(pillar(1), pillar(3)), placements,
+                MultiPaste.Replace.OPEN));
+        int[] deniedFrom = {Integer.MAX_VALUE};
+        PermitSource permits = PermitSource.forPlayer(exact((x, y, z) -> y < deniedFrom[0]), null, WORLD,
+                commit.bounds());
+        JobResult[] result = {null};
+        executor.submit(new JobRequest<>(JobRequest.SYSTEM_OWNER, WORLD, commit, WriteOptions.DEFAULT,
+                permits, true, 0L, listener(result), RecordSink.NONE));
+        for (int tick = 0; tick < 100 && world.get(4, 1, 4) != dirt; tick++) executor.tick();
+        assertEquals(dirt, world.get(4, 1, 4), "the single block, written first");
+        assertEquals(states.air(), world.get(9, 1, 11), "the pillar not started yet");
+
+        deniedFrom[0] = 3; // the pillar's top cell becomes protected
+        for (int tick = 0; tick < 100 && result[0] == null; tick++) executor.tick();
+        assertNotNull(result[0], "the commit did not finish");
+        assertEquals(JobOutcome.COMPLETED, result[0].outcome());
+        for (int y = 1; y <= 3; y++) assertEquals(states.air(), world.get(9, y, 11), "nothing of the pillar at y " + y);
+        assertEquals(1, commit.conflicts(), "the pillar skipped, counted once");
+        assertEquals(0, result[0].skippedProtected(), "no cell of it denied one by one");
+        assertEquals(1, result[0].changed());
     }
 
     // ---------------------------------------------------------------- harness
@@ -260,17 +292,8 @@ class HeightPermitJobTest {
     /** Submits {@code request} (its listener replaced) and ticks until it finishes. */
     private static JobResult run(EditExecutor<Object> executor, JobRequest<Object> request) throws EditRejected {
         JobResult[] result = {null};
-        JobListener listener = new JobListener() {
-            @Override
-            public void progress(UUID job, long done, long total, Phase ph) {}
-
-            @Override
-            public void finished(JobResult r) {
-                result[0] = r;
-            }
-        };
         executor.submit(new JobRequest<>(request.owner(), request.world(), request.program(), request.writeOptions(),
-                request.permits(), request.mayLoadChunks(), request.seed(), listener, request.records()));
+                request.permits(), request.mayLoadChunks(), request.seed(), listener(result), request.records()));
         for (int tick = 0; tick < 1000 && result[0] == null; tick++) {
             executor.tick();
             executor.endTick();
@@ -279,9 +302,55 @@ class HeightPermitJobTest {
         return result[0];
     }
 
+    /** A listener keeping the job's result in {@code result[0]}. */
+    private static JobListener listener(JobResult[] result) {
+        return new JobListener() {
+            @Override
+            public void progress(UUID job, long done, long total, Phase ph) {}
+
+            @Override
+            public void finished(JobResult r) {
+                result[0] = r;
+            }
+        };
+    }
+
     private static EditExecutor.Settings settings() {
-        return new EditExecutor.Settings(1_000_000_000L, 1_000_000, 0.4, 2, 8, 32, 64, UnloadedPolicy.REFUSE, 64,
+        return settings(1_000_000);
+    }
+
+    /** At most {@code maxBlocksPerTick} cells written per tick (a section then spans several slices). */
+    private static EditExecutor.Settings settings(long maxBlocksPerTick) {
+        return new EditExecutor.Settings(1_000_000_000L, maxBlocksPerTick, 0.4, 2, 8, 32, 64, UnloadedPolicy.REFUSE, 64,
                 1024);
+    }
+
+    /** A scatter commit of {@code plan} (each skipped or cut-short placement counted once in its conflicts). */
+    private ConflictCountingProgram commit(MultiPaste plan) {
+        UUID planId = UUID.randomUUID();
+        return new ConflictCountingProgram(OpCompiler.compile(new OpSpec.ScatterCommit(planId), new CompileContext() {
+            @Override
+            public StateSpace states() {
+                return states;
+            }
+
+            @Override
+            public Optional<SourceBlocks> source(SourceRef ref) {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<MultiPaste> scatterPlan(UUID id) {
+                return id.equals(planId) ? Optional.of(plan) : Optional.empty();
+            }
+        }));
+    }
+
+    /** A column of {@code height} dirt cells, anchored at its foot. */
+    private SourceBlocks pillar(int height) {
+        BlockBuffer cells = new BlockBuffer();
+        for (int y = 0; y < height; y++) cells.set(0, y, 0, dirt);
+        return new SourceBlocks(cells, new BlockPos(1, height, 1), BlockPos.ORIGIN);
     }
 
     /** The platform the executor needs for blocks only, over {@link #world}; anything else is not supported. */

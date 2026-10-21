@@ -111,18 +111,22 @@ public interface BiomeWork {
          */
         boolean mayChange(int qx, int qy, int qz) {
             int x = (qx << 2) + 2, y = (qy << 2) + 2, z = (qz << 2) + 2;
-            PermitBounds.check(bounds, x, y, z, "biome work");
+            PermitBounds.check(bounds, null, x, y, z, "biome work");
             int lowest = bounds.min().y() >> 2, highest = bounds.max().y() >> 2;
             // A quart outside the bounds (only when the check is off) has no answer: left alone.
             if (qy < lowest || qy > highest) return false;
             long column = ColumnPlan.pack(x, z);
             long[] allowed = permitted.get(column);
             if (allowed == null) {
-                ChunkPermit permit = permits.column(x, z, bounds.min().y(), bounds.max().y());
+                int minY = bounds.min().y(), maxY = bounds.max().y();
+                ChunkPermit permit = permits.column(x, z, minY, maxY);
                 if (permit == null) permit = ChunkPermit.DENY;
+                Box asked = new Box(new BlockPos(x, minY, z), new BlockPos(x, maxY, z));
                 allowed = new long[(highest - lowest + 64) >> 6];
                 for (int q = lowest; q <= highest; q++) {
-                    if (permit.allows(x, (q << 2) + 2, z)) allowed[(q - lowest) >> 6] |= 1L << (q - lowest);
+                    int centre = (q << 2) + 2;
+                    PermitBounds.check(asked, permit, x, centre, z, "biome work");
+                    if (permit.allows(x, centre, z)) allowed[(q - lowest) >> 6] |= 1L << (q - lowest);
                 }
                 permitted.put(column, allowed);
             }

@@ -138,6 +138,7 @@ class ChunkPermitsTest {
     @Test
     void rectangleMustStayInOneChunk() {
         assertThrows(IllegalArgumentException.class, () -> ChunkPermits.evaluate(0, 0, 16, 0, (x, z) -> true));
+        assertThrows(IllegalArgumentException.class, () -> ChunkPermits.evaluate(3, 0, 2, 0, (x, z) -> true));
     }
 
     // ------------------------------------------------------------------ three dimensions (protection limited in height)

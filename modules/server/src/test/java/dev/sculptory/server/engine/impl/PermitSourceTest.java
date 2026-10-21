@@ -3,6 +3,7 @@ package dev.sculptory.server.engine.impl;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.BlockPos;
@@ -108,5 +109,11 @@ class PermitSourceTest {
         assertFalse(lowerLayer.mayChange(3, 12, 3), "beyond the permit's heights");
         PermitSource none = (cx, cz) -> null;
         assertFalse(none.mayChange(0, 0, 0), "no permit: denied");
+        // A source of its own answers column() from its chunk permit: asked for heights its per-cell permit has no layers
+        // for, the check the tests run with fails it instead of letting the missing heights be denied silently.
+        assertTrue(lowerLayer.column(3, 3, 10, 11).allows(3, 10, 3));
+        assertThrows(IllegalStateException.class, () -> lowerLayer.column(3, 3, 8, 11));
+        assertThrows(IllegalStateException.class, () -> lowerLayer.column(3, 3, 10, 12));
+        assertTrue(PermitSource.ALLOW_ALL.column(3, 3, -64, 319).allows(3, 0, 3), "a compact permit answers any height");
     }
 }
