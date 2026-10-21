@@ -18,7 +18,6 @@ import dev.sculptory.core.tinker.EntityView;
 import dev.sculptory.core.tinker.SignText;
 import dev.sculptory.core.tinker.TinkerKind;
 import dev.sculptory.core.tinker.TinkerProperties;
-import dev.sculptory.mc.perm.McPermissionService;
 import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.mc.world.EntityTypeRules;
 import dev.sculptory.mc.world.EntityWriter;
@@ -35,6 +34,7 @@ import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.RecordSink;
 import dev.sculptory.server.platform.EntityPlacer;
+import dev.sculptory.server.platform.PlatformPermissions;
 import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.TileSanitizer;
 import java.io.IOException;
@@ -86,9 +86,9 @@ final class TinkerEdits implements TinkerService<ServerPlayer> {
     private static final int MAX_DETAIL_CHARS = 300;
 
     private final EngineEditService<ServerPlayer, ServerLevel> service;
-    private final EngineRuntime runtime;
+    private final McHost runtime;
 
-    TinkerEdits(EngineEditService<ServerPlayer, ServerLevel> service, EngineRuntime runtime) {
+    TinkerEdits(EngineEditService<ServerPlayer, ServerLevel> service, McHost runtime) {
         this.service = Objects.requireNonNull(service);
         this.runtime = Objects.requireNonNull(runtime);
     }
@@ -119,7 +119,7 @@ final class TinkerEdits implements TinkerService<ServerPlayer> {
                     + clip(live < 0 ? "an unknown state" : states.format(live)) + ")");
         }
         HolderLookup.Provider registries = world.registryAccess();
-        McPermissionService permissions = runtime.permissions();
+        PlatformPermissions<ServerPlayer, ServerLevel> permissions = runtime.permissions();
         boolean operatorNbt = permissions.mayWriteOperatorNbt(player);
         BlockEntityData tile = null;
         boolean textChanged = false;
@@ -304,7 +304,7 @@ final class TinkerEdits implements TinkerService<ServerPlayer> {
         if (!McEntities.restorable(target.nbt())) {
             throw new EditRejected(RejectReason.INVALID, "the edited entity's data is too large");
         }
-        McPermissionService permissions = runtime.permissions();
+        PlatformPermissions<ServerPlayer, ServerLevel> permissions = runtime.permissions();
         // Protection where the edited entity would stand, as for entities a job places; its chunk must be loaded.
         Predicate<Entity> allowed = placed -> {
             BlockPos cell = McEntities.cell(placed);
@@ -440,7 +440,7 @@ final class TinkerEdits implements TinkerService<ServerPlayer> {
     /** {@code use} and {@code region}, with editing enabled. */
     private void requireAllowed(ServerPlayer player) throws EditRejected {
         if (!runtime.config().editingEnabled) throw new EditRejected(RejectReason.DISABLED);
-        McPermissionService permissions = runtime.permissions();
+        PlatformPermissions<ServerPlayer, ServerLevel> permissions = runtime.permissions();
         for (Perm node : new Perm[] {Perm.USE, Perm.REGION}) {
             if (!permissions.has(player, node)) throw new EditRejected(RejectReason.NO_PERMISSION, node.node());
         }

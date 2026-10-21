@@ -3,7 +3,6 @@ package dev.sculptory.mc.engine.impl;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.nav.Landing;
 import dev.sculptory.mc.net.ServerNet;
-import dev.sculptory.mc.perm.McPermissionService;
 import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.protocol.v2.C2S;
@@ -12,6 +11,7 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.Perm;
+import dev.sculptory.server.platform.PlatformPermissions;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -63,7 +63,7 @@ public final class NavigateService {
     }
 
     /** Decides the request and carries it out: the player moved to the spot, or the refusal's notice sent. */
-    public static S2C.NavigateResult navigate(EngineRuntime runtime, ServerPlayer player, C2S.Navigate request) {
+    public static S2C.NavigateResult navigate(McHost runtime, ServerPlayer player, C2S.Navigate request) {
         Decision decision = decide(runtime, player, request);
         if (!decision.landed()) {
             ServerNet.sendNotice(player, decision.notice());
@@ -87,11 +87,11 @@ public final class NavigateService {
     }
 
     /** Where the request would put the player, or why not; changes nothing. */
-    public static Decision decide(EngineRuntime runtime, ServerPlayer player, C2S.Navigate request) {
+    public static Decision decide(McHost runtime, ServerPlayer player, C2S.Navigate request) {
         Objects.requireNonNull(runtime);
         Objects.requireNonNull(player);
         Objects.requireNonNull(request);
-        McPermissionService permissions = runtime.permissions();
+        PlatformPermissions<ServerPlayer, ServerLevel> permissions = runtime.permissions();
         for (Perm node : List.of(Perm.USE, Perm.NAVIGATE)) {
             if (!permissions.has(player, node)) return Decision.refused(RejectReason.NO_PERMISSION, NEEDS_NODE, node.node());
         }

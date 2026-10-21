@@ -72,7 +72,7 @@ import org.slf4j.LoggerFactory;
  * <p>It is also the Minecraft {@link EngineHost}: the game as the shared engine sees it, over this
  * {@link MinecraftServer}.
  */
-public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel> {
+public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel>, McHost {
     /**
      * Each world's biomes ({@link #biomes}). The value holds its world, so a weak map would never drop it: the entry is
      * removed when the world unloads ({@link ServerLoader#onWorldUnload}). Server thread only.
