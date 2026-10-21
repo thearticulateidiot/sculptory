@@ -42,3 +42,22 @@ tasks.withType(JavaCompile).configureEach {
 // Nothing to publish or run from here.
 tasks.named('jar') { enabled = false }
 tasks.named('remapJar') { enabled = false }
+
+// The GameTests every loader runs (src/gametest): compiled here against vanilla Minecraft and the mod's code with no
+// loader API, so the compiler proves the tests need none. Each loader module compiles these sources into its own test
+// mod, beside its implementation of GameTestLoader (the few things a test needs from a loader) and its metadata.
+// src/fidelity (the mod-fidelity GameTests) is shared the same way but compiled only by the loader modules: it builds
+// against each loader's own build of Farmer's Delight, whose classes differ between the two.
+sourceSets {
+    gametest {
+        def mod = sourceSets.main.output + sourceSets.main.compileClasspath
+        compileClasspath += mod
+        runtimeClasspath += mod
+    }
+}
+
+dependencies {
+    gametestCompileOnly "net.fabricmc:sponge-mixin:${rootProject.sponge_mixin_version}"
+}
+
+tasks.named('check') { dependsOn tasks.named('gametestClasses') }

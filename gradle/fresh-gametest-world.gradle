@@ -1,0 +1,120 @@
+// The fresh-world logic of the GameTest runs, shared by modules/fabric and modules/neoforge (apply from: this file;
+// it adds the closure ext.freshGameTestWorld(File runDir), which a task calls in doLast).
+import java.nio.channels.FileChannel
+import java.nio.channels.OverlappingFileLockException
+import java.nio.file.FileVisitResult
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
+
+// Every GameTest run starts from a fresh world. Tests work in regions thousands of blocks away
+// at random offsets, so a world kept between runs only grows; at ~18,000 region files its chunk I/O made a timing test
+// fail. The old world is moved aside and deleted before the run, unless a process still holds it (a GameTest server
+// that is running: its session.lock is locked, or the folder can't be moved); then the run stops and says so.
+// Nothing here follows a link. A symbolic link or a junction (a Windows reparse point: `isOther` when read without
+// following links) where the world or a leftover belongs is refused; inside a world one is removed as the link itself,
+// never descended into, so nothing outside the run folder can be deleted.
+def isLinkOrJunction = { Path path ->
+    def attributes = Files.readAttributes(path, BasicFileAttributes, LinkOption.NOFOLLOW_LINKS)
+    attributes.isSymbolicLink() || attributes.isOther()
+}
+def refuseLink = { Path path ->
+    if (isLinkOrJunction(path)) {
+        throw new GradleException("${path} is a symbolic link or junction, not a GameTest world, so it is left alone. " +
+                "Remove it by hand, then run the tests again.")
+    }
+}
+// Deletes a folder tree without following links (Files.walkFileTree follows none unless asked; a junction still reads as
+// a directory, so preVisitDirectory removes it as a link and skips it). Returns the paths it could not delete.
+def deleteTree = { Path root ->
+    List<Path> failed = []
+    Files.walkFileTree(root, new SimpleFileVisitor<Path>() {
+        @Override
+        FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attributes) {
+            if (dir == root || !(attributes.isSymbolicLink() || attributes.isOther())) return FileVisitResult.CONTINUE
+            try {
+                Files.delete(dir)
+            } catch (IOException e) {
+                failed << dir
+            }
+            return FileVisitResult.SKIP_SUBTREE
+        }
+
+        @Override
+        FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+            try {
+                Files.delete(file)
+            } catch (IOException e) {
+                failed << file
+            }
+            return FileVisitResult.CONTINUE
+        }
+
+        @Override
+        FileVisitResult visitFileFailed(Path file, IOException e) {
+            failed << file
+            return FileVisitResult.CONTINUE
+        }
+
+        @Override
+        FileVisitResult postVisitDirectory(Path dir, IOException e) {
+            try {
+                Files.delete(dir)
+            } catch (IOException notEmpty) {
+                failed << dir
+            }
+            return FileVisitResult.CONTINUE
+        }
+    })
+    failed
+}
+ext.freshGameTestWorld = { File runDir ->
+    Path run = runDir.toPath()
+    Path world = run.resolve('world')
+    // Leftovers of earlier runs whose deletion was cut short.
+    if (Files.isDirectory(run, LinkOption.NOFOLLOW_LINKS)) {
+        Files.list(run).withCloseable { entries ->
+            entries.filter { it.fileName.toString().startsWith('world.old-') }.toList().each { Path old ->
+                refuseLink(old)
+                if (!deleteTree(old).isEmpty()) {
+                    logger.warn("Could not delete all of ${old} yet; it is tried again before the next GameTest run")
+                }
+            }
+        }
+    }
+    if (!Files.exists(world, LinkOption.NOFOLLOW_LINKS)) return
+    refuseLink(world)
+    Path lock = world.resolve('session.lock')
+    if (Files.exists(lock, LinkOption.NOFOLLOW_LINKS)) {
+        boolean held
+        try {
+            def channel = FileChannel.open(lock, StandardOpenOption.WRITE)
+            try {
+                def acquired = channel.tryLock()
+                held = acquired == null
+                acquired?.release()
+            } finally {
+                channel.close()
+            }
+        } catch (IOException | OverlappingFileLockException e) {
+            held = true
+        }
+        if (held) {
+            throw new GradleException("The GameTest world ${world} is in use by a running process (its session.lock " +
+                    "is locked). Stop that GameTest server, then run the tests again.")
+        }
+    }
+    Path old = run.resolve("world.old-${System.currentTimeMillis()}")
+    try {
+        Files.move(world, old)
+    } catch (IOException e) {
+        throw new GradleException("Could not move the GameTest world ${world} aside (${e}); a process may still " +
+                "have files in it open. Close it, then run the tests again.", e)
+    }
+    if (!deleteTree(old).isEmpty()) {
+        logger.warn("Could not delete all of ${old}; it is tried again before the next GameTest run")
+    }
+}
