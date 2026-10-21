@@ -1,5 +1,6 @@
 package dev.sculptory.server.engine.impl;
 
+import dev.sculptory.protocol.v2.S2C;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Objects;
@@ -40,6 +41,11 @@ public record HistorySnapshot(boolean canUndo, boolean canRedo, List<String> und
     /** The next redo's label, or {@code ""}. */
     public String redoLabel() {
         return redoLabels.isEmpty() ? "" : redoLabels.get(0);
+    }
+
+    /** This history as the protocol message every platform sends ({@code S2C.HistoryState}). */
+    public S2C.HistoryState toMessage() {
+        return new S2C.HistoryState(canUndo, canRedo, undoLabel(), redoLabel(), bytes, undoLabels, redoLabels);
     }
 
     /**

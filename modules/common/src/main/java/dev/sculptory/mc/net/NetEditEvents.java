@@ -1,7 +1,6 @@
 package dev.sculptory.mc.net;
 
 import dev.sculptory.core.brush.SymmetricStep;
-import dev.sculptory.mc.engine.impl.EditServiceHost;
 import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.engine.impl.EditEvents;
@@ -13,7 +12,7 @@ import net.minecraft.server.level.ServerPlayer;
 public final class NetEditEvents implements EditEvents<ServerPlayer> {
     @Override
     public void historyChanged(ServerPlayer player, HistorySnapshot snapshot) {
-        ServerNet.sendHistoryState(player, EditServiceHost.toHistoryState(snapshot));
+        ServerNet.sendHistoryState(player, snapshot.toMessage());
     }
 
     @Override

@@ -43,7 +43,6 @@ import dev.sculptory.server.engine.impl.AckSink;
 import dev.sculptory.server.engine.impl.EditEvents;
 import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
-import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.library.Library;
@@ -457,12 +456,6 @@ public final class EditServiceHost {
         return service == null ? null : service.runtime().states();
     }
 
-    /** The protocol form of a history snapshot. */
-    public static S2C.HistoryState toHistoryState(HistorySnapshot s) {
-        return new S2C.HistoryState(s.canUndo(), s.canRedo(), s.undoLabel(), s.redoLabel(), s.bytes(), s.undoLabels(),
-                s.redoLabels());
-    }
-
     /** Whether {@code service} is the engine of {@code server} (its platform is that server's runtime). */
     private static boolean runs(EngineEditService<ServerPlayer, ServerLevel> service, MinecraftServer server) {
         return service.runtime() instanceof EngineRuntime runtime && runtime.server() == server;
@@ -552,7 +545,7 @@ public final class EditServiceHost {
 
         @Override
         public S2C.HistoryState historyState(ServerPlayer player) {
-            return find(player.getServer()).map(service -> toHistoryState(service.history(player))).orElse(null);
+            return find(player.getServer()).map(service -> service.history(player).toMessage()).orElse(null);
         }
     }
 
