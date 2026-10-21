@@ -5,6 +5,8 @@ import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.loader.ServerLoader;
 import dev.sculptory.mc.net.Frame;
+import dev.sculptory.mc.world.McInternals;
+import dev.sculptory.mc.world.WidenedMcInternals;
 import dev.sculptory.server.engine.Perm;
 import java.nio.file.Path;
 import java.util.List;
@@ -105,9 +107,12 @@ public final class NeoForgeServerLoader implements ServerLoader {
                 event.addNodes(List.<PermissionNode<?>>copyOf(permissions.nodes())));
     }
 
-    /** Makes the loader (once per JVM) and installs it in {@link Loaders}; idempotent. */
+    /** Makes the loader (once per JVM) and installs it in {@link Loaders}, with the game internals read through the access transformer
+     * ({@link WidenedMcInternals}); idempotent.
+     */
     public static synchronized NeoForgeServerLoader install(IEventBus modBus) {
         if (instance == null) instance = new NeoForgeServerLoader(modBus);
+        McInternals.install(WidenedMcInternals.INSTANCE);
         Loaders.installServer(instance);
         return instance;
     }

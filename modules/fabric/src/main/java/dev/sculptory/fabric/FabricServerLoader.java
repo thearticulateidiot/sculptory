@@ -5,6 +5,8 @@ import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.loader.ServerLoader;
 import dev.sculptory.mc.net.Frame;
+import dev.sculptory.mc.world.McInternals;
+import dev.sculptory.mc.world.WidenedMcInternals;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.function.BiConsumer;
@@ -60,9 +62,12 @@ public final class FabricServerLoader implements ServerLoader {
         PayloadTypeRegistry.playS2C().register(Frame.S2C_ID, Frame.S2C_CODEC);
     }
 
-    /** Makes the loader (once per JVM) and installs it in {@link Loaders}; idempotent. */
+    /** Makes the loader (once per JVM) and installs it in {@link Loaders}, with the game internals read through the access widener
+     * ({@link WidenedMcInternals}); idempotent.
+     */
     public static synchronized FabricServerLoader install() {
         if (instance == null) instance = new FabricServerLoader();
+        McInternals.install(WidenedMcInternals.INSTANCE);
         Loaders.installServer(instance);
         return instance;
     }

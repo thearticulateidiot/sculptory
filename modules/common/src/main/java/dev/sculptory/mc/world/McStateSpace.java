@@ -273,12 +273,13 @@ public final class McStateSpace implements StateSpace {
         Arrays.fill(bodies, -1);
         Map<Block, Block> plantOfStem = new IdentityHashMap<>();
         Map<Block, Block> stemOfPlant = new IdentityHashMap<>();
+        McInternals internals = McInternals.get();
         for (Block block : BuiltInRegistries.BLOCK) {
-            if (!(block instanceof GrowingPlantBodyBlock plant) || plant.growthDirection != Direction.UP) continue;
+            if (!(block instanceof GrowingPlantBodyBlock plant) || internals.growthDirection(plant) != Direction.UP) continue;
             try {
                 Block stem = Block.byItem(plant.getCloneItemStack(null, BlockPos.ZERO, plant.defaultBlockState())
                         .getItem());
-                if (stem instanceof GrowingPlantHeadBlock && ((GrowingPlantHeadBlock) stem).growthDirection == Direction.UP) {
+                if (stem instanceof GrowingPlantHeadBlock head && internals.growthDirection(head) == Direction.UP) {
                     plantOfStem.put(stem, plant);
                     stemOfPlant.put(plant, stem);
                 }

@@ -34,6 +34,8 @@ public final class McWorldReader implements LiveReader {
     private final HolderLookup.Provider registries;
     private final int bottomY;
     private final int topY;
+    /** The palette containers' data, read through the platform's seam ({@link McInternals}). */
+    private final McInternals internals = McInternals.get();
 
     private long cachedPos = Long.MIN_VALUE;
     private LevelChunk cachedChunk;
@@ -88,7 +90,7 @@ public final class McWorldReader implements LiveReader {
         LevelChunk chunk = chunk(x >> 4, z >> 4);
         LevelChunkSection section = chunk.getSection(world.getSectionIndexFromSectionY(y >> 4));
         if (section == null) return states.air();
-        PalettedContainer.Data<BlockState> data = section.getStates().data;
+        McInternals.PaletteData<BlockState> data = internals.paletteData(section.getStates());
         BitStorage storage = data.storage();
         if (storage.getSize() != SectionBuffer.SIZE) {
             return Block.getId(section.getBlockState(x & 15, y & 15, z & 15));
@@ -99,9 +101,9 @@ public final class McWorldReader implements LiveReader {
     }
 
     /**
-     * The column section by section from the containers' own palettes and packed indices (widened access, as
-     * {@link #copyStates}): what {@link #get} gives for each cell, without finding the chunk, the section and the handle
-     * again for every one. A {@link SimpleBitStorage}'s words are read directly (vanilla's layout: {@code 64 / bits}
+     * The column section by section from the containers' own palettes and packed indices (through
+     * {@link McInternals}, as {@link #copyStates}): what {@link #get} gives for each cell, without finding the chunk,
+     * the section and the handle again for every one. A {@link SimpleBitStorage}'s words are read directly (vanilla's layout: {@code 64 / bits}
      * entries a word from the lowest bits up, none across words, as its own {@code get} reads them); a palette entry's
      * handle is looked up once per palette ({@link #paletteSlot}).
      */
@@ -122,7 +124,7 @@ public final class McWorldReader implements LiveReader {
                     continue;
                 }
                 PalettedContainer<BlockState> container = section.getStates();
-                PalettedContainer.Data<BlockState> data = container.data;
+                McInternals.PaletteData<BlockState> data = internals.paletteData(container);
                 BitStorage storage = data.storage();
                 if (storage.getSize() != SectionBuffer.SIZE) {
                     // Not vanilla's layout: the plain way.
@@ -252,13 +254,13 @@ public final class McWorldReader implements LiveReader {
     }
 
     /**
-     * Copies the states from the container's own palette and packed indices (widened access; vanilla's storage
-     * order {@code (y << 8) | (z << 4) | x} is the buffer's), mapping each palette entry to its handle once. Stale
-     * palette entries are never looked at unless a cell uses them. About ten times faster than reading every cell
-     * through {@code container.get}, which matters for copies (one server tick for the whole area).
+     * Copies the states from the container's own palette and packed indices (through {@link McInternals}; vanilla's
+     * storage order {@code (y << 8) | (z << 4) | x} is the buffer's), mapping each palette entry to its handle once.
+     * Stale palette entries are never looked at unless a cell uses them. About ten times faster than reading every
+     * cell through {@code container.get}, which matters for copies (one server tick for the whole area).
      */
     private void copyStates(PalettedContainer<BlockState> container, SectionBuffer into) {
-        PalettedContainer.Data<BlockState> data = container.data;
+        McInternals.PaletteData<BlockState> data = internals.paletteData(container);
         Palette<BlockState> palette = data.palette();
         BitStorage storage = data.storage();
         if (storage.getSize() != SectionBuffer.SIZE) {
