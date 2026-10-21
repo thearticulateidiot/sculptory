@@ -104,7 +104,7 @@ public final class PaperPermissions implements McPermissions {
         boolean any = false, all = true;
         for (int z = z0; z <= z1; z++) {
             for (int x = x0; x <= x1; x++) {
-                if (columnAllowed(cells, x, z, y0, y1)) {
+                if (cells.columnAllowed(x, z, y0, y1)) {
                     int bit = ((z & 15) << 4) | (x & 15);
                     bits[bit >>> 6] |= 1L << bit;
                     any = true;
@@ -115,14 +115,6 @@ public final class PaperPermissions implements McPermissions {
         }
         if (all) return ChunkPermit.ALLOW;
         return any ? new ChunkPermit.Columns(bits) : ChunkPermit.DENY;
-    }
-
-    /** The 2D bridge: a column is allowed when every cell of the box's height in it is. */
-    private static boolean columnAllowed(Protection.CellTest cells, int x, int z, int y0, int y1) {
-        for (int y = y0; y <= y1; y++) {
-            if (!cells.allowed(x, y, z)) return false;
-        }
-        return true;
     }
 
     private static ChunkPermit intersect(ChunkPermit a, ChunkPermit b, int cx, int cz) {

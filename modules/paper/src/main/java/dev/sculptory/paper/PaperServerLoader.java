@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.WeakHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
@@ -37,6 +39,8 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRegisterChannelEvent;
+import org.bukkit.event.player.PlayerUnregisterChannelEvent;
 import org.bukkit.event.world.WorldSaveEvent;
 import org.bukkit.event.world.WorldUnloadEvent;
 import org.bukkit.plugin.messaging.Messenger;
@@ -92,6 +96,10 @@ public final class PaperServerLoader implements ServerLoader, Listener {
     /** Frames sent per play connection before its client registered sculptory:s2c (weak, as above). */
     private final Map<ServerGamePacketListenerImpl, Integer> unregisteredSends =
             Collections.synchronizedMap(new WeakHashMap<>());
+    /** Players whose client registered sculptory:s2c (Bukkit's channel events; removed when they quit). */
+    private final Set<UUID> registeredS2C = ConcurrentHashMap.newKeySet();
+    /** An after-save run is queued for the next tick ({@link #onWorldSaveStarting}). */
+    private boolean afterSaveScheduled;
 
     PaperServerLoader(SculptoryPlugin plugin) {
         this.plugin = Objects.requireNonNull(plugin);
@@ -112,12 +120,28 @@ public final class PaperServerLoader implements ServerLoader, Listener {
             for (BiConsumer<ServerPlayer, byte[]> receiver : receivers) receiver.accept(handle, message);
         });
         messenger.registerOutgoingPluginChannel(plugin, S2C_CHANNEL);
+        // Players already online (the plugin enabled again): their registrations happened before the listener.
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (online.getListeningPluginChannels().contains(S2C_CHANNEL)) registeredS2C.add(online.getUniqueId());
+        }
     }
 
+    /**
+     * Unregisters the plugin channels and forgets every hook, so enabling the same plugin instance again (a plugin
+     * manager's disable then enable) starts from nothing: the hooks are registered again by the new start, and none
+     * of the old engine's survive. Bukkit drops the plugin's event listeners itself, Paper its lifecycle handlers.
+     */
     void disable() {
         Messenger messenger = Bukkit.getMessenger();
         messenger.unregisterIncomingPluginChannel(plugin);
         messenger.unregisterOutgoingPluginChannel(plugin);
+        for (List<?> hooks : List.of(starting, started, stopping, stopped, afterSave, startTick, startWorldTick, endTick,
+                worldUnload, join, disconnect, commands, receivers)) {
+            hooks.clear();
+        }
+        spokeC2S.clear();
+        unregisteredSends.clear();
+        registeredS2C.clear();
     }
 
     public boolean sendsThroughNms() {
@@ -200,13 +224,34 @@ public final class PaperServerLoader implements ServerLoader, Listener {
     public void onQuit(PlayerQuitEvent event) {
         ServerPlayer player = ((CraftPlayer) event.getPlayer()).getHandle();
         disconnect.forEach(hook -> hook.accept(player));
+        registeredS2C.remove(event.getPlayer().getUniqueId());
     }
 
-    /** Bukkit fires this per world before it saves; the common hook wants "after a save": close enough for now. */
+    /** The client registered a channel ({@code minecraft:register}): noted for {@code sculptory:s2c} only. */
     @EventHandler(priority = EventPriority.MONITOR)
-    public void onWorldSave(WorldSaveEvent event) {
-        MinecraftServer server = MinecraftServer.getServer();
-        afterSave.forEach(hook -> hook.accept(server));
+    public void onRegisterChannel(PlayerRegisterChannelEvent event) {
+        if (S2C_CHANNEL.equals(event.getChannel())) registeredS2C.add(event.getPlayer().getUniqueId());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onUnregisterChannel(PlayerUnregisterChannelEvent event) {
+        if (S2C_CHANNEL.equals(event.getChannel())) registeredS2C.remove(event.getPlayer().getUniqueId());
+    }
+
+    /**
+     * Bukkit fires {@link WorldSaveEvent} per world before the world is saved (Paper: before a full save; Moonrise's
+     * incremental chunk autosave fires nothing). {@link #onAfterSave} means after, so its hooks run on the next tick,
+     * once however many worlds were saved: a full save writes everything within the tick that fired the event.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onWorldSaveStarting(WorldSaveEvent event) {
+        if (afterSaveScheduled || afterSave.isEmpty()) return;
+        afterSaveScheduled = true;
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            afterSaveScheduled = false;
+            MinecraftServer server = MinecraftServer.getServer();
+            afterSave.forEach(hook -> hook.accept(server));
+        });
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -219,13 +264,17 @@ public final class PaperServerLoader implements ServerLoader, Listener {
 
     // ---- LoaderInfo ----
 
-    /** The plugins folder: the common code's config lives in {@code plugins/sculptory/} (FolderMigration). */
+    /**
+     * The plugin's data folder, {@code plugins/Sculptory}: the one folder of the plugin's own files (server.json, the
+     * library, the self-test report; PaperEditHost uses it directly, not the loaders' FolderMigration). Undo history
+     * stays with each world ({@code <world>/sculptory/history}), as on Fabric and NeoForge.
+     */
     @Override
     public Path configDir() {
-        return plugin.getDataFolder().toPath().toAbsolutePath().getParent();
+        return plugin.getDataFolder().toPath().toAbsolutePath();
     }
 
-    /** The plugins folder too, so the library is {@code plugins/sculptory/library/}. */
+    /** The data folder too ({@link #configDir}). */
     @Override
     public Path gameDir() {
         return configDir();
@@ -327,17 +376,19 @@ public final class PaperServerLoader implements ServerLoader, Listener {
     }
 
     /**
-     * Through the Messenger once the client registered the channel; before that (the join race, {@link S2CRoute}), or
-     * with {@code -Dsculptory.paper.s2c=nms}, as a vanilla custom-payload packet. Frames sent unregistered are counted
-     * per connection ({@link #sentBeforeRegistration}).
+     * Through the Messenger once the client registered the channel; before that (the join race, {@link S2CRoute}), with
+     * {@code -Dsculptory.paper.s2c=nms}, or while the plugin is being disabled (Bukkit marks it disabled before
+     * {@code onDisable} runs, and the Messenger then refuses every send with "Plugin must be enabled"), as a vanilla
+     * custom-payload packet. Frames sent unregistered are counted per connection ({@link #sentBeforeRegistration}).
      */
     @Override
     public void sendS2C(ServerPlayer player, byte[] frame) {
-        S2CRoute route = route(player);
+        boolean registered = registered(player);
+        S2CRoute route = route(player, registered);
         switch (route) {
             case MESSENGER -> player.getBukkitEntity().sendPluginMessage(plugin, S2C_CHANNEL, frame);
             case PACKET -> {
-                if (!registered(player) && player.connection != null) {
+                if (!registered && player.connection != null) {
                     unregisteredSends.merge(player.connection, 1, Integer::sum);
                 }
                 sendThroughNms(player, frame);
@@ -350,8 +401,12 @@ public final class PaperServerLoader implements ServerLoader, Listener {
 
     /** The route {@link #sendS2C} takes for this player now. */
     public S2CRoute route(ServerPlayer player) {
+        return route(player, registered(player));
+    }
+
+    private S2CRoute route(ServerPlayer player, boolean registered) {
         boolean spoke = player.connection != null && spokeC2S.contains(player.connection);
-        return S2CRoute.of(registered(player), spoke, nmsSend);
+        return S2CRoute.of(registered, spoke, nmsSend || !plugin.isEnabled());
     }
 
     /**
@@ -362,8 +417,13 @@ public final class PaperServerLoader implements ServerLoader, Listener {
         return player.connection == null ? 0 : unregisteredSends.getOrDefault(player.connection, 0);
     }
 
-    private static boolean registered(ServerPlayer player) {
-        return player.getBukkitEntity().getListeningPluginChannels().contains(S2C_CHANNEL);
+    /**
+     * Whether the client registered {@code sculptory:s2c}: kept from Bukkit's channel events (and read once for
+     * players online when the plugin is enabled), since {@code getListeningPluginChannels} copies the channel set on
+     * every call.
+     */
+    private boolean registered(ServerPlayer player) {
+        return registeredS2C.contains(player.getUUID());
     }
 
     /**

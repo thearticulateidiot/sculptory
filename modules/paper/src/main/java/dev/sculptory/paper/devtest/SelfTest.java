@@ -22,6 +22,7 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import dev.sculptory.server.engine.impl.EngineEditService;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,6 +31,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
@@ -38,26 +41,39 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.world.Container;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import org.bukkit.Bukkit;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.permissions.PermissionAttachment;
+import org.bukkit.scheduler.BukkitTask;
 
 /**
  * Dev-only adapter checks on a running Paper server, standing in for GameTests (Paper has none):
- * {@code /sculptory selftest [player]} from the console, or at start with {@code -Dsculptory.selftest=<report.xml>}
- * (plus {@code -Dsculptory.selftest.stop=true} to stop the server afterwards, for CI). The edits run through the engine
- * as a player: the named online player, or a fake one (a {@link ServerPlayer} with no connection, not op, given every
- * Sculptory node through a Bukkit permission attachment, so region protection applies to it). Results go to the log
- * and to a JUnit-style report ({@code plugins/sculptory/selftest-report.xml} by default).
+ * {@code /sculptory selftest [player]}, or at start with {@code -Dsculptory.selftest=<report.xml>} (plus
+ * {@code -Dsculptory.selftest.stop=true} to stop the server afterwards, for CI).
+ *
+ * <p>Safety: the commands exist only when the JVM was started with {@code -Dsculptory.selftest.enabled=true} or
+ * {@code -Dsculptory.selftest=...} ({@link #enabled}), and then only for the console or a player holding
+ * {@code sculptory.selftest} (default false; an operator does not get it). The edits run through a throwaway edit
+ * service with history in memory only, so nothing reaches the world's history store or a player's undo; every cell a
+ * check touches is put back as it was (the chest cell included); the region ids are new each run, and a run refuses
+ * to start if one exists. The checks start on a scheduled task; whatever they throw, the report is written, and with
+ * {@code sculptory.selftest.stop} the server stops (an overall timeout does the same), so CI never hangs.
+ *
+ * <p>The edits run as a player: the named online player, or a fake one (a {@link ServerPlayer} with no connection,
+ * not op, given every Sculptory node through a Bukkit permission attachment, so region protection applies to it).
+ * Results go to the log and to a JUnit-style report ({@code plugins/Sculptory/selftest-report.xml} by default).
  *
  * <p>Checks, each in its own corner of the overworld 300+ blocks from spawn (chunks held by plugin tickets):
  * <ol>
@@ -72,20 +88,33 @@ import org.bukkit.permissions.PermissionAttachment;
  * </ol>
  */
 public final class SelfTest {
+    /** The permission a player needs for the dev commands (plugin.yml: default false). */
+    public static final String PERMISSION = "sculptory.selftest";
     private static final int JOB_TIMEOUT_TICKS = 400;
+    /** The whole run's limit; past it the report says so and, in CI mode, the server stops. */
+    private static final int RUN_TIMEOUT_TICKS = 20 * 120;
+    private static final String REGION_PREFIX = "sculptory_selftest_";
     private static volatile boolean running;
 
     private final PaperEditHost host;
+    /** A throwaway edit service: history in memory only, shut down after the run. */
+    private final EngineEditService<ServerPlayer, ServerLevel> service;
     private final ServerLevel level;
     private final ServerPlayer player;
     private final PermissionAttachment attachment;
     private final List<Result> results = new ArrayList<>();
     private final List<long[]> tickets = new ArrayList<>();
+    /** Cells changed outside the engine (the chest), with what to put back. */
+    private final List<Runnable> restores = new ArrayList<>();
+    private final String runId = Long.toHexString(System.nanoTime() & 0xFFFFFFFFL);
     private final int baseX;
     private final int baseZ;
 
-    /** One check (pass or fail), or an information entry ({@code info}: reported, never failed). */
-    private record Result(String name, boolean passed, String detail, boolean info) {
+    /**
+     * One check (pass or fail; {@code error}: the run threw), or an information entry ({@code info}: reported, never
+     * failed).
+     */
+    private record Result(String name, boolean passed, String detail, boolean info, boolean error) {
     }
 
     private SelfTest(PaperEditHost host, ServerPlayer player, PermissionAttachment attachment) {
@@ -93,23 +122,35 @@ public final class SelfTest {
         this.level = host.engine().server().overworld();
         this.player = player;
         this.attachment = attachment;
+        this.service = new EngineEditService<>(host.engine(), null, null, null, null);
         BlockPos spawn = level.getSharedSpawnPos();
         // Chunk-aligned, well outside spawn protection.
         this.baseX = ((spawn.getX() >> 4) + 20) << 4;
         this.baseZ = ((spawn.getZ() >> 4) + 20) << 4;
     }
 
-    /** From the command: starts the checks (they take a few seconds) and reports to the source and the log. */
+    /** Whether the dev commands and the start-up run exist at all (JVM properties; never on by default). */
+    public static boolean enabled() {
+        String run = System.getProperty("sculptory.selftest");
+        return Boolean.getBoolean("sculptory.selftest.enabled") || (run != null && !run.isBlank());
+    }
+
+    /** Who may run them: the console, or a player with {@link #PERMISSION} (not implied by operator status). */
+    public static boolean allowed(CommandSourceStack source) {
+        if (!enabled()) return false;
+        ServerPlayer player = source.getPlayer();
+        return player == null ? source.hasPermission(4) : player.getBukkitEntity().hasPermission(PERMISSION);
+    }
+
+    /** From the command: starts the checks on the next tick and reports to the source and the log. */
     public static int run(PaperEditHost host, CommandSourceStack source, String playerName) {
         if (host == null) {
             source.sendFailure(Component.literal("The Sculptory engine is not running"));
             return 0;
         }
         Path report = reportPath();
-        start(host, playerName).thenAccept(summary -> {
-            write(report, summary);
-            source.sendSuccess(() -> Component.literal(summary.line() + " (report: " + report + ")"), false);
-        });
+        launch(host, playerName, report, summary ->
+                source.sendSuccess(() -> Component.literal(summary.line() + " (report: " + report + ")"), false));
         source.sendSuccess(() -> Component.literal("Sculptory self-test started"), false);
         return 1;
     }
@@ -119,8 +160,7 @@ public final class SelfTest {
         String property = System.getProperty("sculptory.selftest");
         if (property == null || property.isBlank()) return;
         Path report = property.equals("true") ? reportPath() : Path.of(property);
-        start(host, "").thenAccept(summary -> {
-            write(report, summary);
+        launch(host, "", report, summary -> {
             if (Boolean.getBoolean("sculptory.selftest.stop")) {
                 Sculptory.LOG.info("Sculptory self-test: stopping the server (sculptory.selftest.stop)");
                 Bukkit.shutdown();
@@ -128,30 +168,63 @@ public final class SelfTest {
         });
     }
 
+    /**
+     * Starts the run on a scheduled task. Whatever happens (a throw while starting, a failed check chain, the overall
+     * timeout), the report is written exactly once and {@code done} is called.
+     */
+    private static void launch(PaperEditHost host, String playerName, Path report, Consumer<Summary> done) {
+        AtomicBoolean finished = new AtomicBoolean();
+        Consumer<Summary> finish = summary -> {
+            if (!finished.compareAndSet(false, true)) return;
+            write(report, summary);
+            done.accept(summary);
+        };
+        SculptoryPlugin plugin = SculptoryPlugin.instance();
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            CompletableFuture<Summary> run;
+            try {
+                run = start(host, playerName);
+            } catch (Throwable e) {
+                Sculptory.LOG.error("Sculptory self-test: could not start", e);
+                run = CompletableFuture.failedFuture(e);
+            }
+            run.whenComplete((summary, error) -> finish.accept(error == null ? summary : Summary.error(error)));
+        });
+        Bukkit.getScheduler().runTaskLater(plugin, () -> finish.accept(Summary.error(new IllegalStateException(
+                "the self-test did not finish within " + RUN_TIMEOUT_TICKS / 20 + " s"))), RUN_TIMEOUT_TICKS);
+    }
+
     private static Path reportPath() {
-        return SculptoryPlugin.instance().getDataFolder().toPath().getParent().resolve("sculptory")
-                .resolve("selftest-report.xml");
+        return SculptoryPlugin.instance().getDataFolder().toPath().resolve("selftest-report.xml");
     }
 
     record Summary(List<Result> results) {
+        static Summary error(Throwable error) {
+            return new Summary(List.of(new Result("self-test run", false, String.valueOf(error), false, true)));
+        }
+
         List<Result> checks() {
             return results.stream().filter(r -> !r.info).toList();
         }
 
         long failures() {
-            return checks().stream().filter(r -> !r.passed).count();
+            return checks().stream().filter(r -> !r.passed && !r.error).count();
+        }
+
+        long errors() {
+            return checks().stream().filter(r -> r.error).count();
         }
 
         String line() {
             long infos = results.size() - checks().size();
-            return "Sculptory self-test: " + (checks().size() - failures()) + " of " + checks().size()
-                    + " checks passed (" + infos + " information entries)";
+            return "Sculptory self-test: " + (checks().size() - failures() - errors()) + " of " + checks().size()
+                    + " checks passed (" + infos + " information entries" + (errors() > 0 ? ", " + errors()
+                    + " errors" : "") + ")";
         }
     }
 
     private static CompletableFuture<Summary> start(PaperEditHost host, String playerName) {
         if (running) return CompletableFuture.failedFuture(new IllegalStateException("a self-test is already running"));
-        running = true;
         MinecraftServer server = host.engine().server();
         ServerPlayer player;
         PermissionAttachment attachment = null;
@@ -164,22 +237,31 @@ public final class SelfTest {
         } else {
             player = server.getPlayerList().getPlayerByName(playerName);
             if (player == null) {
-                running = false;
                 return CompletableFuture.failedFuture(new IllegalArgumentException(playerName + " is not online"));
             }
         }
+        running = true;
         SelfTest test = new SelfTest(host, player, attachment);
-        Sculptory.LOG.info("Sculptory self-test: starting as {} at x={} z={} (protection: {})",
+        // The throwaway service's housekeeping (stroke timeouts, history polls) while the run lasts.
+        BukkitTask ticker = Bukkit.getScheduler().runTaskTimer(SculptoryPlugin.instance(), test.service::tick, 1, 1);
+        Sculptory.LOG.info("Sculptory self-test: starting as {} at x={} z={} (protection: {}, run {})",
                 player.getGameProfile().getName(), test.baseX, test.baseZ,
-                host.engine().permissions().protection().name());
+                host.engine().permissions().protection().name(), test.runId);
         return test.fillUndo()
                 .thenCompose(v -> test.physicsOff())
                 .thenCompose(v -> test.worldGuard())
+                .thenCompose(v -> test.worldGuardFlags())
                 .thenCompose(v -> test.joinRace())
                 .handle((v, error) -> {
-                    if (error != null) test.record("aborted", false, String.valueOf(error));
-                    test.finish();
-                    running = false;
+                    if (error != null) test.results.add(new Result("aborted", false, String.valueOf(error), false, true));
+                    try {
+                        test.finish();
+                    } catch (RuntimeException e) {
+                        test.results.add(new Result("clean-up", false, String.valueOf(e), false, true));
+                    } finally {
+                        ticker.cancel();
+                        running = false;
+                    }
                     Summary summary = new Summary(List.copyOf(test.results));
                     Sculptory.LOG.info(summary.line());
                     return summary;
@@ -213,7 +295,9 @@ public final class SelfTest {
         hold(sand);
         hold(chest);
         int[] sandBefore = snapshot(sand);
-        // A chest with items, placed the vanilla way (not through the engine, so the undo below is the engine's).
+        // A chest with items, placed the vanilla way (not through the engine, so the undo below is the engine's), over
+        // whatever is there; that cell is put back as it was at the end of the run.
+        restoreLater(chestPos);
         level.setBlock(chestPos, Blocks.CHEST.defaultBlockState(), Block.UPDATE_ALL);
         if (level.getBlockEntity(chestPos) instanceof ChestBlockEntity box) box.setItem(0, new ItemStack(Items.DIAMOND, 7));
         int sandId = Block.getId(Blocks.SAND.defaultBlockState());
@@ -252,9 +336,6 @@ public final class SelfTest {
                             && box.getItem(0).is(Items.DIAMOND) ? box.getItem(0).getCount() : 0;
                     record("physics-off: chest undo with contents", back.is(Blocks.CHEST) && diamonds == 7,
                             back + ", " + diamonds + " diamonds in slot 0");
-                    // Emptied first and removed without callbacks: nothing drops.
-                    if (level.getBlockEntity(chestPos) instanceof ChestBlockEntity box) box.clearContent();
-                    PaperAccess.setBlockWithoutCallbacks(level, chestPos, Blocks.AIR.defaultBlockState());
                 });
     }
 
@@ -313,6 +394,54 @@ public final class SelfTest {
         return player.getGameProfile().getName();
     }
 
+    /**
+     * WorldGuard's place and break flags: two regions with {@code passthrough allow} (membership does not decide
+     * {@code build}) and {@code build} unset, one with {@code block-place deny}, one with {@code block-break deny}.
+     * WorldGuard's own listener refuses a player there; an edit both breaks and places, so a fill inside either must be
+     * refused too.
+     */
+    private CompletableFuture<Void> worldGuardFlags() {
+        if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) return CompletableFuture.completedFuture(null);
+        int x = baseX + 120 + 4, z = baseZ + 4;
+        String placeId = REGION_PREFIX + runId + "_place";
+        String breakId = REGION_PREFIX + runId + "_break";
+        if (WorldGuardTestRegions.exists(level, placeId) || WorldGuardTestRegions.exists(level, breakId)) {
+            return CompletableFuture.failedFuture(new IllegalStateException("a WorldGuard region " + placeId + " or "
+                    + breakId + " exists"));
+        }
+        Box placeBox = box(x, 101, z, x + 3, 102, z + 3);
+        Box breakBox = box(x + 6, 101, z, x + 9, 102, z + 3);
+        WorldGuardTestRegions.addHub(level, placeId, placeBox.min().x(), 101, placeBox.min().z(),
+                placeBox.max().x(), 102, placeBox.max().z(), true, false);
+        WorldGuardTestRegions.addHub(level, breakId, breakBox.min().x(), 101, breakBox.min().z(),
+                breakBox.max().x(), 102, breakBox.max().z(), false, true);
+        hold(placeBox);
+        int[] placeBefore = snapshot(placeBox);
+        int[] breakBefore = snapshot(breakBox);
+        int planks = Block.getId(Blocks.OAK_PLANKS.defaultBlockState());
+        return fill(placeBox, planks)
+                .thenCompose(result -> {
+                    int changed = countDiffering(placeBox, placeBefore);
+                    record("worldguard flags: block-place deny refuses a fill", changed == 0,
+                            result.changed() + " changed, " + result.skippedProtected() + " skipped as protected");
+                    return changed > 0 ? undo() : CompletableFuture.completedFuture(result);
+                })
+                .thenCompose(result -> fill(breakBox, planks))
+                .thenCompose(result -> {
+                    int changed = countDiffering(breakBox, breakBefore);
+                    record("worldguard flags: block-break deny refuses a fill", changed == 0,
+                            result.changed() + " changed, " + result.skippedProtected() + " skipped as protected");
+                    return changed > 0 ? undo() : CompletableFuture.completedFuture(result);
+                })
+                .whenComplete((v, error) -> {
+                    WorldGuardTestRegions.remove(level, placeId);
+                    WorldGuardTestRegions.remove(level, breakId);
+                    int left = countDiffering(placeBox, placeBefore) + countDiffering(breakBox, breakBefore);
+                    record("worldguard flags: everything restored", left == 0, left + " cells differ");
+                })
+                .thenApply(result -> (Void) null);
+    }
+
     private CompletableFuture<Void> worldGuard() {
         // Asked of Bukkit, not of WorldGuardTestRegions: that class must not load without WorldGuard.
         if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) {
@@ -325,7 +454,10 @@ public final class SelfTest {
         }
         // A region of 4x2x4 cells inside one chunk, y 101-102.
         int x = baseX + 80 + 4, z = baseZ + 4;
-        String id = "sculptory_selftest";
+        String id = REGION_PREFIX + runId;
+        if (WorldGuardTestRegions.exists(level, id)) {
+            return CompletableFuture.failedFuture(new IllegalStateException("a WorldGuard region " + id + " exists"));
+        }
         WorldGuardTestRegions.add(level, id, x, 101, z, x + 3, 102, z + 3);
         Box inside = box(x, 101, z, x + 3, 102, z + 3);
         Box beside = box(x + 6, 101, z, x + 9, 102, z + 3);
@@ -392,12 +524,12 @@ public final class SelfTest {
     // ================================================================== helpers
 
     private CompletableFuture<JobResult> fill(Box box, int state) {
-        return job("fill", listener -> host.service().run(player,
+        return job("fill", listener -> service.run(player,
                 new OpSpec.Fill(box, new Pattern.Single(state), CellMask.ANY), RunOptions.DEFAULT, listener));
     }
 
     private CompletableFuture<JobResult> undo() {
-        return job("undo", listener -> host.service().undo(player, ConflictPolicy.SKIP_CONFLICTS, listener));
+        return job("undo", listener -> service.undo(player, ConflictPolicy.SKIP_CONFLICTS, listener));
     }
 
     @FunctionalInterface
@@ -437,12 +569,12 @@ public final class SelfTest {
     }
 
     private void info(String name, String detail) {
-        results.add(new Result(name, true, detail, true));
+        results.add(new Result(name, true, detail, true, false));
         Sculptory.LOG.info("Sculptory self-test: INFO {}{}", name, detail.isEmpty() ? "" : " (" + detail + ")");
     }
 
     private void record(String name, boolean passed, String detail) {
-        results.add(new Result(name, passed, detail, false));
+        results.add(new Result(name, passed, detail, false, false));
         Sculptory.LOG.info("Sculptory self-test: {} {}{}", passed ? "PASS" : "FAIL", name,
                 detail.isEmpty() ? "" : " (" + detail + ")");
     }
@@ -458,10 +590,35 @@ public final class SelfTest {
         }
     }
 
+    /** Puts back what was changed outside the engine, lets go of the chunks, and shuts the throwaway service down. */
     private void finish() {
-        org.bukkit.World world = level.getWorld();
-        for (long[] t : tickets) world.removePluginChunkTicket((int) t[0], (int) t[1], SculptoryPlugin.instance());
-        if (attachment != null) attachment.remove();
+        try {
+            for (int i = restores.size() - 1; i >= 0; i--) restores.get(i).run();
+        } finally {
+            org.bukkit.World world = level.getWorld();
+            for (long[] t : tickets) world.removePluginChunkTicket((int) t[0], (int) t[1], SculptoryPlugin.instance());
+            if (attachment != null) attachment.remove();
+            service.shutdown();
+        }
+    }
+
+    /**
+     * Remembers cell {@code pos} as it is now (state and block entity) and puts it back at the end of the run, without
+     * callbacks, so nothing drops and nothing around it updates.
+     */
+    private void restoreLater(BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        BlockEntity entity = level.getBlockEntity(pos);
+        CompoundTag nbt = entity == null ? null : entity.saveWithFullMetadata(level.registryAccess());
+        restores.add(() -> {
+            if (level.getBlockEntity(pos) instanceof Container container) container.clearContent();
+            PaperAccess.setBlockWithoutCallbacks(level, pos, state);
+            if (nbt != null) {
+                BlockEntity restored = BlockEntity.loadStatic(pos, state, nbt, level.registryAccess());
+                if (restored != null) level.setBlockEntity(restored);
+            }
+            level.getChunkSource().blockChanged(pos);
+        });
     }
 
     private static Box box(int x0, int y0, int z0, int x1, int y1, int z1) {
@@ -510,7 +667,8 @@ public final class SelfTest {
     private static void write(Path report, Summary summary) {
         StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
                 .append("<testsuite name=\"sculptory-paper-selftest\" tests=\"").append(summary.checks().size())
-                .append("\" failures=\"").append(summary.failures()).append("\">\n");
+                .append("\" failures=\"").append(summary.failures()).append("\" errors=\"").append(summary.errors())
+                .append("\">\n");
         // Information entries are suite properties: reported, never a test.
         xml.append("  <properties>\n");
         for (Result r : summary.results) {
@@ -520,8 +678,16 @@ public final class SelfTest {
         }
         xml.append("  </properties>\n");
         for (Result r : summary.checks()) {
-            xml.append("  <testcase name=\"").append(escape(r.name)).append("\">");
-            if (!r.passed) xml.append("<failure message=\"").append(escape(r.detail)).append("\"/>");
+            // classname: the check group (the name before its first colon), as JUnit readers group test cases.
+            int colon = r.name.indexOf(':');
+            String group = colon < 0 ? r.name : r.name.substring(0, colon);
+            xml.append("  <testcase classname=\"sculptory.paper.").append(escape(group)).append("\" name=\"")
+                    .append(escape(r.name)).append("\">");
+            if (r.error) {
+                xml.append("<error message=\"").append(escape(r.detail)).append("\"/>");
+            } else if (!r.passed) {
+                xml.append("<failure message=\"").append(escape(r.detail)).append("\"/>");
+            }
             xml.append("<system-out>").append(escape(r.detail)).append("</system-out></testcase>\n");
         }
         xml.append("</testsuite>\n");

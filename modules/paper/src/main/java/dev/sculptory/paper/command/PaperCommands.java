@@ -6,6 +6,7 @@ import static net.minecraft.commands.Commands.literal;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import dev.sculptory.core.edit.CellMask;
@@ -14,7 +15,9 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.devtest.NetTest;
+import dev.sculptory.paper.devtest.RegionBench;
 import dev.sculptory.paper.devtest.SelfTest;
 import dev.sculptory.paper.engine.PaperEditHost;
 import dev.sculptory.protocol.v2.Phase;
@@ -36,6 +39,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import org.bukkit.Bukkit;
 
 /**
  * {@code /sculptory} on Paper (spike): fill, undo, redo and version as the loaders' command has them, plus the dev
@@ -51,7 +55,7 @@ public final class PaperCommands {
     }
 
     public void register(CommandDispatcher<CommandSourceStack> dispatcher, CommandBuildContext context) {
-        dispatcher.register(literal("sculptory")
+        LiteralArgumentBuilder<CommandSourceStack> root = literal("sculptory")
                 .then(literal("fill").requires(source -> allowed(source, Perm.ADMIN))
                         .then(argument("from", BlockPosArgument.blockPos())
                                 .then(argument("to", BlockPosArgument.blockPos())
@@ -59,22 +63,44 @@ public final class PaperCommands {
                                                 .executes(this::fill)))))
                 .then(literal("undo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, true)))
                 .then(literal("redo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, false)))
-                .then(literal("version").executes(this::version))
-                // Dev only, from the console (permission level 4): the adapter checks and the frame-size probe.
-                .then(literal("selftest").requires(source -> source.hasPermission(4))
-                        .executes(c -> SelfTest.run(host.get(), c.getSource(), "")))
-                .then(literal("selftest").requires(source -> source.hasPermission(4))
-                        .then(argument("player", EntityArgument.player())
-                                .executes(c -> SelfTest.run(host.get(), c.getSource(),
-                                        EntityArgument.getPlayer(c, "player").getGameProfile().getName()))))
-                .then(literal("nettest").requires(source -> source.hasPermission(4))
-                        .then(argument("player", EntityArgument.player())
-                                .then(argument("bytes", IntegerArgumentType.integer(1, 4 * 1024 * 1024))
-                                        .then(argument("route", StringArgumentType.word())
-                                                .executes(c -> NetTest.send(c.getSource(),
-                                                        EntityArgument.getPlayer(c, "player"),
-                                                        IntegerArgumentType.getInteger(c, "bytes"),
-                                                        StringArgumentType.getString(c, "route"))))))));
+                .then(literal("version").executes(this::version));
+        // Dev only: the adapter checks, the frame-size probe and the region benchmark exist only when the JVM was started
+        // for them (SelfTest.enabled), and then only for the console or a holder of sculptory.selftest (not ops).
+        if (SelfTest.enabled()) {
+            root.then(literal("selftest").requires(SelfTest::allowed)
+                            .executes(c -> SelfTest.run(host.get(), c.getSource(), ""))
+                            .then(argument("player", EntityArgument.player())
+                                    .executes(c -> SelfTest.run(host.get(), c.getSource(),
+                                            EntityArgument.getPlayer(c, "player").getGameProfile().getName()))))
+                    .then(literal("wgbench").requires(SelfTest::allowed)
+                            .executes(c -> RegionBench.run(host.get(), c.getSource(), 48))
+                            .then(argument("height", IntegerArgumentType.integer(1, 384))
+                                    .executes(c -> RegionBench.run(host.get(), c.getSource(),
+                                            IntegerArgumentType.getInteger(c, "height")))))
+                    // Disables and enables this plugin instance on the next tick (what a plugin manager does).
+                    .then(literal("reenable").requires(SelfTest::allowed).executes(c -> reenable(c.getSource())))
+                    .then(literal("nettest").requires(SelfTest::allowed)
+                            .then(argument("player", EntityArgument.player())
+                                    .then(argument("bytes", IntegerArgumentType.integer(1, 4 * 1024 * 1024))
+                                            .then(argument("route", StringArgumentType.word())
+                                                    .executes(c -> NetTest.send(c.getSource(),
+                                                            EntityArgument.getPlayer(c, "player"),
+                                                            IntegerArgumentType.getInteger(c, "bytes"),
+                                                            StringArgumentType.getString(c, "route")))))));
+        }
+        dispatcher.register(root);
+    }
+
+    private static int reenable(CommandSourceStack source) {
+        SculptoryPlugin plugin = SculptoryPlugin.instance();
+        Bukkit.getScheduler().runTask(plugin, () -> {
+            Sculptory.LOG.info("Sculptory: disabling and enabling the plugin again (dev)");
+            Bukkit.getPluginManager().disablePlugin(plugin);
+            Bukkit.getPluginManager().enablePlugin(plugin);
+            Sculptory.LOG.info("Sculptory: enabled again: {}", plugin.isEnabled());
+        });
+        source.sendSuccess(() -> Component.literal("Re-enabling Sculptory on the next tick"), false);
+        return 1;
     }
 
     private boolean allowed(CommandSourceStack source, Perm node) {

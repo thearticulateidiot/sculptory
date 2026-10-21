@@ -36,6 +36,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
+import org.bukkit.plugin.Plugin;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -85,26 +86,29 @@ public final class PaperEditHost {
         this.scatter = scatter;
     }
 
-    /** Where the config lives: {@code plugins/sculptory/server.json}. */
-    public static Path configFile() {
-        return FolderMigration.configDir().resolve("server.json");
+    /** Where the config lives: {@code plugins/Sculptory/server.json} (the plugin's data folder). */
+    public static Path configFile(Path dataFolder) {
+        return dataFolder.resolve("server.json");
     }
 
     /** Starts the engine on {@code server} and registers its hooks with {@code loader}; once per JVM. */
-    public static PaperEditHost start(MinecraftServer server, ServerLoader loader, Protection protection) {
-        SculptoryConfig config = SculptoryConfig.load(configFile());
+    public static PaperEditHost start(Plugin plugin, MinecraftServer server, ServerLoader loader,
+                                      Protection protection) {
+        Path dataFolder = plugin.getDataFolder().toPath().toAbsolutePath();
+        SculptoryConfig config = SculptoryConfig.load(configFile(dataFolder));
         PaperEngine engine = new PaperEngine(server, config, protection);
         engine.fluidTrails().install();
         EntityTypeRules.scan(server.overworld());
         var service = new EngineEditService<>(engine, ServerNet::jobListener, ServerNet::predictionApplied,
                 new NetEditEvents(), openHistory(server, engine));
-        var clips = new ServerClipboards<>(service, new Library(FolderMigration.gameDir().resolve("library"),
+        var clips = new ServerClipboards<>(service, new Library(dataFolder.resolve("library"),
                 config.toLibrarySettings()), ServerClipboards.newExecutor(), McDataFixHook.get());
         clips.start();
         var planning = new ServerScatter<>(service);
         engine.executor().addLane(planning.lane(), config.scatter.tickShare);
         PaperEditHost host = new PaperEditHost(engine, service, clips, planning);
         host.registerHooks(loader);
+        HistorySaveHooks.register(plugin, service);
         ServerNet.install(new NetFacade(service), clips, planning, TinkerService.disabled(), engine.permissions(),
                 () -> engine.config().toLimits(), engine::states);
         LOG.info("Sculptory engine started on Paper ({} block states, editing {}, protection: {})", engine.states().size(),
@@ -139,7 +143,11 @@ public final class PaperEditHost {
         });
         loader.onPlayerDisconnect(this::playerLeft);
         loader.onServerStopping(server -> stop());
-        loader.onServerStopped(server -> engine.close());
+        loader.onServerStopped(server -> {
+            engine.close();
+            // The plugin may be enabled again in this JVM: the next start installs the networking anew.
+            ServerNet.uninstall();
+        });
     }
 
     /** As the loaders' EditServiceHost: re-check permissions once more, end the scatter preview, let the player go. */
@@ -164,14 +172,21 @@ public final class PaperEditHost {
 
     /** Before the worlds are saved (plugin disable): jobs end, the history is written, the library closes. */
     private void stop() {
-        engine.shutdown();
-        scatter.shutdown();
-        service.shutdown();
-        if (!service.historyService().closeStore(HISTORY_CLOSE_MILLIS)) {
-            LOG.warn("Sculptory: saving the undo history did not finish within {} s; the last steps may be missing "
-                    + "after the restart", HISTORY_CLOSE_MILLIS / 1000);
+        // Whatever the shutdown steps throw (a send to a client, a job listener), the history is still written.
+        try {
+            engine.shutdown();
+            scatter.shutdown();
+            service.shutdown();
+        } finally {
+            try {
+                if (!service.historyService().closeStore(HISTORY_CLOSE_MILLIS)) {
+                    LOG.warn("Sculptory: saving the undo history did not finish within {} s; the last steps may be "
+                            + "missing after the restart", HISTORY_CLOSE_MILLIS / 1000);
+                }
+            } finally {
+                clipboards.shutdown();
+            }
         }
-        clipboards.shutdown();
     }
 
     /** The world's undo history store ({@code <world>/sculptory/history}), or null for memory only. */

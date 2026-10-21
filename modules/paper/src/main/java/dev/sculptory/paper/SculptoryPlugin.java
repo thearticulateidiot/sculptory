@@ -49,7 +49,7 @@ public final class SculptoryPlugin extends JavaPlugin {
                 loader.sendsThroughNms() ? "NMS packets" : "the Bukkit Messenger");
         loader.enable();
         loader.fireStarting(server);
-        host = PaperEditHost.start(server, loader, SculptoryProtection.detect());
+        host = PaperEditHost.start(this, server, loader, SculptoryProtection.detect());
         PaperCommands commands = new PaperCommands(() -> host);
         loader.onCommands(commands::register);
         loader.registerCommandsOnEveryBuild();
@@ -61,9 +61,17 @@ public final class SculptoryPlugin extends JavaPlugin {
     public void onDisable() {
         MinecraftServer server = MinecraftServer.getServer();
         if (loader != null) {
-            loader.fireStopping(server);
-            loader.fireStopped(server);
-            loader.disable();
+            // Each step runs even when one before it throws: the stop hooks close the history store, and the loader
+            // must forget its hooks for a later enable of this same instance.
+            try {
+                loader.fireStopping(server);
+            } finally {
+                try {
+                    loader.fireStopped(server);
+                } finally {
+                    loader.disable();
+                }
+            }
         }
         host = null;
     }

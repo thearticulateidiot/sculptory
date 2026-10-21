@@ -10,3 +10,8 @@ website: https://github.com/thearticulateidiot/sculptory
 # WorldGuard (a soft dependency) loads first, so its regions are known when the engine starts.
 softdepend: [WorldGuard, WorldEdit]
 load: POSTWORLD
+permissions:
+  # The dev-only self-test, network test and region benchmark (they exist only with -Dsculptory.selftest.enabled=true).
+  # Never granted by default, operators included.
+  sculptory.selftest:
+    default: false

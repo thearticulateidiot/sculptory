@@ -91,11 +91,27 @@ def commonPatches = [
         ],
 ].collectEntries { k, v -> [k, v.collect { [it[0].toString(), it[1].toString()] }] }
 
+// What the patches leave must stay as it is: a new use of these in the sources the plugin compiles would run on Paper
+// without the mixin or the light-engine call it relies on.
+def commonDriftGuards = [
+        [/waitForPendingTasks\(/, '0',
+         "Paper's (Moonrise's) light engine throws there: route it through PaperAccess.lightMarker (a patch)."],
+        [/setBlock\([^;]*UPDATE_KNOWN_SHAPE/, '0',
+         'A physics-off write needs PaperAccess.setBlockWithoutCallbacks on Paper (no mixin cancels onPlace/onRemove).'],
+        [/EditScope\.suppressPhysics\(\)/, '2',
+         "EditScope suppresses nothing on Paper (its mixin is absent): BlockWriter's two uses are covered, a new one is not."],
+].collect { it.collect { s -> s.toString() } }
+// Known detail, not patched: ClientSync and ServerNet resend whole chunks with the four-argument
+// ClientboundLevelChunkWithLightPacket constructor, which Paper marks @Deprecated @DoNotUse in favour of the one with
+// Anti-Xray's "modifyBlocks" flag. Paper's four-argument form passes modifyBlocks = true, so with Anti-Xray on a resent
+// chunk is obfuscated like any other; only the deprecation warning remains.
+
 def commonForPaper = tasks.register('commonForPaper', CommonOverlay) {
     description = 'Copies modules/common/src/main for the Paper plugin, with the Paper patches applied.'
     source = commonSources
     excludes = commonExcludes
     patches = commonPatches
+    limits = commonDriftGuards
     outputDir = layout.buildDirectory.dir('generated/commonForPaper')
 }
 
@@ -182,6 +198,13 @@ abstract class CommonOverlay extends DefaultTask {
     @Input
     abstract MapProperty<String, List<List<String>>> getPatches()
 
+    /**
+     * Drift guards, checked on the patched copy: [regex, most occurrences allowed, why]. Code lines only (comment lines
+     * are skipped). A new use in modules/common of something only a patch makes Paper-safe fails the build here.
+     */
+    @Input
+    abstract ListProperty<List<String>> getLimits()
+
     @OutputDirectory
     abstract DirectoryProperty getOutputDir()
 
@@ -211,6 +234,23 @@ abstract class CommonOverlay extends DefaultTask {
                 text = text.replace(edit[0], edit[1])
             }
             file.setText(text, 'UTF-8')
+        }
+        limits.getOrElse([]).each { List<String> limit ->
+            def pattern = java.util.regex.Pattern.compile(limit[0])
+            int max = limit[1] as int
+            List<String> found = []
+            out.eachFileRecurse(groovy.io.FileType.FILES) { File f ->
+                if (!f.name.endsWith('.java')) return
+                f.readLines('UTF-8').eachWithIndex { String line, int i ->
+                    String code = line.trim()
+                    if (code.startsWith('*') || code.startsWith('//') || code.startsWith('/*')) return
+                    if (pattern.matcher(line).find()) found << "${out.toPath().relativize(f.toPath())}:${i + 1}"
+                }
+            }
+            if (found.size() > max) {
+                throw new GradleException("Paper drift guard: ${found.size()} uses of /${limit[0]}/ in modules/common " +
+                        "(at most ${max}): ${found}. ${limit[2]}")
+            }
         }
     }
 }

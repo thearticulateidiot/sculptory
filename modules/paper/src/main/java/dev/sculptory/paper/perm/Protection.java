@@ -39,5 +39,16 @@ public interface Protection {
         CellTest DENY = (x, y, z) -> false;
 
         boolean allowed(int x, int y, int z);
+
+        /**
+         * Whether every cell of column (x, z) from {@code y0} to {@code y1} (inclusive) is allowed: the 2D permits'
+         * question. Implementations that know their geometry answer it without asking cell by cell.
+         */
+        default boolean columnAllowed(int x, int z, int y0, int y1) {
+            for (int y = y0; y <= y1; y++) {
+                if (!allowed(x, y, z)) return false;
+            }
+            return true;
+        }
     }
 }
