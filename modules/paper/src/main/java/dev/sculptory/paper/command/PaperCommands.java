@@ -9,6 +9,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.history.ConflictPolicy;
@@ -48,6 +49,8 @@ import org.bukkit.Bukkit;
  * protection, like an editor request; their outcome is logged.
  */
 public final class PaperCommands {
+    private static final SimpleCommandExceptionType NOT_RUNNING =
+            new SimpleCommandExceptionType(Component.literal("The Sculptory engine is not running"));
     private final Supplier<PaperEditHost> host;
 
     public PaperCommands(Supplier<PaperEditHost> host) {
@@ -103,6 +106,13 @@ public final class PaperCommands {
         return 1;
     }
 
+    /** The running engine; a command without one fails (the plugin is being enabled again, or failed to start). */
+    private PaperEditHost running(CommandSourceStack source) throws CommandSyntaxException {
+        PaperEditHost running = host.get();
+        if (running == null) throw NOT_RUNNING.create();
+        return running;
+    }
+
     private boolean allowed(CommandSourceStack source, Perm node) {
         ServerPlayer player = source.getPlayer();
         if (player == null) return source.hasPermission(4);
@@ -121,7 +131,8 @@ public final class PaperCommands {
                 new dev.sculptory.core.BlockPos(to.getX(), to.getY(), to.getZ()));
         OpSpec.Fill op = new OpSpec.Fill(box, new Pattern.Single(Block.getId(state)), CellMask.ANY);
         try {
-            JobTicket ticket = host.get().service().run(player, op, RunOptions.DEFAULT, logging(player, "Fill"));
+            JobListener log = logging(player, "Fill");
+            JobTicket ticket = running(source).service().run(player, op, RunOptions.DEFAULT, log);
             Sculptory.LOG.info("Sculptory fill by {}: {} {} -> {} started, job {}, {} cells", name(player), state,
                     from.toShortString(), to.toShortString(), ticket.jobId(), ticket.estimatedCells());
             source.sendSuccess(() -> Component.literal("Fill started: job " + ticket.jobId()), false);
@@ -140,8 +151,8 @@ public final class PaperCommands {
         try {
             JobListener log = logging(player, what);
             JobTicket ticket = undo
-                    ? host.get().service().undo(player, ConflictPolicy.SKIP_CONFLICTS, log)
-                    : host.get().service().redo(player, ConflictPolicy.SKIP_CONFLICTS, log);
+                    ? running(source).service().undo(player, ConflictPolicy.SKIP_CONFLICTS, log)
+                    : running(source).service().redo(player, ConflictPolicy.SKIP_CONFLICTS, log);
             Sculptory.LOG.info("Sculptory {} by {} started: {} (job {})", what.toLowerCase(), name(player),
                     ticket.label(), ticket.jobId());
             source.sendSuccess(() -> Component.literal(what + ": " + ticket.label()), false);

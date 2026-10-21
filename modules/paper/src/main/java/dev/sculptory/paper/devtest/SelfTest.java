@@ -5,7 +5,10 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
+import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.history.ConflictPolicy;
+import dev.sculptory.core.region.Region;
+import dev.sculptory.core.transform.Transform;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.net.ServerNet;
 import dev.sculptory.paper.PaperServerLoader;
@@ -29,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -43,6 +47,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.Container;
+import net.minecraft.world.entity.decoration.ArmorStand;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
@@ -251,6 +256,8 @@ public final class SelfTest {
                 .thenCompose(v -> test.physicsOff())
                 .thenCompose(v -> test.worldGuard())
                 .thenCompose(v -> test.worldGuardFlags())
+                .thenCompose(v -> test.entitiesUnderRegion())
+                .thenCompose(v -> test.biomesUnderRegion())
                 .thenCompose(v -> test.joinRace())
                 .handle((v, error) -> {
                     if (error != null) test.results.add(new Result("aborted", false, String.valueOf(error), false, true));
@@ -442,6 +449,162 @@ public final class SelfTest {
                 .thenApply(result -> (Void) null);
     }
 
+    /**
+     * Entities under a region limited in height (the review's finding: entities were judged at the box's lowest y). A
+     * 6x6x6 box at y 100-105 with two armor stands, at y 101 and y 104; 10 blocks east the same box has a region over
+     * its top three layers (y 103-105) with a third stand in it. A move there is refused as a whole (a move needs all of
+     * its source and destination). A stack (copy) with entities places the copy of the y-101 stand, places nothing in
+     * the region (the y-104 copy's cell is protected at its own height) and leaves the region's stand alone; the undo
+     * takes the copy away and still leaves the region as it was.
+     */
+    private CompletableFuture<Void> entitiesUnderRegion() {
+        if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) return CompletableFuture.completedFuture(null);
+        int x = baseX + 160, z = baseZ + 4;
+        Box area = box(x - 2, 98, z - 2, x + 18, 108, z + 8);
+        hold(area);
+        // Paper loads a chunk's entities a little after the chunk: wait, then clear stands an earlier run left.
+        return ticks(5).thenCompose(v -> {
+            for (ArmorStand stale : level.getEntitiesOfClass(ArmorStand.class, aabb(area))) stale.discard();
+            return entitiesUnderRegion(x, z);
+        });
+    }
+
+    private CompletableFuture<Void> entitiesUnderRegion(int x, int z) {
+        String id = REGION_PREFIX + runId + "_entities";
+        if (WorldGuardTestRegions.exists(level, id)) {
+            return CompletableFuture.failedFuture(new IllegalStateException("a WorldGuard region " + id + " exists"));
+        }
+        Box box = box(x, 100, z, x + 5, 105, z + 5);
+        Box dest = box(x + 10, 100, z, x + 15, 105, z + 5);
+        Box region = box(x + 10, 103, z, x + 15, 105, z + 5);
+        hold(box);
+        hold(dest);
+        int[] boxBefore = snapshot(box);
+        int[] destBefore = snapshot(dest);
+        WorldGuardTestRegions.add(level, id, x + 10, 103, z, x + 15, 105, z + 5);
+        stand(x + 2.5, 101, z + 2.5);
+        stand(x + 2.5, 104, z + 2.5);
+        ArmorStand guarded = stand(x + 14.5, 104, z + 4.5);
+        int air = Block.getId(Blocks.AIR.defaultBlockState());
+        OpSpec.Move move = new OpSpec.Move(new Region.Cuboid(box), new dev.sculptory.core.BlockPos(10, 0, 0),
+                Transform.IDENTITY, new Pattern.Single(air), EntityFilter.DECORATIONS);
+        OpSpec.Stack stack = new OpSpec.Stack(new Region.Cuboid(box), 10, 0, 0, 1, EntityFilter.DECORATIONS);
+        String refusal;
+        try {
+            JobTicket ticket = service.run(player, move, RunOptions.DEFAULT, RegionBench.NO_LISTENER);
+            service.cancel(player, ticket.jobId());
+            refusal = "admitted";
+        } catch (EditRejected e) {
+            refusal = e.getMessage();
+        }
+        record("entities: a move into the region is refused as a whole",
+                refusal.startsWith("PROTECTED") && stands(x + 12.5, 101, z + 2.5) == 0 && inRegion(region) == 1,
+                refusal);
+        return job("stack", listener -> service.run(player, stack, RunOptions.DEFAULT, listener))
+                .thenCompose(result -> {
+                    int copied = stands(x + 12.5, 101, z + 2.5);
+                    int placedInRegion = stands(x + 12.5, 104, z + 2.5);
+                    boolean guardedStays = guarded.isAlive() && stands(x + 14.5, 104, z + 4.5) == 1;
+                    record("entities: a copy places nothing in a region above the box's lowest layer",
+                            copied == 1 && placedInRegion == 0 && guardedStays && inRegion(region) == 1,
+                            "free stand copied " + copied + ", placed in the region " + placedInRegion
+                                    + ", the region's own stand untouched " + guardedStays + " (" + result.outcome()
+                                    + ", " + result.skippedProtected() + " cells skipped as protected)");
+                    return undo();
+                })
+                .thenCompose(result -> ticks(2).thenApply(v -> result))
+                .thenAccept(result -> {
+                    int copyLeft = stands(x + 12.5, 101, z + 2.5);
+                    int sources = stands(x + 2.5, 101, z + 2.5) + stands(x + 2.5, 104, z + 2.5);
+                    record("entities: the undo takes the copy away and leaves the region as it was",
+                            copyLeft == 0 && sources == 2 && inRegion(region) == 1 && guarded.isAlive(),
+                            "copy left " + copyLeft + ", source stands " + sources + ", stands in the region "
+                                    + inRegion(region) + " (only its own); undo " + result.outcome() + ", "
+                                    + result.changed() + " changed, " + result.skippedConflicts() + " conflicts");
+                })
+                .whenComplete((v, error) -> {
+                    WorldGuardTestRegions.remove(level, id);
+                    for (ArmorStand stand : level.getEntitiesOfClass(ArmorStand.class,
+                            aabb(box(x - 2, 98, z - 2, x + 18, 108, z + 8)))) {
+                        stand.discard();
+                    }
+                    int left = countDiffering(box, boxBefore) + countDiffering(dest, destBefore);
+                    record("entities: everything restored", left == 0, left + " cells differ");
+                });
+    }
+
+    private int inRegion(Box region) {
+        return level.getEntitiesOfClass(ArmorStand.class, aabb(region), ArmorStand::isAlive).size();
+    }
+
+    /**
+     * Biomes under a region limited in height: a biome fill over 8x16x8 (two quarts across, four up, y 96-111) with a
+     * region at y 101-102 over the first quart column. The quart whose centre (y 102) is in the region keeps its biome;
+     * the quarts above and below it and beside it are painted; the undo puts every quart back.
+     */
+    private CompletableFuture<Void> biomesUnderRegion() {
+        if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) return CompletableFuture.completedFuture(null);
+        int x = baseX + 200, z = baseZ + 4; // multiples of 4: whole quarts
+        String id = REGION_PREFIX + runId + "_biomes";
+        if (WorldGuardTestRegions.exists(level, id)) {
+            return CompletableFuture.failedFuture(new IllegalStateException("a WorldGuard region " + id + " exists"));
+        }
+        Box box = box(x, 96, z, x + 7, 111, z + 7);
+        hold(box);
+        WorldGuardTestRegions.add(level, id, x, 101, z, x + 3, 102, z + 3);
+        int qx = x >> 2, qz = z >> 2;
+        Map<String, String> before = quarts(qx, qz);
+        String cherry = "minecraft:cherry_grove";
+        OpSpec.BiomeFill fill = new OpSpec.BiomeFill(new Region.Cuboid(box), cherry, false);
+        return job("biome fill", listener -> service.run(player, fill, RunOptions.DEFAULT, listener))
+                .thenCompose(result -> {
+                    String kept = biome(qx, 25, qz), below = biome(qx, 24, qz), above = biome(qx, 26, qz);
+                    String beside = biome(qx + 1, 25, qz);
+                    record("biomes: the quart whose centre is in the region keeps its biome",
+                            kept.equals(before.get(qx + "," + 25 + "," + qz)) && !kept.equals(cherry)
+                                    && below.equals(cherry) && above.equals(cherry) && beside.equals(cherry),
+                            "protected quart " + kept + ", below " + below + ", above " + above + ", beside " + beside);
+                    return undo();
+                })
+                .thenAccept(result -> {
+                    Map<String, String> after = quarts(qx, qz);
+                    record("biomes: the undo puts every quart back", after.equals(before),
+                            after.equals(before) ? "all " + after.size() + " quarts as before" : "before " + before
+                                    + ", after " + after);
+                })
+                .whenComplete((v, error) -> WorldGuardTestRegions.remove(level, id));
+    }
+
+    private ArmorStand stand(double x, double y, double z) {
+        ArmorStand stand = new ArmorStand(level, x, y, z);
+        stand.setNoGravity(true);
+        level.addFreshEntity(stand);
+        return stand;
+    }
+
+    /** Armor stands whose block cell is the one holding (x, y, z). */
+    private int stands(double x, double y, double z) {
+        BlockPos cell = BlockPos.containing(x, y, z);
+        return level.getEntitiesOfClass(ArmorStand.class, new AABB(cell), stand -> stand.isAlive()).size();
+    }
+
+    /** The biome ids of the 2 x 4 x 2 quarts from (qx, 24, qz), keyed "qx,qy,qz". */
+    private Map<String, String> quarts(int qx, int qz) {
+        Map<String, String> out = new java.util.TreeMap<>();
+        for (int dx = 0; dx < 2; dx++) {
+            for (int qy = 24; qy < 28; qy++) {
+                for (int dz = 0; dz < 2; dz++) {
+                    out.put((qx + dx) + "," + qy + "," + (qz + dz), biome(qx + dx, qy, qz + dz));
+                }
+            }
+        }
+        return out;
+    }
+
+    private String biome(int qx, int qy, int qz) {
+        return level.getNoiseBiome(qx, qy, qz).unwrapKey().map(key -> key.location().toString()).orElse("?");
+    }
+
     private CompletableFuture<Void> worldGuard() {
         // Asked of Bukkit, not of WorldGuardTestRegions: that class must not load without WorldGuard.
         if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) {
@@ -499,18 +662,16 @@ public final class SelfTest {
                 })
                 .thenCompose(result -> fill(spanning, planks))
                 .thenCompose(result -> {
-                    // One box over the region's cells and the two layers above them. The region's cells must stay
-                    // whatever the permits; the layers above are the 3D gap: the 2D permits deny the region's columns
-                    // for the whole box height, the 3D permits (ws/permits-3d) must write them. An information entry, not
-                    // a check: it flips from "refused" to "written" when the 3D permits land.
+                    // One box over the region's 32 cells and the two layers above them: with per-cell (3D) permits only
+                    // the region's cells are skipped, and the layers above it in the same columns are written.
                     int regionChanged = countDiffering(inside, insideBefore);
-                    int layersWritten = countNot(layersAbove, planks) == 0 ? 1 : 0;
+                    int notWritten = countNot(layersAbove, planks);
                     record("worldguard: box over the region and above it keeps the region", regionChanged == 0,
                             regionChanged + " region cells differ");
-                    info("worldguard: layers above the region in the same box (3D gap)",
-                            layersWritten == 1 ? "written (3D permits)" : "refused: " + result.skippedProtected()
-                                    + " cells skipped as protected, " + result.changed()
-                                    + " changed (2D permits deny the region's columns for the whole box)");
+                    record("worldguard: only the region's cells are skipped (3D permits)",
+                            notWritten == 0 && result.skippedProtected() == 32 && result.changed() == 32,
+                            result.changed() + " changed, " + result.skippedProtected() + " skipped as protected, "
+                                    + notWritten + " cells above the region not written");
                     return result.changed() > 0 ? undo().thenApply(r -> (Void) null)
                             : CompletableFuture.<Void>completedFuture(null);
                 })

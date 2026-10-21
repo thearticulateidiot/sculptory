@@ -143,11 +143,7 @@ public final class PaperEditHost {
         });
         loader.onPlayerDisconnect(this::playerLeft);
         loader.onServerStopping(server -> stop());
-        loader.onServerStopped(server -> {
-            engine.close();
-            // The plugin may be enabled again in this JVM: the next start installs the networking anew.
-            ServerNet.uninstall();
-        });
+        loader.onServerStopped(server -> engine.close());
     }
 
     /** As the loaders' EditServiceHost: re-check permissions once more, end the scatter preview, let the player go. */

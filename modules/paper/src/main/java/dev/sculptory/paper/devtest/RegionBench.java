@@ -48,7 +48,7 @@ public final class RegionBench {
     private static final int SIZE = 200;
     private static final int REGIONS = 20;
     private static final int RUNS = 5;
-    private static final JobListener NO_LISTENER = new JobListener() {
+    static final JobListener NO_LISTENER = new JobListener() {
         @Override
         public void progress(UUID job, long done, long total, Phase ph) {
         }

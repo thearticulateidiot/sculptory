@@ -1,6 +1,7 @@
 package dev.sculptory.paper;
 
 import dev.sculptory.mc.Sculptory;
+import dev.sculptory.mc.net.ServerNet;
 import dev.sculptory.mc.world.McInternals;
 import dev.sculptory.paper.command.PaperCommands;
 import dev.sculptory.paper.devtest.SelfTest;
@@ -69,6 +70,9 @@ public final class SculptoryPlugin extends JavaPlugin {
                 try {
                     loader.fireStopped(server);
                 } finally {
+                    // After ServerNet's own stopped hook closed its sessions: the plugin may be enabled again in this
+                    // JVM, and the next start installs the networking anew.
+                    ServerNet.uninstall();
                     loader.disable();
                 }
             }

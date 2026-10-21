@@ -5,6 +5,7 @@ import com.destroystokyo.paper.event.server.ServerTickStartEvent;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
+import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.loader.ServerLoader;
 import io.netty.buffer.Unpooled;
@@ -176,6 +177,23 @@ public final class PaperServerLoader implements ServerLoader, Listener {
      */
     @SuppressWarnings("unchecked")
     void registerCommandsOnEveryBuild() {
+        try {
+            registerLifecycleCommands();
+        } catch (IllegalStateException refused) {
+            // Paper takes lifecycle handlers only while plugins are first enabled; this same instance enabled again
+            // (a plugin manager's disable then enable) gets the old route: straight into the dispatcher, which a
+            // later /minecraft:reload drops until the server restarts.
+            MinecraftServer server = MinecraftServer.getServer();
+            CommandBuildContext context = CommandBuildContext.simple(server.registryAccess(),
+                    server.getWorldData().enabledFeatures());
+            commands.forEach(hook -> hook.accept(server.getCommands().getDispatcher(), context));
+            Sculptory.LOG.warn("Sculptory: enabled again after start, so its commands are registered directly ({}); a "
+                    + "/minecraft:reload removes them until the server restarts", refused.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void registerLifecycleCommands() {
         plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
             MinecraftServer server = MinecraftServer.getServer();
             CommandDispatcher<CommandSourceStack> scratch = new CommandDispatcher<>();
