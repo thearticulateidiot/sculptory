@@ -27,6 +27,13 @@ import net.neoforged.bus.api.IEventBus;
  * as the Fabric mod's {@code SculptoryClientMod} (the block-change stamp, the client state space, protocol v2
  * networking, the editor, builder mode, {@code /flyspeed} and the dev-only harnesses). The Fabric layer's
  * development-only {@code /bsclient} commands are typed on Fabric's client command API and are not ported.
+ *
+ * <p>Thread: NeoForge constructs mods on a mod-loading worker thread, not on the render thread where Fabric runs its
+ * client entrypoint. That is fine for this wiring as it stands: it registers hooks and keys (keys are only collected
+ * here and registered in {@code RegisterKeyMappingsEvent}), creates plain objects and executors, and only stores
+ * {@code Minecraft.getInstance()}; the window, GL, fonts and options are first touched by the hooks, which run on the
+ * render thread (the editor builds its UI on first use, {@code McWorldDraw} its buffers on its first frame). Anything
+ * added here that needs the render thread belongs in a hook or in {@code FMLClientSetupEvent.enqueueWork}.
  */
 public final class SculptoryNeoForgeClient {
     private SculptoryNeoForgeClient() {
