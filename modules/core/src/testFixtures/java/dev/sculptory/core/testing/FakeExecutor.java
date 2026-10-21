@@ -13,7 +13,7 @@ import it.unimi.dsi.fastutil.ints.IntArrayList;
 /**
  * Runs an {@link EditProgram} against a {@link FakeWorld} the way the server executor does, section by
  * section: capture the section, compute, then write the result (state and tile) cell by cell, asking
- * {@link EditProgram#mayReplace} against the live cell (state and tile) and skipping columns the {@link Hooks} deny, and
+ * {@link EditProgram#mayReplace} against the live cell (state and tile) and skipping cells the {@link Hooks} deny, and
  * record the change.
  */
 public final class FakeExecutor {
@@ -23,7 +23,7 @@ public final class FakeExecutor {
      * @param conflicts conflicts reported through {@link ComputeContext#conflicts}
      * @param sections sections computed
      * @param refused cells {@link EditProgram#mayReplace} refused
-     * @param denied cells skipped because {@link Hooks#mayWrite} denies their column
+     * @param denied cells skipped because {@link Hooks#mayWrite} denies them
      */
     public record Result(EditRecord record, long written, long conflicts, int sections, long refused, long denied) {}
 
@@ -31,8 +31,8 @@ public final class FakeExecutor {
     public interface Hooks {
         Hooks NONE = new Hooks() {};
 
-        /** Whether the job may write column (x, z), as protection and the world border decide on a server. */
-        default boolean mayWrite(int x, int z) {
+        /** Whether the job may write cell (x, y, z), as protection and the world border decide on a server. */
+        default boolean mayWrite(int x, int y, int z) {
             return true;
         }
 
@@ -87,8 +87,8 @@ public final class FakeExecutor {
             }
 
             @Override
-            public boolean mayWrite(int x, int z) {
-                return hooks.mayWrite(x, z);
+            public boolean mayWrite(int x, int y, int z) {
+                return hooks.mayWrite(x, y, z);
             }
 
             @Override
@@ -115,7 +115,7 @@ public final class FakeExecutor {
             for (int k = 0; k < cells.size(); k++) {
                 int i = cells.getInt(k);
                 int x = ox + SectionBuffer.localX(i), y = oy + SectionBuffer.localY(i), z = oz + SectionBuffer.localZ(i);
-                if (!hooks.mayWrite(x, z)) {
+                if (!hooks.mayWrite(x, y, z)) {
                     denied++;
                     continue;
                 }

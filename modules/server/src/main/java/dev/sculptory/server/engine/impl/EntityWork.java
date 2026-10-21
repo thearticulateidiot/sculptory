@@ -4,7 +4,7 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.server.platform.EntityPlacer;
 import dev.sculptory.server.platform.WorldEntities;
 import dev.sculptory.server.platform.WriteOptions;
-import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Object2BooleanOpenHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -91,7 +91,7 @@ public interface EntityWork {
         final RecordSink records;
         private final PermitSource permits;
         private final InWorld inWorld;
-        private final Long2BooleanOpenHashMap seen = new Long2BooleanOpenHashMap();
+        private final Object2BooleanOpenHashMap<BlockPos> seen = new Object2BooleanOpenHashMap<>();
         /** Entities left alone because their block may not be changed (protection, the world border). */
         long protectedEntities;
         /** Entities kept because they changed since the step (undo and redo). */
@@ -123,20 +123,19 @@ public interface EntityWork {
 
         /**
          * Whether the job may change an entity belonging to block {@code cell}: the player's right to change that
-         * column ({@link PermitSource#mayChangeColumn}, asked for the column itself, since an entity found by its UUID
-         * may have wandered outside the chunks the job was admitted for), the world border and the build limit.
+         * cell ({@link PermitSource#mayChange}, asked for the cell itself at its own height, since an entity found by its
+         * UUID may have wandered outside the chunks and heights the job was admitted for), the world border and the build
+         * limit.
          */
         boolean mayChange(BlockPos cell) {
-            int x = cell.x(), z = cell.z();
-            long column = ColumnPlan.pack(x, z);
             boolean allowed;
-            if (seen.containsKey(column)) {
-                allowed = seen.get(column);
+            if (seen.containsKey(cell)) {
+                allowed = seen.getBoolean(cell);
             } else {
-                allowed = permits.mayChangeColumn(x, z);
-                seen.put(column, allowed);
+                allowed = permits.mayChange(cell.x(), cell.y(), cell.z());
+                seen.put(cell, allowed);
             }
-            return allowed && inWorld.contains(x, cell.y(), z);
+            return allowed && inWorld.contains(cell.x(), cell.y(), cell.z());
         }
 
         /**

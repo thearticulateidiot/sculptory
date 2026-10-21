@@ -13,8 +13,11 @@ public interface PermissionService<P, W> {
     boolean has(P p, Perm node);
 
     /**
-     * Protection for the part of {@code bounds} inside chunk (cx, cz), from {@code canPlayerModifyAt} on its
-     * four corner columns: all allowed, all denied, or per-column when mixed.
+     * Protection for the part of {@code bounds} inside chunk (cx, cz): all allowed, all denied, per column when mixed
+     * ({@link ChunkPermit.Columns}, protection the same at every height: {@code canPlayerModifyAt} on its four corner
+     * columns, {@code ChunkPermits.forChunk} with a column test), or per cell over the bounds' heights
+     * ({@link ChunkPermit.Cells}, protection limited in height: {@code ChunkPermits.forChunk} with a cell test).
+     * Consumers ask {@link ChunkPermit#allows(int, int, int)} for each cell, at its own height.
      */
     ChunkPermit chunk(P p, W w, int cx, int cz, Box bounds);
 }

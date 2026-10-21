@@ -122,7 +122,7 @@ class GrownScatterTest {
     }
 
     private ScatterPlanner planner(Spec spec, List<Clipboard> sources, List<FeatureCatalog.FeatureDef> defs,
-                                   FakeWorld world, long maxCells, long maxGrown, ScatterPlanner.ColumnGuard guard) {
+                                   FakeWorld world, long maxCells, long maxGrown, ScatterPlanner.ProtectionGuard guard) {
         return new ScatterPlanner(spec.build(), sources, world, maxCells, ScatterPlanner.DEFAULT_MAX_WORK, guard, null,
                 ScatterPlanner.SurvivalCheck.ALWAYS, null, new ScatterPlanner.Features(defs, grower(world), maxGrown));
     }
@@ -131,7 +131,7 @@ class GrownScatterTest {
     private ScatterPlan trees(FakeWorld world, long seed) {
         Spec spec = Spec.box(0, 0, 39, 39).spacing(3).density(new Density.Fraction(0.2)).seed(seed);
         ScatterPlan plan = planner(spec, List.of(placeholder()), List.of(oak), world, Long.MAX_VALUE, 1 << 20,
-                ScatterPlanner.ColumnGuard.ALLOW_ALL).finish();
+                ScatterPlanner.ProtectionGuard.ALLOW_ALL).finish();
         assertBalanced(plan);
         return plan;
     }
@@ -279,7 +279,7 @@ class GrownScatterTest {
         world.setLoaded(2, 0, false); // x 32-47
         Spec spec = Spec.box(0, 0, 31, 15).spacing(3).density(new Density.Fraction(0.3)).seed(5L);
         ScatterPlan plan = planner(spec, List.of(placeholder()), List.of(oak), world, Long.MAX_VALUE, 1 << 20,
-                (x, z) -> z < 12).finish();
+                (x, y, z) -> z < 12).finish();
         assertBalanced(plan);
         assertTrue(plan.count(Outcome.PROTECTED) > 0, plan.toString());
         assertTrue(plan.count(Outcome.UNLOADED) > 0, plan.toString());
@@ -306,7 +306,7 @@ class GrownScatterTest {
         ScatterPlanner.CellGuard guard = (x, y, z) -> z != 7 && z != 19;
         FakeWorld world = world();
         ScatterPlan masked = planner(spec, sources, defs, world, Long.MAX_VALUE, 1 << 20,
-                ScatterPlanner.ColumnGuard.ALLOW_ALL).cellGuard(guard).finish();
+                ScatterPlanner.ProtectionGuard.ALLOW_ALL).cellGuard(guard).finish();
         assertBalanced(masked);
         assertTrue(masked.count(Outcome.MASKED) > 0, masked.toString());
         for (GrownFeature cluster : masked.clusters()) {
@@ -330,7 +330,7 @@ class GrownScatterTest {
         // Planned without the mask, committed under it.
         FakeWorld other = world();
         ScatterPlan open = planner(spec, sources, defs, other, Long.MAX_VALUE, 1 << 20,
-                ScatterPlanner.ColumnGuard.ALLOW_ALL).finish();
+                ScatterPlanner.ProtectionGuard.ALLOW_ALL).finish();
         BitSet denied = open.denied(guard, f.states);
         assertTrue(denied.cardinality() > 0 && denied.cardinality() < open.placements().size(), denied.toString());
         long expected = 0;
@@ -371,12 +371,12 @@ class GrownScatterTest {
     void theGrownCellCapRefusesThePlanAndTheCellBudgetSkipsTrees() {
         Spec spec = Spec.box(0, 0, 39, 39).spacing(3).density(new Density.Fraction(0.2)).seed(7L);
         ScatterPlanner capped = planner(spec, List.of(placeholder()), List.of(oak), world(), Long.MAX_VALUE, 200,
-                ScatterPlanner.ColumnGuard.ALLOW_ALL);
+                ScatterPlanner.ProtectionGuard.ALLOW_ALL);
         ScatterPlanner.GrownCellsExceeded refused = assertThrows(ScatterPlanner.GrownCellsExceeded.class, capped::finish);
         assertEquals(200, refused.cap());
 
         ScatterPlan budget = planner(spec, List.of(placeholder()), List.of(oak), world(), 300, 1 << 20,
-                ScatterPlanner.ColumnGuard.ALLOW_ALL).finish();
+                ScatterPlanner.ProtectionGuard.ALLOW_ALL).finish();
         assertTrue(budget.count(Outcome.BUDGET) > 0);
         assertTrue(budget.totalCells() <= 300);
         assertFalse(budget.placements().isEmpty());
@@ -387,7 +387,7 @@ class GrownScatterTest {
         Spec spec = Spec.box(0, 0, 39, 39).spacing(3).density(new Density.Fraction(0.2)).seed(7L);
         FakeWorld world = world();
         ScatterPlan capped = new ScatterPlanner(spec.build(), List.of(placeholder()), world, Long.MAX_VALUE,
-                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ColumnGuard.ALLOW_ALL, null,
+                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ProtectionGuard.ALLOW_ALL, null,
                 ScatterPlanner.SurvivalCheck.ALWAYS, null,
                 new ScatterPlanner.Features(List.of(oak), grower(world), 1 << 20, 300)).finish();
         assertBalanced(capped);
@@ -414,7 +414,7 @@ class GrownScatterTest {
                 .variants(new Variant(0, 1), new Variant(1, 1));
         List<FeatureCatalog.FeatureDef> defs = Arrays.asList(oak, null);
         ScatterPlan plan = planner(spec, List.of(placeholder(), f.slab(3, 3, f.stone)), defs, world, Long.MAX_VALUE,
-                1 << 20, ScatterPlanner.ColumnGuard.ALLOW_ALL).finish();
+                1 << 20, ScatterPlanner.ProtectionGuard.ALLOW_ALL).finish();
         assertBalanced(plan);
         assertTrue(plan.count(Outcome.COLLISION) > 0, plan.toString());
         Map<Long, Integer> grown = new HashMap<>();

@@ -18,11 +18,11 @@ public interface ComputeContext {
     }
 
     /**
-     * Whether the job may write world column (x, z): the requester's protection and the world border. A program that
-     * decides about cells beyond the section it computes (a scatter commit skips a placement whole) asks it; the
-     * runner still guards every write itself. The default allows every column.
+     * Whether the job may write world cell (x, y, z): the requester's protection (which may differ with height) and the
+     * world border. A program that decides about cells beyond the section it computes (a scatter commit skips a placement
+     * whole) asks it; the runner still guards every write itself. The default allows every cell.
      */
-    default boolean mayWrite(int x, int z) {
+    default boolean mayWrite(int x, int y, int z) {
         return true;
     }
 

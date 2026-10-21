@@ -1373,7 +1373,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     }
 
     /**
-     * The first chunk ("cx,cz") of {@code columns} holding a column the player may not modify, or {@code null}. Each
+     * The first chunk ("cx,cz") of {@code columns} holding a cell the player may not modify, or {@code null}. Each
      * chunk's permit is asked for the smallest rectangle holding its columns (y from {@code bounds}); a permit mixed
      * over that rectangle is then checked column by column, so an L-shaped set of columns is judged by its own columns
      * whenever the permit service sees the mix (the four-corner sampling of {@code ChunkPermits} may not).
@@ -1400,13 +1400,18 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             if (minX > maxX) continue;
             Box rectangle = new Box(new BlockPos((cx << 4) + minX, bounds.min().y(), (cz << 4) + minZ),
                     new BlockPos((cx << 4) + maxX, bounds.max().y(), (cz << 4) + maxZ));
-            if (!allowsColumns(permissions.chunk(p, world, cx, cz, rectangle), held)) return cx + "," + cz;
+            if (!allowsColumns(permissions.chunk(p, world, cx, cz, rectangle), held, bounds.min().y(), bounds.max().y())) {
+                return cx + "," + cz;
+            }
         }
         return null;
     }
 
-    /** Whether the permit allows every column set in {@code held} (bit {@code ((z & 15) << 4) | (x & 15)}). */
-    static boolean allowsColumns(ChunkPermit permit, long[] held) {
+    /**
+     * Whether the permit allows every cell from {@code y0} to {@code y1} of every column set in {@code held} (bit
+     * {@code ((z & 15) << 4) | (x & 15)}).
+     */
+    static boolean allowsColumns(ChunkPermit permit, long[] held, int y0, int y1) {
         if (permit == null) return false;
         return switch (permit) {
             case ChunkPermit.Allow allow -> true;
@@ -1418,10 +1423,19 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 }
                 yield true;
             }
+            case ChunkPermit.Cells cells -> {
+                for (int bit = 0; bit < 256; bit++) {
+                    if ((held[bit >>> 6] & (1L << bit)) == 0) continue;
+                    for (int y = y0; y <= y1; y++) {
+                        if (!cells.allows(bit & 15, y, bit >>> 4)) yield false;
+                    }
+                }
+                yield true;
+            }
         };
     }
 
-    /** The first chunk ("cx,cz") holding a column of {@code box} the player may not modify, or {@code null}. */
+    /** The first chunk ("cx,cz") holding a cell of {@code box} the player may not modify, or {@code null}. */
     private String firstDenied(P p, W world, Box box) throws EditRejected {
         int minCx = box.min().x() >> 4, maxCx = box.max().x() >> 4;
         int minCz = box.min().z() >> 4, maxCz = box.max().z() >> 4;
@@ -1437,23 +1451,23 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         return null;
     }
 
-    /** Whether the permit allows every column of {@code box} inside chunk (cx, cz). */
+    /** Whether the permit allows every cell of {@code box} inside chunk (cx, cz). */
     static boolean allowsWholeRectangle(ChunkPermit permit, int cx, int cz, Box box) {
         if (permit == null) return false;
-        return switch (permit) {
-            case ChunkPermit.Allow allow -> true;
-            case ChunkPermit.Deny deny -> false;
-            case ChunkPermit.Columns columns -> {
-                int x0 = Math.max(box.min().x(), cx << 4), x1 = Math.min(box.max().x(), (cx << 4) + 15);
-                int z0 = Math.max(box.min().z(), cz << 4), z1 = Math.min(box.max().z(), (cz << 4) + 15);
-                for (int z = z0; z <= z1; z++) {
-                    for (int x = x0; x <= x1; x++) {
-                        if (!columns.allows(x, z)) yield false;
-                    }
+        if (permit instanceof ChunkPermit.Allow) return true;
+        if (permit instanceof ChunkPermit.Deny) return false;
+        int x0 = Math.max(box.min().x(), cx << 4), x1 = Math.min(box.max().x(), (cx << 4) + 15);
+        int z0 = Math.max(box.min().z(), cz << 4), z1 = Math.min(box.max().z(), (cz << 4) + 15);
+        // A column permit answers the same at every height: one layer is enough.
+        int y0 = box.min().y(), y1 = permit instanceof ChunkPermit.Columns ? y0 : box.max().y();
+        for (int y = y0; y <= y1; y++) {
+            for (int z = z0; z <= z1; z++) {
+                for (int x = x0; x <= x1; x++) {
+                    if (!permit.allows(x, y, z)) return false;
                 }
-                yield true;
             }
-        };
+        }
+        return true;
     }
 
     /** {@code box} cut to the world's build height ({@code INVALID} when nothing is left). */
@@ -2999,7 +3013,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     }
 
     /**
-     * Writes a step's cells: per-column protection and world border, physics off, recorded into the stroke. A chunk's
+     * Writes a step's cells: per-cell protection and world border, physics off, recorded into the stroke. A chunk's
      * permit covers the parts of the step's dab areas inside it ({@link #permitBounds}), so a copy far from the dab
      * is checked where it writes.
      */
@@ -3034,7 +3048,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         /** {@code tile}: the block entity the cell keeps (a state pattern changed a property of the same block), or null. */
         @Override
         public void set(int x, int y, int z, int handle, BlockEntityData tile) {
-            if (!permitFor(x >> 4, z >> 4).allows(x, z) || !runtime.insideBorder(stroke.world, x, z)) {
+            if (!permitFor(x >> 4, z >> 4).allows(x, y, z) || !runtime.insideBorder(stroke.world, x, z)) {
                 denied++;
                 return;
             }
@@ -3049,7 +3063,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         }
 
         /**
-         * A biome quart the Biome brush writes (protocol 6): its centre column's permit and the world border decide, as for
+         * A biome quart the Biome brush writes (protocol 6): its centre cell's permit and the world border decide, as for
          * a cell; recorded into the stroke when it changes, and sent to players at the tick's end.
          */
         @Override
@@ -3057,7 +3071,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             WorldBiomes biomes = stroke.biomes;
             if (biomes == null) return;
             int x = (qx << 2) + 2, y = (qy << 2) + 2, z = (qz << 2) + 2;
-            if (!permitFor(x >> 4, z >> 4).allows(x, z) || !runtime.insideBorder(stroke.world, x, z)
+            if (!permitFor(x >> 4, z >> 4).allows(x, y, z) || !runtime.insideBorder(stroke.world, x, z)
                     || !runtime.inBuildLimit(stroke.world, x, y, z) || !biomes.loaded(x >> 4, z >> 4)) {
                 denied++;
                 return;

@@ -31,7 +31,7 @@ public record MultiPaste(List<SourceBlocks> sources, List<Placement> placements,
      * Which world cells a placement may write. With any rule but {@link #ANY} (a scatter commit) the world is checked
      * when the program first reaches a placement, after the runner has loaded the placement's other chunks
      * ({@link EditProgram#readColumns}): if any of its cells no longer passes the rule (for example a chest was placed
-     * there since the preview), lies in a column the job may not write ({@link ComputeContext#mayWrite}: protection,
+     * there since the preview), is a cell the job may not write ({@link ComputeContext#mayWrite}: protection,
      * the world border) or in a chunk that is still not loaded, the whole placement is skipped, so nothing is
      * overwritten and no placement is left half built. Every write is then also guarded per cell, against the
      * section's captured content and against the cell's live content right before it is written

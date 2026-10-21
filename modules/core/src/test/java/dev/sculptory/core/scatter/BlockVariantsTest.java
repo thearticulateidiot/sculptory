@@ -189,7 +189,7 @@ class BlockVariantsTest {
         Spec spec = Spec.box(0, 0, 31, 31).density(new ScatterSettings.Density.Fraction(0.5)).seed(9);
         List<Clipboard> sources = List.of(BlockVariants.clipboard(f.states, poppy));
         ScatterPlan surviving = new ScatterPlanner(spec.build(), sources, world, Long.MAX_VALUE,
-                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ColumnGuard.ALLOW_ALL, null, evenX).finish();
+                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ProtectionGuard.ALLOW_ALL, null, evenX).finish();
         ScatterFixture.assertBalanced(surviving);
         assertTrue(surviving.placements().size() > 20, surviving.toString());
         assertTrue(surviving.count(Outcome.SURVIVAL) > 20, surviving.toString());
@@ -202,7 +202,7 @@ class BlockVariantsTest {
 
         asked.clear();
         ScatterPlan anywhere = new ScatterPlanner(spec.fit(Fit.DEFAULT.withSurvive(false)).build(), sources, world,
-                Long.MAX_VALUE, ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ColumnGuard.ALLOW_ALL, null, evenX).finish();
+                Long.MAX_VALUE, ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ProtectionGuard.ALLOW_ALL, null, evenX).finish();
         assertTrue(asked.isEmpty(), "asked with survive off");
         assertEquals(0, anywhere.count(Outcome.SURVIVAL));
         assertEquals(surviving.placements().size() + surviving.count(Outcome.SURVIVAL), anywhere.placements().size());
@@ -220,7 +220,7 @@ class BlockVariantsTest {
         Spec spec = Spec.box(0, 0, 31, 31);
         List<Clipboard> sources = List.of(BlockVariants.clipboard(f.states, poppy));
         ScatterPlan plan = new ScatterPlanner(spec.build(), sources, world, Long.MAX_VALUE,
-                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ColumnGuard.ALLOW_ALL, null, edges).finish();
+                ScatterPlanner.DEFAULT_MAX_WORK, ScatterPlanner.ProtectionGuard.ALLOW_ALL, null, edges).finish();
         ScatterFixture.assertBalanced(plan);
         assertEquals(4 * 32, plan.count(Outcome.UNLOADED));
         assertEquals(4 * 32, plan.count(Outcome.SURVIVAL), "another answer counts as SURVIVAL");

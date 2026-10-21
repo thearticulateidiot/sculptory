@@ -97,8 +97,8 @@ import java.util.Objects;
  * {@code density × 4096} buckets, about {@code candidates / (density × 4096)} each (the kept ranks are spread evenly
  * below the cut because splitmix64 mixes the coordinates); a target count keeps every rank and fills all 4096.
  *
- * <p>An optional {@link ColumnGuard} (the requester's protection) rejects candidates whose footprint reaches a
- * denied column as {@link Outcome#PROTECTED}. An optional {@link FootprintCache} shares footprints between planners.
+ * <p>An optional {@link ProtectionGuard} (the requester's protection) rejects candidates whose footprint reaches a
+ * denied cell as {@link Outcome#PROTECTED}. An optional {@link FootprintCache} shares footprints between planners.
  *
  * <p><b>Trees and features</b> ({@link Features}). A tree or feature
  * source has no footprint: when one of its candidates is reached in acceptance, the {@link Grower} grows it on the spot
@@ -121,15 +121,15 @@ public final class ScatterPlanner {
     public static final long DEFAULT_MAX_WORK = 1L << 25;
 
     /**
-     * Which world columns a placement may write, for example the requester's protection (spawn protection, claims,
-     * the world border). A candidate with a footprint cell in a denied column is rejected as
+     * Which world cells a placement may write, for example the requester's protection (spawn protection, claims,
+     * regions limited in height, the world border). A candidate with a footprint cell the guard denies is rejected as
      * {@link Outcome#PROTECTED}. Called on the planner's thread during acceptance.
      */
     @FunctionalInterface
-    public interface ColumnGuard {
-        ColumnGuard ALLOW_ALL = (x, z) -> true;
+    public interface ProtectionGuard {
+        ProtectionGuard ALLOW_ALL = (x, y, z) -> true;
 
-        boolean allows(int x, int z);
+        boolean allows(int x, int y, int z);
     }
 
     /**
@@ -346,7 +346,7 @@ public final class ScatterPlanner {
     private final boolean survive;
     private final double minSupportFraction;
     private final long variantSeed, transformSeed, heightSeed, featureSeed;
-    private final ColumnGuard guard;
+    private final ProtectionGuard guard;
     private CellGuard cellGuard = CellGuard.ALLOW_ALL;
     private final SurvivalCheck survival;
     private final Features features;
@@ -374,12 +374,12 @@ public final class ScatterPlanner {
     /** A planner without a column guard. */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells,
                           long maxWork) {
-        this(settings, sources, world, maxCells, maxWork, ColumnGuard.ALLOW_ALL);
+        this(settings, sources, world, maxCells, maxWork, ProtectionGuard.ALLOW_ALL);
     }
 
     /** A planner computing its own footprints. */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells,
-                          long maxWork, ColumnGuard guard) {
+                          long maxWork, ProtectionGuard guard) {
         this(settings, sources, world, maxCells, maxWork, guard, null);
     }
 
@@ -388,29 +388,29 @@ public final class ScatterPlanner {
      *     indexes this list
      * @param maxCells the cell budget: the sum of the accepted footprints never exceeds it
      * @param maxWork the acceptance work budget (see the class comment)
-     * @param guard the columns placements may write ({@link ColumnGuard#ALLOW_ALL} for any)
+     * @param guard the cells placements may write ({@link ProtectionGuard#ALLOW_ALL} for any)
      * @param footprintCache where to find and keep the sources' footprints, or {@code null}
      * @throws IllegalArgumentException if a variant names a missing source, a source has no blocks or a state
      *     outside the world's state space, the sources hold more than {@value #MAX_SOURCE_CELLS} cells, a mask
      *     names an unknown state, a box area lies outside the build height, or a budget is negative
      */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells,
-                          long maxWork, ColumnGuard guard, FootprintCache footprintCache) {
+                          long maxWork, ProtectionGuard guard, FootprintCache footprintCache) {
         this(settings, sources, world, maxCells, maxWork, guard, footprintCache, SurvivalCheck.ALWAYS);
     }
 
     /**
-     * As {@link #ScatterPlanner(ScatterSettings, List, WorldReader, long, long, ColumnGuard, FootprintCache)}, with
+     * As {@link #ScatterPlanner(ScatterSettings, List, WorldReader, long, long, ProtectionGuard, FootprintCache)}, with
      * the check that block variants could stay where they are placed (asked only with
      * {@link ScatterSettings.Fit#survive}). Every source goes on land.
      */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells,
-                          long maxWork, ColumnGuard guard, FootprintCache footprintCache, SurvivalCheck survival) {
+                          long maxWork, ProtectionGuard guard, FootprintCache footprintCache, SurvivalCheck survival) {
         this(settings, sources, world, maxCells, maxWork, guard, footprintCache, survival, null);
     }
 
     /**
-     * As {@link #ScatterPlanner(ScatterSettings, List, WorldReader, long, long, ColumnGuard, FootprintCache,
+     * As {@link #ScatterPlanner(ScatterSettings, List, WorldReader, long, long, ProtectionGuard, FootprintCache,
      * SurvivalCheck)}, knowing which sources are block variants: those go where their {@link BlockVariants#medium}
      * says, and column plants grow to the settings' {@link ScatterSettings.ColumnHeight}.
      *
@@ -421,13 +421,13 @@ public final class ScatterPlanner {
      *     state space or not a placeable block variant
      */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells,
-                          long maxWork, ColumnGuard guard, FootprintCache footprintCache, SurvivalCheck survival,
+                          long maxWork, ProtectionGuard guard, FootprintCache footprintCache, SurvivalCheck survival,
                           int[] blockStates) {
         this(settings, sources, world, maxCells, maxWork, guard, footprintCache, survival, blockStates, Features.NONE);
     }
 
     /**
-     * As {@link #ScatterPlanner(ScatterSettings, List, WorldReader, long, long, ColumnGuard, FootprintCache,
+     * As {@link #ScatterPlanner(ScatterSettings, List, WorldReader, long, long, ProtectionGuard, FootprintCache,
      * SurvivalCheck, int[])}, with trees and features: a source with a catalog entry in {@code features} is grown at
      * each of its spots by the grower instead of pasted (its entry in {@code sources} is a placeholder and is never
      * written; its block state is -1). See the class comment.
@@ -435,7 +435,7 @@ public final class ScatterPlanner {
      * @throws IllegalArgumentException also when {@code features} lists entries for another number of sources
      */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells,
-                          long maxWork, ColumnGuard guard, FootprintCache footprintCache, SurvivalCheck survival,
+                          long maxWork, ProtectionGuard guard, FootprintCache footprintCache, SurvivalCheck survival,
                           int[] blockStates, Features features) {
         this.features = Objects.requireNonNull(features);
         if (features != Features.NONE && features.size() != sources.size()) {
@@ -1007,7 +1007,7 @@ public final class ScatterPlanner {
         /**
          * A tree or feature candidate: its anchor's chunk must be loaded; then it is grown (seeded by its column,
          * reading the growths accepted so far before the world) and refused as the growth says, or when its cells would
-         * take the plan past its cell budget ({@link Outcome#BUDGET}), reach a chunk that is not loaded, a column the
+         * take the plan past its cell budget ({@link Outcome#BUDGET}), reach a chunk that is not loaded, a cell the
          * guard denies ({@link Outcome#PROTECTED}), a cell of a held or block placement or one holding a block entity,
          * or would make its cluster larger than {@link #MAX_CLUSTER_CELLS} ({@link Outcome#COLLISION}); past
          * {@link Features#maxCells} the whole plan is refused ({@link GrownCellsExceeded}). Cells it
@@ -1051,9 +1051,12 @@ public final class ScatterPlanner {
                     }
                     lastChunk = chunk;
                 }
-                if (guard != ColumnGuard.ALLOW_ALL) {
+            }
+            if (guard != ProtectionGuard.ALLOW_ALL) {
+                // Protection may differ with height: every cell the growth writes is asked.
+                for (int i = 0; i < n; i++) {
                     work++;
-                    if (!guard.allows(cx, cz)) {
+                    if (!guard.allows(grown.x(i), grown.y(i), grown.z(i))) {
                         reject(Outcome.PROTECTED);
                         return;
                     }
@@ -1202,18 +1205,12 @@ public final class ScatterPlanner {
                 }
             }
             int[] rxs = footprint.rx, rys = footprint.ry, rzs = footprint.rz;
-            if (guard != ColumnGuard.ALLOW_ALL) {
-                // One test per run of cells in the same column (a work unit each).
-                int lastX = 0, lastZ = 0;
-                boolean checked = false;
+            if (guard != ProtectionGuard.ALLOW_ALL) {
+                // One test per footprint cell (a work unit each): protection may differ with height.
                 for (int i = 0; i < footprint.cells; i++) {
-                    int cx = x + o.dx(rxs[i], rzs[i]), cz = z + o.dz(rxs[i], rzs[i]);
-                    if (checked && cx == lastX && cz == lastZ) continue;
+                    int rx = rxs[i], rz = rzs[i];
                     work++;
-                    if (!guard.allows(cx, cz)) return Outcome.PROTECTED;
-                    lastX = cx;
-                    lastZ = cz;
-                    checked = true;
+                    if (!guard.allows(x + o.dx(rx, rz), y + rys[i], z + o.dz(rx, rz))) return Outcome.PROTECTED;
                 }
             }
             for (int i = 0; i < footprint.cells; i++) {

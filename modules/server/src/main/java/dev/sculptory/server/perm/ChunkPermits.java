@@ -1,7 +1,10 @@
 package dev.sculptory.server.perm;
 
+import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.server.engine.ChunkPermit;
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * The per-chunk protection rule, independent of Minecraft: test the four corner columns
@@ -13,6 +16,11 @@ import dev.sculptory.server.engine.ChunkPermit;
  * sit inside the rectangle (or straddle one edge) without covering any corner. The rectangle column nearest the
  * spawn lies inside the square whenever the square and the rectangle intersect, so sampling it catches every such
  * case. Other protected areas (claims) that touch neither a corner nor the focus are still not detected.
+ *
+ * <p>The same rule in three dimensions ({@link #forChunk(int, int, Box, CellTest, List)}) serves protection limited in
+ * height: the eight corner cells of the part of the box inside the chunk, plus the cell of that part nearest each focus
+ * point; mixed answers fall back to a check of every cell, kept as {@link ChunkPermit.Columns} when no column changes
+ * with height and as {@link ChunkPermit.Cells} otherwise.
  */
 public final class ChunkPermits {
     private ChunkPermits() {}
@@ -21,6 +29,12 @@ public final class ChunkPermits {
     @FunctionalInterface
     public interface ColumnTest {
         boolean allowed(int x, int z);
+    }
+
+    /** Whether the player may modify cell (x, y, z). */
+    @FunctionalInterface
+    public interface CellTest {
+        boolean allowed(int x, int y, int z);
     }
 
     /** Four-corner rule without a focus point. */
@@ -77,6 +91,86 @@ public final class ChunkPermits {
             }
         }
         return new ChunkPermit.Columns(bits);
+    }
+
+    /** The three-dimensional rule without focus points: the eight corner cells, then every cell when mixed. */
+    public static ChunkPermit forChunk(int cx, int cz, Box bounds, CellTest test) {
+        return forChunk(cx, cz, bounds, test, List.of());
+    }
+
+    /**
+     * The permit for chunk (cx, cz) and the part of {@code bounds} inside it, judged cell by cell: the eight corner cells
+     * of that part, and for each of {@code focus} the cell of the part nearest it. All allowed gives
+     * {@link ChunkPermit#ALLOW}, all denied {@link ChunkPermit#DENY}, without asking any other cell; anything mixed asks
+     * every cell of the part. A chunk the box does not touch gets {@link ChunkPermit#ALLOW}: nothing there is written.
+     *
+     * <p>A focus point inside a box with a rule of its own catches that box wherever it meets the part, even when it
+     * touches no corner (a small protected region in the middle of a chunk, or a layer the player may build in between
+     * protected ones): on each axis the coordinate of the part nearest a point inside the box lies inside the box
+     * whenever the two ranges overlap. A producer passes one point inside each such area that may reach the chunk (its
+     * centre, say). An area it names no point for and that touches no corner is not detected, as in two dimensions:
+     * missed protection is written, a missed allowed area is skipped.
+     */
+    public static ChunkPermit forChunk(int cx, int cz, Box bounds, CellTest test, List<BlockPos> focus) {
+        int[] rect = rectangle(cx, cz, bounds);
+        if (rect == null) return ChunkPermit.ALLOW;
+        return evaluate(rect[0], bounds.min().y(), rect[1], rect[2], bounds.max().y(), rect[3], test, focus);
+    }
+
+    /**
+     * The permit for the inclusive cell box, which must lie inside one chunk column: its corner cells and the cells
+     * nearest the focus points first, then every cell when they disagree.
+     */
+    public static ChunkPermit evaluate(int x0, int y0, int z0, int x1, int y1, int z1, CellTest test,
+                                       List<BlockPos> focus) {
+        if (x0 > x1 || y0 > y1 || z0 > z1 || (x0 >> 4) != (x1 >> 4) || (z0 >> 4) != (z1 >> 4)) {
+            throw new IllegalArgumentException("Box must be non-empty and inside one chunk column");
+        }
+        boolean anyAllowed = false, anyDenied = false;
+        // Distinct corners only: a box one cell wide, tall or deep has fewer than eight.
+        for (int x = x0; ; x = x1) {
+            for (int y = y0; ; y = y1) {
+                for (int z = z0; ; z = z1) {
+                    if (test.allowed(x, y, z)) {
+                        anyAllowed = true;
+                    } else {
+                        anyDenied = true;
+                    }
+                    if (z == z1) break;
+                }
+                if (y == y1) break;
+            }
+            if (x == x1) break;
+        }
+        for (BlockPos point : focus) {
+            if (anyAllowed && anyDenied) break;
+            int fx = Math.max(x0, Math.min(x1, point.x()));
+            int fy = Math.max(y0, Math.min(y1, point.y()));
+            int fz = Math.max(z0, Math.min(z1, point.z()));
+            if (test.allowed(fx, fy, fz)) {
+                anyAllowed = true;
+            } else {
+                anyDenied = true;
+            }
+        }
+        if (!anyDenied) return ChunkPermit.ALLOW;
+        if (!anyAllowed) return ChunkPermit.DENY;
+        long[] bits = new long[(y1 - y0 + 1) * 4];
+        for (int y = y0; y <= y1; y++) {
+            for (int z = z0; z <= z1; z++) {
+                for (int x = x0; x <= x1; x++) {
+                    if (test.allowed(x, y, z)) {
+                        int bit = ((z & 15) << 4) | (x & 15);
+                        bits[ChunkPermit.Cells.word(y0, y, bit >>> 6)] |= 1L << bit;
+                    }
+                }
+            }
+        }
+        // The same answer at every height of every column (protection that is not limited in height): 256 bits do.
+        for (int i = 4; i < bits.length; i++) {
+            if (bits[i] != bits[i & 3]) return new ChunkPermit.Cells(y0, y1, bits);
+        }
+        return new ChunkPermit.Columns(Arrays.copyOf(bits, 4));
     }
 
     /** {x0, z0, x1, z1} of the part of {@code bounds} inside chunk (cx, cz), or {@code null}. */

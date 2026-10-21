@@ -113,8 +113,8 @@ final class ConflictCountingProgram implements EditProgram {
                 }
 
                 @Override
-                public boolean mayWrite(int x, int z) {
-                    return ctx.mayWrite(x, z);
+                public boolean mayWrite(int x, int y, int z) {
+                    return ctx.mayWrite(x, y, z);
                 }
 
                 @Override

@@ -27,7 +27,7 @@ class ScatterOrderingTest {
 
     private ScatterPlan plan(Spec spec, FakeWorld world, int bucketBits, long maxWork, FootprintCache cache) {
         ScatterPlanner planner = new ScatterPlanner(spec.build(), sources(), world, Long.MAX_VALUE, maxWork,
-                ScatterPlanner.ColumnGuard.ALLOW_ALL, cache);
+                ScatterPlanner.ProtectionGuard.ALLOW_ALL, cache);
         planner.bucketBits(bucketBits);
         return planner.finish();
     }

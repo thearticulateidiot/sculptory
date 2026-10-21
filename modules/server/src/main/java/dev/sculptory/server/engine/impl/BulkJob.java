@@ -200,8 +200,8 @@ final class BulkJob<W> {
 
             /** The same rule {@link #writeCell} applies: the player's chunk permit and the world border. */
             @Override
-            public boolean mayWrite(int x, int z) {
-                return decisionPermit(x >> 4, z >> 4).allows(x, z) && host.insideBorder(world, x, z);
+            public boolean mayWrite(int x, int y, int z) {
+                return decisionPermit(x >> 4, z >> 4).allows(x, y, z) && host.insideBorder(world, x, z);
             }
         };
         this.guard = (live, liveTile) -> program.mayReplace(guardKey, guardIndex, live, liveTile, context);
@@ -697,7 +697,7 @@ final class BulkJob<W> {
         int x = s.ox + SectionBuffer.localX(i);
         int y = s.oy + SectionBuffer.localY(i);
         int z = s.oz + SectionBuffer.localZ(i);
-        if (!s.permit.allows(x, z) || (!s.insideBorder && !host.insideBorder(world, x, z))) {
+        if (!s.permit.allows(x, y, z) || (!s.insideBorder && !host.insideBorder(world, x, z))) {
             skippedProtected++;
             return;
         }

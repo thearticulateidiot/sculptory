@@ -311,7 +311,7 @@ final class TinkerEdits implements TinkerService<ServerPlayer> {
             if (!WorldChecks.editable(world, cell.getX(), cell.getY(), cell.getZ())) return false;
             if (!McEntities.loaded(world, cell.getX() >> 4, cell.getZ() >> 4)) return false;
             ChunkPermit permit = permissions.chunk(player, world, cell.getX() >> 4, cell.getZ() >> 4, box(cell));
-            return permit != null && permit.allows(cell.getX(), cell.getZ());
+            return permit != null && permit.allows(cell.getX(), cell.getY(), cell.getZ());
         };
 
         service.commitStroke(player.getUUID());
@@ -457,7 +457,7 @@ final class TinkerEdits implements TinkerService<ServerPlayer> {
         }
         ChunkPermit permit = runtime.permissions().chunk(player, world, pos.getX() >> 4, pos.getZ() >> 4,
                 box(pos));
-        if (permit == null || !permit.allows(pos.getX(), pos.getZ())) {
+        if (permit == null || !permit.allows(pos.getX(), pos.getY(), pos.getZ())) {
             throw new EditRejected(RejectReason.PROTECTED, "you may not change blocks here");
         }
     }

@@ -1,6 +1,8 @@
 package dev.sculptory.server.engine.impl;
 
+import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.platform.WorldBiomes;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.util.Objects;
 
@@ -44,12 +46,14 @@ public interface BiomeWork {
         private final RecordSink records;
         private final EntityWork.InWorld inWorld;
         private final Object2IntOpenHashMap<String> handles = new Object2IntOpenHashMap<>();
-        /** Per centre column ({@link ColumnPlan#pack} of x, z): whether the player may change it. */
-        private final it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap allowed =
-                new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+        /**
+         * Per centre column ({@link ColumnPlan#pack} of x, z): the player's permit for that column over the job's heights
+         * ({@link PermitSource#column}), asked once; each quart is answered at its own centre cell.
+         */
+        private final Long2ObjectOpenHashMap<ChunkPermit> permitted = new Long2ObjectOpenHashMap<>();
         /** Quarts whose biome changed. */
         long changed;
-        /** Quarts left alone because their column may not be changed (protection, the world border). */
+        /** Quarts left alone because their centre cell may not be changed (protection, the world border). */
         long protectedQuarts;
         /** Quarts kept because they changed since the step (undo, redo), or whose biome the world does not know. */
         long conflicts;
@@ -75,20 +79,19 @@ public interface BiomeWork {
         }
 
         /**
-         * Whether the job may change quart {@code (qx, qy, qz)}: its centre column ({@code 4q + 2}) may be changed by the
-         * player and lies inside the world border, and its centre cell inside the build height.
+         * Whether the job may change quart {@code (qx, qy, qz)}: its centre cell ({@code 4q + 2}) may be changed by the
+         * player (the permit of its column, asked once per column) and lies inside the world border and the build height.
          */
         boolean mayChange(int qx, int qy, int qz) {
             int x = (qx << 2) + 2, y = (qy << 2) + 2, z = (qz << 2) + 2;
             long column = ColumnPlan.pack(x, z);
-            boolean may;
-            if (allowed.containsKey(column)) {
-                may = allowed.get(column);
-            } else {
-                may = permits.mayChangeColumn(x, z);
-                allowed.put(column, may);
+            ChunkPermit permit = permitted.get(column);
+            if (permit == null) {
+                permit = permits.column(x, z);
+                if (permit == null) permit = ChunkPermit.DENY;
+                permitted.put(column, permit);
             }
-            return may && inWorld.contains(x, y, z);
+            return permit.allows(x, y, z) && inWorld.contains(x, y, z);
         }
 
         /**
