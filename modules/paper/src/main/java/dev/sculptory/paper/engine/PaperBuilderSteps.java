@@ -234,8 +234,11 @@ final class PaperBuilderSteps implements BuilderSteps {
             world.captureBlockStates = true;
             // Keep shape: the replaced blocks' own callbacks do not run (nothing drops, no cleanup reacts).
             if (keepShape) world.isBlockPlaceCancelled = true;
+            RuntimeException failure = null;
             try {
                 step.run();
+            } catch (RuntimeException e) {
+                failure = e;
             } finally {
                 world.captureBlockStates = false;
                 world.isBlockPlaceCancelled = cancelled;
@@ -244,6 +247,12 @@ final class PaperBuilderSteps implements BuilderSteps {
                     new LinkedHashMap<>(world.capturedTileEntities));
             world.capturedBlockStates.clear();
             world.capturedTileEntities.clear();
+            if (failure != null) {
+                // The game failed halfway: what it changed so far stays and is recorded (BuilderService reports
+                // FAILED), and the world's capture is left empty for the next one.
+                keep(phase);
+                throw failure;
+            }
             return phase;
         }
 
