@@ -10,6 +10,7 @@ import dev.sculptory.neoforge.NeoForgeServerLoader;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
@@ -32,6 +33,7 @@ import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.level.ChunkEvent;
+import net.neoforged.neoforge.network.payload.MinecraftRegisterPayload;
 import org.joml.Matrix4fStack;
 
 /**
@@ -87,7 +89,9 @@ import org.joml.Matrix4fStack;
  *       never stops the start-destroy packet, and {@code AttackEntityEvent} fires after the attack packet went out. So
  *       {@code MultiPlayerGameModeMixin} asks the hooks at the very points Fabric API's own mixin does, with its
  *       semantics (see {@link Interactions});</li>
- *   <li>{@link #receiveS2C}: the payload registered by {@link NeoForgeServerLoader}, handled on the render thread;
+ *   <li>{@link #receiveS2C}: the payload registered by {@link NeoForgeServerLoader}, handled on the render thread, and
+ *       announced to servers that are not NeoForge with a play-phase {@code minecraft:register} at join
+ *       ({@link #joined});
  *       {@link #canSendC2S}, {@link #sendC2S}: the connection's negotiated channels ({@code hasChannel}) and
  *       {@code send}.</li>
  * </ul>
@@ -123,8 +127,23 @@ public final class NeoForgeClientLoader implements ClientLoader {
         });
     }
 
-    /** The end of {@code ClientPacketListener.handleLogin} ({@code ClientPacketListenerMixin}): the join hooks. */
-    public static void joined() {
+    /**
+     * The end of {@code ClientPacketListener.handleLogin} ({@code ClientPacketListenerMixin}): announces
+     * {@code sculptory:s2c} to a server that is not NeoForge, then runs the join hooks.
+     *
+     * <p>Why the announcement: a server that is not NeoForge learns which play channels this client receives from a
+     * {@code minecraft:register} sent in the play phase (Fabric API's {@code ServerPlayNetworking.canSend} reads only
+     * that; Fabric's own client sends it at this very point, {@code ClientPlayNetworkAddon.onServerReady}). NeoForge
+     * 21.1 sends its "play" channel list in {@code NetworkRegistry.onConfigurationFinished}, still in the configuration
+     * phase (before {@code ServerboundFinishConfigurationPacket}), where a Fabric server files it under configuration,
+     * and sends nothing in play; so a Fabric server never saw {@code sculptory:s2c} and never answered the handshake.
+     * It is sent before the join hooks, so it reaches the server ahead of the handshake's Hello. A vanilla server
+     * discards the unknown payload; a NeoForge server negotiated the channel already and is not sent it.
+     */
+    public static void joined(ClientPacketListener connection) {
+        if (!connection.getConnectionType().isNeoForge()) {
+            connection.send(new MinecraftRegisterPayload(Set.of(Frame.S2C_ID.id())));
+        }
         joined = true;
         JOIN_HOOKS.forEach(Runnable::run);
     }

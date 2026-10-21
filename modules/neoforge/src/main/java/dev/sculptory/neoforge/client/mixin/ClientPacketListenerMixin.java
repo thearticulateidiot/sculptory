@@ -19,6 +19,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class ClientPacketListenerMixin {
     @Inject(method = "handleLogin", at = @At("TAIL"))
     private void sculptory$joined(ClientboundLoginPacket packet, CallbackInfo ci) {
-        NeoForgeClientLoader.joined();
+        NeoForgeClientLoader.joined((ClientPacketListener) (Object) this);
     }
 }
