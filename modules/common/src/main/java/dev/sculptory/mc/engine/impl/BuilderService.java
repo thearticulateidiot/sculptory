@@ -14,6 +14,7 @@ import dev.sculptory.mc.builder.BuilderPlacement;
 import dev.sculptory.mc.builder.BuilderPlacementContext;
 import dev.sculptory.mc.perm.McPermissionService;
 import dev.sculptory.mc.perm.Tri;
+import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.mc.world.EditScope;
 import dev.sculptory.mc.world.McTile;
 import dev.sculptory.mc.world.McWorldReader;
@@ -586,7 +587,9 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
     /**
      * Puts every changed cell back as it was, newest first, physics-free ({@code FORCE_STATE}, no neighbour updates,
      * the blocks' own callbacks cancelled so nothing drops or reacts); block entities are restored with their contents.
-     * Clients hear the writes, and the action's prediction is reverted by its acknowledgement anyway.
+     * Clients hear the writes, and the action's prediction is reverted by its acknowledgement anyway. Block entities are
+     * removed through the chunk ({@link BlockWriter#removeBlockEntityQuietly}): NeoForge's {@code Level.removeBlockEntity}
+     * also updates the comparators next to the cell, which a physics-free write must not do.
      */
     private static void revert(ServerLevel world, List<Change> changes) {
         try (EditScope scope = EditScope.suppressPhysics()) {
@@ -594,7 +597,7 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
                 Change change = changes.get(i);
                 BlockPos pos = change.pos();
                 BlockState before = Block.stateById(change.before());
-                if (world.getBlockState(pos).hasBlockEntity()) world.removeBlockEntity(pos);
+                if (world.getBlockState(pos).hasBlockEntity()) BlockWriter.removeBlockEntityQuietly(world, pos);
                 world.setBlock(pos, before, Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_CLIENTS, 0);
                 if (change.beforeTile() != null) restoreTile(world, pos, before, change.beforeTile());
             }
@@ -606,7 +609,8 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
             CompoundTag nbt = McTile.from(tile).copyNbt();
             BlockEntity entity = BlockEntity.loadStatic(pos, state, nbt, world.registryAccess());
             if (entity == null) return;
-            world.removeBlockEntity(pos);
+            // Part of the physics-free revert, so through the chunk as above.
+            BlockWriter.removeBlockEntityQuietly(world, pos);
             world.setBlockEntity(entity);
             world.getChunkAt(pos).setUnsaved(true);
         } catch (IOException | RuntimeException e) {

@@ -49,12 +49,16 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ComparatorBlock;
 import net.minecraft.world.level.block.CrossCollisionBlock;
 import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.LecternBlock;
 import net.minecraft.world.level.block.StairBlock;
 import net.minecraft.world.level.block.WallTorchBlock;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Half;
@@ -775,6 +779,51 @@ public final class BuilderModeGameTest {
         }
         removePlayers(h, extra);
         undoAll(context, h, 1, before, r);
+    }
+
+    /**
+     * A refused action is put back without touching comparators: a Keep shape bed whose head lands in a protected
+     * column is reverted, and the comparator beside its head gets no neighbour update when the head's block entity goes
+     * (NeoForge's {@code Level.removeBlockEntity} sends one). The comparator reads a lectern with a book but was set
+     * without updates, so it is off and any neighbour update would schedule it a tick. It sits by the head, not the
+     * foot: vanilla's bed placement updates the foot's neighbours itself ({@code BedBlock.setPlacedBy}), Keep shape or
+     * not, while the head is written through the keep-shape capture without neighbour updates.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_revert_comparator", timeoutTicks = LIMIT)
+    public void refusedActionLeavesComparatorsAlone(GameTestHelper context) {
+        Harness h = new Harness(context);
+        Region r = region(h, context, 1077);
+        BlockPos foot = pos(r.x + 15, FLOOR + 1, r.z + 4);
+        BlockPos head = pos(r.x + 16, FLOOR + 1, r.z + 4);
+        BlockPos comparator = head.north();
+        BlockPos lectern = comparator.north();
+        try {
+            h.world.setBlockAndUpdate(lectern, Blocks.LECTERN.defaultBlockState().setValue(LecternBlock.HAS_BOOK, true));
+            ((LecternBlockEntity) h.world.getBlockEntity(lectern)).setBook(new ItemStack(Items.WRITABLE_BOOK));
+            BlockState reading = Blocks.COMPARATOR.defaultBlockState().setValue(ComparatorBlock.FACING, Direction.NORTH);
+            h.world.setBlock(comparator, reading, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
+            check(!h.world.getBlockTicks().hasScheduledTick(comparator, Blocks.COMPARATOR), "setup: a comparator tick");
+            stand(h.player, r.x + 12, r.z + 4, -90f); // facing east: the head lies at x + 1
+            hold(h.player, Items.RED_BED);
+            ProtectionHook.protect(h.player, h.world, r.x + 16, r.z, r.x + 31, r.z + 31);
+            BuilderOutcome placed = place(h, h.player, r.x + 15, FLOOR, r.z + 4, Facing.UP, 0.5f, 1f, 0.5f,
+                    BuilderPower.KEEP_SHAPE.bit(), Symmetry.NONE);
+            check(placed.refusal() == Refusal.PROTECTED && placed.changed() == 0, "the head is protected: " + placed);
+            check(h.world.getBlockState(foot).isAir() && h.world.getBlockState(head).isAir(), "both halves put back");
+            check(!h.world.getBlockTicks().hasScheduledTick(comparator, Blocks.COMPARATOR), "the comparator was updated");
+            check(entries(h).isEmpty(), "no step: " + labels(entries(h)));
+        } catch (RuntimeException | Error e) {
+            cleanup(h, List.of(), r);
+            throw e;
+        }
+        context.runAfterDelay(10, () -> {
+            try {
+                check(!h.world.getBlockState(comparator).getValue(ComparatorBlock.POWERED), "the comparator reacted");
+            } finally {
+                cleanup(h, List.of(), r);
+            }
+            context.succeed();
+        });
     }
 
     /** A target in a chunk that is not loaded is refused and loads nothing. */

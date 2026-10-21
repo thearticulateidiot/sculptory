@@ -466,18 +466,27 @@ public final class BlockWriter implements WorldWriter {
     }
 
     /**
-     * Removes the block entity at {@code pos}. With physics off it goes to the chunk directly: NeoForge patches
-     * {@code Level.removeBlockEntity} to also call {@code updateNeighbourForOutputSignal}, so comparators next to the
-     * cell would get a neighbour update and schedule a tick, which a physics-off write must not cause and an
-     * {@link EditScope} does not suppress. Vanilla's {@code Level.removeBlockEntity} is exactly this chunk call behind
-     * the build-height check, so nothing changes on Fabric. Physics-on writes keep the loader's method: they update
-     * neighbours and comparators anyway ({@code UPDATE_ALL}), and on NeoForge that notification is what other mods
-     * expect when a block entity goes.
+     * Removes the block entity at {@code pos}: {@link #removeBlockEntityQuietly} with physics off. Physics-on writes
+     * keep the loader's {@code Level.removeBlockEntity}: they update neighbours and comparators anyway
+     * ({@code UPDATE_ALL}), and on NeoForge its notification is what other mods expect when a block entity goes.
      */
     private void removeBlockEntity(BlockPos pos) {
         if (options.physics()) {
             world.removeBlockEntity(pos);
-        } else if (!world.isOutsideBuildHeight(pos)) {
+        } else {
+            removeBlockEntityQuietly(world, pos);
+        }
+    }
+
+    /**
+     * Removes the block entity at {@code pos} for a physics-free write, through the chunk. NeoForge patches
+     * {@code Level.removeBlockEntity} to also call {@code updateNeighbourForOutputSignal}, so comparators next to the
+     * cell would get a neighbour update and schedule a tick, which a physics-free write must not cause and an
+     * {@link EditScope} does not suppress. Vanilla's {@code Level.removeBlockEntity} is exactly this chunk call behind
+     * the build-height check, so nothing changes on Fabric.
+     */
+    public static void removeBlockEntityQuietly(Level world, BlockPos pos) {
+        if (!world.isOutsideBuildHeight(pos)) {
             world.getChunkAt(pos).removeBlockEntity(pos);
         }
     }
