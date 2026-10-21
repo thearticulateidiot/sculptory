@@ -26,7 +26,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  *       at another position (the view moved on before that column's forget packet came): the old column is replaced
  *       and its later forget packet finds nothing to drop;</li>
  *   <li>{@code updateViewRadius}, for each column outside the new, smaller radius: it is left out of the new storage,
- *       and its later forget packet is ignored as out of range.</li>
+ *       and its later forget packet finds nothing to drop either: out of range it is ignored, and in range (the view
+ *       centre moved back) {@code drop} finds another column or an empty slot there, which {@code isValidChunk}
+ *       rejects. Either way no unload fires twice.</li>
  * </ul>
  * The third way, {@code drop} (a forget packet for a loaded column), is NeoForge's own {@code ChunkEvent.Unload}, so
  * nothing is injected there. NeoForge 21.1 leaves both methods as vanilla has them (its only change to the class is the

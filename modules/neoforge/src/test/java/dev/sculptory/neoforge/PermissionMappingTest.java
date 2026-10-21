@@ -90,6 +90,11 @@ class PermissionMappingTest {
     @Test
     void aNullOrNonBooleanAnswerIsNo() {
         assertFalse(mapping.check(OPERATOR, USE, 0, (player, node) -> null));
+        // The PermissionAPI's answer is generic: a handler returning another type must not throw or count as yes.
+        BiFunction<Player, Node, Object> wrongType = (player, node) -> "true";
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        BiFunction<Player, Node, Boolean> polluted = (BiFunction) wrongType;
+        assertFalse(mapping.check(OPERATOR, USE, 0, polluted));
     }
 
     @Test

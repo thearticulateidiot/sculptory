@@ -96,6 +96,8 @@ dependencies {
     compileOnly project(':server')
     // PermissionMappingTest: the mapping walks the engine's Perm nodes.
     testImplementation project(':server')
+    // PermissionMapping logs through SLF4J, which the game provides at run time.
+    testRuntimeOnly "org.slf4j:slf4j-api:${rootProject.slf4j_version}"
 }
 
 // The dev-only client harnesses run from a dev checkout, never from the jar (as in modules/fabric).
