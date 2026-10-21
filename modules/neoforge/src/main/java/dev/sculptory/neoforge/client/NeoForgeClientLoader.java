@@ -63,11 +63,11 @@ import org.joml.Matrix4fStack;
  *   <li>{@link #onClientStopping}: {@code GameShuttingDownEvent} from {@code Minecraft.stop} (render thread). Fabric's
  *       {@code CLIENT_STOPPING} fires a little later, in {@code Minecraft.destroy}, with GL still current in both;</li>
  *   <li>{@link #onScreenAfterRender}: {@code ScreenEvent.Render.Post};</li>
- *   <li>{@link #onJoin}: {@code ClientPlayerNetworkEvent.LoggingIn}, on the render thread inside
- *       {@code ClientPacketListener.handleLogin}: after registry sync and the configuration phase's tags (both done
- *       before the play phase starts) and after the client world exists, but before the local player gets its entity
- *       id and is added to the world, which Fabric's {@code JOIN} (the end of {@code handleLogin}) comes after. Run
- *       there, not deferred, so the join hooks still run before any packet that follows the login packet;</li>
+ *   <li>{@link #onJoin}: {@code ClientPacketListenerMixin} at the end of {@code ClientPacketListener.handleLogin}, on
+ *       the render thread, where Fabric API fires {@code ClientPlayConnectionEvents.JOIN} (its networking mixin injects
+ *       at the method's RETURN; NeoForge 21.1's patched method has the one return, checked with javap): after registry
+ *       sync and the configuration phase's tags, with the local player added to the client world. NeoForge's
+ *       {@code LoggingIn} event comes earlier, before the player has its entity id and is in the world;</li>
  *   <li>{@link #onDisconnect}: {@code ClientPlayerNetworkEvent.LoggingOut} from {@code Minecraft.disconnect}, on the
  *       render thread, only after a join (NeoForge fires it for every disconnect, also one before the play phase);</li>
  *   <li>{@link #onClientTagsLoaded}: {@code TagsUpdatedEvent} with cause {@code CLIENT_PACKET_RECEIVED}, fired by the
@@ -89,27 +89,31 @@ import org.joml.Matrix4fStack;
  * </ul>
  */
 public final class NeoForgeClientLoader implements ClientLoader {
+    /** The join hooks, which {@code ClientPacketListenerMixin} runs ({@link #joined}). */
+    private static final List<Runnable> JOIN_HOOKS = new CopyOnWriteArrayList<>();
+    /** Whether the play connection's join hooks ran (and its disconnect hooks have not yet). Render thread only. */
+    private static boolean joined;
+
     private final NeoForgeServerLoader server;
     /** Keys registered before {@code RegisterKeyMappingsEvent}; null once it ran. */
     private List<KeyMapping> pendingKeys = new ArrayList<>();
-    /** Whether the play connection's join hooks ran (and its disconnect hooks have not yet). */
-    private boolean joined;
-    private final List<Runnable> joinHooks = new CopyOnWriteArrayList<>();
     private final List<Runnable> disconnectHooks = new CopyOnWriteArrayList<>();
 
     NeoForgeClientLoader(IEventBus modBus) {
         server = (NeoForgeServerLoader) Loaders.server();
         modBus.addListener(this::registerKeys);
-        // One listener each, so joins and disconnects pair up whatever order hooks are registered in.
-        NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingIn event) -> {
-            joined = true;
-            joinHooks.forEach(Runnable::run);
-        });
+        // One listener, so a disconnect pairs up with a join whatever order the hooks are registered in.
         NeoForge.EVENT_BUS.addListener((ClientPlayerNetworkEvent.LoggingOut event) -> {
             if (!joined) return;
             joined = false;
             disconnectHooks.forEach(Runnable::run);
         });
+    }
+
+    /** The end of {@code ClientPacketListener.handleLogin} ({@code ClientPacketListenerMixin}): the join hooks. */
+    public static void joined() {
+        joined = true;
+        JOIN_HOOKS.forEach(Runnable::run);
     }
 
     private void registerKeys(RegisterKeyMappingsEvent event) {
@@ -234,7 +238,7 @@ public final class NeoForgeClientLoader implements ClientLoader {
 
     @Override
     public void onJoin(Runnable hook) {
-        joinHooks.add(Objects.requireNonNull(hook));
+        JOIN_HOOKS.add(Objects.requireNonNull(hook));
     }
 
     @Override
