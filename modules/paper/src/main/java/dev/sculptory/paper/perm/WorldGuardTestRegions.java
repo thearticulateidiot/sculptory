@@ -1,16 +1,18 @@
 package dev.sculptory.paper.perm;
 
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
+import com.sk89q.worldedit.math.BlockVector2;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldguard.WorldGuard;
 import com.sk89q.worldguard.protection.flags.Flags;
 import com.sk89q.worldguard.protection.flags.StateFlag;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion;
+import com.sk89q.worldguard.protection.regions.ProtectedPolygonalRegion;
 import net.minecraft.server.level.ServerLevel;
 
 /**
- * Dev only (the self-test and the region benchmark): adds and removes WorldGuard cuboid regions. Name this class only
+ * Dev only (the self-test and the region benchmark): adds and removes WorldGuard regions. Name this class only
  * when WorldGuard is enabled.
  */
 public final class WorldGuardTestRegions {
@@ -41,6 +43,26 @@ public final class WorldGuardTestRegions {
         manager(level).addRegion(region);
     }
 
+    /**
+     * A region where non-members may do one of the two: {@code block-break allow} (a mine) or {@code block-place allow},
+     * no members, {@code build} unset. An edit both breaks and places, so a non-member may edit neither.
+     */
+    public static void addAllowing(ServerLevel level, String id, int x0, int y0, int z0, int x1, int y1, int z1,
+                                   boolean allowBreak) {
+        ProtectedCuboidRegion region = new ProtectedCuboidRegion(id, BlockVector3.at(x0, y0, z0),
+                BlockVector3.at(x1, y1, z1));
+        region.setFlag(allowBreak ? Flags.BLOCK_BREAK : Flags.BLOCK_PLACE, StateFlag.State.ALLOW);
+        manager(level).addRegion(region);
+    }
+
+    /** A polygonal region over the world's whole height, corners in order (x, z pairs), no members, no flags. */
+    public static void addPolygon(ServerLevel level, String id, int... xz) {
+        java.util.List<BlockVector2> points = new java.util.ArrayList<>();
+        for (int i = 0; i + 1 < xz.length; i += 2) points.add(BlockVector2.at(xz[i], xz[i + 1]));
+        manager(level).addRegion(new ProtectedPolygonalRegion(id, points, level.getMinBuildHeight(),
+                level.getMaxBuildHeight() - 1));
+    }
+
     /** A region with a priority (the benchmark's overlapping regions). */
     public static void addWithPriority(ServerLevel level, String id, int x0, int y0, int z0, int x1, int y1, int z1,
                                        int priority) {
@@ -48,6 +70,15 @@ public final class WorldGuardTestRegions {
                 BlockVector3.at(x1, y1, z1));
         region.setPriority(priority);
         manager(level).addRegion(region);
+    }
+
+    /** Dev diagnostics: whether region {@code id} contains (x, y, z) and how many regions WorldGuard finds there. */
+    public static String describe(ServerLevel level, String id, int x, int y, int z) {
+        RegionManager manager = manager(level);
+        var region = manager.getRegion(id);
+        return id + ": " + (region == null ? "missing" : "contains=" + region.contains(x, y, z) + " min="
+                + region.getMinimumPoint() + " max=" + region.getMaximumPoint()) + ", regions at the point "
+                + manager.getApplicableRegions(BlockVector3.at(x, y, z)).size();
     }
 
     public static void remove(ServerLevel level, String id) {

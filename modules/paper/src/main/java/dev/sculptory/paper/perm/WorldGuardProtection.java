@@ -9,7 +9,6 @@ import com.sk89q.worldguard.WorldGuard;
 import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
 import com.sk89q.worldguard.protection.ApplicableRegionSet;
 import com.sk89q.worldguard.protection.flags.Flags;
-import com.sk89q.worldguard.protection.flags.StateFlag;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
@@ -23,9 +22,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 
 /**
- * WorldGuard's rule for a player changing blocks, as its own block listener applies it: {@code build} together with
- * {@code block-place} and {@code block-break} (an edit both breaks what is there and places the new block), with
- * membership, priorities, inheritance and the global region, through {@code RegionQuery.testBuild}. WorldGuard's own
+ * WorldGuard's rule for a player changing blocks, as its own block listener applies it: {@code build} with
+ * {@code block-place}, and {@code build} with {@code block-break}, asked as two queries and both required (an edit both
+ * breaks what is there and places the new block), with membership, priorities, inheritance and the global region,
+ * through {@code RegionQuery.testBuild}. One query naming both flags is not the same: WorldGuard combines the flags of
+ * one query so that any ALLOW wins and a non-member's {@code build} DENY is dropped, so a mine region with only
+ * {@code block-break allow} would let every non-member place there too. WorldGuard's own
  * bypass (the {@code worldguard.region.bypass.<world>} permission with bypass on in the player's session) allows
  * everything. Only loaded when WorldGuard is (a soft dependency: {@link SculptoryProtection#detect} names this class
  * only after checking), so the plugin runs without it.
@@ -35,7 +37,9 @@ import net.minecraft.server.level.ServerPlayer;
  * WorldGuard is asked once per distinct combination (at a cell that has it) and the answers are kept for the part; each
  * cell is then placed from the regions' geometry: which regions cover its column is worked out once per column
  * (integer bounds for cuboids, WorldGuard's own test for other shapes), and then only their heights are compared. No
- * {@code Location} and no query per cell, so {@code ChunkPermits.rasterize} can ask every cell of the part.
+ * {@code Location} and no query per cell, so {@code ChunkPermits.rasterize} can ask every cell of the part. A part
+ * touched by more than {@value #MAX_KEYED_REGIONS} regions (the combination key is one bit per region) is answered
+ * with two WorldGuard queries per cell instead: correct, only slower.
  */
 final class WorldGuardProtection implements Protection {
     private static final String PROBE_ID = "__sculptory_probe__";
@@ -58,10 +62,7 @@ final class WorldGuardProtection implements Protection {
         RegionManager manager = container.get(world);
         if (manager == null) return CellTest.ALLOW; // regions are off in this world
         RegionQuery query = container.createQuery();
-        ProtectedCuboidRegion probe = new ProtectedCuboidRegion(PROBE_ID, true,
-                BlockVector3.at(part.min().x(), part.min().y(), part.min().z()),
-                BlockVector3.at(part.max().x(), part.max().y(), part.max().z()));
-        ApplicableRegionSet touching = manager.getApplicableRegions(probe);
+        ApplicableRegionSet touching = manager.getApplicableRegions(new Probe(part));
         if (touching.size() == 0) {
             // Only the global region applies: one answer for the whole part.
             return allowed(query, world, local, part.min().x(), part.min().y(), part.min().z())
@@ -75,12 +76,50 @@ final class WorldGuardProtection implements Protection {
         return new RegionCells(regions, query, world, local);
     }
 
-    /** WorldGuard's answer at one cell: build with block-place and block-break, as its block listener asks. */
+    /**
+     * WorldGuard's answer at one cell: placing (build with block-place) and breaking (build with block-break), each
+     * asked on its own as WorldGuard's block listener asks it, and both required (the class comment says why one query
+     * with both flags is not the same).
+     */
     static boolean allowed(RegionQuery query, World world, LocalPlayer local, int x, int y, int z) {
-        return query.testBuild(new Location(world, x + 0.5, y + 0.5, z + 0.5), local, PLACE_AND_BREAK);
+        Location at = new Location(world, x + 0.5, y + 0.5, z + 0.5);
+        return query.testBuild(at, local, Flags.BLOCK_PLACE) && query.testBuild(at, local, Flags.BLOCK_BREAK);
     }
 
-    private static final StateFlag[] PLACE_AND_BREAK = {Flags.BLOCK_PLACE, Flags.BLOCK_BREAK};
+    /**
+     * The region lookup's probe over a chunk part. WorldGuard's {@code getApplicableRegions(region)} keeps a candidate
+     * only when the two regions' {@code java.awt.geom.Area}s overlap with a positive area, so it misses a polygon that
+     * touches the part only along the part's min-x or min-z edge (the probe's area is the half-open rectangle
+     * [x0, x1 + 1)) and a degenerate polygon (all its points on one line: no area at all), although
+     * {@code ProtectedPolygonalRegion.contains} counts edges and corners as inside. This probe keeps every candidate whose
+     * bounding box overlaps the part, edges included: more regions than really touch it (safe: which regions hold a
+     * cell is then worked out by their own {@code contains}, and the cell's combination is answered by WorldGuard's own
+     * query), never fewer. It is one block wider on every side, so the region index's own candidate search (by bounding
+     * boxes, or by the chunks a region is indexed for) cannot drop an edge either.
+     *
+     * <p>Where WorldGuard itself does not protect: its chunk index ({@code ChunkHashTable}) files a region under a chunk
+     * by the same positive-area test, so a polygon that meets a chunk only along a line (or a degenerate one) is not
+     * filed there, and WorldGuard's point queries in that chunk (its block listener's too) do not see it. Such a cell's
+     * combination is then answered "allowed" by WorldGuard's query, as a player placing there by hand is allowed.
+     */
+    static final class Probe extends ProtectedCuboidRegion {
+        private final Box part;
+
+        Probe(Box part) {
+            super(PROBE_ID, true,
+                    BlockVector3.at(part.min().x() - 1, part.min().y() - 1, part.min().z() - 1),
+                    BlockVector3.at(part.max().x() + 1, part.max().y() + 1, part.max().z() + 1));
+            this.part = part;
+        }
+
+        @Override
+        protected boolean intersects(ProtectedRegion region, java.awt.geom.Area thisArea) {
+            BlockVector3 min = region.getMinimumPoint(), max = region.getMaximumPoint();
+            return max.x() >= part.min().x() && min.x() <= part.max().x()
+                    && max.y() >= part.min().y() && min.y() <= part.max().y()
+                    && max.z() >= part.min().z() && min.z() <= part.max().z();
+        }
+    }
 
     @Override
     public String name() {

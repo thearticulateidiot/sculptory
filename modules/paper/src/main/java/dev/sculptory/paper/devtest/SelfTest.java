@@ -256,6 +256,7 @@ public final class SelfTest {
                 .thenCompose(v -> test.physicsOff())
                 .thenCompose(v -> test.worldGuard())
                 .thenCompose(v -> test.worldGuardFlags())
+                .thenCompose(v -> test.worldGuardLoopholes())
                 .thenCompose(v -> test.entitiesUnderRegion())
                 .thenCompose(v -> test.biomesUnderRegion())
                 .thenCompose(v -> test.joinRace())
@@ -445,6 +446,84 @@ public final class SelfTest {
                     WorldGuardTestRegions.remove(level, breakId);
                     int left = countDiffering(placeBox, placeBefore) + countDiffering(breakBox, breakBefore);
                     record("worldguard flags: everything restored", left == 0, left + " cells differ");
+                })
+                .thenApply(result -> (Void) null);
+    }
+
+    /**
+     * Two loopholes a region lookup could leave open. Allow flags: one region with only {@code block-break allow} (a
+     * mine) and one with only {@code block-place allow}, no members; a non-member may do one of the two there, but an
+     * edit both breaks and places, so a fill inside either changes nothing (one WorldGuard query naming both flags
+     * answered yes for both). A polygon's edge: a full-height L-shaped polygon west of chunk column X
+     * (a multiple of 16) whose edge x = X, z Z+3..Z+12, is the only part of it a fill over x X..X+5, z Z..Z+10 touches,
+     * while its foot (x X..X+3, z Z+12..Z+15) lies inside the chunk, so WorldGuard indexes it for that chunk and protects
+     * the edge strip x = X, z Z+3..Z+10 against players. The fill must leave that strip as it was and write the rest:
+     * WorldGuard's region lookup for a box keeps only regions overlapping it with a positive area, so the polygon was
+     * missed for the fill's part of the chunk and the strip written. (A polygon touching a chunk only along that line,
+     * with no area in the chunk, is not indexed for the chunk by WorldGuard itself, so WorldGuard does not protect that
+     * strip from players either; Sculptory gives the same answer, since every cell is decided by WorldGuard's own query.)
+     */
+    private CompletableFuture<Void> worldGuardLoopholes() {
+        if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) return CompletableFuture.completedFuture(null);
+        int x = baseX + 240 + 4, z = baseZ + 4;
+        String mineId = REGION_PREFIX + runId + "_mine";
+        String placeId = REGION_PREFIX + runId + "_placeonly";
+        String polygonId = REGION_PREFIX + runId + "_polygon";
+        for (String id : List.of(mineId, placeId, polygonId)) {
+            if (WorldGuardTestRegions.exists(level, id)) {
+                return CompletableFuture.failedFuture(new IllegalStateException("a WorldGuard region " + id + " exists"));
+            }
+        }
+        Box mine = box(x, 101, z, x + 3, 102, z + 3);
+        Box placeOnly = box(x + 6, 101, z, x + 9, 102, z + 3);
+        WorldGuardTestRegions.addAllowing(level, mineId, x, 101, z, x + 3, 102, z + 3, true);
+        WorldGuardTestRegions.addAllowing(level, placeId, x + 6, 101, z, x + 9, 102, z + 3, false);
+        // The polygon lies west of chunk column X (a multiple of 16) but for its edge x = X and its foot in the chunk.
+        int px = baseX + 288, pz = baseZ + 16;
+        WorldGuardTestRegions.addPolygon(level, polygonId, px - 8, pz + 3, px, pz + 3, px, pz + 12, px + 3, pz + 12,
+                px + 3, pz + 15, px - 8, pz + 15);
+        Box fillBox = box(px, 101, pz, px + 5, 102, pz + 10);
+        Box strip = box(px, 101, pz + 3, px, 102, pz + 10);
+        hold(mine);
+        hold(box(px - 8, 101, pz, px + 5, 102, pz + 15));
+        int[] mineBefore = snapshot(mine), placeBefore = snapshot(placeOnly), fillBefore = snapshot(fillBox);
+        int[] stripBefore = snapshot(strip);
+        int planks = Block.getId(Blocks.OAK_PLANKS.defaultBlockState());
+        return fill(mine, planks)
+                .thenCompose(result -> {
+                    int changed = countDiffering(mine, mineBefore);
+                    record("worldguard loopholes: block-break allow alone does not let a fill in", changed == 0,
+                            result.changed() + " changed, " + result.skippedProtected() + " skipped as protected");
+                    return changed > 0 ? undo() : CompletableFuture.completedFuture(result);
+                })
+                .thenCompose(result -> fill(placeOnly, planks))
+                .thenCompose(result -> {
+                    int changed = countDiffering(placeOnly, placeBefore);
+                    record("worldguard loopholes: block-place allow alone does not let a fill in", changed == 0,
+                            result.changed() + " changed, " + result.skippedProtected() + " skipped as protected");
+                    return changed > 0 ? undo() : CompletableFuture.completedFuture(result);
+                })
+                .thenCompose(result -> fill(fillBox, planks))
+                .thenCompose(result -> {
+                    int stripChanged = countDiffering(strip, stripBefore);
+                    long written = fillBox.volume() - countNot(fillBox, planks);
+                    long expected = fillBox.volume() - strip.volume();
+                    record("worldguard loopholes: a polygon whose edge alone meets the fill keeps that edge",
+                            stripChanged == 0 && written == expected, stripChanged + " strip cells changed, "
+                                    + written + " cells written (expected " + expected + "), "
+                                    + result.skippedProtected() + " skipped as protected" + "; "
+                                    + WorldGuardTestRegions.describe(level, polygonId, px, 101, pz + 5) + ", cell test "
+                                    + host.engine().permissions().protection().cells(player, level, fillBox)
+                                    .allowed(px, 101, pz + 5));
+                    return result.changed() > 0 ? undo() : CompletableFuture.completedFuture(result);
+                })
+                .whenComplete((v, error) -> {
+                    WorldGuardTestRegions.remove(level, mineId);
+                    WorldGuardTestRegions.remove(level, placeId);
+                    WorldGuardTestRegions.remove(level, polygonId);
+                    int left = countDiffering(mine, mineBefore) + countDiffering(placeOnly, placeBefore)
+                            + countDiffering(fillBox, fillBefore);
+                    record("worldguard loopholes: everything restored", left == 0, left + " cells differ");
                 })
                 .thenApply(result -> (Void) null);
     }
