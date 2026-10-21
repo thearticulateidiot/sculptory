@@ -45,12 +45,22 @@ neoForge {
         }
     }
 
+    // The dev client and server load only the mod: without loadedMods a run loads every mod of this build, and the
+    // GameTest mods declared further down (sculptory_gametest, sculptory_fidelity, which needs Chipped and Farmer's
+    // Delight) are not for them.
     runs {
         client {
             client()
+            loadedMods = [mods.sculptory]
             gameDirectory = rootProject.file('.local/run/neoforge-client')
             programArgument '--username'
             programArgument((project.findProperty('bsUser') ?: 'BuilderDev').toString())
+            // -PbsWorld=<save name> / -PbsServer=<host:port>: open a singleplayer world or join a server at start, as in
+            // modules/fabric.
+            if (project.hasProperty('bsWorld')) {
+                programArgument '--quickPlaySingleplayer'
+                programArgument project.property('bsWorld').toString()
+            }
             if (project.hasProperty('bsServer')) {
                 programArgument '--quickPlayMultiplayer'
                 programArgument project.property('bsServer').toString()
@@ -58,6 +68,7 @@ neoForge {
         }
         server {
             server()
+            loadedMods = [mods.sculptory]
             gameDirectory = rootProject.file('.local/run/neoforge-server')
             programArgument '--nogui'
         }
