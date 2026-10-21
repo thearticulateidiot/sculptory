@@ -1,9 +1,11 @@
 package dev.sculptory.paper;
 
 import dev.sculptory.mc.Sculptory;
+import dev.sculptory.mc.world.McInternals;
 import dev.sculptory.paper.command.PaperCommands;
 import dev.sculptory.paper.devtest.SelfTest;
 import dev.sculptory.paper.engine.PaperEditHost;
+import dev.sculptory.paper.nms.PaperAccess;
 import dev.sculptory.paper.perm.SculptoryProtection;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import net.minecraft.server.MinecraftServer;
@@ -19,6 +21,11 @@ public final class SculptoryPlugin extends JavaPlugin {
     private PaperServerLoader loader;
     private volatile PaperEditHost host;
 
+    /** The loader seam this plugin installed (the self-test asks it about the network). */
+    public PaperServerLoader loader() {
+        return loader;
+    }
+
     public static SculptoryPlugin instance() {
         SculptoryPlugin plugin = instance;
         if (plugin == null) throw new IllegalStateException("Sculptory is not loaded");
@@ -28,6 +35,8 @@ public final class SculptoryPlugin extends JavaPlugin {
     @Override
     public void onLoad() {
         instance = this;
+        // Before any common code runs: the game internals it reads, Paper's way.
+        McInternals.install(PaperAccess.INSTANCE);
         loader = new PaperServerLoader(this);
         loader.install();
     }
@@ -43,7 +52,7 @@ public final class SculptoryPlugin extends JavaPlugin {
         host = PaperEditHost.start(server, loader, SculptoryProtection.detect());
         PaperCommands commands = new PaperCommands(() -> host);
         loader.onCommands(commands::register);
-        loader.fireCommands(server);
+        loader.registerCommandsOnEveryBuild();
         loader.fireStarted(server);
         SelfTest.runAtStartup(host);
     }

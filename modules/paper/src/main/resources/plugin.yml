@@ -1,3 +1,6 @@
+# A Bukkit plugin.yml, not a paper-plugin.yml (decided 2026-10-21): a plugin.yml plugin's class loader sees other
+# plugins' classes, so the soft dependency on WorldGuard (and WorldEdit's API under it) needs no extra declaration,
+# and paper-plugin.yml's class-loader isolation and bootstrapper buy nothing yet.
 name: Sculptory
 version: '${version}'
 main: dev.sculptory.paper.SculptoryPlugin

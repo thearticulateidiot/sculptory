@@ -23,13 +23,15 @@ repositories {
 }
 
 // The plugin takes the loader-free Minecraft code of modules/common as source, like the loader modules do, but through
-// a copy (commonForPaper) that routes the few uses of access-widened members and the one physics-off write through
-// PaperAccess, and adds the methods Paper's patched level interfaces declare abstract. Every patch must match, so a
-// change in modules/common that moves one fails here instead of silently compiling the old behaviour.
+// a copy (commonForPaper) with the few Paper-only changes no seam covers: the physics-off write and the light marker go
+// through PaperAccess, and the methods Paper's patched level interfaces declare abstract are added. (The access-widened
+// reads go through the McInternals seam, which PaperAccess implements.) Every patch must match, so a change in
+// modules/common that moves one fails here instead of silently compiling the old behaviour.
 def commonSources = project(':common').file('src/main/java')
-// Not on Paper: the mixins (Paper has none), builder mode (mixin accessors), the Fabric/NeoForge engine wiring and the
-// command tree over it (the plugin wires the engine itself: PaperEngine, PaperEditHost, PaperCommands),
-// and the light batch (Paper's own light engine; src/commonReplacements has its stand-in).
+// Not on Paper: the mixins (Paper has none), builder mode (mixin accessors), the loaders' reads of widened members
+// (WidenedMcInternals), the Fabric/NeoForge engine wiring and the command tree over it (the plugin wires the engine
+// itself: PaperEngine, PaperEditHost, PaperCommands; EngineRuntime still builds BuilderService), and the light batch
+// (Paper's own light engine; src/commonReplacements has its stand-in).
 def commonExcludes = [
         'dev/sculptory/mc/mixin/**',
         'dev/sculptory/mc/builder/**',
@@ -37,8 +39,7 @@ def commonExcludes = [
         'dev/sculptory/mc/engine/impl/EngineRuntime.java',
         'dev/sculptory/mc/engine/impl/EditServiceHost.java',
         'dev/sculptory/mc/engine/impl/BuilderService.java',
-        'dev/sculptory/mc/engine/impl/TinkerEdits.java',
-        'dev/sculptory/mc/engine/impl/NavigateService.java',
+        'dev/sculptory/mc/world/WidenedMcInternals.java',
         'dev/sculptory/mc/world/LightBatch.java',
 ]
 // What Paper's level interfaces add as abstract methods (LevelReader, BlockGetter, LevelAccessor), for the common
@@ -68,15 +69,6 @@ def levelAccessorMethods = levelReaderMethods + """
 """
 def access = 'dev.sculptory.paper.nms.PaperAccess'
 def commonPatches = [
-        'dev/sculptory/mc/world/McStateSpace.java': [
-                ['plant.growthDirection', "${access}.growthDirection(plant)"],
-                ['((GrowingPlantHeadBlock) stem).growthDirection', "${access}.growthDirection((GrowingPlantHeadBlock) stem)"],
-        ],
-        'dev/sculptory/mc/world/McWorldReader.java': [
-                ['PalettedContainer.Data<BlockState> data = section.getStates().data;',
-                 "var data = ${access}.data(section.getStates());"],
-                ['PalettedContainer.Data<BlockState> data = container.data;', "var data = ${access}.data(container);"],
-        ],
         'dev/sculptory/mc/world/ClientSync.java': [
                 // Paper's (Moonrise's) light engine throws UnsupportedOperationException here.
                 ['light.waitForPendingTasks(cx + dx, cz + dz)', "${access}.lightMarker(light, cx + dx, cz + dz)"],
@@ -96,11 +88,6 @@ def commonPatches = [
         'dev/sculptory/mc/world/CapturingWorldAccess.java': [
                 ['public final class CapturingWorldAccess implements WorldGenLevel {',
                  'public final class CapturingWorldAccess implements WorldGenLevel {\n' + levelAccessorMethods],
-        ],
-        // The history-state conversion lives on the loaders' EditServiceHost, which the plugin replaces.
-        'dev/sculptory/mc/net/NetEditEvents.java': [
-                ['import dev.sculptory.mc.engine.impl.EditServiceHost;', ''],
-                ['EditServiceHost.toHistoryState(snapshot)', 'dev.sculptory.paper.engine.PaperEditHost.toHistoryState(snapshot)'],
         ],
 ].collectEntries { k, v -> [k, v.collect { [it[0].toString(), it[1].toString()] }] }
 
@@ -164,8 +151,10 @@ processResources {
 def commonProbe = tasks.register('commonProbe', CommonOverlay) {
     description = 'Copies all of modules/common/src/main with the Paper patches, for the compile probe.'
     source = commonSources
-    // LightBatch is Paper's stand-in, so the mixin feeding the common one goes too.
-    excludes = ['dev/sculptory/mc/world/LightBatch.java', 'dev/sculptory/mc/mixin/LightBatchMixin.java']
+    // LightBatch is Paper's stand-in, so the mixin feeding the common one goes too; WidenedMcInternals reads members
+    // only the access widener opens (Paper's McInternals is PaperAccess).
+    excludes = ['dev/sculptory/mc/world/LightBatch.java', 'dev/sculptory/mc/mixin/LightBatchMixin.java',
+                'dev/sculptory/mc/world/WidenedMcInternals.java']
     patches = commonPatches
     outputDir = layout.buildDirectory.dir('generated/commonProbe')
 }

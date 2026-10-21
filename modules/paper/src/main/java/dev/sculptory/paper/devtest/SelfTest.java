@@ -7,11 +7,15 @@ import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.mc.Sculptory;
+import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.paper.PaperServerLoader;
+import dev.sculptory.paper.S2CRoute;
 import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.engine.PaperEditHost;
 import dev.sculptory.paper.nms.PaperAccess;
 import dev.sculptory.paper.perm.WorldGuardTestRegions;
 import dev.sculptory.protocol.v2.Phase;
+import dev.sculptory.protocol.v2.ProtocolException;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
@@ -44,6 +48,7 @@ import net.minecraft.world.level.block.entity.ChestBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import org.bukkit.Bukkit;
+import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.permissions.PermissionAttachment;
 
 /**
@@ -79,7 +84,8 @@ public final class SelfTest {
     private final int baseX;
     private final int baseZ;
 
-    private record Result(String name, boolean passed, String detail) {
+    /** One check (pass or fail), or an information entry ({@code info}: reported, never failed). */
+    private record Result(String name, boolean passed, String detail, boolean info) {
     }
 
     private SelfTest(PaperEditHost host, ServerPlayer player, PermissionAttachment attachment) {
@@ -128,12 +134,18 @@ public final class SelfTest {
     }
 
     record Summary(List<Result> results) {
+        List<Result> checks() {
+            return results.stream().filter(r -> !r.info).toList();
+        }
+
         long failures() {
-            return results.stream().filter(r -> !r.passed).count();
+            return checks().stream().filter(r -> !r.passed).count();
         }
 
         String line() {
-            return "Sculptory self-test: " + (results.size() - failures()) + " of " + results.size() + " checks passed";
+            long infos = results.size() - checks().size();
+            return "Sculptory self-test: " + (checks().size() - failures()) + " of " + checks().size()
+                    + " checks passed (" + infos + " information entries)";
         }
     }
 
@@ -163,6 +175,7 @@ public final class SelfTest {
         return test.fillUndo()
                 .thenCompose(v -> test.physicsOff())
                 .thenCompose(v -> test.worldGuard())
+                .thenCompose(v -> test.joinRace())
                 .handle((v, error) -> {
                     if (error != null) test.record("aborted", false, String.valueOf(error));
                     test.finish();
@@ -245,14 +258,69 @@ public final class SelfTest {
                 });
     }
 
+    /**
+     * The join race ({@code S2CRoute}): the Fabric client's hello arrives before its registration of
+     * {@code sculptory:s2c}, and the Messenger would drop the Welcome. Needs a connected Sculptory client, so it runs
+     * only for a named player. First reports whether this player's own join hit the race (frames sent before the
+     * registration); then reproduces it: the client's registration is taken away on the server, as if it had not
+     * arrived yet, a harmless frame (a chunk of a stream the client never opened, which its session ignores) is sent
+     * through the loader, and it must have gone out as a vanilla packet; the registration is then given back, and
+     * the client must still be connected a second later.
+     */
+    private CompletableFuture<Void> joinRace() {
+        PaperServerLoader loader = SculptoryPlugin.instance().loader();
+        if (attachment != null || player.connection == null) {
+            info("network: join race", "skipped: needs a connected Sculptory client (/sculptory selftest <player>)");
+            return CompletableFuture.completedFuture(null);
+        }
+        if (!ServerNet.isReady(player)) {
+            record("network: join race: the handshake completed", false, name() + " has no ready Sculptory session");
+            return CompletableFuture.completedFuture(null);
+        }
+        int atJoin = loader.sentBeforeRegistration(player);
+        info("network: join race on this join", atJoin > 0
+                ? atJoin + " frame(s), the Welcome first, went out before the client registered sculptory:s2c"
+                : "the client's registration arrived before the Welcome this time");
+        CraftPlayer bukkit = player.getBukkitEntity();
+        int before = loader.sentBeforeRegistration(player);
+        S2CRoute route;
+        boolean canSend;
+        bukkit.removeChannel(PaperServerLoader.S2C_CHANNEL);
+        try {
+            route = loader.route(player);
+            canSend = loader.canSendS2C(player);
+            loader.sendS2C(player, NetTest.frameOf(64));
+        } catch (ProtocolException e) {
+            bukkit.addChannel(PaperServerLoader.S2C_CHANNEL);
+            return CompletableFuture.failedFuture(e);
+        } finally {
+            if (!bukkit.getListeningPluginChannels().contains(PaperServerLoader.S2C_CHANNEL)) {
+                bukkit.addChannel(PaperServerLoader.S2C_CHANNEL);
+            }
+        }
+        int sent = loader.sentBeforeRegistration(player) - before;
+        record("network: join race: a frame before the registration goes as a vanilla packet",
+                canSend && route == S2CRoute.PACKET && sent == 1, "canSend=" + canSend + ", route=" + route
+                        + ", counted " + sent);
+        return ticks(20).thenAccept(v -> record("network: join race: the client stays connected",
+                player.connection != null && !player.hasDisconnected()
+                        && bukkit.getListeningPluginChannels().contains(PaperServerLoader.S2C_CHANNEL),
+                "connected=" + !player.hasDisconnected() + ", registration back="
+                        + bukkit.getListeningPluginChannels().contains(PaperServerLoader.S2C_CHANNEL)));
+    }
+
+    private String name() {
+        return player.getGameProfile().getName();
+    }
+
     private CompletableFuture<Void> worldGuard() {
         // Asked of Bukkit, not of WorldGuardTestRegions: that class must not load without WorldGuard.
         if (!Bukkit.getPluginManager().isPluginEnabled("WorldGuard")) {
-            record("worldguard: skipped (WorldGuard not installed)", true, "");
+            info("worldguard: skipped", "WorldGuard is not installed");
             return CompletableFuture.completedFuture(null);
         }
         if (attachment == null && player.hasPermissions(2)) {
-            record("worldguard: note", true, player.getGameProfile().getName()
+            info("worldguard: note", player.getGameProfile().getName()
                     + " is an operator; WorldGuard may let them bypass (run without a player for the fake one)");
         }
         // A region of 4x2x4 cells inside one chunk, y 101-102.
@@ -301,12 +369,13 @@ public final class SelfTest {
                 .thenCompose(result -> {
                     // One box over the region's cells and the two layers above them. The region's cells must stay
                     // whatever the permits; the layers above are the 3D gap: the 2D permits deny the region's columns
-                    // for the whole box height, the 3D permits (ws/permits-3d) must write them. Reported, not failed.
+                    // for the whole box height, the 3D permits (ws/permits-3d) must write them. An information entry, not
+                    // a check: it flips from "refused" to "written" when the 3D permits land.
                     int regionChanged = countDiffering(inside, insideBefore);
                     int layersWritten = countNot(layersAbove, planks) == 0 ? 1 : 0;
                     record("worldguard: box over the region and above it keeps the region", regionChanged == 0,
                             regionChanged + " region cells differ");
-                    record("worldguard: layers above the region in the same box (3D gap, informational)", true,
+                    info("worldguard: layers above the region in the same box (3D gap)",
                             layersWritten == 1 ? "written (3D permits)" : "refused: " + result.skippedProtected()
                                     + " cells skipped as protected, " + result.changed()
                                     + " changed (2D permits deny the region's columns for the whole box)");
@@ -367,8 +436,13 @@ public final class SelfTest {
         return done;
     }
 
+    private void info(String name, String detail) {
+        results.add(new Result(name, true, detail, true));
+        Sculptory.LOG.info("Sculptory self-test: INFO {}{}", name, detail.isEmpty() ? "" : " (" + detail + ")");
+    }
+
     private void record(String name, boolean passed, String detail) {
-        results.add(new Result(name, passed, detail));
+        results.add(new Result(name, passed, detail, false));
         Sculptory.LOG.info("Sculptory self-test: {} {}{}", passed ? "PASS" : "FAIL", name,
                 detail.isEmpty() ? "" : " (" + detail + ")");
     }
@@ -435,9 +509,17 @@ public final class SelfTest {
 
     private static void write(Path report, Summary summary) {
         StringBuilder xml = new StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-                .append("<testsuite name=\"sculptory-paper-selftest\" tests=\"").append(summary.results.size())
+                .append("<testsuite name=\"sculptory-paper-selftest\" tests=\"").append(summary.checks().size())
                 .append("\" failures=\"").append(summary.failures()).append("\">\n");
+        // Information entries are suite properties: reported, never a test.
+        xml.append("  <properties>\n");
         for (Result r : summary.results) {
+            if (!r.info) continue;
+            xml.append("    <property name=\"").append(escape(r.name)).append("\" value=\"").append(escape(r.detail))
+                    .append("\"/>\n");
+        }
+        xml.append("  </properties>\n");
+        for (Result r : summary.checks()) {
             xml.append("  <testcase name=\"").append(escape(r.name)).append("\">");
             if (!r.passed) xml.append("<failure message=\"").append(escape(r.detail)).append("\"/>");
             xml.append("<system-out>").append(escape(r.detail)).append("</system-out></testcase>\n");

@@ -3,9 +3,12 @@ package dev.sculptory.paper.perm;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.mc.perm.McPermissionService;
+import dev.sculptory.mc.perm.McPermissions;
+import dev.sculptory.mc.perm.Tri;
+import dev.sculptory.protocol.v2.PermissionMask;
+import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.Perm;
-import dev.sculptory.server.platform.PlatformPermissions;
 import java.util.Objects;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -24,7 +27,7 @@ import net.minecraft.server.level.ServerPlayer;
  * {@code ChunkPermits.forChunk(cx, cz, part, cells::allowed)} with {@link Protection.CellTest} as that API's cell test,
  * and the intersection with the vanilla permit becomes cell-wise. Nothing else here changes.
  */
-public final class PaperPermissions implements PlatformPermissions<ServerPlayer, ServerLevel> {
+public final class PaperPermissions implements McPermissions {
     private final McPermissionService nodes;
     private final Protection protection;
 
@@ -49,6 +52,21 @@ public final class PaperPermissions implements PlatformPermissions<ServerPlayer,
     @Override
     public boolean denied(ServerPlayer p, Perm node) {
         return nodes.denied(p, node);
+    }
+
+    @Override
+    public Tri check(ServerPlayer p, Perm node) {
+        return nodes.check(p, node);
+    }
+
+    @Override
+    public PermissionMask mask(ServerPlayer p) {
+        return nodes.mask(p);
+    }
+
+    @Override
+    public void configure(SculptoryConfig config) {
+        nodes.configure(config);
     }
 
     @Override

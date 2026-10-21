@@ -3,12 +3,16 @@ package dev.sculptory.paper;
 import com.destroystokyo.paper.event.server.ServerTickEndEvent;
 import com.destroystokyo.paper.event.server.ServerTickStartEvent;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.tree.CommandNode;
+import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.loader.ServerLoader;
 import io.netty.buffer.Unpooled;
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -48,12 +52,14 @@ import org.bukkit.plugin.messaging.Messenger;
  *       worlds and the network ticked). Paper has no per-world tick event; {@link #onStartWorldTick} hooks run for
  *       every world at the server tick's start (only the light batch used it, a no-op on Paper).</li>
  *   <li>Join and leave: {@link PlayerJoinEvent} and {@link PlayerQuitEvent}, on the server thread.</li>
- *   <li>Commands: registered straight into the server's Brigadier dispatcher (Mojang-named; Paper bridges it to
- *       Bukkit's command map), once, when the plugin is enabled.</li>
+ *   <li>Commands: through Paper's {@code LifecycleEvents.COMMANDS}, so they are registered again whenever Paper
+ *       rebuilds the command tree (start, {@code /minecraft:reload}); see {@link #registerCommandsOnEveryBuild}.</li>
  *   <li>Network: Bukkit plugin channels {@code sculptory:c2s} (in) and {@code sculptory:s2c} (out). Paper hands
- *       incoming plugin messages to listeners on the server thread. Out goes through the Messenger once the client
- *       registered the channel (else, or with {@code -Dsculptory.paper.s2c=nms}, straight as a vanilla
- *       {@link ClientboundCustomPayloadPacket}).</li>
+ *       incoming plugin messages to listeners on the server thread. Bukkit's Messenger drops, silently, a plugin
+ *       message on a channel the client has not registered, and the Fabric client's hello arrives before its
+ *       registration of {@code sculptory:s2c} (the join race, {@link S2CRoute}). So out goes through the Messenger
+ *       once the client registered the channel, and before that (or with {@code -Dsculptory.paper.s2c=nms}) as a
+ *       vanilla {@link ClientboundCustomPayloadPacket} to a client that has spoken {@code sculptory:c2s}.</li>
  *   <li>Permissions: Bukkit's, with the operator level as the fallback for a node nothing has set.</li>
  * </ul>
  */
@@ -79,9 +85,13 @@ public final class PaperServerLoader implements ServerLoader, Listener {
     private final List<BiConsumer<CommandDispatcher<CommandSourceStack>, CommandBuildContext>> commands =
             new CopyOnWriteArrayList<>();
     private final List<BiConsumer<ServerPlayer, byte[]>> receivers = new CopyOnWriteArrayList<>();
+    private volatile int commandBuilds;
     /** Play connections that sent a sculptory:c2s frame (weak: a connection is forgotten once it is gone). */
     private final Set<ServerGamePacketListenerImpl> spokeC2S =
             Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+    /** Frames sent per play connection before its client registered sculptory:s2c (weak, as above). */
+    private final Map<ServerGamePacketListenerImpl, Integer> unregisteredSends =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     PaperServerLoader(SculptoryPlugin plugin) {
         this.plugin = Objects.requireNonNull(plugin);
@@ -132,11 +142,35 @@ public final class PaperServerLoader implements ServerLoader, Listener {
         stopped.forEach(hook -> hook.accept(server));
     }
 
-    void fireCommands(MinecraftServer server) {
-        CommandDispatcher<CommandSourceStack> dispatcher = server.getCommands().getDispatcher();
-        CommandBuildContext context = CommandBuildContext.simple(server.registryAccess(),
-                server.getWorldData().enabledFeatures());
-        commands.forEach(hook -> hook.accept(dispatcher, context));
+    /**
+     * Runs the command hooks whenever Paper builds its command tree: at start and again on every data-pack reload
+     * ({@code /minecraft:reload}), which rebuilds the tree without plugin commands registered straight into the
+     * dispatcher. The hooks register into a scratch dispatcher; each top-level literal then goes through Paper's
+     * registrar, which adds it as {@code sculptory:<name>} plus {@code <name>}. The nodes are Mojang-typed: Paper's
+     * {@code CommandSourceStack} is the server's own (it implements Paper's interface), so the cast only renames
+     * the type the registrar declares.
+     */
+    @SuppressWarnings("unchecked")
+    void registerCommandsOnEveryBuild() {
+        plugin.getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, event -> {
+            MinecraftServer server = MinecraftServer.getServer();
+            CommandDispatcher<CommandSourceStack> scratch = new CommandDispatcher<>();
+            CommandBuildContext context = CommandBuildContext.simple(server.registryAccess(),
+                    server.getWorldData().enabledFeatures());
+            commands.forEach(hook -> hook.accept(scratch, context));
+            for (CommandNode<CommandSourceStack> node : scratch.getRoot().getChildren()) {
+                if (!(node instanceof LiteralCommandNode<CommandSourceStack> literal)) continue;
+                var paperTyped = (LiteralCommandNode<io.papermc.paper.command.brigadier.CommandSourceStack>)
+                        (LiteralCommandNode<?>) literal;
+                event.registrar().register(paperTyped, "Sculptory", List.of());
+            }
+            commandBuilds++;
+        });
+    }
+
+    /** How many times Paper has built the command tree with ours in it (start, then once per reload). */
+    public int commandBuilds() {
+        return commandBuilds;
     }
 
     // ---- Bukkit events ----
@@ -283,31 +317,53 @@ public final class PaperServerLoader implements ServerLoader, Listener {
 
     /**
      * The client registered {@code sculptory:s2c} ({@code minecraft:register}, which Fabric API sends for its
-     * receivers), or it has sent a {@code sculptory:c2s} frame on this connection. The second is needed: the Fabric
-     * client sends its hello as soon as it sees the server's channels, before its own registration of
-     * {@code sculptory:s2c} reaches Paper (seen on Paper 1.21.1 build 133), so the Welcome would otherwise be dropped
-     * and the client would give up ("no handshake answer"). A client that speaks the protocol has the mod.
+     * receivers), or it has sent a {@code sculptory:c2s} frame on this connection. The second is needed because of the
+     * join race {@link S2CRoute} describes: the hello arrives before the client's registration, and Bukkit's Messenger
+     * drops plugin messages on unregistered channels without a word, so the Welcome must not wait for it.
      */
     @Override
     public boolean canSendS2C(ServerPlayer player) {
-        return registered(player) || (player.connection != null && spokeC2S.contains(player.connection));
+        return route(player) != S2CRoute.NONE;
+    }
+
+    /**
+     * Through the Messenger once the client registered the channel; before that (the join race, {@link S2CRoute}), or
+     * with {@code -Dsculptory.paper.s2c=nms}, as a vanilla custom-payload packet. Frames sent unregistered are counted
+     * per connection ({@link #sentBeforeRegistration}).
+     */
+    @Override
+    public void sendS2C(ServerPlayer player, byte[] frame) {
+        S2CRoute route = route(player);
+        switch (route) {
+            case MESSENGER -> player.getBukkitEntity().sendPluginMessage(plugin, S2C_CHANNEL, frame);
+            case PACKET -> {
+                if (!registered(player) && player.connection != null) {
+                    unregisteredSends.merge(player.connection, 1, Integer::sum);
+                }
+                sendThroughNms(player, frame);
+            }
+            case NONE -> {
+                // The client gave no sign of the mod; the dispatcher asks canSendS2C first, so this is not reached.
+            }
+        }
+    }
+
+    /** The route {@link #sendS2C} takes for this player now. */
+    public S2CRoute route(ServerPlayer player) {
+        boolean spoke = player.connection != null && spokeC2S.contains(player.connection);
+        return S2CRoute.of(registered(player), spoke, nmsSend);
+    }
+
+    /**
+     * Frames sent to this player's connection before its client registered {@code sculptory:s2c}: at least one (the
+     * Welcome) whenever the join race happened. The self-test reports it.
+     */
+    public int sentBeforeRegistration(ServerPlayer player) {
+        return player.connection == null ? 0 : unregisteredSends.getOrDefault(player.connection, 0);
     }
 
     private static boolean registered(ServerPlayer player) {
         return player.getBukkitEntity().getListeningPluginChannels().contains(S2C_CHANNEL);
-    }
-
-    /**
-     * Through the Messenger when the client registered the channel (CraftPlayer silently drops a plugin message on a
-     * channel the client did not register), else, or with {@code -Dsculptory.paper.s2c=nms}, as a vanilla packet.
-     */
-    @Override
-    public void sendS2C(ServerPlayer player, byte[] frame) {
-        if (!nmsSend && registered(player)) {
-            player.getBukkitEntity().sendPluginMessage(plugin, S2C_CHANNEL, frame);
-        } else {
-            sendThroughNms(player, frame);
-        }
     }
 
     /**
@@ -316,7 +372,8 @@ public final class PaperServerLoader implements ServerLoader, Listener {
      */
     public static void sendThroughNms(ServerPlayer player, byte[] frame) {
         if (player.connection == null) return;
-        player.connection.send(new ClientboundCustomPayloadPacket(new DiscardedPayload(S2C_ID, Unpooled.wrappedBuffer(frame))));
+        DiscardedPayload payload = new DiscardedPayload(S2C_ID, Unpooled.wrappedBuffer(frame));
+        player.connection.send(new ClientboundCustomPayloadPacket(payload));
     }
 
     // ---- permissions ----

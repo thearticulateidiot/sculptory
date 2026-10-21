@@ -5,6 +5,7 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.scatter.FeatureCatalog;
 import dev.sculptory.core.scatter.ScatterPlanner;
+import dev.sculptory.mc.engine.impl.McHost;
 import dev.sculptory.mc.engine.impl.PaperScatterSurvival;
 import dev.sculptory.mc.perm.McPermissionService;
 import dev.sculptory.mc.world.BlockWriter;
@@ -66,7 +67,7 @@ import net.minecraft.world.level.border.WorldBorder;
  * (they need mixin replacements: {@link DisabledBuilderMode}, {@link TinkerService#disabled()}, a refusal); the light
  * batch is off (Paper's Moonrise light engine); fluid trails record nothing (their mixins are absent).
  */
-public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel> {
+public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>, McHost {
     /** Region-op chunk ticket, as on the loaders: radius 0, expires after 600 ticks unless refreshed. */
     public static final TicketType<ChunkPos> EDIT_TICKET =
             TicketType.create("sculptory:edit", Comparator.comparingLong(ChunkPos::toLong), 600);

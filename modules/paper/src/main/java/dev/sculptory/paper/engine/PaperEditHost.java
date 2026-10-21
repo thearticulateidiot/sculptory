@@ -27,7 +27,6 @@ import dev.sculptory.server.engine.RunOptions;
 import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
-import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.engine.impl.ServerScatter;
 import dev.sculptory.server.library.Library;
@@ -198,11 +197,6 @@ public final class PaperEditHost {
         }
     }
 
-    public static S2C.HistoryState toHistoryState(HistorySnapshot s) {
-        return new S2C.HistoryState(s.canUndo(), s.canRedo(), s.undoLabel(), s.redoLabel(), s.bytes(), s.undoLabels(),
-                s.redoLabels());
-    }
-
     /**
      * The edit service as the dispatcher sees it, plus {@link HistoryView} so it sends the history after the handshake,
      * jobs and strokes (the loaders' EditServiceHost facade does the same).
@@ -285,7 +279,7 @@ public final class PaperEditHost {
 
         @Override
         public S2C.HistoryState historyState(ServerPlayer player) {
-            return toHistoryState(service.history(player));
+            return service.history(player).toMessage();
         }
     }
 }
