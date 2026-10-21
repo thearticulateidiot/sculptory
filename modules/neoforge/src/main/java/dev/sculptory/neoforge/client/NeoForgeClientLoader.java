@@ -30,7 +30,6 @@ import net.neoforged.neoforge.client.event.RenderHighlightEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ScreenEvent;
 import net.neoforged.neoforge.common.NeoForge;
-import net.neoforged.neoforge.event.GameShuttingDownEvent;
 import net.neoforged.neoforge.event.TagsUpdatedEvent;
 import net.neoforged.neoforge.event.level.ChunkEvent;
 import org.joml.Matrix4fStack;
@@ -58,8 +57,9 @@ import org.joml.Matrix4fStack;
  *       wrote depth up to their z, so the depth test is turned off around the hooks, as Fabric's see it;</li>
  *   <li>{@link #onRenderStateInvalidated}: no NeoForge event; {@code LevelRendererMixin} calls it at the head of
  *       {@code LevelRenderer.allChanged}, where Fabric's {@code InvalidateRenderStateCallback} fires;</li>
- *   <li>{@link #onClientStopping}: {@code GameShuttingDownEvent} from {@code Minecraft.stop} (render thread). Fabric's
- *       {@code CLIENT_STOPPING} fires a little later, in {@code Minecraft.destroy}, with GL still current in both;</li>
+ *   <li>{@link #onClientStopping}: {@code MinecraftMixin} in {@code Minecraft.destroy} after the game loop ended, where
+ *       Fabric fires {@code CLIENT_STOPPING} (render thread, GL current). Not NeoForge's {@code GameShuttingDownEvent},
+ *       which {@code Minecraft.stop} posts before the loop's last tick and frame;</li>
  *   <li>{@link #onScreenAfterRender}: {@code ScreenEvent.Render.Post};</li>
  *   <li>{@link #onJoin}: {@code ClientPacketListenerMixin} at the end of {@code ClientPacketListener.handleLogin}, on
  *       the render thread, where Fabric API fires {@code ClientPlayConnectionEvents.JOIN} (its networking mixin injects
@@ -97,6 +97,8 @@ public final class NeoForgeClientLoader implements ClientLoader {
     private static final List<Runnable> JOIN_HOOKS = new CopyOnWriteArrayList<>();
     /** The chunk unload hooks, run from NeoForge's event and from {@code ClientChunkCacheMixin} ({@link #chunkUnloaded}). */
     private static final List<BiConsumer<ClientLevel, LevelChunk>> CHUNK_UNLOAD_HOOKS = new CopyOnWriteArrayList<>();
+    /** The client stopping hooks, which {@code MinecraftMixin} runs ({@link #clientStopping}). */
+    private static final List<Runnable> STOPPING_HOOKS = new CopyOnWriteArrayList<>();
     /** Whether the play connection's join hooks ran (and its disconnect hooks have not yet). Render thread only. */
     private static boolean joined;
 
@@ -235,8 +237,12 @@ public final class NeoForgeClientLoader implements ClientLoader {
 
     @Override
     public void onClientStopping(Runnable hook) {
-        Objects.requireNonNull(hook);
-        NeoForge.EVENT_BUS.addListener((GameShuttingDownEvent event) -> hook.run());
+        STOPPING_HOOKS.add(Objects.requireNonNull(hook));
+    }
+
+    /** {@code Minecraft.destroy}, after the game loop ended ({@code MinecraftMixin}): the stopping hooks. */
+    public static void clientStopping() {
+        STOPPING_HOOKS.forEach(Runnable::run);
     }
 
     @Override

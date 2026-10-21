@@ -7,6 +7,7 @@
     "ClientChunkCacheMixin",
     "ClientPacketListenerMixin",
     "LevelRendererMixin",
+    "MinecraftMixin",
     "MultiPlayerGameModeMixin"
   ],
   "injectors": { "defaultRequire": 1 }
