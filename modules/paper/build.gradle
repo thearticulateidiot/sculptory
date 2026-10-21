@@ -24,9 +24,10 @@ repositories {
 
 // The plugin takes the loader-free Minecraft code of modules/common as source, like the loader modules do, but through
 // a copy (commonForPaper) with the few Paper-only changes no seam covers: the physics-off write and the light marker go
-// through PaperAccess, and the methods Paper's patched level interfaces declare abstract are added. (The access-widened
-// reads go through the McInternals seam, which PaperAccess implements.) Every patch must match, so a change in
-// modules/common that moves one fails here instead of silently compiling the old behaviour.
+// through PaperAccess, captured entities lose CraftBukkit's own keys (CraftBukkitKeys), and the methods Paper's
+// patched level interfaces declare abstract are added. (The access-widened reads go through the McInternals seam,
+// which PaperAccess implements.) Every patch must match, so a change in modules/common that moves one fails here
+// instead of silently compiling the old behaviour.
 def commonSources = project(':common').file('src/main/java')
 // Not on Paper: the mixins (Paper has none), builder mode (mixin accessors), the loaders' reads of widened members
 // (WidenedMcInternals), the Fabric/NeoForge engine wiring and the command tree over it (the plugin wires the engine
@@ -85,6 +86,11 @@ def commonPatches = [
                 ['final class LoadedOnlyView implements LevelReader {',
                  'final class LoadedOnlyView implements LevelReader {\n' + levelReaderMethods],
         ],
+        // CraftBukkit's own entity keys (Bukkit.*, Paper.*, Spigot.*, the world id) are not part of a captured entity.
+        'dev/sculptory/mc/world/McEntities.java': [
+                ['if (!entity.saveAsPassenger(nbt)) return null;',
+                 'if (!entity.saveAsPassenger(nbt)) return null;\n        dev.sculptory.paper.nms.CraftBukkitKeys.strip(nbt);'],
+        ],
         'dev/sculptory/mc/world/CapturingWorldAccess.java': [
                 ['public final class CapturingWorldAccess implements WorldGenLevel {',
                  'public final class CapturingWorldAccess implements WorldGenLevel {\n' + levelAccessorMethods],
@@ -92,12 +98,14 @@ def commonPatches = [
 ].collectEntries { k, v -> [k, v.collect { [it[0].toString(), it[1].toString()] }] }
 
 // What the patches leave must stay as it is: a new use of these in the sources the plugin compiles would run on Paper
-// without the mixin or the light-engine call it relies on.
+// without the mixin, the light-engine call or the patch it relies on.
 def commonDriftGuards = [
         [/waitForPendingTasks\(/, '0',
          "Paper's (Moonrise's) light engine throws there: route it through PaperAccess.lightMarker (a patch)."],
         [/setBlock\([^;]*UPDATE_KNOWN_SHAPE/, '0',
          'A physics-off write needs PaperAccess.setBlockWithoutCallbacks on Paper (no mixin cancels onPlace/onRemove).'],
+        [/saveAsPassenger\(|saveWithoutId\(|\.save\(new CompoundTag/, '1',
+         "Entity NBT is captured in McEntities.save alone, where CraftBukkit's keys are stripped (a patch); another capture would keep them."],
         [/EditScope\.suppressPhysics\(\)/, '2',
          "EditScope suppresses nothing on Paper (its mixin is absent): BlockWriter's two uses are covered, a new one is not."],
 ].collect { it.collect { s -> s.toString() } }
