@@ -201,6 +201,8 @@ abstract class CommonOverlay extends DefaultTask {
     /**
      * Drift guards, checked on the patched copy: [regex, most occurrences allowed, why]. Code lines only (comment lines
      * are skipped). A new use in modules/common of something only a patch makes Paper-safe fails the build here.
+     * The patterns match one line at a time: a call split over two lines, or reached through a helper of another name,
+     * is not seen, so a guard is a tripwire for the plain form of the call, not a proof.
      */
     @Input
     abstract ListProperty<List<String>> getLimits()

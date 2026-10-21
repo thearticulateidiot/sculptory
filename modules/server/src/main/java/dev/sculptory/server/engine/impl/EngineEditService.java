@@ -2139,6 +2139,17 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         return true;
     }
 
+    /**
+     * Journals the changed sections of every open job record and open stroke now, without waiting for the writer: a
+     * platform's catch-up where the game saves chunks with no hook before each one (Paper's periodic save, whose chunks
+     * Moonrise writes a few a tick afterwards). Off the server thread, or without saved history, it does nothing.
+     */
+    public void saveOpenNow() {
+        if (!runtime.isOnThread() || !history.persistent()) return;
+        history.saveOpen();
+        saveOpenStrokes(null, 0, 0, false);
+    }
+
     /** The player joined: with saved history, their history starts loading now (it is ready by the time they edit). */
     public void playerJoined(UUID player) {
         checkThread();

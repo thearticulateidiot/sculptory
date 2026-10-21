@@ -60,18 +60,21 @@ public final class SculptoryPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        // A self-test in progress puts its test areas back while the plugin can still write (dev only).
+        SelfTest.pluginDisabling();
         MinecraftServer server = MinecraftServer.getServer();
         if (loader != null) {
             // Each step runs even when one before it throws: the stop hooks close the history store, and the loader
-            // must forget its hooks for a later enable of this same instance.
+            // must forget its hooks (a /reload makes a fresh instance; enabling this one again is not supported: Paper
+            // closes its class loader on disable).
             try {
                 loader.fireStopping(server);
             } finally {
                 try {
                     loader.fireStopped(server);
                 } finally {
-                    // After ServerNet's own stopped hook closed its sessions: the plugin may be enabled again in this
-                    // JVM, and the next start installs the networking anew.
+                    // After ServerNet's own stopped hook closed its sessions: a /reload loads the plugin again in this
+                    // JVM, and its start installs the networking anew.
                     ServerNet.uninstall();
                     loader.disable();
                 }

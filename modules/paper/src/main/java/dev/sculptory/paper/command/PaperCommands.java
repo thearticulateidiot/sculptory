@@ -16,7 +16,6 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.net.ServerNet;
-import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.devtest.NetTest;
 import dev.sculptory.paper.devtest.RegionBench;
 import dev.sculptory.paper.devtest.SelfTest;
@@ -40,7 +39,6 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
-import org.bukkit.Bukkit;
 
 /**
  * {@code /sculptory} on Paper (spike): fill, undo, redo and version as the loaders' command has them, plus the dev
@@ -80,8 +78,6 @@ public final class PaperCommands {
                             .then(argument("height", IntegerArgumentType.integer(1, 384))
                                     .executes(c -> RegionBench.run(host.get(), c.getSource(),
                                             IntegerArgumentType.getInteger(c, "height")))))
-                    // Disables and enables this plugin instance on the next tick (what a plugin manager does).
-                    .then(literal("reenable").requires(SelfTest::allowed).executes(c -> reenable(c.getSource())))
                     .then(literal("nettest").requires(SelfTest::allowed)
                             .then(argument("player", EntityArgument.player())
                                     .then(argument("bytes", IntegerArgumentType.integer(1, 4 * 1024 * 1024))
@@ -94,19 +90,7 @@ public final class PaperCommands {
         dispatcher.register(root);
     }
 
-    private static int reenable(CommandSourceStack source) {
-        SculptoryPlugin plugin = SculptoryPlugin.instance();
-        Bukkit.getScheduler().runTask(plugin, () -> {
-            Sculptory.LOG.info("Sculptory: disabling and enabling the plugin again (dev)");
-            Bukkit.getPluginManager().disablePlugin(plugin);
-            Bukkit.getPluginManager().enablePlugin(plugin);
-            Sculptory.LOG.info("Sculptory: enabled again: {}", plugin.isEnabled());
-        });
-        source.sendSuccess(() -> Component.literal("Re-enabling Sculptory on the next tick"), false);
-        return 1;
-    }
-
-    /** The running engine; a command without one fails (the plugin is being enabled again, or failed to start). */
+    /** The running engine; a command without one fails (the plugin is being disabled, or failed to start). */
     private PaperEditHost running(CommandSourceStack source) throws CommandSyntaxException {
         PaperEditHost running = host.get();
         if (running == null) throw NOT_RUNNING.create();

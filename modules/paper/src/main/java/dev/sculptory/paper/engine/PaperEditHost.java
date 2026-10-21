@@ -76,6 +76,8 @@ public final class PaperEditHost {
     private final EngineEditService<ServerPlayer, ServerLevel> service;
     private final ServerClipboards<ServerPlayer, ServerLevel> clipboards;
     private final ServerScatter<ServerPlayer, ServerLevel> scatter;
+    /** The crash-safe history hooks (set once by {@link #start}). */
+    private HistorySaveHooks saveHooks;
 
     private PaperEditHost(PaperEngine engine, EngineEditService<ServerPlayer, ServerLevel> service,
                           ServerClipboards<ServerPlayer, ServerLevel> clipboards,
@@ -108,7 +110,7 @@ public final class PaperEditHost {
         engine.executor().addLane(planning.lane(), config.scatter.tickShare);
         PaperEditHost host = new PaperEditHost(engine, service, clips, planning);
         host.registerHooks(loader);
-        HistorySaveHooks.register(plugin, service);
+        host.saveHooks = HistorySaveHooks.register(plugin, service);
         ServerNet.install(new NetFacade(service), clips, planning, TinkerService.disabled(), engine.permissions(),
                 () -> engine.config().toLimits(), engine::states);
         LOG.info("Sculptory engine started on Paper ({} block states, editing {}, protection: {})", engine.states().size(),
@@ -122,6 +124,14 @@ public final class PaperEditHost {
 
     public EngineEditService<ServerPlayer, ServerLevel> service() {
         return service;
+    }
+
+    /**
+     * How often the history save hooks ran so far: chunk unloads, full world saves, periodic world saves (the dev
+     * self-test checks which path a save took).
+     */
+    public long[] historySaveHookCounts() {
+        return saveHooks == null ? new long[3] : saveHooks.counts();
     }
 
     /** The hooks in the loaders' order: the engine's ticks first, then the edit service's, then (ServerNet) the network's. */

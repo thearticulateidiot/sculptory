@@ -121,16 +121,17 @@ public final class PaperServerLoader implements ServerLoader, Listener {
             for (BiConsumer<ServerPlayer, byte[]> receiver : receivers) receiver.accept(handle, message);
         });
         messenger.registerOutgoingPluginChannel(plugin, S2C_CHANNEL);
-        // Players already online (the plugin enabled again): their registrations happened before the listener.
+        // Players already online (a /reload made this instance): their registrations happened before the listener.
         for (Player online : Bukkit.getOnlinePlayers()) {
             if (online.getListeningPluginChannels().contains(S2C_CHANNEL)) registeredS2C.add(online.getUniqueId());
         }
     }
 
     /**
-     * Unregisters the plugin channels and forgets every hook, so enabling the same plugin instance again (a plugin
-     * manager's disable then enable) starts from nothing: the hooks are registered again by the new start, and none
-     * of the old engine's survive. Bukkit drops the plugin's event listeners itself, Paper its lifecycle handlers.
+     * Unregisters the plugin channels and forgets every hook, so none of the old engine's survive into the instance a
+     * {@code /reload} makes (which registers its own). Bukkit drops the plugin's event listeners itself, Paper its
+     * lifecycle handlers. Enabling this same instance again is not supported: Paper closes the plugin's class loader on
+     * disable, so a class first needed afterwards fails to load ({@code NoClassDefFoundError}).
      */
     void disable() {
         Messenger messenger = Bukkit.getMessenger();
@@ -143,6 +144,8 @@ public final class PaperServerLoader implements ServerLoader, Listener {
         spokeC2S.clear();
         unregisteredSends.clear();
         registeredS2C.clear();
+        // Its task was cancelled with the plugin's others.
+        afterSaveScheduled = false;
     }
 
     public boolean sendsThroughNms() {
@@ -180,14 +183,14 @@ public final class PaperServerLoader implements ServerLoader, Listener {
         try {
             registerLifecycleCommands();
         } catch (IllegalStateException refused) {
-            // Paper takes lifecycle handlers only while plugins are first enabled; this same instance enabled again
-            // (a plugin manager's disable then enable) gets the old route: straight into the dispatcher, which a
-            // later /minecraft:reload drops until the server restarts.
+            // Paper takes lifecycle handlers only while plugins are enabled at start or by /reload; a plugin manager
+            // loading this after start gets the old route: straight into the dispatcher, which a later
+            // /minecraft:reload drops until the server restarts.
             MinecraftServer server = MinecraftServer.getServer();
             CommandBuildContext context = CommandBuildContext.simple(server.registryAccess(),
                     server.getWorldData().enabledFeatures());
             commands.forEach(hook -> hook.accept(server.getCommands().getDispatcher(), context));
-            Sculptory.LOG.warn("Sculptory: enabled again after start, so its commands are registered directly ({}); a "
+            Sculptory.LOG.warn("Sculptory: enabled after start, so its commands are registered directly ({}); a "
                     + "/minecraft:reload removes them until the server restarts", refused.getMessage());
         }
     }
@@ -241,8 +244,11 @@ public final class PaperServerLoader implements ServerLoader, Listener {
     @EventHandler(priority = EventPriority.MONITOR)
     public void onQuit(PlayerQuitEvent event) {
         ServerPlayer player = ((CraftPlayer) event.getPlayer()).getHandle();
-        disconnect.forEach(hook -> hook.accept(player));
-        registeredS2C.remove(event.getPlayer().getUniqueId());
+        try {
+            disconnect.forEach(hook -> hook.accept(player));
+        } finally {
+            registeredS2C.remove(event.getPlayer().getUniqueId());
+        }
     }
 
     /** The client registered a channel ({@code minecraft:register}): noted for {@code sculptory:s2c} only. */
@@ -257,9 +263,11 @@ public final class PaperServerLoader implements ServerLoader, Listener {
     }
 
     /**
-     * Bukkit fires {@link WorldSaveEvent} per world before the world is saved (Paper: before a full save; Moonrise's
-     * incremental chunk autosave fires nothing). {@link #onAfterSave} means after, so its hooks run on the next tick,
-     * once however many worlds were saved: a full save writes everything within the tick that fired the event.
+     * Bukkit fires {@link WorldSaveEvent} per world before a full save ({@code ServerLevel.save}: {@code save-all},
+     * which writes the chunks in that same call) and before Paper's periodic save ({@code saveIncrementally}, which
+     * writes the level data only; Moonrise's incremental chunk autosave fires nothing). {@link #onAfterSave} means after,
+     * so its hooks run on the next tick, once however many worlds were saved: either save is done within the tick that
+     * fired the event.
      */
     @EventHandler(priority = EventPriority.MONITOR)
     public void onWorldSaveStarting(WorldSaveEvent event) {

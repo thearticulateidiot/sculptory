@@ -41,8 +41,9 @@ import org.bukkit.permissions.PermissionAttachment;
  * (not op, no WorldGuard bypass): first with no region there, then with 20 overlapping WorldGuard cuboids of mixed
  * heights and priorities. Times, each the median of five runs: every chunk's permit ({@code PaperPermissions.chunk}, as
  * the engine asks it), and the whole admission of a fill of air over the box ({@code EditService.run}, through a
- * throwaway edit service; the job is cancelled before it runs, and air over air would change nothing anyway). The
- * regions and chunk tickets are removed afterwards.
+ * throwaway edit service; the job is cancelled in the same tick, while it is still queued, so it changes nothing: y 100
+ * and up may hold terrain, which a fill that ran would change). The regions and chunk tickets are removed afterwards;
+ * the 13x13 chunks are loaded for the run, and generated if they never were.
  */
 public final class RegionBench {
     private static final int SIZE = 200;
