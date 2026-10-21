@@ -29,17 +29,17 @@ repositories {
 // which PaperAccess implements.) Every patch must match, so a change in modules/common that moves one fails here
 // instead of silently compiling the old behaviour.
 def commonSources = project(':common').file('src/main/java')
-// Not on Paper: the mixins (Paper has none), builder mode (mixin accessors), the loaders' reads of widened members
-// (WidenedMcInternals), the Fabric/NeoForge engine wiring and the command tree over it (the plugin wires the engine
-// itself: PaperEngine, PaperEditHost, PaperCommands; EngineRuntime still builds BuilderService), and the light batch
-// (Paper's own light engine; src/commonReplacements has its stand-in).
+// Not on Paper: the mixins (Paper has none), builder mode's mixin-backed steps (BuilderCapture, CapturedBuilderSteps;
+// Paper's are PaperBuilderSteps), the loaders' reads of widened members (WidenedMcInternals), the Fabric/NeoForge
+// engine wiring and the command tree over it (the plugin wires the engine itself: PaperEngine, PaperEditHost,
+// PaperCommands), and the light batch (Paper's own light engine; src/commonReplacements has its stand-in).
 def commonExcludes = [
         'dev/sculptory/mc/mixin/**',
-        'dev/sculptory/mc/builder/**',
+        'dev/sculptory/mc/builder/BuilderCapture.java',
+        'dev/sculptory/mc/builder/CapturedBuilderSteps.java',
         'dev/sculptory/mc/command/**',
         'dev/sculptory/mc/engine/impl/EngineRuntime.java',
         'dev/sculptory/mc/engine/impl/EditServiceHost.java',
-        'dev/sculptory/mc/engine/impl/BuilderService.java',
         'dev/sculptory/mc/world/WidenedMcInternals.java',
         'dev/sculptory/mc/world/LightBatch.java',
 ]

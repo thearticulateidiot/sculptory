@@ -2,23 +2,17 @@ package dev.sculptory.mc.engine.impl;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.Symmetry;
-import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.core.mask.BoundMask;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.state.StateSpace;
-import dev.sculptory.mc.builder.BuilderCapture;
+import dev.sculptory.mc.builder.BuilderChange;
 import dev.sculptory.mc.builder.BuilderPlacement;
 import dev.sculptory.mc.builder.BuilderPlacementContext;
-import dev.sculptory.mc.perm.McPermissions;
-import dev.sculptory.mc.perm.Tri;
-import dev.sculptory.mc.world.BlockWriter;
-import dev.sculptory.mc.world.EditScope;
-import dev.sculptory.mc.world.McTile;
+import dev.sculptory.mc.builder.BuilderSteps;
 import dev.sculptory.mc.world.McWorldReader;
-import dev.sculptory.mc.world.FluidTrails;
 import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
@@ -34,7 +28,8 @@ import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.EditMasks;
 import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
-import java.io.IOException;
+import dev.sculptory.server.platform.FluidTrailHook;
+import dev.sculptory.server.platform.PlatformPermissions;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -48,12 +43,10 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.Clearable;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -64,7 +57,6 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.GameMasterBlock;
 import net.minecraft.world.level.block.LiquidBlock;
-import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.BlockHitResult;
@@ -74,8 +66,8 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Builder mode on the server: the placements and breaks a player makes in
- * normal creative play with a power on, carried out through the engine ({@link EngineRuntime#builderMode}). Server
- * thread only; owned by {@link EngineEditService}.
+ * normal creative play with a power on, carried out through the engine (the host's {@code builderMode}: the loaders'
+ * EngineRuntime, Paper's PaperEngine). Server thread only; owned by {@link EngineEditService}.
  *
  * <p><b>Who may.</b> Every action needs editing enabled, {@code sculptory.use} and {@code sculptory.builder}, and
  * Creative mode. The target (the clicked block, or the empty cell Place in air aims at, and every cell a drag breaks)
@@ -85,15 +77,19 @@ import org.slf4j.LoggerFactory;
  * ({@link BuilderOutcome}). Mirrored copies are checked each on its own: one that fails is skipped, the others are
  * written. Cells vanilla's own steps reach beyond those (a bed's head, a door's upper half, the base of a broken
  * piston head) are checked once the action ran: one the player may not write puts everything the action changed back
- * and refuses it. Replace takes an operator block, and Force place puts one down, only for a level-2 creative op. Every block written, copies included, spends one token of the player's budget
+ * and refuses it. Replace takes an operator block, and Force place puts one down, only for a level-2 creative op.
+ * Where the platform has block events (Paper: {@code BlockPlaceEvent}, {@code BlockMultiPlaceEvent},
+ * {@code BlockBreakEvent}), every block placed or broken is announced like a player's, and one another plugin cancels is
+ * refused like a protected cell: the target refuses the action whole ({@link Refusal#PROTECTED}), a copy or a cell of a
+ * drag is skipped. Every block written, copies included, spends one token of the player's budget
  * ({@code builder.maxBlocksPerSecond}, bursts of twice that); an action over it is refused whole.
  *
- * <p><b>Writes</b> are vanilla's own placement and creative-break steps ({@link BuilderPlacement}) inside a
- * {@link BuilderCapture}, which records every cell they change, the door's upper half and the fence that joined
- * included: exact undo of whatever vanilla did in that call. Keep shape makes them physics-free (the capture's
- * {@code FORCE_STATE} writes and an {@link EditScope}), and clears scheduled ticks at the changed cells as the editor's
- * writes do. Containers are emptied (into the record, not onto the ground) before they are broken or replaced, so nothing
- * drops and undo cannot duplicate items. Fluid the action leaves is its entry's ({@link FluidTrails}).
+ * <p><b>Writes</b> are vanilla's own placement and creative-break steps ({@link BuilderPlacement}), carried out by the
+ * platform's {@link BuilderSteps}, which records every cell they change, the door's upper half and the fence that
+ * joined included: exact undo of whatever vanilla did in that call. Keep shape makes them physics-free, and clears
+ * scheduled ticks at the changed cells as the editor's writes do. Containers are emptied (into the record, not onto the
+ * ground) before they are broken or replaced, so nothing drops and undo cannot duplicate items. Fluid the action leaves
+ * is its entry's (the host's fluid trails).
  *
  * <p><b>History.</b> A placement is one entry ("Place · 3 blocks", "Replace · 1 block"), pushed at once. Breaks
  * belong to a drag: a click is a drag of one message; a bulldozer drag's messages build one record, which becomes one
@@ -108,7 +104,7 @@ import org.slf4j.LoggerFactory;
  * reach as far; it is removed as soon as they may not (checked every tick for the game mode and the modifier, every
  * {@value #RECHECK_TICKS} ticks and on op changes for the nodes), and when they leave.
  */
-final class BuilderService implements BuilderMode<ServerPlayer> {
+public final class BuilderService implements BuilderMode<ServerPlayer> {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
     /** Added to the reach in the distance check, as vanilla adds to its own. */
     static final double REACH_MARGIN = 1.0;
@@ -120,14 +116,16 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
     static final int RECHECK_TICKS = 40;
 
     private final EngineEditService<ServerPlayer, ServerLevel> edits;
-    private final EngineRuntime runtime;
+    private final McHost runtime;
     private final MinecraftServer server;
+    /** The platform's way of carrying out the steps ({@link BuilderSteps}). */
+    private final BuilderSteps steps;
     /** The config in effect ({@code /sculptory reload} replaces it): read whenever a check runs. */
     private final Supplier<SculptoryConfig> configs;
-    private final McPermissions permissions;
+    private final PlatformPermissions<ServerPlayer, ServerLevel> permissions;
     private final EditExecutor<ServerLevel> executor;
     private final HistoryService history;
-    private final FluidTrails trails;
+    private final FluidTrailHook<ServerLevel> trails;
     private final StateSpace states;
     private final LongSupplier clock;
     private final Map<UUID, PlayerState> players = new HashMap<>();
@@ -171,11 +169,18 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
         }
     }
 
-    BuilderService(EngineEditService<ServerPlayer, ServerLevel> edits, EngineRuntime runtime,
-                   EditExecutor<ServerLevel> executor, HistoryService history, LongSupplier clock) {
+    /**
+     * @param runtime the engine host (config, permissions, fluid trails, states, readers)
+     * @param server the running server (players by id)
+     * @param steps how this platform carries out the world steps
+     */
+    public BuilderService(EngineEditService<ServerPlayer, ServerLevel> edits, McHost runtime, MinecraftServer server,
+                          BuilderSteps steps, EditExecutor<ServerLevel> executor, HistoryService history,
+                          LongSupplier clock) {
         this.edits = Objects.requireNonNull(edits);
         this.runtime = Objects.requireNonNull(runtime);
-        this.server = runtime.server();
+        this.server = Objects.requireNonNull(server);
+        this.steps = Objects.requireNonNull(steps);
         this.configs = runtime::config;
         this.permissions = runtime.permissions();
         this.executor = Objects.requireNonNull(executor);
@@ -275,14 +280,18 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
 
         RecordBuilder record = new RecordBuilder();
         int skipped = 0;
+        boolean refused = false;
         RuntimeException failure = null;
-        BuilderCapture capture = BuilderCapture.open(world, keepShape, true);
-        EditScope scope = keepShape ? EditScope.suppressPhysics() : null;
+        BuilderSteps.Action action = steps.open(world, p, keepShape);
         try {
-            if (replace) emptyContainer(capture, world, cell);
-            if (!BuilderPlacement.place(decision.item(), decision.context(), decision.state(), false)) skipped++;
+            if (replace) action.emptyContainer(cell);
+            BuilderSteps.Step placed = action.place(decision.item(), decision.context(), decision.state(), false);
+            // Another plugin refused the block itself (its place event): the action is refused whole, as protection.
+            refused = placed == BuilderSteps.Step.REFUSED;
+            if (placed == BuilderSteps.Step.NOT_DONE) skipped++;
             ItemStack stack = decision.context().getItemInHand();
-            for (BuilderPlacement.Copy copy : copies.subList(1, copies.size())) {
+            List<BuilderPlacement.Copy> others = refused ? List.of() : copies.subList(1, copies.size());
+            for (BuilderPlacement.Copy copy : others) {
                 BlockPos at = copy.pos();
                 if (writable(p, world, at) != null || (replace && !mayReplace(p, world, at))) {
                     skipped++;
@@ -294,23 +303,27 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
                     skipped++;
                     continue;
                 }
-                if (replace) emptyContainer(capture, world, at);
+                if (replace) action.emptyContainer(at);
                 BlockState copyState = BuilderPlacement.imageState(states, copy.image(), decision.state());
-                if (!BuilderPlacement.place(decision.item(), context, copyState, true)) skipped++;
+                // A copy another plugin refused is skipped, as a protected copy is.
+                if (action.place(decision.item(), context, copyState, true) != BuilderSteps.Step.DONE) skipped++;
             }
         } catch (RuntimeException e) {
             failure = e;
             LOG.error("Sculptory: a builder placement at {} failed; what it changed stays in the history",
                     cell.toShortString(), e);
-        } finally {
-            if (scope != null) scope.close();
         }
-        List<Change> changes = changes(capture);
+        List<BuilderChange> changes = action.finish();
+        if (refused) {
+            // What the refused step changed is already put back; a container emptied for Replace is not.
+            steps.revert(world, changes);
+            return BuilderOutcome.refused(Refusal.PROTECTED, cell.toShortString());
+        }
         // Vanilla's own steps reach other cells (a bed's head, a door's upper half): each must be writable too.
         Blocked secondary = failure == null ? blocked(p, world, changes) : null;
         if (secondary == null && failure == null) secondary = masked(mask, world, changes);
         if (secondary != null) {
-            revert(world, changes);
+            steps.revert(world, changes);
             return BuilderOutcome.refused(secondary.refusal(), secondary.pos().toShortString());
         }
         int changed = record(world, record, changes, keepShape).changed();
@@ -383,8 +396,7 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
         Refusal first = null;
         int skipped = 0;
         RuntimeException failure = null;
-        BuilderCapture capture = BuilderCapture.open(world, keepShape, true);
-        EditScope scope = keepShape ? EditScope.suppressPhysics() : null;
+        BuilderSteps.Action action = steps.open(world, p, keepShape);
         try {
             for (List<BuilderPlacement.Copy> copies : targets) {
                 BlockPos cell = copies.get(0).pos();
@@ -397,8 +409,14 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
                     skipped++;
                     continue;
                 }
-                if (drag.firstKind == null) drag.firstKind = world.getBlockState(cell).getBlock();
-                breakAt(capture, world, p, cell);
+                Block kind = world.getBlockState(cell).getBlock();
+                if (action.breakBlock(cell) == BuilderSteps.Step.REFUSED) {
+                    // Another plugin refused the break (its break event): skipped, as a protected cell is.
+                    if (first == null || first == Refusal.NOTHING) first = Refusal.PROTECTED;
+                    skipped++;
+                    continue;
+                }
+                if (drag.firstKind == null) drag.firstKind = kind;
                 for (BuilderPlacement.Copy copy : copies.subList(1, copies.size())) {
                     BlockPos at = copy.pos();
                     if (writable(p, world, at) != null || breakable(p, world, at, drag, m.sameKind()) != null
@@ -406,22 +424,20 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
                         skipped++;
                         continue;
                     }
-                    breakAt(capture, world, p, at);
+                    if (action.breakBlock(at) == BuilderSteps.Step.REFUSED) skipped++;
                 }
             }
         } catch (RuntimeException e) {
             failure = e;
             LOG.error("Sculptory: a builder break failed; what it changed stays in the history", e);
-        } finally {
-            if (scope != null) scope.close();
         }
-        List<Change> changes = changes(capture);
+        List<BuilderChange> changes = action.finish();
         // What a break took with it (a door's other half, a piston's base) must be writable too, else nothing of this
         // message stands; the drag's earlier messages are untouched.
         Blocked secondary = failure == null ? blocked(p, world, changes) : null;
         if (secondary == null && failure == null) secondary = masked(mask, world, changes);
         if (secondary != null) {
-            revert(world, changes);
+            steps.revert(world, changes);
             if (m.last()) closeDrag(owner, true);
             return BuilderOutcome.refused(secondary.refusal(), secondary.pos().toShortString());
         }
@@ -461,11 +477,6 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
         return null;
     }
 
-    private void breakAt(BuilderCapture capture, ServerLevel world, ServerPlayer p, BlockPos pos) {
-        emptyContainer(capture, world, pos);
-        BuilderPlacement.breakBlock(world, p, pos);
-    }
-
     // ================================================================== drags and history
 
     /**
@@ -491,7 +502,7 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
         closeDrag(owner, true);
     }
 
-    /** The entries open drags are building, which {@link FluidTrails} must not forget. */
+    /** The entries open drags are building, which the fluid trails must not forget. */
     @Override
     public void liveEntries(Set<UUID> ids) {
         for (PlayerState state : players.values()) {
@@ -516,19 +527,8 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
     /** What an action changed: the cells, and whether any of them now holds fluid marked as the entry's. */
     private record Finished(int changed, boolean fluid) {}
 
-    /** One cell an action changed, as the capture saw it: its first and last state and block entity. */
-    private record Change(BlockPos pos, int before, BlockEntityData beforeTile, int after, BlockEntityData afterTile) {}
-
     /** A changed cell the player may not write, and why. */
     private record Blocked(Refusal refusal, BlockPos pos) {}
-
-    /** Closes the capture: every cell the action changed, in the order they were first changed. */
-    private static List<Change> changes(BuilderCapture capture) {
-        List<Change> changes = new ArrayList<>();
-        capture.finish((x, y, z, before, beforeTile, after, afterTile) ->
-                changes.add(new Change(new BlockPos(x, y, z), before, beforeTile, after, afterTile)));
-        return changes;
-    }
 
     /** The player's global mask, or {@code null} while their last mask was refused (their actions are refused). */
     private BoundMask mask(ServerPlayer p) {
@@ -543,11 +543,11 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
      * The first changed cell the global mask rejects, judged against the world before the action: {@link Refusal#MASKED}, or {@code null} when it accepts them all (or is off). Like the protection
      * check, one rejected cell refuses the whole action.
      */
-    private Blocked masked(BoundMask mask, ServerLevel world, List<Change> changes) {
+    private Blocked masked(BoundMask mask, ServerLevel world, List<BuilderChange> changes) {
         if (mask.acceptsAll() || changes.isEmpty()) return null;
         EditMasks.BeforeView before = new EditMasks.BeforeView(runtime.reader(world));
-        for (Change change : changes) before.remember(change.pos().getX(), change.pos().getY(), change.pos().getZ(), change.before());
-        for (Change change : changes) {
+        for (BuilderChange change : changes) before.remember(change.pos().getX(), change.pos().getY(), change.pos().getZ(), change.before());
+        for (BuilderChange change : changes) {
             BlockPos pos = change.pos();
             if (!mask.test(pos.getX(), pos.getY(), pos.getZ(), change.before(), before)) return new Blocked(Refusal.MASKED, pos);
         }
@@ -576,8 +576,8 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
      * by a job), or {@code null}. The target and the mirrored copies were checked before the action; this catches the
      * cells vanilla's own steps reached (a bed's head, a door's upper half, the base of a broken piston head).
      */
-    private Blocked blocked(ServerPlayer p, ServerLevel world, List<Change> changes) {
-        for (Change change : changes) {
+    private Blocked blocked(ServerPlayer p, ServerLevel world, List<BuilderChange> changes) {
+        for (BuilderChange change : changes) {
             Refusal refusal = writable(p, world, change.pos());
             if (refusal != null) return new Blocked(refusal, change.pos());
         }
@@ -585,47 +585,12 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
     }
 
     /**
-     * Puts every changed cell back as it was, newest first, physics-free ({@code FORCE_STATE}, no neighbour updates,
-     * the blocks' own callbacks cancelled so nothing drops or reacts); block entities are restored with their contents.
-     * Clients hear the writes, and the action's prediction is reverted by its acknowledgement anyway. Block entities are
-     * removed through the chunk ({@link BlockWriter#removeBlockEntityQuietly}): NeoForge's {@code Level.removeBlockEntity}
-     * also updates the comparators next to the cell, which a physics-free write must not do.
-     */
-    private static void revert(ServerLevel world, List<Change> changes) {
-        try (EditScope scope = EditScope.suppressPhysics()) {
-            for (int i = changes.size() - 1; i >= 0; i--) {
-                Change change = changes.get(i);
-                BlockPos pos = change.pos();
-                BlockState before = Block.stateById(change.before());
-                if (world.getBlockState(pos).hasBlockEntity()) BlockWriter.removeBlockEntityQuietly(world, pos);
-                world.setBlock(pos, before, Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_CLIENTS, 0);
-                if (change.beforeTile() != null) restoreTile(world, pos, before, change.beforeTile());
-            }
-        }
-    }
-
-    private static void restoreTile(ServerLevel world, BlockPos pos, BlockState state, BlockEntityData tile) {
-        try {
-            CompoundTag nbt = McTile.from(tile).copyNbt();
-            BlockEntity entity = BlockEntity.loadStatic(pos, state, nbt, world.registryAccess());
-            if (entity == null) return;
-            // Part of the physics-free revert, so through the chunk as above.
-            BlockWriter.removeBlockEntityQuietly(world, pos);
-            world.setBlockEntity(entity);
-            world.getChunkAt(pos).setUnsaved(true);
-        } catch (IOException | RuntimeException e) {
-            LOG.warn("Sculptory: a block entity at {} could not be put back after a refused builder action",
-                    pos.toShortString(), e);
-        }
-    }
-
-    /**
      * Records the changes into {@code record}, marking fluid the action left as the record's entry's; with Keep shape
      * it clears scheduled ticks at the changed cells, as the editor's physics-off writes do.
      */
-    private Finished record(ServerLevel world, RecordBuilder record, List<Change> changes, boolean keepShape) {
+    private Finished record(ServerLevel world, RecordBuilder record, List<BuilderChange> changes, boolean keepShape) {
         boolean fluid = false;
-        for (Change change : changes) {
+        for (BuilderChange change : changes) {
             BlockPos pos = change.pos();
             record.record(pos.getX(), pos.getY(), pos.getZ(), change.before(), change.beforeTile(), change.after(),
                     change.afterTile());
@@ -702,19 +667,6 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
         }
     }
 
-    /**
-     * Empties a container before it is broken or replaced: its contents go into the record (the cell is noted first),
-     * not onto the ground, so undo restores them without duplicating anything.
-     */
-    private static void emptyContainer(BuilderCapture capture, ServerLevel world, BlockPos pos) {
-        BlockEntity entity = world.getBlockEntity(pos);
-        if (!(entity instanceof Clearable)) return;
-        capture.touch(pos);
-        try (EditScope scope = EditScope.suppressPhysics()) {
-            Clearable.tryClear(entity);
-        }
-    }
-
     private static Refusal refusal(BuilderPlacement.Refusal refusal) {
         return switch (refusal) {
             case NOT_A_BLOCK -> Refusal.NOT_A_BLOCK;
@@ -773,8 +725,8 @@ final class BuilderService implements BuilderMode<ServerPlayer> {
             if (player == null) continue;
             if (recheck) {
                 // A permissions mod that fails to answer takes nothing away.
-                boolean denied = !config().editingEnabled || permissions.check(player, Perm.USE) == Tri.FALSE
-                        || permissions.check(player, Perm.BUILDER) == Tri.FALSE;
+                boolean denied = !config().editingEnabled || permissions.denied(player, Perm.USE)
+                        || permissions.denied(player, Perm.BUILDER);
                 if (denied) state.allowed = false;
                 else if (!state.allowed) state.allowed = mayUse(player);
             }

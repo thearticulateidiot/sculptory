@@ -13,8 +13,15 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ThreadedLevelLightEngine;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.util.BitStorage;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.StandingAndWallBlockItem;
+import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.GrowingPlantBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -22,8 +29,9 @@ import net.minecraft.world.level.chunk.Palette;
 import net.minecraft.world.level.chunk.PalettedContainer;
 
 /**
- * What modules/common reaches through its access widener on Fabric and NeoForge, and what needs a mixin or vanilla's
- * light engine there, done Paper's way: Paper's {@link McInternals} (installed by the plugin when it loads), plus the
+ * What modules/common reaches through its access widener and the builder mixin invokers on Fabric and NeoForge, and
+ * what needs a mixin or vanilla's light engine there, done Paper's way: Paper's {@link McInternals} (installed by the
+ * plugin when it loads: the widened reads and the steps of {@code BlockItem.place} builder mode calls), plus the
  * physics-off write and the light marker, which the modules/paper build ({@code commonForPaper}) patches the common
  * sources to call. Paper has no access transformers for plugins, so non-public members are read through method handles
  * ({@link MethodHandles#privateLookupIn}: the server's classes are in the unnamed module, which a plugin may open).
@@ -42,6 +50,13 @@ public final class PaperAccess implements McInternals {
     private static final VarHandle DATA;
     private static final MethodHandle DATA_STORAGE;
     private static final MethodHandle DATA_PALETTE;
+    private static final MethodHandle PLACEMENT_STATE;
+    private static final MethodHandle PLACE_BLOCK;
+    private static final MethodHandle STATE_FROM_TAG;
+    private static final MethodHandle CUSTOM_BLOCK_ENTITY_TAG;
+    private static final MethodHandle PLACE_SOUND;
+    private static final MethodHandle BLOCK_ENTITY_COMPONENTS;
+    private static final VarHandle WALL_BLOCK;
 
     static {
         try {
@@ -55,6 +70,24 @@ public final class PaperAccess implements McInternals {
                     .asType(MethodType.methodType(BitStorage.class, Object.class));
             DATA_PALETTE = containers.findVirtual(data, "palette", MethodType.methodType(Palette.class))
                     .asType(MethodType.methodType(Palette.class, Object.class));
+            // Builder mode: the steps of BlockItem.place. Virtual where the game's are, so items that override them
+            // (doors, beds, signs, torches) keep their behaviour.
+            MethodHandles.Lookup items = MethodHandles.privateLookupIn(BlockItem.class, MethodHandles.lookup());
+            PLACEMENT_STATE = items.findVirtual(BlockItem.class, "getPlacementState",
+                    MethodType.methodType(BlockState.class, BlockPlaceContext.class));
+            PLACE_BLOCK = items.findVirtual(BlockItem.class, "placeBlock",
+                    MethodType.methodType(boolean.class, BlockPlaceContext.class, BlockState.class));
+            STATE_FROM_TAG = items.findVirtual(BlockItem.class, "updateBlockStateFromTag", MethodType.methodType(
+                    BlockState.class, BlockPos.class, Level.class, ItemStack.class, BlockState.class));
+            CUSTOM_BLOCK_ENTITY_TAG = items.findVirtual(BlockItem.class, "updateCustomBlockEntityTag",
+                    MethodType.methodType(boolean.class, BlockPos.class, Level.class, Player.class, ItemStack.class,
+                            BlockState.class));
+            PLACE_SOUND = items.findVirtual(BlockItem.class, "getPlaceSound",
+                    MethodType.methodType(SoundEvent.class, BlockState.class));
+            BLOCK_ENTITY_COMPONENTS = items.findStatic(BlockItem.class, "updateBlockEntityComponents",
+                    MethodType.methodType(void.class, Level.class, BlockPos.class, ItemStack.class));
+            WALL_BLOCK = MethodHandles.privateLookupIn(StandingAndWallBlockItem.class, MethodHandles.lookup())
+                    .findVarHandle(StandingAndWallBlockItem.class, "wallBlock", Block.class);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -94,6 +127,74 @@ public final class PaperAccess implements McInternals {
         } catch (Throwable e) {
             throw new IllegalStateException("Reading a palette container failed", e);
         }
+    }
+
+    @Override
+    public BlockState placementState(BlockItem item, BlockPlaceContext context) {
+        try {
+            return (BlockState) PLACEMENT_STATE.invokeExact(item, context);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
+    }
+
+    @Override
+    public boolean placeBlock(BlockItem item, BlockPlaceContext context, BlockState state) {
+        try {
+            return (boolean) PLACE_BLOCK.invokeExact(item, context, state);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
+    }
+
+    @Override
+    public BlockState updateBlockStateFromTag(BlockItem item, BlockPos pos, Level world, ItemStack stack,
+                                              BlockState state) {
+        try {
+            return (BlockState) STATE_FROM_TAG.invokeExact(item, pos, world, stack, state);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
+    }
+
+    @Override
+    public boolean updateCustomBlockEntityTag(BlockItem item, BlockPos pos, Level world, Player player, ItemStack stack,
+                                              BlockState state) {
+        try {
+            return (boolean) CUSTOM_BLOCK_ENTITY_TAG.invokeExact(item, pos, world, player, stack, state);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
+    }
+
+    @Override
+    public SoundEvent placeSound(BlockItem item, BlockState state) {
+        try {
+            return (SoundEvent) PLACE_SOUND.invokeExact(item, state);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
+    }
+
+    @Override
+    public void updateBlockEntityComponents(Level world, BlockPos pos, ItemStack stack) {
+        try {
+            BLOCK_ENTITY_COMPONENTS.invokeExact(world, pos, stack);
+        } catch (Throwable e) {
+            throw rethrow(e);
+        }
+    }
+
+    @Override
+    public Block wallBlock(StandingAndWallBlockItem item) {
+        return (Block) WALL_BLOCK.get(item);
+    }
+
+    /** What a method handle threw, unchecked as the game threw it (an Error or RuntimeException goes on as it is). */
+    private static RuntimeException rethrow(Throwable e) {
+        if (e instanceof RuntimeException runtime) return runtime;
+        if (e instanceof Error error) throw error;
+        return new IllegalStateException(e);
     }
 
     /**

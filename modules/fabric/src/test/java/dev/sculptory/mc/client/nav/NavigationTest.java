@@ -111,7 +111,8 @@ class NavigationTest {
         for (String key : List.of(JumpKey.KEY, "sculptory.key.jump", "sculptory.key.jump_through",
                 Navigation.NOTHING_LOOKED_AT, Navigation.NOT_CONNECTED, Navigation.NOT_OFFERED, Navigation.RATE_LIMITED,
                 Navigation.REFUSED, NavigateService.NEEDS_NODE, NavigateService.NEEDS_MODE, NavigateService.TOO_FAR,
-                NavigateService.UNLOADED, NavigateService.NO_SPOT, NavigateService.NO_SPOT_THROUGH, NavigateService.OUTSIDE)) {
+                NavigateService.UNLOADED, NavigateService.NO_SPOT, NavigateService.NO_SPOT_THROUGH, NavigateService.OUTSIDE,
+                NavigateService.BLOCKED)) {
             assertTrue(lang.has(key), key);
         }
     }

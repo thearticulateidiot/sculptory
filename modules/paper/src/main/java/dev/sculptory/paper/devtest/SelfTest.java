@@ -79,6 +79,9 @@ public final class SelfTest {
                 new Group("entities", RegionChecks::entities),
                 new Group("biomes", RegionChecks::biomes),
                 new Group("entities (CraftBukkit keys)", EntityChecks::craftBukkitKeys),
+                new Group("builder mode", BuilderChecks::run),
+                new Group("tinker", TinkerNavigateChecks::tinker),
+                new Group("navigate", TinkerNavigateChecks::navigate),
                 new Group("history saving", HistoryChecks::saveHooks),
                 new Group("network", NetChecks::joinRace));
     }
