@@ -366,12 +366,12 @@ public final class ScatterPlanner {
     /** Set once acceptance starts: no more surveys. */
     private Acceptance acceptance;
 
-    /** A planner with the {@link #DEFAULT_MAX_WORK default work budget} and no column guard. */
+    /** A planner with the {@link #DEFAULT_MAX_WORK default work budget} and no protection guard. */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells) {
         this(settings, sources, world, maxCells, DEFAULT_MAX_WORK);
     }
 
-    /** A planner without a column guard. */
+    /** A planner without a protection guard. */
     public ScatterPlanner(ScatterSettings settings, List<Clipboard> sources, WorldReader world, long maxCells,
                           long maxWork) {
         this(settings, sources, world, maxCells, maxWork, ProtectionGuard.ALLOW_ALL);

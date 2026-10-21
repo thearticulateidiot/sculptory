@@ -86,6 +86,8 @@ subprojects {
         testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     }
     tasks.withType(Test).configureEach {
+        // Fails any permit asked about a cell outside the bounds it was asked for (server engine PermitBounds).
+        systemProperty 'sculptory.checkPermitBounds', 'true'
         useJUnitPlatform()
         testLogging {
             events = ['failed']

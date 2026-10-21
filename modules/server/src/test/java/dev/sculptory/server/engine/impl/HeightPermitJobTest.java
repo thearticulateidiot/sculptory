@@ -9,8 +9,14 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
+import dev.sculptory.core.edit.CompileContext;
 import dev.sculptory.core.edit.ComputeContext;
 import dev.sculptory.core.edit.EditProgram;
+import dev.sculptory.core.edit.MultiPaste;
+import dev.sculptory.core.edit.OpCompiler;
+import dev.sculptory.core.edit.OpSpec;
+import dev.sculptory.core.edit.SourceBlocks;
+import dev.sculptory.core.edit.SourceRef;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.history.EditRecord;
 import dev.sculptory.core.history.HistoryEntry;
@@ -19,6 +25,7 @@ import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
+import dev.sculptory.core.transform.Transform;
 import dev.sculptory.protocol.v2.JobOutcome;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.server.config.UnloadedPolicy;
@@ -37,6 +44,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import java.lang.reflect.Proxy;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -44,7 +52,8 @@ import org.junit.jupiter.api.Test;
  * Protection limited in height, driven through the executor's bulk jobs against a fake world: a chunk allowed below
  * y 10 and denied from y 10 up. Denied cells are skipped and counted cell by cell, the record holds exactly the cells
  * written, and an undo restores exactly those (under the same protection, or skipping and counting what became
- * protected since).
+ * protected since). Nested regions are honoured, and a scatter placement reaching a denied layer is skipped whole. The
+ * JUnit runs set {@code sculptory.checkPermitBounds}, so every permit is asked only inside its bounds here.
  */
 class HeightPermitJobTest {
     private static final Object WORLD = "world";
@@ -58,9 +67,8 @@ class HeightPermitJobTest {
     private final FakeWorld world = new FakeWorld(states, -64, 320);
 
     /**
-     * Protection as a 3D producer gives it: chunk (0, 0) is denied at y {@code deniedFrom} and above and below
-     * {@code allowedFrom}; chunk (1, 0) is free. Like a region-based producer, it names a point inside each of its
-     * areas as a focus, so an area between the box's corners is not missed.
+     * Protection as a 3D producer gives it, judged cell by cell ({@code ChunkPermits.rasterize}): chunk (0, 0) is
+     * denied at y {@code deniedFrom} and above and below {@code allowedFrom}; chunk (1, 0) is free.
      */
     private record Region(int allowedFrom, int deniedFrom) implements PermissionService<Object, Object> {
         @Override
@@ -70,14 +78,27 @@ class HeightPermitJobTest {
 
         @Override
         public ChunkPermit chunk(Object p, Object w, int cx, int cz, Box bounds) {
-            List<BlockPos> areas = List.of(new BlockPos(8, allowedFrom - 1, 8),
-                    new BlockPos(8, (allowedFrom + deniedFrom - 1) >> 1, 8), new BlockPos(8, deniedFrom, 8));
-            return ChunkPermits.forChunk(cx, cz, bounds, this::allows, areas);
+            return ChunkPermits.rasterize(cx, cz, bounds, this::allows);
         }
 
         boolean allows(int x, int y, int z) {
             return x >= 16 || (y >= allowedFrom && y < deniedFrom);
         }
+    }
+
+    /** Any cell test as a player's protection, judged cell by cell. */
+    private static PermissionService<Object, Object> exact(ChunkPermits.CellTest test) {
+        return new PermissionService<>() {
+            @Override
+            public boolean has(Object p, Perm node) {
+                return true;
+            }
+
+            @Override
+            public ChunkPermit chunk(Object p, Object w, int cx, int cz, Box bounds) {
+                return ChunkPermits.rasterize(cx, cz, bounds, test);
+            }
+        };
     }
 
     @Test
@@ -139,20 +160,86 @@ class HeightPermitJobTest {
         });
     }
 
+    /**
+     * Nested regions with priorities (an outer region denying, an inner one allowing again), which corner sampling
+     * reads as all allowed: the fill skips exactly the one-cell ring between them. The undo asks for the record's
+     * bounds, smaller than the fill's, and judges every cell as the fill did: it puts back exactly what was written.
+     */
     @Test
-    void aSmallRegionInsideAChunkIsHonouredWhenItsProducerNamesIt() throws EditRejected {
-        // A 3 x 2 x 3 region in the middle of chunk (0, 0), touching no corner of the fill; the producer names its
-        // centre as a focus point (ChunkPermits.forChunk), so the permit is judged cell by cell.
+    void nestedRegionsAreHonouredAndTheUndoJudgesEveryCellAsTheFillDid() throws EditRejected {
         world.fill(AREA, stone);
         EditExecutor<Object> executor = new EditExecutor<>(host(), settings());
-        ChunkPermits.CellTest outside = (x, y, z) -> !(x >= 5 && x <= 7 && y >= 8 && y <= 9 && z >= 6 && z <= 8);
-        PermitSource permits = (cx, cz) -> ChunkPermits.forChunk(cx, cz, AREA, outside,
-                List.of(new BlockPos(6, 8, 7)));
-        JobResult filled = run(executor, JobRequest.system(WORLD, new Fill(AREA, dirt), null).withPermits(permits));
-        assertEquals(3 * 2 * 3, filled.skippedProtected());
-        assertEquals(AREA.volume() - 18, filled.changed());
-        forEachCell(AREA, (x, y, z) -> assertEquals(outside.allowed(x, y, z) ? dirt : stone, world.get(x, y, z),
-                x + "," + y + "," + z));
+        ChunkPermits.CellTest nested = (x, y, z) -> {
+            if (x >= 3 && x <= 12 && z >= 3 && z <= 12 && y >= 5 && y <= 15) return true; // R2, the higher priority
+            return !(x >= 2 && x <= 13 && z >= 2 && z <= 13 && y >= 5 && y <= 15); // R1
+        };
+        PermissionService<Object, Object> protection = exact(nested);
+        RecordBuilder record = new RecordBuilder();
+        JobResult filled = run(executor, JobRequest.system(WORLD, new Fill(AREA, dirt), null)
+                .withPermits(PermitSource.forPlayer(protection, null, WORLD, AREA)).withRecords(RecordSink.into(record)));
+        long ring = (12L * 12 - 10 * 10) * 11;
+        assertEquals(ring, filled.skippedProtected());
+        assertEquals(AREA.volume() - ring, filled.changed());
+        forEachCell(AREA, (x, y, z) -> assertEquals(nested.allowed(x, y, z) ? dirt : stone, world.get(x, y, z),
+                "after the fill at " + x + "," + y + "," + z));
+
+        EditRecord edit = record.build();
+        HistoryEntry entry = new HistoryEntry(UUID.randomUUID(), UUID.randomUUID(), "world", "Fill", edit, 0L);
+        EditProgram undo = HistoryPrograms.undo(entry, ConflictPolicy.SKIP_CONFLICTS);
+        JobResult undone = run(executor, JobRequest.system(WORLD, undo, null)
+                .withPermits(PermitSource.forPlayer(protection, null, WORLD, undo.bounds())));
+        assertEquals(AREA.volume() - ring, undone.changed());
+        assertEquals(0, undone.skippedProtected(), "no written cell is judged protected by the undo");
+        forEachCell(AREA, (x, y, z) -> assertEquals(stone, world.get(x, y, z), "after the undo at " + x + "," + y + "," + z));
+    }
+
+    /**
+     * A scatter commit under protection limited in height: a placement reaching a denied layer is skipped whole (none
+     * of its cells written), counted once as a skipped placement, never cell by cell; the others are written.
+     */
+    @Test
+    void aScatterPlacementReachingADeniedLayerIsSkippedWhole() throws EditRejected {
+        world.fill(new Box(new BlockPos(0, 0, 0), new BlockPos(31, 0, 15)), stone);
+        EditExecutor<Object> executor = new EditExecutor<>(host(), settings());
+        // Pillars three cells tall, standing on the floor (y 1..3).
+        BlockBuffer pillar = new BlockBuffer();
+        for (int y = 0; y < 3; y++) pillar.set(0, y, 0, dirt);
+        SourceBlocks source = new SourceBlocks(pillar, new BlockPos(1, 3, 1), BlockPos.ORIGIN);
+        // Chunk (0, 0) is denied from y 3 up: the two pillars there reach it with their top cell.
+        List<MultiPaste.Placement> placements = List.of(new MultiPaste.Placement(new BlockPos(4, 1, 4), 0,
+                Transform.IDENTITY), new MultiPaste.Placement(new BlockPos(20, 1, 4), 0, Transform.IDENTITY),
+                new MultiPaste.Placement(new BlockPos(9, 1, 11), 0, Transform.IDENTITY));
+        MultiPaste plan = new MultiPaste(List.of(source), placements, MultiPaste.Replace.OPEN);
+        UUID planId = UUID.randomUUID();
+        EditProgram compiled = OpCompiler.compile(new OpSpec.ScatterCommit(planId), new CompileContext() {
+            @Override
+            public StateSpace states() {
+                return states;
+            }
+
+            @Override
+            public Optional<SourceBlocks> source(SourceRef ref) {
+                return Optional.empty();
+            }
+
+            @Override
+            public Optional<MultiPaste> scatterPlan(UUID id) {
+                return id.equals(planId) ? Optional.of(plan) : Optional.empty();
+            }
+        });
+        ConflictCountingProgram commit = new ConflictCountingProgram(compiled);
+        Region region = new Region(-64, 3);
+        JobResult result = run(executor, JobRequest.system(WORLD, commit, null)
+                .withPermits(PermitSource.forPlayer(region, null, WORLD, commit.bounds())));
+        assertEquals(JobOutcome.COMPLETED, result.outcome());
+        assertEquals(3, result.changed(), "the pillar in the free chunk");
+        assertEquals(0, result.skippedProtected(), "nothing denied cell by cell");
+        assertEquals(2, commit.conflicts(), "each skipped placement counted once");
+        for (int y = 1; y <= 3; y++) {
+            assertEquals(dirt, world.get(20, y, 4), "the free pillar at y " + y);
+            assertEquals(states.air(), world.get(4, y, 4), "nothing of a skipped pillar at y " + y);
+            assertEquals(states.air(), world.get(9, y, 11), "nothing of a skipped pillar at y " + y);
+        }
     }
 
     // ---------------------------------------------------------------- harness

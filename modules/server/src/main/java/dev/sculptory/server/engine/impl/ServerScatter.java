@@ -623,7 +623,9 @@ public final class ServerScatter<P, W> implements ScatterService<P> {
 
     /**
      * The player's permit for chunk (cx, cz) ({@link Platform#permissions}) over the whole build height (a scatter's
-     * surfaces may lie at any height), asked once, kept in {@code permits}.
+     * surfaces may lie at any height), asked once, kept in {@code permits}. Under protection that differs with height a
+     * chunk's permit may be per cell: 16 × 16 × 384 bits, 12 KB in the overworld, so at most about 48 MB for the
+     * {@value #MAX_HELD_COLUMNS} chunks a preview may hold (uniform chunks cost nothing, ALLOW and DENY being shared).
      */
     private static <P, W> ChunkPermit chunkPermit(Platform<P, W> platform, P p, W world,
                                                   Long2ObjectOpenHashMap<ChunkPermit> permits, int cx, int cz) {

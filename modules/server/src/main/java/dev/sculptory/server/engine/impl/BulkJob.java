@@ -1,5 +1,6 @@
 package dev.sculptory.server.engine.impl;
 
+import dev.sculptory.core.Box;
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.edit.ComputeContext;
@@ -65,6 +66,8 @@ final class BulkJob<W> {
     final UUID id;
     final JobRequest<W> request;
     final EditProgram program;
+    /** The program's bounds: what the job's permits are asked for, and so every cell they may be asked about. */
+    private final Box bounds;
     final long[] order;
     /** Source sections read from the world (inside the world border). */
     final long[] sources;
@@ -113,7 +116,12 @@ final class BulkJob<W> {
     private SectionWork current;
     private long permitColumn = Long.MIN_VALUE;
     private ChunkPermit permit;
-    /** Permits asked through {@link ComputeContext#mayWrite} during one slice (a decision may span chunks). */
+    /**
+     * Permits asked through {@link ComputeContext#mayWrite} (a decision may span chunks), kept for the job's life: a
+     * producer that asks every cell ({@code ChunkPermits.rasterize}) is not asked again for each slice of a scatter
+     * commit. Protection changed while the job runs still reaches the writes ({@link #permitFor} asks again for each
+     * section's column). At most one per chunk column the job reads, each no larger than the job's box in that chunk.
+     */
     private final Long2ObjectOpenHashMap<ChunkPermit> decisionPermits = new Long2ObjectOpenHashMap<>();
     private long waitingSince = NOT_WAITING;
     /** The section index whose read columns ({@link #reads}) are known, or -1. */
@@ -161,6 +169,7 @@ final class BulkJob<W> {
         this.id = id;
         this.request = request;
         this.program = request.program();
+        this.bounds = program.bounds();
         this.order = order;
         this.sources = sources;
         this.airSources = airSources;
@@ -201,6 +210,7 @@ final class BulkJob<W> {
             /** The same rule {@link #writeCell} applies: the player's chunk permit and the world border. */
             @Override
             public boolean mayWrite(int x, int y, int z) {
+                PermitBounds.check(bounds, x, y, z, program.label());
                 return decisionPermit(x >> 4, z >> 4).allows(x, y, z) && host.insideBorder(world, x, z);
             }
         };
@@ -265,7 +275,8 @@ final class BulkJob<W> {
         }
         if (biomeWork != null) {
             biomes = new BiomeWork.Context(host.biomes(world), request.permits(), request.records(),
-                    (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z));
+                    (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z),
+                    BiomeWork.quarts(bounds, host.bottomY(world), host.topY(world)));
         }
         if (entityWork != null) {
             entities = EntityWork.Context.of(host.entities(world), request.writeOptions(), request.permits(),
@@ -413,7 +424,6 @@ final class BulkJob<W> {
     long run(long maxUnits, EditExecutor.Budget budget) {
         long used = 0;
         reader.invalidate();
-        decisionPermits.clear();
         while (used < maxUnits && !budget.exhausted()) {
             if (current == null && cancelRequested) {
                 executor.finish(this, JobOutcome.CANCELLED);
@@ -670,7 +680,7 @@ final class BulkJob<W> {
         return permit;
     }
 
-    /** A chunk's permit for {@link ComputeContext#mayWrite}, asked once per slice. */
+    /** A chunk's permit for {@link ComputeContext#mayWrite}, asked once per job. */
     private ChunkPermit decisionPermit(int cx, int cz) {
         long column = ColumnPlan.pack(cx, cz);
         ChunkPermit found = decisionPermits.get(column);
@@ -697,6 +707,7 @@ final class BulkJob<W> {
         int x = s.ox + SectionBuffer.localX(i);
         int y = s.oy + SectionBuffer.localY(i);
         int z = s.oz + SectionBuffer.localZ(i);
+        PermitBounds.check(bounds, x, y, z, program.label());
         if (!s.permit.allows(x, y, z) || (!s.insideBorder && !host.insideBorder(world, x, z))) {
             skippedProtected++;
             return;

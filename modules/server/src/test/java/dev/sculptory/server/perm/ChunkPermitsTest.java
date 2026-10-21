@@ -10,8 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.server.engine.ChunkPermit;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -140,10 +138,6 @@ class ChunkPermitsTest {
     @Test
     void rectangleMustStayInOneChunk() {
         assertThrows(IllegalArgumentException.class, () -> ChunkPermits.evaluate(0, 0, 16, 0, (x, z) -> true));
-        assertThrows(IllegalArgumentException.class, () -> ChunkPermits.evaluate(3, 0, 2, 0, (x, z) -> true));
-        ChunkPermits.CellTest any = (x, y, z) -> true;
-        assertThrows(IllegalArgumentException.class, () -> ChunkPermits.evaluate(0, 0, 0, 16, 5, 0, any, List.of()));
-        assertThrows(IllegalArgumentException.class, () -> ChunkPermits.evaluate(0, 6, 0, 3, 5, 0, any, List.of()));
     }
 
     // ------------------------------------------------------------------ three dimensions (protection limited in height)
@@ -151,116 +145,118 @@ class ChunkPermitsTest {
     /** Chunk (0, 0), layers 0..19: two sections, so a cell test may differ between them. */
     private static final Box TALL = new Box(new BlockPos(0, 0, 0), new BlockPos(15, 19, 15));
 
-    @Test
-    void uniformCellAnswersUseTheCornersOnly() {
-        AtomicInteger calls = new AtomicInteger();
-        ChunkPermits.CellTest allowed = (x, y, z) -> {
-            calls.incrementAndGet();
-            return true;
-        };
-        assertSame(ChunkPermit.ALLOW, ChunkPermits.forChunk(0, 0, TALL, allowed));
-        assertEquals(8, calls.get(), "eight corners, no cell between");
-        calls.set(0);
-        ChunkPermits.CellTest denied = (x, y, z) -> {
-            calls.incrementAndGet();
-            return false;
-        };
-        assertSame(ChunkPermit.DENY, ChunkPermits.forChunk(0, 0, TALL, denied));
-        assertEquals(8, calls.get());
-        calls.set(0);
-        assertSame(ChunkPermit.ALLOW, ChunkPermits.forChunk(0, 0, TALL, allowed, List.of(new BlockPos(6, 8, 7))));
-        assertEquals(9, calls.get(), "and one per focus point");
-        // A box one column wide has two distinct corners; one cell, one.
-        calls.set(0);
-        ChunkPermits.forChunk(0, 0, new Box(new BlockPos(3, 0, 4), new BlockPos(3, 19, 4)), allowed);
-        assertEquals(2, calls.get());
-        calls.set(0);
-        ChunkPermits.forChunk(0, 0, new Box(new BlockPos(3, 7, 4), new BlockPos(3, 7, 4)), allowed);
-        assertEquals(1, calls.get());
-        assertSame(ChunkPermit.ALLOW, ChunkPermits.forChunk(1, 0, TALL, (x, y, z) -> false), "untouched chunk");
+    /** Checks {@code permit} against {@code test} on every cell of {@code box}; returns the denied count. */
+    private static long checkEveryCell(ChunkPermit permit, ChunkPermits.CellTest test, Box box) {
+        long denied = 0;
+        for (int y = box.min().y(); y <= box.max().y(); y++) {
+            for (int z = box.min().z(); z <= box.max().z(); z++) {
+                for (int x = box.min().x(); x <= box.max().x(); x++) {
+                    assertEquals(test.allowed(x, y, z), permit.allows(x, y, z), x + "," + y + "," + z);
+                    if (!permit.allows(x, y, z)) denied++;
+                }
+            }
+        }
+        return denied;
     }
 
     @Test
-    void cornersAreThoseOfTheBoxPartInsideTheChunkAtItsHeights() {
-        // Box covers x 20..40, y 5..9, z -5..3; in chunk (1, 0) the part is x 20..31, z 0..3.
+    void uniformAsksOneCell() {
+        AtomicInteger calls = new AtomicInteger();
+        assertSame(ChunkPermit.ALLOW, ChunkPermits.uniform(0, 0, TALL, (x, y, z) -> {
+            calls.incrementAndGet();
+            return true;
+        }));
+        assertEquals(1, calls.get());
+        assertSame(ChunkPermit.DENY, ChunkPermits.uniform(0, 0, TALL, (x, y, z) -> false));
+        assertSame(ChunkPermit.ALLOW, ChunkPermits.uniform(1, 0, TALL, (x, y, z) -> false), "untouched chunk");
+    }
+
+    @Test
+    void rasterizeAsksEveryCellOnceAndKeepsAgreementCompact() {
+        AtomicInteger calls = new AtomicInteger();
+        assertSame(ChunkPermit.ALLOW, ChunkPermits.rasterize(0, 0, TALL, (x, y, z) -> {
+            calls.incrementAndGet();
+            return true;
+        }));
+        assertEquals(16 * 16 * 20, calls.get(), "every cell, once");
+        assertSame(ChunkPermit.DENY, ChunkPermits.rasterize(0, 0, TALL, (x, y, z) -> false));
+        // Only the part of the box inside the chunk: x 20..31, y 5..9, z 0..3 of chunk (1, 0).
         Box box = new Box(new BlockPos(20, 5, -5), new BlockPos(40, 9, 3));
-        List<String> seen = new ArrayList<>();
-        ChunkPermits.forChunk(1, 0, box, (x, y, z) -> {
-            seen.add(x + "," + y + "," + z);
+        calls.set(0);
+        ChunkPermits.rasterize(1, 0, box, (x, y, z) -> {
+            calls.incrementAndGet();
+            assertTrue(x >= 20 && x <= 31 && y >= 5 && y <= 9 && z >= 0 && z <= 3, x + "," + y + "," + z);
             return true;
         });
-        assertEquals(List.of("20,5,0", "20,5,3", "20,9,0", "20,9,3", "31,5,0", "31,5,3", "31,9,0", "31,9,3"), seen);
+        assertEquals(12 * 5 * 4, calls.get());
+        assertSame(ChunkPermit.ALLOW, ChunkPermits.rasterize(5, 5, box, (x, y, z) -> false), "untouched chunk");
+        // A mixed answer the same at every height: what a column test gives.
+        assertEquals(ChunkPermits.forChunk(0, 0, TALL, (x, z) -> x < 5), ChunkPermits.rasterize(0, 0, TALL,
+                (x, y, z) -> x < 5));
     }
 
     @Test
     void protectionLimitedInHeightIsKeptPerCell() {
         // Allowed at y 0..9, denied at y 10..19, in every column.
-        AtomicInteger calls = new AtomicInteger();
-        ChunkPermits.CellTest lowerHalf = (x, y, z) -> {
-            calls.incrementAndGet();
-            return y < 10;
-        };
-        ChunkPermit permit = ChunkPermits.forChunk(0, 0, TALL, lowerHalf);
+        ChunkPermits.CellTest lowerHalf = (x, y, z) -> y < 10;
+        ChunkPermit permit = ChunkPermits.rasterize(0, 0, TALL, lowerHalf);
         ChunkPermit.Cells cells = assertInstanceOf(ChunkPermit.Cells.class, permit);
         assertEquals(0, cells.minY());
         assertEquals(19, cells.maxY());
-        assertEquals(8 + 16 * 16 * 20, calls.get(), "the corners, then every cell once");
-        long denied = 0;
-        for (int y = 0; y <= 19; y++) {
-            for (int z = 0; z < 16; z++) {
-                for (int x = 0; x < 16; x++) {
-                    assertEquals(y < 10, permit.allows(x, y, z), x + "," + y + "," + z);
-                    if (!permit.allows(x, y, z)) denied++;
-                }
-            }
-        }
-        assertEquals(16 * 16 * 10, denied);
+        assertEquals(16 * 16 * 10, checkEveryCell(permit, lowerHalf, TALL));
         // The permit says nothing beyond the box's heights: denied there.
         assertFalse(permit.allows(0, -1, 0));
         assertFalse(permit.allows(0, 20, 0));
-    }
-
-    @Test
-    void anAllowedLayerBetweenProtectedOnesIsFoundThroughAFocusPoint() {
-        // Denied below y 5 and from y 10: every corner of the box is denied.
+        // An allowed layer between protected ones, which no corner of the box shows.
         ChunkPermits.CellTest band = (x, y, z) -> y >= 5 && y < 10;
-        assertSame(ChunkPermit.DENY, ChunkPermits.forChunk(0, 0, TALL, band), "the corners alone deny it all");
-        ChunkPermit permit = ChunkPermits.forChunk(0, 0, TALL, band, List.of(new BlockPos(8, 7, 8)));
-        for (int y = 0; y <= 19; y++) assertEquals(y >= 5 && y < 10, permit.allows(3, y, 11), "y " + y);
+        assertEquals(16 * 16 * 15, checkEveryCell(ChunkPermits.rasterize(0, 0, TALL, band), band, TALL));
+        // A small protected box touching no corner of the part.
+        ChunkPermits.CellTest small = (x, y, z) -> !(x >= 5 && x <= 7 && y >= 8 && y <= 9 && z >= 6 && z <= 8);
+        assertEquals(3 * 2 * 3, checkEveryCell(ChunkPermits.rasterize(0, 0, TALL, small), small, TALL));
     }
 
+    /**
+     * Nested regions with priorities, which sampling gets wrong: R1 (x 2..13, z 2..13, y 5..15) denies, R2 inside it
+     * (x 3..12, z 3..12, same heights) allows with a higher priority. Every corner of the chunk lies outside R1 and both
+     * regions' centres inside R2, all allowed; only the one-cell ring R1 \ R2 is denied, and it must be.
+     */
     @Test
-    void aMixedAnswerTheSameAtEveryHeightIsKeptAsColumns() {
-        ChunkPermit permit = ChunkPermits.forChunk(0, 0, TALL, (x, y, z) -> x < 5);
-        assertEquals(ChunkPermits.forChunk(0, 0, TALL, (x, z) -> x < 5), permit, "what a column test gives");
+    void nestedRegionsWithPrioritiesKeepTheirRingDenied() {
+        Box chunk = new Box(new BlockPos(0, 0, 0), new BlockPos(15, 20, 15));
+        ChunkPermits.CellTest nested = (x, y, z) -> {
+            boolean inR2 = x >= 3 && x <= 12 && z >= 3 && z <= 12 && y >= 5 && y <= 15;
+            if (inR2) return true;
+            boolean inR1 = x >= 2 && x <= 13 && z >= 2 && z <= 13 && y >= 5 && y <= 15;
+            return !inR1;
+        };
+        ChunkPermit permit = ChunkPermits.rasterize(0, 0, chunk, nested);
+        long ring = (12L * 12 - 10 * 10) * 11; // 44 columns, y 5..15
+        assertEquals(ring, checkEveryCell(permit, nested, chunk));
+        assertFalse(permit.allows(2, 5, 2), "a ring cell");
+        assertFalse(permit.allows(13, 15, 7), "a ring cell");
+        assertTrue(permit.allows(3, 10, 3), "inside R2");
+        assertTrue(permit.allows(2, 4, 2), "below R1");
+        assertTrue(permit.allows(2, 16, 2), "above R1");
     }
 
+    /**
+     * A fill asks for its box, an undo for the record's (smaller) bounds: an exact permit judges every cell the same way
+     * in both.
+     */
     @Test
-    void aSmallProtectedBoxTouchingNoCornerIsFoundThroughAFocusPoint() {
-        // A region of x 5..7, y 8..9, z 6..8 in the middle of the chunk: no corner of the box lies in it.
-        ChunkPermits.CellTest outsideRegion = (x, y, z) -> !(x >= 5 && x <= 7 && y >= 8 && y <= 9 && z >= 6 && z <= 8);
-        assertSame(ChunkPermit.ALLOW, ChunkPermits.forChunk(0, 0, TALL, outsideRegion),
-                "the corners alone miss it, which is why focus points exist");
-        // The region's centre as the focus: the cell of the box nearest it is in the region, so every cell is asked.
-        ChunkPermit permit = ChunkPermits.forChunk(0, 0, TALL, outsideRegion, List.of(new BlockPos(6, 8, 7)));
-        assertInstanceOf(ChunkPermit.Cells.class, permit);
-        long denied = 0;
-        for (int y = 0; y <= 19; y++) {
-            for (int z = 0; z < 16; z++) {
-                for (int x = 0; x < 16; x++) {
-                    assertEquals(outsideRegion.allowed(x, y, z), permit.allows(x, y, z), x + "," + y + "," + z);
-                    if (!permit.allows(x, y, z)) denied++;
+    void aCellIsJudgedTheSameWhateverBoundsItIsAskedWith() {
+        ChunkPermits.CellTest thinStrip = (x, y, z) -> !(z == 9 && y >= 3 && y <= 4);
+        Box fill = new Box(new BlockPos(0, 0, 0), new BlockPos(15, 19, 15));
+        Box undo = new Box(new BlockPos(6, 2, 6), new BlockPos(11, 5, 11));
+        ChunkPermit wide = ChunkPermits.rasterize(0, 0, fill, thinStrip);
+        ChunkPermit narrow = ChunkPermits.rasterize(0, 0, undo, thinStrip);
+        for (int y = 2; y <= 5; y++) {
+            for (int z = 6; z <= 11; z++) {
+                for (int x = 6; x <= 11; x++) {
+                    assertEquals(wide.allows(x, y, z), narrow.allows(x, y, z), x + "," + y + "," + z);
+                    assertEquals(thinStrip.allowed(x, y, z), narrow.allows(x, y, z), x + "," + y + "," + z);
                 }
             }
         }
-        assertEquals(3 * 2 * 3, denied);
-        // A box that reaches only the region's top layer, from above: still found, by the cell nearest the focus.
-        Box above = new Box(new BlockPos(0, 9, 0), new BlockPos(15, 30, 15));
-        ChunkPermit top = ChunkPermits.forChunk(0, 0, above, outsideRegion, List.of(new BlockPos(6, 8, 7)));
-        assertFalse(top.allows(6, 9, 7));
-        assertTrue(top.allows(6, 10, 7));
-        // A region the box does not reach changes nothing.
-        Box high = new Box(new BlockPos(0, 10, 0), new BlockPos(15, 30, 15));
-        assertSame(ChunkPermit.ALLOW, ChunkPermits.forChunk(0, 0, high, outsideRegion, List.of(new BlockPos(6, 8, 7))));
     }
 }

@@ -311,6 +311,8 @@ neoForge.runs.matching { it.name in gameTestRuns }.configureEach { run ->
     run.systemProperty 'sculptory.gametest.report', file("build/run/${run.name}/junit.xml").absolutePath
     // The heap a GitHub Actions runner gives the GameTest server by default, on every machine (modules/fabric).
     run.jvmArgument '-Xmx4G'
+    // Fails any permit asked about a cell outside the bounds it was asked for (server engine PermitBounds).
+    run.systemProperty 'sculptory.checkPermitBounds', 'true'
     run.disableIdeRun()
     // -PgameTestFilter=<text>[,<text>...]: only the GameTests whose name or batch contains an entry (GameTestFilter).
     if (project.hasProperty('gameTestFilter')) {

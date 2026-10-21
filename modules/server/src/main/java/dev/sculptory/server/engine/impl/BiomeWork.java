@@ -1,5 +1,7 @@
 package dev.sculptory.server.engine.impl;
 
+import dev.sculptory.core.BlockPos;
+import dev.sculptory.core.Box;
 import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.platform.WorldBiomes;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -39,6 +41,23 @@ public interface BiomeWork {
     /** How many quarts the work may write at most (its progress and its cost). */
     long quarts();
 
+    /**
+     * {@code box} widened to whole quarts (x, y and z from {@code min & ~3} to {@code max | 3}), its heights clipped to
+     * the build height {@code [bottomY, topYExclusive)}: every quart a job over {@code box} may touch (a move or paste
+     * visits each quart its box touches) lies inside, centre included, so permits asked for these bounds answer for
+     * each quart's centre. The build height is whole quarts, so the clip keeps that.
+     */
+    static Box quarts(Box box, int bottomY, int topYExclusive) {
+        int y0 = Math.max(bottomY, box.min().y() & ~3), y1 = Math.min(topYExclusive - 1, box.max().y() | 3);
+        if (y0 > y1) {
+            // Nothing of the box is inside the build height: an empty answer is never asked about.
+            y0 = Math.max(bottomY, Math.min(topYExclusive - 1, box.min().y()));
+            y1 = y0;
+        }
+        return new Box(new BlockPos(box.min().x() & ~3, y0, box.min().z() & ~3),
+                new BlockPos(box.max().x() | 3, y1, box.max().z() | 3));
+    }
+
     /** What biome work may use and what it counts, for one job. */
     final class Context {
         final WorldBiomes biomes;
@@ -47,10 +66,16 @@ public interface BiomeWork {
         private final EntityWork.InWorld inWorld;
         private final Object2IntOpenHashMap<String> handles = new Object2IntOpenHashMap<>();
         /**
-         * Per centre column ({@link ColumnPlan#pack} of x, z): the player's permit for that column over the job's heights
-         * ({@link PermitSource#column}), asked once; each quart is answered at its own centre cell.
+         * The job's bounds widened to whole quarts and clipped to the build height ({@link #quarts}): every quart the work
+         * may touch has its centre inside, so the permits are asked for these bounds.
          */
-        private final Long2ObjectOpenHashMap<ChunkPermit> permitted = new Long2ObjectOpenHashMap<>();
+        private final Box bounds;
+        /**
+         * Per centre column ({@link ColumnPlan#pack} of x, z): one bit per quart of {@link #bounds}' heights, from its
+         * lowest, set where the quart's centre may be changed. The column's permit ({@link PermitSource#column}) is asked
+         * once and dropped: a per-cell permit is far larger than these bits.
+         */
+        private final Long2ObjectOpenHashMap<long[]> permitted = new Long2ObjectOpenHashMap<>();
         /** Quarts whose biome changed. */
         long changed;
         /** Quarts left alone because their centre cell may not be changed (protection, the world border). */
@@ -60,11 +85,13 @@ public interface BiomeWork {
         /** Quarts visited (written or not): the work's progress. */
         long visited;
 
-        Context(WorldBiomes biomes, PermitSource permits, RecordSink records, EntityWork.InWorld inWorld) {
+        /** @param bounds the job's bounds widened to whole quarts ({@link #quarts}) */
+        Context(WorldBiomes biomes, PermitSource permits, RecordSink records, EntityWork.InWorld inWorld, Box bounds) {
             this.biomes = Objects.requireNonNull(biomes);
             this.permits = Objects.requireNonNull(permits);
             this.records = Objects.requireNonNull(records);
             this.inWorld = Objects.requireNonNull(inWorld);
+            this.bounds = Objects.requireNonNull(bounds);
             handles.defaultReturnValue(Integer.MIN_VALUE);
         }
 
@@ -84,14 +111,23 @@ public interface BiomeWork {
          */
         boolean mayChange(int qx, int qy, int qz) {
             int x = (qx << 2) + 2, y = (qy << 2) + 2, z = (qz << 2) + 2;
+            PermitBounds.check(bounds, x, y, z, "biome work");
+            int lowest = bounds.min().y() >> 2, highest = bounds.max().y() >> 2;
+            // A quart outside the bounds (only when the check is off) has no answer: left alone.
+            if (qy < lowest || qy > highest) return false;
             long column = ColumnPlan.pack(x, z);
-            ChunkPermit permit = permitted.get(column);
-            if (permit == null) {
-                permit = permits.column(x, z);
+            long[] allowed = permitted.get(column);
+            if (allowed == null) {
+                ChunkPermit permit = permits.column(x, z, bounds.min().y(), bounds.max().y());
                 if (permit == null) permit = ChunkPermit.DENY;
-                permitted.put(column, permit);
+                allowed = new long[(highest - lowest + 64) >> 6];
+                for (int q = lowest; q <= highest; q++) {
+                    if (permit.allows(x, (q << 2) + 2, z)) allowed[(q - lowest) >> 6] |= 1L << (q - lowest);
+                }
+                permitted.put(column, allowed);
             }
-            return permit.allows(x, y, z) && inWorld.contains(x, y, z);
+            int bit = qy - lowest;
+            return (allowed[bit >> 6] & (1L << bit)) != 0 && inWorld.contains(x, y, z);
         }
 
         /**

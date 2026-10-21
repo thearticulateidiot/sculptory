@@ -48,9 +48,7 @@ class PermitSourceTest {
         @Override
         public ChunkPermit chunk(Object p, Object w, int cx, int cz, Box bounds) {
             asked.add(bounds);
-            // A region-based producer names a point inside the region, so a box reaching past it on every side finds it.
-            return ChunkPermits.forChunk(cx, cz, bounds, (x, y, z) -> x < 40 || x > 47 || y < 10 || y > 19,
-                    List.of(new BlockPos(43, 14, 0)));
+            return ChunkPermits.rasterize(cx, cz, bounds, (x, y, z) -> x < 40 || x > 47 || y < 10 || y > 19);
         }
     }
 
@@ -69,10 +67,10 @@ class PermitSourceTest {
         assertTrue(permits.mayChange(50, 66, 5));
         assertTrue(permits.mayChange(3, 66, 3));
         assertEquals(ChunkPermit.ALLOW, permits.chunk(0, 0));
-        // Work visiting one column at several heights asks once, for the column over the job's heights.
-        assertFalse(permits.column(41, 5).allows(41, 64, 5));
-        assertEquals(box(41, 64, 5, 41, 70, 5), claim.asked.get(claim.asked.size() - 1), "the column, the job's heights");
-        assertTrue(permits.column(50, 5).allows(50, 70, 5));
+        // Work visiting one column at several heights asks once, for the column over the heights it gives.
+        assertFalse(permits.column(41, 5, 64, 70).allows(41, 64, 5));
+        assertEquals(box(41, 64, 5, 41, 70, 5), claim.asked.get(claim.asked.size() - 1), "the column, the heights given");
+        assertTrue(permits.column(50, 5, 64, 70).allows(50, 70, 5));
     }
 
     @Test
@@ -87,8 +85,8 @@ class PermitSourceTest {
         assertTrue(permits.mayChange(41, 20, 5), "above the region");
         assertEquals(box(41, 20, 5, 41, 20, 5), region.asked.get(region.asked.size() - 1), "asked at its own height");
         assertTrue(permits.mayChange(48, 15, 5), "beside the region");
-        // A column over the job's heights 0..30 holds both: answered per cell.
-        ChunkPermit column = permits.column(41, 5);
+        // A column over heights 0..30 holds both: answered per cell.
+        ChunkPermit column = permits.column(41, 5, 0, 30);
         assertInstanceOf(ChunkPermit.Cells.class, column);
         for (int y = 0; y <= 30; y++) assertEquals(y < 10 || y > 19, column.allows(41, y, 5), "y " + y);
     }
@@ -98,7 +96,7 @@ class PermitSourceTest {
         PermitSource denyEast = (cx, cz) -> cx >= 1 ? ChunkPermit.DENY : ChunkPermit.ALLOW;
         assertTrue(denyEast.mayChange(15, 64, 0));
         assertFalse(denyEast.mayChange(16, 64, 0));
-        assertFalse(denyEast.column(16, 0).allows(16, 64, 0));
+        assertFalse(denyEast.column(16, 0, 64, 64).allows(16, 64, 0));
         assertTrue(PermitSource.ALLOW_ALL.mayChange(-1000, -64, 1000));
         // A chunk permit limited in height answers the default mayChange at the cell's own height.
         long[] bits = new long[2 * 4];

@@ -341,7 +341,8 @@ public final class ServerClipboards<P, W> implements ClipboardService<P> {
         boolean box = region instanceof Region.Cuboid;
         long[] sections = box ? null : edits.regionSections(region, area.min().y(), area.max().y());
         Long2ObjectOpenHashMap<long[]> columns = box ? null : edits.regionColumns(region, area.min().y(), area.max().y());
-        boolean trusted = box ? edits.requireReadable(p, world, area) : edits.requireReadable(p, world, columns, area);
+        boolean trusted = box ? edits.requireReadable(p, world, area)
+                : edits.requireReadable(p, world, columns, area, region);
         LiveReader reader = runtime.reader(world);
         if (box) {
             for (int cx = area.min().x() >> 4; cx <= area.max().x() >> 4; cx++) {

@@ -18,11 +18,12 @@ public interface PermitSource {
     ChunkPermit chunk(int cx, int cz);
 
     /**
-     * The permit for column (x, z) alone over the job's heights, wherever the column lies, also outside the chunks the job
-     * was admitted for: for work that visits the cells of one column at several heights (biome quarts) and asks once per
-     * column. The default is the column's chunk's {@link #chunk} permit.
+     * The permit for column (x, z) alone between heights {@code minY} and {@code maxY}, wherever the column lies, also
+     * outside the chunks the job was admitted for: for work that visits one column at several heights (biome quarts)
+     * and asks once per column. Only cells of that column within those heights may be asked about. The default is the
+     * column's chunk's {@link #chunk} permit.
      */
-    default ChunkPermit column(int x, int z) {
+    default ChunkPermit column(int x, int z, int minY, int maxY) {
         return chunk(x >> 4, z >> 4);
     }
 
@@ -36,9 +37,9 @@ public interface PermitSource {
     }
 
     /**
-     * A player's permits for a job over {@code bounds}: {@link #chunk} by the corner rule over the part of the bounds in
-     * that chunk; {@link #column} for the column itself over the bounds' heights, and {@link #mayChange} for the cell
-     * itself, wherever they are.
+     * A player's permits for a job over {@code bounds}: {@link #chunk} for the part of the bounds in that chunk;
+     * {@link #column} for the column itself over the heights given, and {@link #mayChange} for the cell itself, wherever
+     * they are.
      */
     static <P, W> PermitSource forPlayer(PermissionService<P, W> permissions, P player, W world, Box bounds) {
         Objects.requireNonNull(permissions);
@@ -50,8 +51,8 @@ public interface PermitSource {
             }
 
             @Override
-            public ChunkPermit column(int x, int z) {
-                Box column = new Box(new BlockPos(x, bounds.min().y(), z), new BlockPos(x, bounds.max().y(), z));
+            public ChunkPermit column(int x, int z, int minY, int maxY) {
+                Box column = new Box(new BlockPos(x, minY, z), new BlockPos(x, maxY, z));
                 ChunkPermit permit = permissions.chunk(player, world, x >> 4, z >> 4, column);
                 return permit == null ? ChunkPermit.DENY : permit;
             }
