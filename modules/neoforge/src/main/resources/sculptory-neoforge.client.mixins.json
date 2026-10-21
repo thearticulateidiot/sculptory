@@ -4,6 +4,7 @@
   "package": "dev.sculptory.neoforge.client.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
+    "ClientChunkCacheMixin",
     "ClientPacketListenerMixin",
     "LevelRendererMixin",
     "MultiPlayerGameModeMixin"

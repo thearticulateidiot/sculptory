@@ -72,8 +72,13 @@ import org.joml.Matrix4fStack;
  *       render thread, only after a join (NeoForge fires it for every disconnect, also one before the play phase);</li>
  *   <li>{@link #onClientTagsLoaded}: {@code TagsUpdatedEvent} with cause {@code CLIENT_PACKET_RECEIVED}, fired by the
  *       client's {@code TagCollector} for the configuration phase's tags and for each {@code /reload};</li>
- *   <li>{@link #onChunkLoad}, {@link #onChunkUnload}: {@code ChunkEvent.Load} and {@code .Unload} for client worlds
- *       ({@code ClientChunkCache.replaceWithPacketData}, also for a column replaced in place, and {@code drop});</li>
+ *   <li>{@link #onChunkLoad}: {@code ChunkEvent.Load} for client worlds, posted at the end of
+ *       {@code ClientChunkCache.replaceWithPacketData} for a new column and for one updated in place alike, where
+ *       Fabric API fires {@code CHUNK_LOAD} (the method's TAIL);</li>
+ *   <li>{@link #onChunkUnload}: {@code ChunkEvent.Unload} for client worlds, which NeoForge posts only from
+ *       {@code ClientChunkCache.drop}; {@code ClientChunkCacheMixin} adds the two other places Fabric API fires
+ *       {@code CHUNK_UNLOAD} (a slot's column replaced by one at another position, columns outside a smaller view
+ *       radius). One list of hooks serves all three, in registration order;</li>
  *   <li>{@link #registerKey}: collected and registered in {@code RegisterKeyMappingsEvent} (mod bus), which NeoForge
  *       fires after the mods are constructed, so keys must be registered during construction;
  *       {@link #boundKey}: NeoForge's public {@code KeyMapping.getKey()};</li>
@@ -91,6 +96,8 @@ import org.joml.Matrix4fStack;
 public final class NeoForgeClientLoader implements ClientLoader {
     /** The join hooks, which {@code ClientPacketListenerMixin} runs ({@link #joined}). */
     private static final List<Runnable> JOIN_HOOKS = new CopyOnWriteArrayList<>();
+    /** The chunk unload hooks, run from NeoForge's event and from {@code ClientChunkCacheMixin} ({@link #chunkUnloaded}). */
+    private static final List<BiConsumer<ClientLevel, LevelChunk>> CHUNK_UNLOAD_HOOKS = new CopyOnWriteArrayList<>();
     /** Whether the play connection's join hooks ran (and its disconnect hooks have not yet). Render thread only. */
     private static boolean joined;
 
@@ -107,6 +114,11 @@ public final class NeoForgeClientLoader implements ClientLoader {
             if (!joined) return;
             joined = false;
             disconnectHooks.forEach(Runnable::run);
+        });
+        NeoForge.EVENT_BUS.addListener((ChunkEvent.Unload event) -> {
+            if (event.getLevel() instanceof ClientLevel world && event.getChunk() instanceof LevelChunk chunk) {
+                chunkUnloaded(world, chunk);
+            }
         });
     }
 
@@ -266,12 +278,12 @@ public final class NeoForgeClientLoader implements ClientLoader {
 
     @Override
     public void onChunkUnload(BiConsumer<ClientLevel, LevelChunk> hook) {
-        Objects.requireNonNull(hook);
-        NeoForge.EVENT_BUS.addListener((ChunkEvent.Unload event) -> {
-            if (event.getLevel() instanceof ClientLevel world && event.getChunk() instanceof LevelChunk chunk) {
-                hook.accept(world, chunk);
-            }
-        });
+        CHUNK_UNLOAD_HOOKS.add(Objects.requireNonNull(hook));
+    }
+
+    /** A client column left the world ({@code ChunkEvent.Unload} or {@code ClientChunkCacheMixin}): the unload hooks. */
+    public static void chunkUnloaded(ClientLevel world, LevelChunk chunk) {
+        CHUNK_UNLOAD_HOOKS.forEach(hook -> hook.accept(world, chunk));
     }
 
     // ---- keys ----
