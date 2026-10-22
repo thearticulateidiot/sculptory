@@ -33,7 +33,7 @@ import org.junit.jupiter.api.Test;
  */
 class DevHarnessClassesTest {
     private static final String ENTRYPOINT = "dev/sculptory/fabric/client/SculptoryClientMod.class";
-    /** The classes {@code SculptoryClientMod} looks for (devHarness, devClassPresent), by their binary names. */
+    /** The classes {@code SculptoryClientMod} looks for (through DevClasses), by their binary names. */
     private static final List<String> STARTED = List.of("dev.sculptory.mc.client.editor.tour.UiTour",
             "dev.sculptory.mc.client.editor.check.PlayCheck", "dev.sculptory.mc.client.editor.demo.PlayDemo",
             "dev.sculptory.fabric.client.editor.devtools.DevCommands");
