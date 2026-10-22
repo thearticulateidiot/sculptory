@@ -74,15 +74,16 @@ public final class LightBatchGameTest {
         steps.add(() -> {
             writer[0] = h.runtime.writer(world, WriteOptions.DEFAULT);
             check(writer[0].lightTasks() == 0, "the writer batches its light checks: " + writer[0].lightTasks());
-            long before = lightTaskObjects();
+            long before = LightBatch.vanillaChecks();
             batched[0] = LightBatch.batchedCells();
             build((x, y, z, state) -> write(writer[0], ax + x, Y0 + y, az + z, state));
             writer[0].clearTicksAtWrittenCells();
-            long tasks = lightTaskObjects() - before;
+            long vanillaChecks = LightBatch.vanillaChecks() - before;
             // At most a thousand checks a task, and the block covers 2 x 2 chunk columns.
             check(writer[0].lightTasks() > 0 && writer[0].lightTasks() <= 4 + 34_000 / LightBatch.TASK_CELLS,
                     "light tasks for the batched copy: " + writer[0].lightTasks());
-            check(tasks < 1_000, "vanilla light tasks queued for ~34,000 batched writes: " + tasks);
+            // Counted as checks are handed over, so the light thread's progress does not matter.
+            check(vanillaChecks == 0, "checks of the ~34,000 batched writes that went the vanilla way: " + vanillaChecks);
             check(LightBatch.batchedCells() - batched[0] > 30_000, "checks batched: "
                     + (LightBatch.batchedCells() - batched[0]));
             vanilla(() -> build((x, y, z, state) -> set(world, bx + x, Y0 + y, az + z, state)));
