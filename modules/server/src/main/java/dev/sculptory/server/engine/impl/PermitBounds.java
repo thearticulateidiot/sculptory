@@ -36,6 +36,19 @@ final class PermitBounds {
     }
 
     /**
+     * Throws when the check is on and heights {@code minY}..{@code maxY} reach outside {@code bounds} (the bounds a
+     * source's permits were asked for; nothing is checked when it is null): a permit made for those bounds cannot vouch
+     * for heights beyond them, compact or not.
+     */
+    static void checkHeights(Box bounds, int minY, int maxY, Object what) {
+        if (!CHECKED || bounds == null) return;
+        if (minY < bounds.min().y() || maxY > bounds.max().y()) {
+            throw new IllegalStateException(what + " was asked heights " + minY + ".." + maxY
+                    + " outside the bounds its permits were asked for, " + bounds);
+        }
+    }
+
+    /**
      * Throws when the check is on and {@code permit} is per cell without layers for every height from {@code minY} to
      * {@code maxY}: a source handing out a permit asked for other heights than those requested.
      */

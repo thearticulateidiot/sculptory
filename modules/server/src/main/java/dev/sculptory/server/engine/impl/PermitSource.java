@@ -29,12 +29,16 @@ public interface PermitSource {
     /**
      * The permit for column (x, z) alone between heights {@code minY} and {@code maxY}, wherever the column lies, also
      * outside the chunks the job was admitted for: for work that visits one column at several heights (biome quarts)
-     * and asks once per column. It must answer every one of those heights: a source of its own overrides this so, or
-     * makes {@link #chunk} answer them. The default is the column's chunk's {@link #chunk} permit; with the bounds check
-     * on, a per-cell permit from it without layers for all of those heights fails loudly instead of silently denying
-     * the heights it lacks.
+     * and asks once per column. It must answer every one of those heights. The default is the column's chunk's
+     * {@link #chunk} permit, which is right only for the heights {@link #chunk} was asked for: a source of its own whose
+     * chunk permits come from other heights than the ones asked here overrides this (as {@link #forPlayer} does). With
+     * the bounds check on, the default fails loudly instead of silently answering heights it cannot vouch for: when
+     * the source reports its {@link #bounds}, asked heights outside them; and a per-cell permit without layers for all
+     * of the asked heights. (A compact permit, ALLOW, DENY or Columns, says nothing of the heights it was made for, so
+     * without bounds only an override can be right.)
      */
     default ChunkPermit column(int x, int z, int minY, int maxY) {
+        PermitBounds.checkHeights(bounds(), minY, maxY, "a permit source's column()");
         ChunkPermit permit = chunk(x >> 4, z >> 4);
         PermitBounds.checkLayers(permit, minY, maxY, "a permit source's column()");
         return permit;
