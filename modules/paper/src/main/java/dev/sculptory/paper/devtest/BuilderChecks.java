@@ -2,7 +2,6 @@ package dev.sculptory.paper.devtest;
 
 import static dev.sculptory.paper.devtest.SelfTestRun.aabb;
 import static dev.sculptory.paper.devtest.SelfTestRun.box;
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.Symmetry;
@@ -174,11 +173,11 @@ final class BuilderChecks {
         r.record("builder: Keep shape places only the block", placed.accepted() && placed.changed() == 1 && !joined,
                 placed + ", the old fence joined " + joined);
         hold(r, Items.AIR);
-        return ticks(5).thenCompose(v -> {
+        return r.ticks(5).thenCompose(v -> {
             BuilderOutcome broken = breakCells(r, 2, List.of(support), keep);
             r.record("builder: Keep shape breaks only the block", broken.accepted() && broken.changed() == 1,
                     broken.toString());
-            return ticks(10);
+            return r.ticks(10);
         }).thenCompose(v -> {
             boolean sand = r.level.getBlockState(support.above()).is(Blocks.SAND);
             int drops = r.level.getEntitiesOfClass(ItemEntity.class, aabb(work), e -> e.tickCount < 40).size();
@@ -253,7 +252,7 @@ final class BuilderChecks {
                         + "events " + seen);
         r.record("builder: the revert leaves the comparator alone", !tickBefore && !ticked,
                 "tick scheduled before " + tickBefore + ", after the revert " + ticked);
-        return ticks(10).thenAccept(v -> {
+        return r.ticks(10).thenAccept(v -> {
             boolean powered = r.level.getBlockState(comparator).getValue(ComparatorBlock.POWERED);
             r.record("builder: the comparator is still off 10 ticks later", !powered, "powered " + powered);
         });

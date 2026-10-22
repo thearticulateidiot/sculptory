@@ -1,7 +1,6 @@
 package dev.sculptory.paper.devtest;
 
 import static dev.sculptory.paper.devtest.SelfTestRun.box;
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.region.Facing;
@@ -101,7 +100,7 @@ final class TinkerNavigateChecks {
                 new dev.sculptory.core.BlockPos(pillarTop.getX(), pillarTop.getY(), pillarTop.getZ()), Facing.WEST,
                 1f, 0f, 0f);
         // A tick for the teleport of stand() to settle on the client.
-        return ticks(5).thenCompose(v -> {
+        return r.ticks(5).thenCompose(v -> {
             teleports.seen.clear();
             teleports.cancel = true;
             S2C.NavigateResult refused = r.service.navigate(r.player, jump);

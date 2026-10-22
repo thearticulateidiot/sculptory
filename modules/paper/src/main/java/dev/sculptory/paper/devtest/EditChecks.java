@@ -3,7 +3,6 @@ package dev.sculptory.paper.devtest;
 import static dev.sculptory.paper.devtest.SelfTestRun.aabb;
 import static dev.sculptory.paper.devtest.SelfTestRun.box;
 import static dev.sculptory.paper.devtest.SelfTestRun.cells;
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.paper.nms.PaperAccess;
@@ -63,7 +62,7 @@ final class EditChecks {
         int sandId = Block.getId(Blocks.SAND.defaultBlockState());
         int stone = Block.getId(Blocks.STONE.defaultBlockState());
         return r.fill(sand, sandId)
-                .thenCompose(result -> ticks(10).thenApply(v -> result))
+                .thenCompose(result -> r.ticks(10).thenApply(v -> result))
                 .thenCompose(result -> {
                     int notSand = r.countNot(sand, sandId);
                     int falling = level.getEntitiesOfClass(FallingBlockEntity.class, aabb(sand).inflate(2, 40, 2)).size();
@@ -80,7 +79,7 @@ final class EditChecks {
                             r.countDiffering(sand, sandBefore) + " cells differ");
                     return r.fill(chest, stone);
                 })
-                .thenCompose(result -> ticks(5).thenApply(v -> result))
+                .thenCompose(result -> r.ticks(5).thenApply(v -> result))
                 .thenCompose(result -> {
                     // Only items that appeared during the check (younger than 40 ticks).
                     int items = level.getEntitiesOfClass(ItemEntity.class, aabb(chest).inflate(3), item -> item.tickCount < 40)

@@ -1,6 +1,5 @@
 package dev.sculptory.paper.devtest;
 
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.mc.net.ServerNet;
 import dev.sculptory.paper.PaperServerLoader;
@@ -57,7 +56,7 @@ final class NetChecks {
         r.record("network: join race: a frame before the registration goes as a vanilla packet",
                 canSend && route == S2CRoute.PACKET && sent == 1, "canSend=" + canSend + ", route=" + route
                         + ", counted " + sent);
-        return ticks(20).thenAccept(v -> r.record("network: join race: the client stays connected",
+        return r.ticks(20).thenAccept(v -> r.record("network: join race: the client stays connected",
                 r.player.connection != null && !r.player.hasDisconnected()
                         && bukkit.getListeningPluginChannels().contains(PaperServerLoader.S2C_CHANNEL),
                 "connected=" + !r.player.hasDisconnected() + ", registration back="

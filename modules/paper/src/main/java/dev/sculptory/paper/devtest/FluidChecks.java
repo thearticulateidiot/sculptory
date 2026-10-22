@@ -2,7 +2,6 @@ package dev.sculptory.paper.devtest;
 
 import static dev.sculptory.paper.devtest.SelfTestRun.box;
 import static dev.sculptory.paper.devtest.SelfTestRun.cells;
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.history.HistoryEntry;
@@ -62,7 +61,7 @@ final class FluidChecks {
             // The written water lies still (physics off) until something updates it: its own tick, as a neighbour's
             // change would set off.
             r.level.scheduleTick(source, Fluids.WATER, 1);
-            return ticks(60);
+            return r.ticks(60);
         }).thenCompose(v -> {
             int wet = 0;
             for (BlockPos cell : cells(floor)) if (!r.level.getFluidState(cell).isEmpty()) wet++;
@@ -78,7 +77,7 @@ final class FluidChecks {
             r.record("fluid trails: the marks go into the chunk's data container", saved,
                     "key " + FluidTrails.NBT_KEY + " present " + saved);
             return r.undo();
-        }).thenCompose(result -> ticks(20).thenApply(v -> result)).thenAccept(result -> {
+        }).thenCompose(result -> r.ticks(20).thenApply(v -> result)).thenAccept(result -> {
             int differ = r.countDiffering(floor, before);
             r.record("fluid trails: the fill's undo takes the flowed water back", differ == 0,
                     result.outcome() + ", " + result.changed() + " changed, " + differ + " cells differ");
@@ -102,8 +101,8 @@ final class FluidChecks {
         Box one = box(source.getX(), source.getY(), source.getZ(), source.getX(), source.getY(), source.getZ());
         return r.fill(one, Block.getId(Blocks.WATER.defaultBlockState())).thenCompose(result -> {
             r.level.scheduleTick(source, Fluids.WATER, 1);
-            return ticks(60);
-        }).thenCompose(v -> r.undo()).thenCompose(result -> ticks(10)).thenAccept(v -> {
+            return r.ticks(60);
+        }).thenCompose(v -> r.undo()).thenCompose(result -> r.ticks(10)).thenAccept(v -> {
             List<String> differ = new ArrayList<>();
             List<BlockPos> cells = cells(all);
             int[] now = r.snapshot(all);

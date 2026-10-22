@@ -2,7 +2,6 @@ package dev.sculptory.paper.devtest;
 
 import static dev.sculptory.paper.devtest.SelfTestRun.aabb;
 import static dev.sculptory.paper.devtest.SelfTestRun.box;
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
@@ -40,7 +39,7 @@ final class EntityChecks {
         int x = r.baseX + 320, z = r.baseZ + 4;
         Box area = box(x, 99, z, x + 9, 106, z + 9);
         SelfTestRun.Area claimed = r.claim(area);
-        return ticks(5).thenCompose(v -> {
+        return r.ticks(5).thenCompose(v -> {
             if (claimed.hadEntities() || !r.level.getEntitiesOfClass(ArmorStand.class, aabb(area)).isEmpty()) {
                 throw new IllegalStateException("the entity check's area holds entities already; it changes nothing");
             }
@@ -85,9 +84,9 @@ final class EntityChecks {
                             placed.size() == 1 && hidden, placed.size() + " stands placed, visible by default "
                                     + !hidden + " (" + result.outcome() + ")");
                     // A few ticks, as a player would undo later: CraftBukkit's tick counter moves on meanwhile.
-                    return ticks(10).thenCompose(v -> r.undo());
+                    return r.ticks(10).thenCompose(v -> r.undo());
                 })
-                .thenCompose(result -> ticks(2).thenApply(v -> result))
+                .thenCompose(result -> r.ticks(2).thenApply(v -> result))
                 .thenAccept(result -> {
                     int left = r.level.getEntitiesOfClass(ArmorStand.class, aabb(pasted), ArmorStand::isAlive).size();
                     r.record("entities: its undo finds no conflict and takes it away",

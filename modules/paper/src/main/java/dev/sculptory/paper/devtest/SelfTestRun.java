@@ -335,9 +335,17 @@ final class SelfTestRun {
         JobTicket start(JobListener listener) throws EditRejected;
     }
 
-    /** Starts a job and completes with its result (or fails when it is refused or times out). */
+    /**
+     * Starts a job and completes with its result (or fails when it is refused or times out). It also fails when the run
+     * has ended by the time the job finishes (the run's timeout put the areas back and stopped the service): the check's
+     * next steps must not write into areas already put back.
+     */
     CompletableFuture<JobResult> job(String what, Starter starter) {
         CompletableFuture<JobResult> done = new CompletableFuture<>();
+        if (finished) {
+            done.completeExceptionally(ended(what));
+            return done;
+        }
         try {
             JobTicket ticket = starter.start(new JobListener() {
                 @Override
@@ -346,7 +354,11 @@ final class SelfTestRun {
 
                 @Override
                 public void finished(JobResult r) {
-                    done.complete(r);
+                    if (SelfTestRun.this.finished) {
+                        done.completeExceptionally(ended(what));
+                    } else {
+                        done.complete(r);
+                    }
                 }
             });
             Sculptory.LOG.info("Sculptory self-test: {} job {} ({} cells)", what, ticket.jobId(), ticket.estimatedCells());
@@ -360,10 +372,24 @@ final class SelfTestRun {
         return done;
     }
 
-    static CompletableFuture<Void> ticks(int n) {
+    /**
+     * Completes {@code n} ticks from now; fails instead when the run has ended by then, so what a check meant to do
+     * next (write, undo) never touches areas already put back.
+     */
+    CompletableFuture<Void> ticks(int n) {
         CompletableFuture<Void> done = new CompletableFuture<>();
-        Bukkit.getScheduler().runTaskLater(SculptoryPlugin.instance(), () -> done.complete(null), n);
+        Bukkit.getScheduler().runTaskLater(SculptoryPlugin.instance(), () -> {
+            if (finished) {
+                done.completeExceptionally(ended(n + " ticks"));
+            } else {
+                done.complete(null);
+            }
+        }, n);
         return done;
+    }
+
+    private static IllegalStateException ended(String what) {
+        return new IllegalStateException("the self-test run ended before " + what + " was done");
     }
 
     // ================================================================== cells

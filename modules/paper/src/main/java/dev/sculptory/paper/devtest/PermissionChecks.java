@@ -1,6 +1,5 @@
 package dev.sculptory.paper.devtest;
 
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.mc.net.ServerNet;
 import dev.sculptory.mc.perm.Tri;
@@ -59,7 +58,7 @@ final class PermissionChecks {
             Bukkit.getPluginManager().callEvent(new PlayerCommandSendEvent(r.player.getBukkitEntity(),
                     new LinkedHashSet<>()));
         }
-        return ticks(20).thenAccept(v -> {
+        return r.ticks(20).thenAccept(v -> {
             r.record("permissions: a command tree sent again re-reads the player's permissions at once",
                     seen.contains(r.player), seen.size() + " re-reads seen for " + r.name());
             r.info("permissions: LuckPerms", Bukkit.getPluginManager().isPluginEnabled("LuckPerms")

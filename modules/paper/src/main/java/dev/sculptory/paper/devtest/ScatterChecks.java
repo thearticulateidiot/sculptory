@@ -86,7 +86,7 @@ final class ScatterChecks {
             return CompletableFuture.failedFuture(new IllegalStateException("preview refused: " + e.getMessage(), e));
         }
         // Planned over the next server ticks, as the planning lane would (its payloads are encoded off the thread).
-        return planned(scatter, reply).thenCompose(v -> {
+        return planned(r, scatter, reply).thenCompose(v -> {
             if (reply.plan == null) {
                 throw new IllegalStateException("no plan: " + reply.reason + " " + reply.detail + "; planning "
                         + scatter.planning(r.player.getUUID()) + ", active " + scatter.active() + ", encoding "
@@ -96,11 +96,19 @@ final class ScatterChecks {
         });
     }
 
-    /** Runs the planning a step every server tick until the reply came (at most 600 ticks). */
-    private static CompletableFuture<Void> planned(ServerScatter<?, ?> scatter, Reply reply) {
+    /**
+     * Runs the planning a step every server tick until the reply came (at most 600 ticks); fails once the run has
+     * ended (its areas are put back: nothing may follow).
+     */
+    private static CompletableFuture<Void> planned(SelfTestRun r, ServerScatter<?, ?> scatter, Reply reply) {
         CompletableFuture<Void> done = new CompletableFuture<>();
         int[] ticks = {0};
         Bukkit.getScheduler().runTaskTimer(SculptoryPlugin.instance(), task -> {
+            if (r.finished()) {
+                task.cancel();
+                done.completeExceptionally(new IllegalStateException("the self-test run ended while planning"));
+                return;
+            }
             scatter.tick();
             if (reply.plan != null || reply.reason != null || ++ticks[0] >= 600) {
                 task.cancel();
