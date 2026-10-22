@@ -67,5 +67,14 @@ public interface BuilderSteps {
          * changed, in the order they were first changed: each cell's first and last state and block entity.
          */
         List<BuilderChange> finish();
+
+        /**
+         * Ends the action after a step threw an {@link Error}, instead of {@link #finish}: what the platform defers (the
+         * physics of the steps so far) does not run; whatever the action holds is released and every cell it changed is
+         * given, to be put back. On Fabric and NeoForge nothing is deferred, so it is {@link #finish}.
+         */
+        default List<BuilderChange> abort() {
+            return finish();
+        }
     }
 }

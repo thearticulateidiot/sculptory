@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -27,6 +28,7 @@ import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SignBlock;
+import net.minecraft.world.level.block.TripWireHookBlock;
 import net.minecraft.world.level.block.WitherSkullBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
@@ -80,10 +82,15 @@ import org.slf4j.LoggerFactory;
  *       physics event (registered for the action only, first in line) notes every cell within {@value #WATCH_RADIUS}
  *       blocks of each cell an update reaches, before that cell reacts. Paper fires the event for every neighbour update
  *       before the block reacts, and for every changed cell before its shape updates go out, so a cell the cascade
- *       changes has been noted before it changes. At the end every noted cell whose state differs is a change of the
- *       action, with the block entity it had (saved then, from the object noted). At most
- *       {@value #MAX_WATCHED_CELLS} cells are noted per action; past that (a long redstone contraption) the rest of the
- *       cascade still runs, but what it changes is not recorded for the undo (logged).</li>
+ *       changes has been noted before it changes; its block entity is saved when it is noted, before any reaction (a
+ *       crafter sets its block and its block entity's {@code triggered} in one reaction). At the end every noted cell
+ *       whose state differs is a change of the action. A tripwire hook is the one block found that changes cells far
+ *       from any update: the hook a string's or hook's change reaches sets the opposite hook and the strings between,
+ *       up to 41 blocks away, each before its own event; so whenever a string or a hook is noted, the cells along its
+ *       line (both ways along each horizontal axis of a string, along a hook's axis) are noted too, 42 blocks each way.
+ *       At most {@value #DEFAULT_MAX_WATCHED_CELLS} cells are noted around the physics per action; past that (a long
+ *       redstone contraption) the rest of the cascade still runs, but what it changes further out is not recorded for
+ *       the undo (logged). The action's own targets and the containers it empties are always noted, cap or not.</li>
  *   <li><b>Keep shape:</b> nothing around reacts: the replaced blocks' callbacks do not run during the step
  *       ({@code isBlockPlaceCancelled}), their add callbacks are deferred by the capture and never run, and each
  *       changed cell only tells the clients and the points of interest. Breaks run captured for this.</li>
@@ -92,6 +99,15 @@ import org.slf4j.LoggerFactory;
  * <p><b>Events and the history.</b> The place and break events fire for every step, also for one the engine puts back
  * afterwards (a secondary cell another protection refuses, the global mask, a failure), and undo and redo fire none:
  * a logging plugin sees the builder action as placed and broken by the player, and does not see the undo.
+ *
+ * <p><b>Refused after the physics.</b> The cells the physics changed are part of the action's changes, so the engine
+ * checks them against protection and the global mask like the action's own: a lamp reacting in a protected or masked
+ * cell refuses the whole action, which is then put back physics-free. What the physics did that is not a block change
+ * (items dropped, ticks scheduled, entities) stays. This is Fabric's rule too.
+ *
+ * <p><b>An Error in a step</b> ends the action through {@link Action#abort}: the capture and the physics listener are
+ * released and the changed cells given for the revert, without running the deferred physics (no golem or wither built,
+ * nothing primed) of half-done work.
  *
  * <p>Known differences from Fabric's mixin capture: what a replaced block's own removal sets off beyond its neighbours
  * does not run when a placement replaces it (Replace over a powered lever: its attached block's neighbours keep their
@@ -104,16 +120,26 @@ import org.slf4j.LoggerFactory;
  */
 public final class PaperBuilderSteps implements BuilderSteps {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
-    /** The most cells one action notes while its physics run (each a state and a reference, about 100 bytes). */
-    static final int MAX_WATCHED_CELLS = 32768;
+    /** The most cells one action notes around its physics, by default (each a state, about 100 bytes, plus a tile). */
+    public static final int DEFAULT_MAX_WATCHED_CELLS = 32768;
     /** How far around a changed or updated cell the cells are noted before they may change. */
     static final int WATCH_RADIUS = 2;
+    /** How far along a tripwire's line the cells are noted: a hook finds its opposite hook up to 41 blocks away. */
+    static final int TRIPWIRE_REACH = 42;
 
     private final Plugin plugin;
+    private final int maxWatchedCells;
 
     /** {@code plugin} owns the physics listener an action registers while it watches (PaperEngine; the self-test). */
     public PaperBuilderSteps(Plugin plugin) {
+        this(plugin, DEFAULT_MAX_WATCHED_CELLS);
+    }
+
+    /** With another cap on the cells noted around an action's physics (the self-test checks what happens past it). */
+    public PaperBuilderSteps(Plugin plugin, int maxWatchedCells) {
+        if (maxWatchedCells < 0) throw new IllegalArgumentException("a negative cap: " + maxWatchedCells);
         this.plugin = Objects.requireNonNull(plugin);
+        this.maxWatchedCells = maxWatchedCells;
     }
 
     @Override
@@ -121,7 +147,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
         if (world.captureBlockStates || world.captureTreeGeneration) {
             throw new IllegalStateException("another block capture is open on " + world.dimension().location());
         }
-        return new PaperAction(plugin, world, player, keepShape);
+        return new PaperAction(plugin, maxWatchedCells, world, player, keepShape);
     }
 
     @Override
@@ -144,11 +170,10 @@ public final class PaperBuilderSteps implements BuilderSteps {
     }
 
     /**
-     * A cell as it was before the action first changed it. A cell a step changed has its block entity saved
-     * ({@code tile}); a cell only noted around the physics ({@code watched}) keeps a reference to its block entity
-     * ({@code entity}), saved only if the cell's state turns out changed (most noted cells never change).
+     * A cell as it was before the action first changed it, its block entity saved then. A cell only noted around the
+     * physics ({@code watched}) counts as changed only when its block did (as on Fabric, whose hook sees block changes).
      */
-    private record Before(int state, BlockEntityData tile, BlockEntity entity, boolean watched) {
+    private record Before(int state, BlockEntityData tile, boolean watched) {
     }
 
     /** A changed cell whose deferred updates are still to run: its state before the action and its last change's flags. */
@@ -164,6 +189,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
 
     private static final class PaperAction implements Action, Listener, EventExecutor {
         private final Plugin plugin;
+        private final int maxWatchedCells;
         private final ServerLevel world;
         private final ServerPlayer player;
         private final boolean keepShape;
@@ -180,8 +206,9 @@ public final class PaperBuilderSteps implements BuilderSteps {
         private boolean captureFailureLogged;
         private LevelChunk lastChunk;
 
-        PaperAction(Plugin plugin, ServerLevel world, ServerPlayer player, boolean keepShape) {
+        PaperAction(Plugin plugin, int maxWatchedCells, ServerLevel world, ServerPlayer player, boolean keepShape) {
             this.plugin = plugin;
+            this.maxWatchedCells = maxWatchedCells;
             this.world = world;
             this.player = player;
             this.keepShape = keepShape;
@@ -231,6 +258,9 @@ public final class PaperBuilderSteps implements BuilderSteps {
             // The event came first, so nothing needs deferring: the break runs with its physics now (a lever's or a
             // torch's own updates included), watched like the deferred updates of a placement.
             startWatching();
+            // The target itself is always noted, whatever the cascade of an earlier target of the message noted.
+            note(pos);
+            noteTripwireLine(pos, world.getBlockState(pos));
             watchAround(pos);
             removed[0] = BuilderPlacement.breakBlock(world, player, pos);
             // The break's own updates have run: an emptied container's deferred ones are not run again.
@@ -240,12 +270,22 @@ public final class PaperBuilderSteps implements BuilderSteps {
 
         @Override
         public List<BuilderChange> finish() {
+            return end(true);
+        }
+
+        /** After an Error in a step: the deferred physics of the half-done work do not run (see the class doc). */
+        @Override
+        public List<BuilderChange> abort() {
+            return end(false);
+        }
+
+        private List<BuilderChange> end(boolean physics) {
             if (!finished) {
                 finished = true;
                 try {
-                    if (keepShape) {
+                    if (physics && keepShape) {
                         notifyOnly();
-                    } else {
+                    } else if (physics) {
                         runUpdates();
                     }
                 } finally {
@@ -253,7 +293,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
                 }
                 if (watchFull) {
                     LOG.warn("Sculptory: a builder action set off updates beyond the {} cells followed per action; what "
-                            + "they changed further out is not undone with it", MAX_WATCHED_CELLS);
+                            + "they changed further out is not undone with it", maxWatchedCells);
                 }
             }
             List<BuilderChange> changes = new ArrayList<>();
@@ -264,10 +304,9 @@ public final class PaperBuilderSteps implements BuilderSteps {
                 BlockState now = world.getBlockState(pos);
                 int after = Block.getId(now);
                 if (before.watched() && after == before.state()) continue;
-                BlockEntityData beforeTile = before.watched() ? saved(pos, before.entity()) : before.tile();
                 BlockEntityData tile = now.hasBlockEntity() ? tileAt(pos) : null;
-                if (after == before.state() && sameTile(beforeTile, tile)) continue;
-                changes.add(new BuilderChange(pos.immutable(), before.state(), beforeTile, after, tile));
+                if (after == before.state() && sameTile(before.tile(), tile)) continue;
+                changes.add(new BuilderChange(pos.immutable(), before.state(), before.tile(), after, tile));
             }
             return changes;
         }
@@ -290,7 +329,12 @@ public final class PaperBuilderSteps implements BuilderSteps {
         private void runUpdates() {
             if (pending.isEmpty()) return;
             startWatching();
-            for (Pending p : pending.values()) watchAround(p.pos());
+            for (Pending p : pending.values()) {
+                // A string or hook placed or replaced: its far hook is reached by the add or replace callback.
+                noteTripwireLine(p.pos(), p.old());
+                noteTripwireLine(p.pos(), world.getBlockState(p.pos()));
+                watchAround(p.pos());
+            }
             for (Pending p : pending.values()) update(p);
             for (Pending p : pending.values()) {
                 BlockState now = world.getBlockState(p.pos());
@@ -345,7 +389,10 @@ public final class PaperBuilderSteps implements BuilderSteps {
             watchAround(block.getPosition());
         }
 
-        /** Notes every loaded cell within {@value #WATCH_RADIUS} blocks of {@code center} not noted yet, as it is now. */
+        /**
+         * Notes every loaded cell within {@value #WATCH_RADIUS} blocks of {@code center} not noted yet, as it is now
+         * (a string or hook among them: its line too).
+         */
         private void watchAround(BlockPos center) {
             if (watchFull) return;
             for (int dy = -WATCH_RADIUS; dy <= WATCH_RADIUS; dy++) {
@@ -353,23 +400,59 @@ public final class PaperBuilderSteps implements BuilderSteps {
                 if (world.isOutsideBuildHeight(y)) continue;
                 for (int dz = -WATCH_RADIUS; dz <= WATCH_RADIUS; dz++) {
                     for (int dx = -WATCH_RADIUS; dx <= WATCH_RADIUS; dx++) {
-                        cursor.set(center.getX() + dx, y, center.getZ() + dz);
-                        long key = cursor.asLong();
-                        if (befores.containsKey(key)) continue;
-                        LevelChunk chunk = loadedChunk(cursor.getX() >> 4, cursor.getZ() >> 4);
-                        if (chunk == null) continue;
-                        if (watched >= MAX_WATCHED_CELLS) {
-                            watchFull = true;
-                            return;
-                        }
-                        BlockState state = chunk.getBlockState(cursor);
-                        BlockEntity entity = state.hasBlockEntity()
-                                ? chunk.getBlockEntity(cursor, LevelChunk.EntityCreationType.CHECK) : null;
-                        befores.put(key, new Before(Block.getId(state), null, entity, true));
-                        watched++;
+                        BlockState state = noteWatched(center.getX() + dx, y, center.getZ() + dz);
+                        if (watchFull) return;
+                        if (state != null) noteTripwireLine(new BlockPos(center.getX() + dx, y, center.getZ() + dz), state);
                     }
                 }
             }
+        }
+
+        /**
+         * Pre-notes a tripwire's line when {@code state} at {@code pos} is a string (both ways along both horizontal
+         * axes) or a hook (both ways along its axis), {@value #TRIPWIRE_REACH} cells each way: a hook's update sets the
+         * opposite hook and the strings between before their own events fire.
+         */
+        private void noteTripwireLine(BlockPos pos, BlockState state) {
+            List<Direction> directions;
+            if (state.is(Blocks.TRIPWIRE)) {
+                directions = List.of(Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST);
+            } else if (state.getBlock() instanceof TripWireHookBlock) {
+                Direction facing = state.getValue(TripWireHookBlock.FACING);
+                directions = List.of(facing, facing.getOpposite());
+            } else {
+                return;
+            }
+            for (Direction direction : directions) {
+                for (int i = 1; i <= TRIPWIRE_REACH && !watchFull; i++) {
+                    noteWatched(pos.getX() + direction.getStepX() * i, pos.getY(), pos.getZ() + direction.getStepZ() * i);
+                }
+            }
+        }
+
+        /**
+         * Notes loaded cell (x, y, z) as it is now, block entity saved, unless noted already or the action's cap is
+         * reached (then {@link #watchFull}). Returns the state noted now, or null.
+         */
+        private BlockState noteWatched(int x, int y, int z) {
+            cursor.set(x, y, z);
+            long key = cursor.asLong();
+            if (befores.containsKey(key)) return null;
+            LevelChunk chunk = loadedChunk(x >> 4, z >> 4);
+            if (chunk == null) return null;
+            if (watched >= maxWatchedCells) {
+                watchFull = true;
+                return null;
+            }
+            BlockState state = chunk.getBlockState(cursor);
+            BlockEntityData tile = null;
+            if (state.hasBlockEntity()) {
+                BlockEntity entity = chunk.getBlockEntity(cursor, LevelChunk.EntityCreationType.CHECK);
+                if (entity != null && !entity.isRemoved()) tile = saved(cursor, entity);
+            }
+            befores.put(key, new Before(Block.getId(state), tile, true));
+            watched++;
+            return state;
         }
 
         /** The chunk at (cx, cz) if it is loaded (never loads one). */
@@ -501,7 +584,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
             if (known != null && !known.watched()) return;
             BlockState state = world.getBlockState(pos);
             if (known != null && known.state() != Block.getId(state)) return;
-            befores.put(key, new Before(Block.getId(state), state.hasBlockEntity() ? tileAt(pos) : null, null, false));
+            befores.put(key, new Before(Block.getId(state), state.hasBlockEntity() ? tileAt(pos) : null, false));
         }
 
         /** A cell's first state as CraftBukkit captured it, its block entity included. */
@@ -517,13 +600,12 @@ public final class PaperBuilderSteps implements BuilderSteps {
                     logCaptureFailure(state.getPosition(), e);
                 }
             }
-            return new Before(Block.getId(state.getHandle()), tile, null, false);
+            return new Before(Block.getId(state.getHandle()), tile, false);
         }
 
         /**
-         * A watched cell's block entity as noted, saved now: the object keeps its data after the block is gone (a sign
-         * popping off), so its text comes back with the undo. A container a cascade destroyed has dropped its items by
-         * then and is saved empty (no duplicates; no block's physics destroys one in vanilla).
+         * A noted cell's block entity, saved as it is now (before anything reacts), so the undo puts back the data that
+         * went with the block's first state.
          */
         private BlockEntityData saved(BlockPos pos, BlockEntity entity) {
             if (entity == null) return null;

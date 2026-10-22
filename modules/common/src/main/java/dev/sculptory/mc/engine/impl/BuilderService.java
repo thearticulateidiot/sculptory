@@ -338,13 +338,20 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
     }
 
     /**
-     * A step threw an {@link Error} (a stack overflow, a linkage error): the action is still ended, so its capture and
-     * Keep shape scope are released and the world's own block capture is left empty, and what it changed so far is put
-     * back (no history step is pushed for it); then the error goes on, with whatever the clean-up threw added to it.
+     * A step threw an {@link Error} (a stack overflow, a linkage error): the action is still ended ({@code abort}: its
+     * capture and Keep shape scope released, the world's own block capture left empty, the deferred physics of the
+     * half-done work not run), and what it changed so far is put back (no history step is pushed for it); then the error
+     * goes on, with whatever the clean-up threw added to it. The revert runs whatever ending the action threw.
      */
     private Error ended(ServerLevel world, BuilderSteps.Action action, Error error) {
+        List<BuilderChange> changes = List.of();
         try {
-            steps.revert(world, action.finish());
+            changes = action.abort();
+        } catch (Throwable cleanup) {
+            error.addSuppressed(cleanup);
+        }
+        try {
+            steps.revert(world, changes);
         } catch (Throwable cleanup) {
             error.addSuppressed(cleanup);
         }

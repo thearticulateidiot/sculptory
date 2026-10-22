@@ -9,6 +9,7 @@ import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.mc.builder.BuilderChange;
 import dev.sculptory.mc.builder.BuilderSteps;
+import dev.sculptory.mc.engine.impl.BuilderService;
 import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.engine.PaperBuilderSteps;
 import dev.sculptory.paper.nms.PaperAccess;
@@ -17,10 +18,13 @@ import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.server.engine.BuilderOutcome;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.animal.SnowGolem;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.BlockItem;
@@ -31,15 +35,21 @@ import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ComparatorBlock;
+import net.minecraft.world.level.block.CrafterBlock;
 import net.minecraft.world.level.block.CrossCollisionBlock;
 import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.LecternBlock;
 import net.minecraft.world.level.block.LeverBlock;
+import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.RedstoneLampBlock;
+import net.minecraft.world.level.block.TripWireBlock;
+import net.minecraft.world.level.block.TripWireHookBlock;
+import net.minecraft.world.level.block.entity.CrafterBlockEntity;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.RedstoneSide;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.bukkit.Bukkit;
@@ -49,6 +59,7 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockMultiPlaceEvent;
+import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 
 /**
@@ -136,7 +147,11 @@ final class BuilderChecks {
                 .thenCompose(v -> door(r, x0, z0 + 30, work))
                 .thenCompose(v -> lever(r, x0 + 16, z0 + 5, work))
                 .thenCompose(v -> golem(r, x0 + 16, z0 + 9, work))
-                .thenAccept(v -> errorInStep(r, new BlockPos(x0 + 24, FLOOR + 1, z0 + 13)));
+                .thenAccept(v -> errorInStep(r, new BlockPos(x0 + 24, FLOOR + 1, z0 + 13)))
+                .thenCompose(v -> crafter(r, x0 + 16, z0 + 17, work))
+                .thenCompose(v -> tripwire(r, x0 + 14, z0 + 24, work))
+                .thenCompose(v -> pastTheCap(r, x0 + 12, z0 + 27, work))
+                .thenAccept(v -> errorThroughService(r, x0 + 16, z0 + 30));
     }
 
     /**
@@ -244,29 +259,249 @@ final class BuilderChecks {
      * Paper's steps directly (as {@code BuilderService} drives them): a placement step that throws an {@link Error}
      * after the game placed its block (a stack overflow, here from the placement context) leaves the world's block
      * capture switched off and empty (the next placement anywhere would take those states for its own), Keep shape's
-     * callback switch restored; the action still ends, gives the placed cell, and its revert puts it back.
+     * callback switch restored; the action still ends (aborted, after a break before it: the physics listener that
+     * break registered is gone), gives both cells, and its revert puts them back.
      */
     private static void errorInStep(SelfTestRun r, BlockPos cell) {
         PaperBuilderSteps steps = new PaperBuilderSteps(SculptoryPlugin.instance());
         for (boolean keepShape : new boolean[] {false, true}) {
+            boolean physicsBefore = r.level.hasPhysicsEvent;
+            // A break first: without Keep shape it runs watched, so the physics listener is registered when the step
+            // fails.
+            BlockPos broken = cell.east(2);
+            set(r, broken, Blocks.STONE.defaultBlockState());
             BuilderSteps.Action action = steps.open(r.level, r.player, keepShape);
             BlockPlaceContext context = new FailingContext(r, cell);
             StackOverflowError thrown = null;
             try {
+                action.breakBlock(broken);
                 action.place((BlockItem) Items.STONE, context, Blocks.STONE.defaultBlockState(), false);
             } catch (StackOverflowError e) {
                 thrown = e;
             }
             boolean clean = !r.level.captureBlockStates && r.level.capturedBlockStates.isEmpty()
                     && r.level.capturedTileEntities.isEmpty() && !r.level.isBlockPlaceCancelled;
-            List<BuilderChange> changes = action.finish();
+            List<BuilderChange> changes = action.abort();
+            String left = physicsLeftOn(r, physicsBefore);
             steps.revert(r.level, changes);
-            boolean back = r.level.getBlockState(cell).isAir();
+            boolean back = r.level.getBlockState(cell).isAir() && r.level.getBlockState(broken).is(Blocks.STONE);
             r.record("builder: a step that throws an Error leaves the block capture empty ("
                             + (keepShape ? "Keep shape" : "no Keep shape") + ")",
-                    thrown != null && clean && changes.size() == 1 && back,
+                    thrown != null && clean && changes.size() == 2 && back && left == null,
                     "thrown " + thrown + ", capture clean " + clean + ", " + changes.size() + " cells given, put back "
-                            + back);
+                            + back + ", " + (left == null ? "physics released" : left));
+        }
+    }
+
+    /**
+     * Whether no builder action's physics listener is left registered and the world's physics-event switch is back
+     * where it was ({@code before}); null when so, else what is wrong.
+     */
+    private static String physicsLeftOn(SelfTestRun r, boolean before) {
+        long left = Arrays.stream(BlockPhysicsEvent.getHandlerList().getRegisteredListeners())
+                .filter(l -> l.getListener().getClass().getName().startsWith(PaperBuilderSteps.class.getName()))
+                .count();
+        boolean others = BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0;
+        boolean switchOk = r.level.hasPhysicsEvent == (before || others);
+        if (left == 0 && switchOk) return null;
+        return left + " builder physics listeners left, physics event " + r.level.hasPhysicsEvent + " (before "
+                + before + ")";
+    }
+
+    /**
+     * A redstone block placed beside a crafter (without Keep shape): the crafter sets TRIGGERED and its block entity's
+     * {@code triggered} in one reaction. The crafter's block entity is saved when it is noted, before it reacts, so the
+     * undo puts back an untriggered crafter whose data agrees. The physics listener is gone afterwards.
+     */
+    private static CompletableFuture<Void> crafter(SelfTestRun r, int x0, int z, Box work) {
+        BlockPos crafter = new BlockPos(x0 + 4, FLOOR + 1, z);
+        set(r, crafter, Blocks.CRAFTER.defaultBlockState());
+        r.stand(x0 + 0.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.REDSTONE_BLOCK, 64));
+        int[] before = r.snapshot(work);
+        boolean physicsBefore = r.level.hasPhysicsEvent;
+        BuilderOutcome placed = place(r, x0 + 3, FLOOR, z, 0);
+        String left = physicsLeftOn(r, physicsBefore);
+        boolean triggered = r.level.getBlockState(crafter).getValue(CrafterBlock.TRIGGERED);
+        r.record("builder: a redstone block beside a crafter triggers it (recorded)",
+                placed.accepted() && placed.changed() == 2 && triggered, placed + ", triggered " + triggered);
+        r.record("builder: the action's physics listener is gone and the physics switch restored", left == null,
+                left == null ? "released" : left);
+        return r.undo().thenAccept(v -> {
+            boolean data = r.level.getBlockEntity(crafter) instanceof CrafterBlockEntity entity && entity.isTriggered();
+            boolean state = r.level.getBlockState(crafter).getValue(CrafterBlock.TRIGGERED);
+            r.record("builder: the crafter step's undo puts back an untriggered crafter, block and data alike",
+                    r.countDiffering(work, before) == 0 && !state && !data,
+                    r.countDiffering(work, before) + " cells differ, TRIGGERED " + state + ", block entity triggered "
+                            + data);
+        });
+    }
+
+    /**
+     * A tripwire of ten strings between two hooks, the middle string missing: placing it attaches both hooks (the hooks
+     * are 5 and 6 blocks away, set by the string's add callback before their own events), and the undo puts both back
+     * unattached. Then, the whole line attached, breaking one hook unattaches the far one (11 blocks away), and the undo
+     * puts the far hook back attached.
+     */
+    private static CompletableFuture<Void> tripwire(SelfTestRun r, int x0, int z, Box work) {
+        BlockPos west = new BlockPos(x0 + 1, FLOOR + 1, z);
+        BlockPos east = new BlockPos(x0 + 12, FLOOR + 1, z);
+        BlockPos middle = new BlockPos(x0 + 6, FLOOR + 1, z);
+        set(r, west.west(), Blocks.STONE.defaultBlockState());
+        set(r, east.east(), Blocks.STONE.defaultBlockState());
+        line(r, west, east, middle, false);
+        r.stand(x0 + 6.5, FLOOR + 1, z - 2.5, 0f, new ItemStack(Items.STRING, 64));
+        int[] before = r.snapshot(work);
+        BuilderOutcome placed = place(r, middle.getX(), FLOOR, z, 0);
+        boolean attached = r.level.getBlockState(west).getValue(TripWireHookBlock.ATTACHED)
+                && r.level.getBlockState(east).getValue(TripWireHookBlock.ATTACHED);
+        r.record("builder: the string completing a tripwire attaches both hooks", placed.accepted() && attached,
+                placed + ", both hooks attached " + attached);
+        return r.undo().thenCompose(v -> {
+            r.record("builder: the string's undo puts both far hooks back unattached",
+                    r.countDiffering(work, before) == 0, r.countDiffering(work, before) + " cells differ");
+            line(r, west, east, null, true);
+            r.stand(x0 + 3.5, FLOOR + 1, z - 2.5, 0f, ItemStack.EMPTY);
+            int[] armed = r.snapshot(work);
+            BuilderOutcome broken = breakCells(r, 6, List.of(west), 0);
+            boolean farLoose = !r.level.getBlockState(east).getValue(TripWireHookBlock.ATTACHED);
+            r.record("builder: breaking a hook unattaches the far hook", broken.accepted() && farLoose,
+                    broken + ", far hook unattached " + farLoose);
+            return r.undo().thenAccept(w -> {
+                boolean farBack = r.level.getBlockState(east).getValue(TripWireHookBlock.ATTACHED);
+                r.record("builder: the hook's undo puts the far hook back attached",
+                        r.countDiffering(work, armed) == 0 && farBack,
+                        r.countDiffering(work, armed) + " cells differ, far hook " + r.level.getBlockState(east));
+            });
+        });
+    }
+
+    /** Two facing hooks with strings between them (all but {@code gap}), physics-free, attached or not. */
+    private static void line(SelfTestRun r, BlockPos west, BlockPos east, BlockPos gap, boolean attached) {
+        BlockState hook = Blocks.TRIPWIRE_HOOK.defaultBlockState().setValue(TripWireHookBlock.ATTACHED, attached);
+        set(r, west, hook.setValue(TripWireHookBlock.FACING, Direction.EAST));
+        set(r, east, hook.setValue(TripWireHookBlock.FACING, Direction.WEST));
+        BlockState string = Blocks.TRIPWIRE.defaultBlockState().setValue(TripWireBlock.EAST, true)
+                .setValue(TripWireBlock.WEST, true).setValue(TripWireBlock.ATTACHED, attached);
+        for (int x = west.getX() + 1; x < east.getX(); x++) {
+            BlockPos cell = new BlockPos(x, west.getY(), west.getZ());
+            set(r, cell, cell.equals(gap) ? Blocks.AIR.defaultBlockState() : string);
+        }
+    }
+
+    /** The cap of cells noted around an action's physics in {@link #pastTheCap}. */
+    private static final int SMALL_CAP = 64;
+
+    /**
+     * Past the cap of cells noted around an action's physics (lowered to {@value #SMALL_CAP} here): one break message
+     * whose first target, a redstone block, sets a redstone line going out and so fills the cap, and whose second
+     * target is a stone block apart. Both targets are recorded (they are always noted, cap or not): the step holds
+     * both and its undo puts both back.
+     */
+    private static CompletableFuture<Void> pastTheCap(SelfTestRun r, int x0, int z, Box work) {
+        BlockPos power = new BlockPos(x0, FLOOR + 1, z);
+        set(r, power, Blocks.REDSTONE_BLOCK.defaultBlockState());
+        for (int x = x0 + 1; x <= x0 + 14; x++) {
+            set(r, new BlockPos(x, FLOOR + 1, z), Blocks.REDSTONE_WIRE.defaultBlockState()
+                    .setValue(RedStoneWireBlock.EAST, RedstoneSide.SIDE)
+                    .setValue(RedStoneWireBlock.WEST, RedstoneSide.SIDE)
+                    .setValue(RedStoneWireBlock.POWER, Math.max(0, 15 - (x - x0))));
+        }
+        BlockPos stone = new BlockPos(x0 + 2, FLOOR + 1, z + 2);
+        set(r, stone, Blocks.STONE.defaultBlockState());
+        r.stand(x0 + 1.5, FLOOR + 1, z + 1.5, -90f, ItemStack.EMPTY);
+        BuilderService capped = new BuilderService(r.service, r.host.engine(), r.host.engine().server(),
+                new PaperBuilderSteps(SculptoryPlugin.instance(), SMALL_CAP), r.service.executor(),
+                r.service.historyService(), System::nanoTime);
+        BuilderOutcome broken = capped.breakBlocks(r.player, new C2S.BuilderBreak(seq++, 7,
+                List.of(core(power), core(stone)), 0, Symmetry.NONE, false, true));
+        boolean gone = r.level.getBlockState(power).isAir() && r.level.getBlockState(stone).isAir();
+        r.record("builder: past the noted-cell cap both targets of a break message are recorded",
+                broken.accepted() && broken.changed() >= 2 && gone, broken + ", both broken " + gone);
+        return r.undo().thenAccept(v -> {
+            boolean back = r.level.getBlockState(power).is(Blocks.REDSTONE_BLOCK)
+                    && r.level.getBlockState(stone).is(Blocks.STONE);
+            r.record("builder: its undo puts both targets back", back, "redstone block " + r.level.getBlockState(power)
+                    + ", stone " + r.level.getBlockState(stone));
+        });
+    }
+
+    private static dev.sculptory.core.BlockPos core(BlockPos pos) {
+        return new dev.sculptory.core.BlockPos(pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    /**
+     * Through {@code BuilderService}: a carved pumpkin placed on two snow blocks, the step then failing with a stack
+     * overflow. The action is aborted (its deferred physics, which would build the golem, do not run), put back, and no
+     * step is added; the error reaches the caller. Whether a golem appeared is reported.
+     */
+    private static void errorThroughService(SelfTestRun r, int x0, int z) {
+        BlockPos base = new BlockPos(x0 + 5, FLOOR + 1, z);
+        set(r, base, Blocks.SNOW_BLOCK.defaultBlockState());
+        set(r, base.above(), Blocks.SNOW_BLOCK.defaultBlockState());
+        r.stand(x0 + 2.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.CARVED_PUMPKIN, 64));
+        PaperBuilderSteps paper = new PaperBuilderSteps(SculptoryPlugin.instance());
+        BuilderService failing = new BuilderService(r.service, r.host.engine(), r.host.engine().server(),
+                new FailingSteps(paper), r.service.executor(), r.service.historyService(), System::nanoTime);
+        List<String> labelsBefore = labels(r);
+        boolean physicsBefore = r.level.hasPhysicsEvent;
+        StackOverflowError thrown = null;
+        try {
+            failing.place(r.player, new C2S.BuilderPlace(seq++, false, core(base.above()), Facing.UP, 0.5f, 1f, 0.5f,
+                    0, Symmetry.NONE));
+        } catch (StackOverflowError e) {
+            thrown = e;
+        }
+        String left = physicsLeftOn(r, physicsBefore);
+        boolean back = r.level.getBlockState(base).is(Blocks.SNOW_BLOCK)
+                && r.level.getBlockState(base.above()).is(Blocks.SNOW_BLOCK)
+                && r.level.getBlockState(base.above(2)).isAir();
+        int golems = r.level.getEntitiesOfClass(SnowGolem.class, aabb(box(x0, FLOOR, z - 3, x0 + 10, FLOOR + 6, z + 3)),
+                e -> e.tickCount < 5).size();
+        r.record("builder: an Error after a pumpkin's placement is aborted and put back, without a step",
+                thrown != null && back && labels(r).equals(labelsBefore) && left == null,
+                "thrown " + thrown + ", blocks back " + back + ", history " + labels(r) + ", "
+                        + (left == null ? "physics released" : left));
+        r.info("builder: entities after the aborted pumpkin", golems + " snow golems (0: the deferred add callback did "
+                + "not run)");
+    }
+
+    /** Paper's steps, except that a placement throws a {@link StackOverflowError} once the game has done it. */
+    private record FailingSteps(PaperBuilderSteps inner) implements BuilderSteps {
+        @Override
+        public Action open(ServerLevel world, ServerPlayer player, boolean keepShape) {
+            Action action = inner.open(world, player, keepShape);
+            return new Action() {
+                @Override
+                public void emptyContainer(BlockPos pos) {
+                    action.emptyContainer(pos);
+                }
+
+                @Override
+                public Step place(BlockItem item, BlockPlaceContext context, BlockState state, boolean copy) {
+                    action.place(item, context, state, copy);
+                    throw new StackOverflowError("a builder step failed (test)");
+                }
+
+                @Override
+                public Step breakBlock(BlockPos pos) {
+                    return action.breakBlock(pos);
+                }
+
+                @Override
+                public List<BuilderChange> finish() {
+                    return action.finish();
+                }
+
+                @Override
+                public List<BuilderChange> abort() {
+                    return action.abort();
+                }
+            };
+        }
+
+        @Override
+        public void revert(ServerLevel world, List<BuilderChange> changes) {
+            inner.revert(world, changes);
         }
     }
 
