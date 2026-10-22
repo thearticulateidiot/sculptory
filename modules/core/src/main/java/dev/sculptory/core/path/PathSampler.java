@@ -123,7 +123,7 @@ public final class PathSampler {
             segment.select(s);
             int steps = segment.steps(maxSpacing, samples);
             for (int j = 0; j < steps; j++) {
-                segment.at((double) j / steps, point);
+                segment.at(j, steps, point);
                 if (!first) along += distance(point[0] - lastX, point[1] - lastY, point[2] - lastZ);
                 visitor.visit(point[0], point[1], point[2], along);
                 first = false;
@@ -160,6 +160,10 @@ public final class PathSampler {
         private int i0, i1, i2, i3;
         /** Curve: the four control points of the segment selected. */
         private final double[] c0 = new double[3], c1 = new double[3], c2 = new double[3], c3 = new double[3];
+        /** The segment's ends, for its straight line (a curve's straight segments too). */
+        private final double[] a = new double[3], b = new double[3];
+        /** Curve: the selected segment is straight ({@link CatmullRom#straight}), so its line is used. */
+        private boolean straightCurve;
         /** Hanging: the span's catenary half-parameter (0: its parabola), and cosh of it. */
         private double u, coshU;
         private boolean sags;
@@ -186,7 +190,10 @@ public final class PathSampler {
                 load(i1, c1);
                 load(i2, c2);
                 load(i3, c3);
+                straightCurve = CatmullRom.straight(c0, c1, c2, c3);
             }
+            load(i1, a);
+            load(i2, b);
             if (kind == PathKind.HANGING) {
                 double span = StrictMath.sqrt(sq(px[i2] - px[i1]) + sq(pz[i2] - pz[i1]));
                 sags = sag > 0 && span > 1e-9;
@@ -212,38 +219,45 @@ public final class PathSampler {
             double wanted = StrictMath.ceil(chord / spacing);
             long steps = (long) StrictMath.max(1, wanted);
             if (samplesSoFar + steps > MAX_SAMPLES) throw tooLong();
-            double[] a = new double[3], b = new double[3];
+            double[] from = new double[3], to = new double[3];
             while (true) {
                 if (samplesSoFar + steps > MAX_SAMPLES) throw tooLong();
                 boolean fits = true;
-                at(0, a);
+                at(0, steps, from);
                 for (long j = 1; j <= steps && fits; j++) {
-                    at((double) j / steps, b);
-                    if (distance(b[0] - a[0], b[1] - a[1], b[2] - a[2]) > spacing) fits = false;
-                    double[] t = a;
-                    a = b;
-                    b = t;
+                    at(j, steps, to);
+                    if (distance(to[0] - from[0], to[1] - from[1], to[2] - from[2]) > spacing) fits = false;
+                    double[] t = from;
+                    from = to;
+                    to = t;
                 }
                 if (fits) return (int) steps;
                 steps *= 2;
             }
         }
 
-        void at(double t, double[] out) {
+        /**
+         * The point {@code j / n} of the way along the segment. Straight pieces (a straight line, a hanging line's
+         * chord, a curve's straight segment) are {@link CatmullRom#lerp exact}: a point truly on a block boundary (a
+         * line rising half a block a block crosses one at every other sample) lands on it, so the cells and stairs of a
+         * line come out as its geometry says, wherever it lies.
+         */
+        void at(long j, long n, double[] out) {
+            double t = (double) j / n;
             switch (kind) {
-                case STRAIGHT -> lerp(t, out);
-                case CURVE -> CatmullRom.at(c0, c1, c2, c3, t, out);
+                case STRAIGHT -> CatmullRom.lerp(a, b, j, n, out);
+                case CURVE -> {
+                    if (straightCurve) {
+                        CatmullRom.lerp(a, b, j, n, out);
+                    } else {
+                        CatmullRom.at(c0, c1, c2, c3, t, out);
+                    }
+                }
                 case HANGING -> {
-                    lerp(t, out);
+                    CatmullRom.lerp(a, b, j, n, out);
                     if (sags) out[1] -= drop(t);
                 }
             }
-        }
-
-        private void lerp(double t, double[] out) {
-            out[0] = px[i1] + t * (px[i2] - px[i1]);
-            out[1] = py[i1] + t * (py[i2] - py[i1]);
-            out[2] = pz[i1] + t * (pz[i2] - pz[i1]);
         }
 
         /** How far below the chord the span hangs at parameter t: 0 at both ends, {@code sag} at the middle. */

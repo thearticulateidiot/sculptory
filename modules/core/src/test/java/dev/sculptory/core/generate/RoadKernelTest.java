@@ -356,6 +356,62 @@ class RoadKernelTest {
     }
 
     /**
+     * A Straight road rising half a block a column (99 to 105 over 13 columns) is exactly on half blocks at every odd
+     * column, and rounds those up: its deck rises at columns 1, 3, 5, 7, 9 and 11, where Use Stairs and Slabs puts a
+     * stair across its width, wherever it is built (the moves of {@link #aRoadBuiltElsewhereIsTheSameRoadMoved}), along
+     * x and along z.
+     */
+    @Test
+    void aRoadRisingHalfABlockAColumnStepsAtEveryOddColumnAnywhere() {
+        int bricks = states.state("minecraft:stone_bricks");
+        int east = states.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
+        int south = states.state("minecraft:stone_brick_stairs[facing=south,half=bottom]");
+        SlopeSteps.Variants variants = new SlopeSteps.Variants() {
+            @Override
+            public int stairs(int state, String facing, String half) {
+                return state == bricks ? states.state("minecraft:stone_brick_stairs[facing=" + facing + ",half=" + half
+                        + "]") : -1;
+            }
+
+            @Override
+            public int slab(int state, String type) {
+                return state == bricks ? states.state("minecraft:stone_brick_slab[type=" + type + "]") : -1;
+            }
+        };
+        Set<String> expected = new HashSet<>();
+        for (int k = 1; k <= 11; k += 2) {
+            for (int side = -1; side <= 1; side++) expected.add(k + "," + (99 + (k + 1) / 2) + "," + side);
+        }
+        for (int dx : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
+            for (int step = -1024; step <= 1024; step += 16) {
+                int dz = step, dy = (Math.floorMod(dz / 16, 3) - 1) * 20;
+                for (boolean alongZ : new boolean[] {false, true}) {
+                    BlockPos end = alongZ ? new BlockPos(dx, 105 + dy, dz + 12) : new BlockPos(dx + 12, 105 + dy, dz);
+                    RoadKernel.Spec spec = new RoadKernel.Spec(List.of(new BlockPos(dx, 99 + dy, dz), end), 3,
+                            new Pattern.Single(bricks), null, RoadKernel.HeightMode.STRAIGHT, true, 0, 2, air);
+                    RoadKernel.Path laid = RoadKernel.path(spec);
+                    for (RoadKernel.Column column : laid.columns()) {
+                        int k = alongZ ? column.z() - dz : column.x() - dx;
+                        assertEquals(99 + dy + (k + 1) / 2, RoadKernel.deckHeight(laid, column),
+                                "the deck at column " + k + " moved by " + dx + ", " + dy + ", " + dz);
+                    }
+                    GeneratedSource road = RoadKernel.generate(spec, laid, new GroundMap(), -64, 320, 1 << 16).source();
+                    int stair = alongZ ? south : east;
+                    Set<String> found = new HashSet<>();
+                    SlopeSteps.apply(road, SlopeSteps.byColumn(laid.climbAxes()), variants, air).source()
+                            .forEach((x, y, z, state) -> {
+                                if (state != stair) return;
+                                int along = alongZ ? z - dz : x - dx, across = alongZ ? x - dx : z - dz;
+                                found.add(along + "," + (y - dy) + "," + across);
+                            });
+                    assertEquals(expected, found, "stairs " + (alongZ ? "along z" : "along x") + " moved by " + dx + ", "
+                            + dy + ", " + dz);
+                }
+            }
+        }
+    }
+
+    /**
      * The same road built anywhere is the same road moved there. The spline's rounding noise grows with the size of
      * its coordinates, and these roads have ties: a deck exactly on half blocks, column centres exactly on the end
      * caps' planes, an even width's centre line on block boundaries, averaged ground exactly between two heights. Each

@@ -9,6 +9,7 @@ import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.path.PathKind;
+import dev.sculptory.core.path.PathSampler;
 import dev.sculptory.core.path.PathSpec;
 import dev.sculptory.core.testing.FakeStateSpace;
 import java.util.ArrayList;
@@ -203,6 +204,52 @@ class LineKernelTest {
         assertEquals(319, clipped.bounds().max().y());
         assertEquals(9 * 10, clipped.cells());
         assertEquals(9 * 21, LineKernel.generate(spec, states, 1000).cells());
+    }
+
+    /**
+     * A thin line rising half a block a block (101 to 107 over 13 blocks) crosses a block boundary exactly at the middle
+     * of every odd block, and its samples land on those crossings: it steps up at blocks 1, 3, 5, 7, 9 and 11, where Use
+     * Stairs and Slabs puts a stair, wherever it is drawn (the moves of {@link #aLineDrawnElsewhereIsTheSameLineMoved}),
+     * along x and along z.
+     */
+    @Test
+    void aLineRisingHalfABlockABlockStepsAtEveryOddBlockAnywhere() {
+        int bricks = states.state("minecraft:stone_bricks");
+        int east = states.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
+        int south = states.state("minecraft:stone_brick_stairs[facing=south,half=bottom]");
+        SlopeSteps.Variants variants = new SlopeSteps.Variants() {
+            @Override
+            public int stairs(int state, String facing, String half) {
+                return state == bricks ? states.state("minecraft:stone_brick_stairs[facing=" + facing + ",half=" + half
+                        + "]") : -1;
+            }
+
+            @Override
+            public int slab(int state, String type) {
+                return state == bricks ? states.state("minecraft:stone_brick_slab[type=" + type + "]") : -1;
+            }
+        };
+        Set<String> expected = new HashSet<>();
+        for (int k = 1; k <= 11; k += 2) expected.add(k + "," + (101 + (k + 1) / 2));
+        for (int dx : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
+            for (int step = -1024; step <= 1024; step += 16) {
+                int dz = step, dy = (Math.floorMod(dz / 16, 3) - 1) * 20;
+                for (boolean alongZ : new boolean[] {false, true}) {
+                    BlockPos end = alongZ ? new BlockPos(dx, 107 + dy, dz + 12) : new BlockPos(dx + 12, 107 + dy, dz);
+                    PathSpec path = new PathSpec(List.of(new BlockPos(dx, 101 + dy, dz), end), PathKind.STRAIGHT);
+                    GeneratedSource line = LineKernel.generate(new LineKernel.Spec(path, 1, LineKernel.Profile.ROUND,
+                            new Pattern.Single(bricks)), states, 1 << 16);
+                    int stair = alongZ ? south : east;
+                    Set<String> found = new HashSet<>();
+                    SlopeSteps.apply(line, SlopeSteps.along(PathSampler.sample(path, 0.5)), variants, states.air())
+                            .source().forEach((x, y, z, state) -> {
+                                if (state == stair) found.add((alongZ ? z - dz : x - dx) + "," + (y - dy));
+                            });
+                    assertEquals(expected, found, "stairs " + (alongZ ? "along z" : "along x") + " moved by " + dx + ", "
+                            + dy + ", " + dz);
+                }
+            }
+        }
     }
 
     /**

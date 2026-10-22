@@ -224,9 +224,12 @@ public final class RoadKernel {
             for (int i = 1; i < nodeAlong.length; i++) {
                 if (s <= nodeAlong[i]) {
                     double span = nodeAlong[i] - nodeAlong[i - 1];
-                    double t = span <= 0 ? 1 : (s - nodeAlong[i - 1]) / span;
-                    int from = nodes.get(i - 1).y() - originY;
-                    return from + t * (nodes.get(i).y() - nodes.get(i - 1).y());
+                    int from = nodes.get(i - 1).y() - originY, to = nodes.get(i).y() - originY;
+                    if (span <= 0) return to;
+                    // (from (span - u) + to u) / span: exact where the true height is a half or whole block (a column
+                    // centre at a whole arc length on a straight segment), so deckHeight rounds that tie up as it is.
+                    double u = s - nodeAlong[i - 1];
+                    return (from * (span - u) + to * u) / span;
                 }
             }
             return nodes.get(nodes.size() - 1).y() - originY;
@@ -266,8 +269,9 @@ public final class RoadKernel {
             int found = Arrays.binarySearch(along, s);
             int i = found >= 0 ? Math.max(1, found) : -found - 1;
             double span = along[i] - along[i - 1];
-            double t = span <= 0 ? 1 : (s - along[i - 1]) / span;
-            return new double[] {xs[i - 1] + t * (xs[i] - xs[i - 1]), zs[i - 1] + t * (zs[i] - zs[i - 1])};
+            if (span <= 0) return new double[] {xs[i], zs[i]};
+            double u = s - along[i - 1], v = along[i] - s;
+            return new double[] {(xs[i - 1] * v + xs[i] * u) / span, (zs[i - 1] * v + zs[i] * u) / span};
         }
     }
 
@@ -302,9 +306,16 @@ public final class RoadKernel {
                 int steps = Math.max(1, (int) Math.ceil(chord / SAMPLE_STEP));
                 nodeVertex[s] = vertices.size();
                 double[] c0 = {px[i0], pz[i0]}, c1 = {px[i1], pz[i1]}, c2 = {px[i2], pz[i2]}, c3 = {px[i3], pz[i3]};
+                // A straight segment is sampled on its line exactly (CatmullRom.lerp), so its vertices, arc lengths and
+                // heights land exactly on the half and whole blocks the geometry puts them on.
+                boolean straight = CatmullRom.straight(c0, c1, c2, c3);
                 for (int j = 0; j < steps; j++) {
                     double[] vertex = new double[2];
-                    CatmullRom.at(c0, c1, c2, c3, (double) j / steps, vertex);
+                    if (straight) {
+                        CatmullRom.lerp(c1, c2, j, steps, vertex);
+                    } else {
+                        CatmullRom.at(c0, c1, c2, c3, (double) j / steps, vertex);
+                    }
                     vertices.add(vertex);
                 }
             }
