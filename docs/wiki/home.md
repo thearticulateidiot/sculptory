@@ -1,6 +1,6 @@
 # Sculptory wiki
 
-A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to find any command by name, `F1` for every key. Pick a page by what you want to do. Every page ends with related pages, and the **Home** button above brings you back here.
+A world editor for Minecraft 1.21.1: a mod for Fabric or NeoForge, and a plugin for Paper servers. Press `B` to open it, `Ctrl+K` to find any command by name, `F1` for every key. Pick a page by what you want to do. Every page ends with related pages, and the **Home** button above brings you back here.
 
 ## Start here
 
@@ -59,7 +59,7 @@ A world editor for Minecraft 1.21.1 (Fabric). Press `B` to open it, `Ctrl+K` to 
 
 ## Run a server
 
-- [Server setup](server-setup.md): install, settings, commands
+- [Server setup](server-setup.md): install on Fabric, NeoForge or Paper, settings, commands
 - [Permissions](permissions.md): who may do what
 - [Server configuration](config.md): every setting, command and limit
 

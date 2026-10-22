@@ -6,7 +6,7 @@ For server admins: every key of `config/sculptory/server.json`, the `/sculptory`
 
 ## The settings file
 
-- Sculptory writes `config/sculptory/server.json` with the defaults on its first start and never rewrites it. On a dedicated server the path is in the server folder; in singleplayer, in the game folder.
+- Sculptory writes `config/sculptory/server.json` with the defaults on its first start and never rewrites it. On a dedicated server the path is in the server folder; in singleplayer, in the game folder. The Paper plugin keeps it in `plugins/Sculptory/server.json`, and has no `/sculptory reload` yet: restart the server after a change (see [On Paper](server-setup.md#on-paper)).
 - A key missing from the file uses its default, and unknown keys are ignored. Keys added by a newer build aren't added to your file: the start-up log lists, in one line, the keys your file doesn't set.
 - An existing file keeps its values, even the old defaults of the build that wrote it. Delete the file to have the current defaults written.
 - A value out of range is clamped into it, with a warning in the log.

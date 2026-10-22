@@ -1,6 +1,9 @@
-# Runs the full check (JUnit and the headless Fabric and NeoForge GameTests), and the Paper plugin's self-test on a
-# Paper server, on every push to a branch and every pull request.
-# Actions are pinned to full commit SHAs; the comment names the release.
+# CI, on every push to a branch and every pull request. Two independent jobs:
+#   check:           ./gradlew check: the JUnit tests of every module and the headless GameTests (vanilla and mod
+#                    fidelity) on Fabric and on NeoForge;
+#   paper-selftest:  builds the Paper plugin (:paper:jar) and runs its self-test on a real Paper 1.21.1 server with
+#                    WorldEdit and WorldGuard; fails on any failed check or on fewer checks than SELFTEST_MIN_TESTS.
+# Neither job sees a secret. Actions are pinned to full commit SHAs; the comment names the release.
 name: CI
 
 on:

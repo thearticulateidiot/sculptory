@@ -7,11 +7,13 @@ A newer Sculptory for the same Minecraft version keeps what you saved: your edit
 ## How to update
 
 1. Close the game. On a server, stop the server.
-2. In the `mods` folder, take out the old Sculptory jar and put the new one in. Keep only one Sculptory jar there.
-3. On a server, put the same jar on the server and on every client that edits. Players who don't edit need nothing.
+2. In the `mods` folder (on a Paper server, `plugins`), take out the old Sculptory jar and put the new one in. Keep only one Sculptory jar there.
+3. On a server, update the server and every client that edits together. Players who don't edit need nothing. Fabric and NeoForge players each take the jar for their own loader, and on Paper the server takes the plugin.
 4. Start as usual. Nothing needs converting.
 
 `/sculptory version` names the server's build and yours. A client with a different build may not be able to open the editor on that server: see [Server setup](server-setup.md#updating).
+
+The products have their own versions: Sculptory for Fabric, for NeoForge and for Paper are each released on their own schedule, so the newest Fabric mod and the newest Paper plugin can have different version numbers. What a client and a server must share is the network protocol, which the changelog names for each release.
 
 ## What carries over
 
@@ -30,7 +32,7 @@ On the server, or in singleplayer in your game folder and world:
 
 - Undo history, within the server's history limits: steps older than its age limit, or over its disk limit, go first as always (see [Server configuration](config.md#history-undo-and-saving-it))
 - The library's schematics and palettes, and who each one is shared with
-- The server settings in `config/sculptory/server.json`; a setting a newer build adds uses its default until you set it
+- The server settings in `config/sculptory/server.json` (on Paper `plugins/Sculptory/server.json`); a setting a newer build adds uses its default until you set it
 
 The world itself never depends on the mod: blocks placed with Sculptory are ordinary blocks.
 
@@ -53,8 +55,8 @@ A file Sculptory can't read is never deleted: it is left as it is, or copied asi
 | Path | Holds |
 |---|---|
 | `config/sculptory/` in your game folder | Your editor settings (`editor-*.json`, `editor-mask.txt`) |
-| `config/sculptory/server.json` | The server settings (in the server folder, or the game folder in singleplayer) |
-| `sculptory/library/` in the server folder | The library: schematics, palettes and who may use them (in singleplayer, in the game folder) |
+| `config/sculptory/server.json` | The server settings (in the server folder, or the game folder in singleplayer; on Paper `plugins/Sculptory/server.json`) |
+| `sculptory/library/` in the server folder | The library: schematics, palettes and who may use them (in singleplayer, in the game folder; on Paper `plugins/Sculptory/library/`) |
 | `<world>/sculptory/history/` | The saved undo history, one file per player |
 | `sculptory/heightmaps/` in your game folder | Your own heightmap pictures |
 | `options.txt` in your game folder | Sculptory's keys in Minecraft's Controls, saved by Minecraft |

@@ -4,6 +4,46 @@ All notable changes to Sculptory. From 0.5.0 on, each product has its own versio
 `## <Product> <version>+<Minecraft version>` (`## Fabric 0.5.0+1.21.1`); the releases up to 0.4.0-beta are the Fabric
 mod's. Client and server need the same network protocol (each section says which).
 
+## Unreleased
+
+The first NeoForge and Paper releases, not out yet. Each becomes a section of its own, headed
+`## NeoForge <version>+1.21.1` or `## Paper <version>+1.21.1`, when it is released; until then both can be built from
+source (README, "Install").
+
+### NeoForge 0.5.0+1.21.1 (planned)
+
+For Minecraft 1.21.1 with NeoForge 21.1.264 or newer. Network protocol 6.
+
+- **The whole editor on NeoForge**: every tool, window and key of the Fabric mod, in singleplayer and on NeoForge
+  servers. Nothing else to install besides NeoForge.
+- **Fabric and NeoForge work together**: a Fabric client can use the editor on a NeoForge server, and a NeoForge
+  client on a Fabric server, as long as both speak the same network protocol.
+- **Permissions** through NeoForge's permission system: the same `sculptory.*` nodes as on Fabric, operators by
+  default, and a permissions mod can decide per player or group.
+- Tried on a server next to Cobblemon, Create and JEI: no conflicts, and their blocks fill, undo and redo like vanilla
+  ones.
+
+### Paper 0.1.0+1.21.1 (planned)
+
+For Paper 1.21.1 (build 133). The plugin is the server side only: players who edit need the Sculptory mod for their
+loader (Fabric or NeoForge) on their client; everyone else joins with nothing installed. Network protocol 6.
+
+- **Sculptory as a Paper plugin**: put the jar in `plugins/`. The settings are in `plugins/Sculptory/server.json`, the
+  library in `plugins/Sculptory/library/`; the undo history is saved with each world, as on Fabric.
+- **WorldGuard regions are respected**: an edit changes only blocks where the player may both place and break, the
+  rule WorldGuard applies to building by hand. WorldGuard and WorldEdit are optional.
+- **Builder mode fires the server's block events**, so protection and logging plugins see every place and break it
+  makes and can cancel one (the step is then put back and refused). Bulk edits (fills, brushes, pastes) fire none,
+  like WorldEdit's.
+- **Permissions** are Bukkit permission nodes, `sculptory.*`: LuckPerms or another permissions plugin decides, and
+  without a grant operators may edit. Changes in LuckPerms apply at once.
+- **Jump and Through** teleport the Paper way, so a plugin that blocks a teleport blocks them too.
+- Known limits: after a crash, up to about a second of edits (five for brush strokes) saved by Paper's background save
+  can't be undone; undo of water and lava takes back flows next to the edit but not chain reactions further away;
+  builder mode records the blocks within two of each change, so far-reaching redstone reactions are not undone; the
+  `/sculptory` command has `version` and, for admins, `fill`, `undo` and `redo` only (restart the server after
+  editing `server.json`).
+
 ## 0.4.0-beta — first beta
 
 For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.3.0-alpha. Beta means the main
