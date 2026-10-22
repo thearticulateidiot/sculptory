@@ -240,7 +240,9 @@ final class FluidChecks {
         @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
         public void flowed(BlockFromToEvent event) {
             org.bukkit.block.Block to = event.getToBlock();
-            if (powered > 0 || to.getX() != into.getX() || to.getY() != into.getY() || to.getZ() != into.getZ()) return;
+            if (powered > 0 || to.getX() != into.getX() || to.getY() != into.getY() || to.getZ() != into.getZ()) {
+                return;
+            }
             ServerLevel level = ((CraftWorld) to.getWorld()).getHandle();
             level.setBlock(power, Blocks.REDSTONE_BLOCK.defaultBlockState(), Block.UPDATE_ALL);
             powered++;
@@ -317,12 +319,48 @@ final class FluidChecks {
                 });
     }
 
+    /**
+     * Two entries' fluids meeting: lava one fill wrote falls onto water another fill wrote, turning it to stone. The
+     * stone is the water entry's change alone (the lava's flow announced the same cell first, but its own change never
+     * happened there), so undoing both entries, in either order, puts the world back exactly.
+     */
+    private static CompletableFuture<Void> lavaOntoWater(SelfTestRun r, int x0, int z0, boolean lavaFirst) {
+        BlockPos water = new BlockPos(x0 + 4, FLOOR + 1, z0 + 12);
+        BlockPos lava = water.above();
+        Box around = box(x0, FLOOR + 1, z0 + 6, x0 + 15, FLOOR + 3, z0 + 15);
+        int[] before = r.snapshot(around);
+        Box waterBox = box(water.getX(), water.getY(), water.getZ(), water.getX(), water.getY(), water.getZ());
+        Box lavaBox = box(lava.getX(), lava.getY(), lava.getZ(), lava.getX(), lava.getY(), lava.getZ());
+        int waterId = Block.getId(Blocks.WATER.defaultBlockState());
+        int lavaId = Block.getId(Blocks.LAVA.defaultBlockState());
+        CompletableFuture<?> filled = lavaFirst
+                ? r.fill(lavaBox, lavaId).thenCompose(v -> r.fill(waterBox, waterId))
+                : r.fill(waterBox, waterId).thenCompose(v -> r.fill(lavaBox, lavaId));
+        String order = lavaFirst ? "the water undone first" : "the lava undone first";
+        return filled.thenCompose(v -> {
+            r.level.scheduleTick(lava, Fluids.LAVA, 1);
+            return r.ticks(160);
+        }).thenCompose(v -> {
+            r.info("fluid trails: lava onto water (" + order + ")", "the water cell is now "
+                    + r.level.getBlockState(water));
+            return r.undo();
+        }).thenCompose(v -> r.undo()).thenCompose(v -> r.ticks(40)).thenAccept(v -> {
+            int fluid = 0;
+            for (BlockPos cell : cells(around)) if (!r.level.getFluidState(cell).isEmpty()) fluid++;
+            int differ = r.countDiffering(around, before);
+            r.record("fluid trails: lava onto another entry's water, both undone (" + order + "): world exact",
+                    differ == 0 && fluid == 0, differ + " cells differ, " + fluid + " fluid cells left");
+        });
+    }
+
     /** The cells the fluid does not explain, in an area of their own: a piston's push, a plant beside lava. */
     private static CompletableFuture<Void> unexplained(SelfTestRun r, int x0, int z0) {
         Box area = box(x0, FLOOR, z0, x0 + 15, FLOOR + 4, z0 + 15);
         r.claim(area);
         floor(r, area);
-        return pistonInto(r, x0, z0).thenCompose(v -> plantBesideLava(r, x0 + 8, z0));
+        return pistonInto(r, x0, z0).thenCompose(v -> plantBesideLava(r, x0 + 8, z0))
+                .thenCompose(v -> lavaOntoWater(r, x0, z0, false))
+                .thenCompose(v -> lavaOntoWater(r, x0, z0, true));
     }
 
     private static void set(SelfTestRun r, BlockPos pos, BlockState state) {

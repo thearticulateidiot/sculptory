@@ -142,9 +142,12 @@ public final class PaperEditHost {
     private void registerHooks(ServerLoader loader) {
         loader.onStartServerTick(server -> engine.tickStart());
         loader.onEndServerTick(server -> {
-            engine.tickEnd();
-            // After the tick's announced fluid changes went into their trails.
-            if (fluidTrails != null) fluidTrails.tickEnded();
+            try {
+                engine.tickEnd();
+            } finally {
+                // After the tick's announced fluid changes went into their trails (or failed to): the listener goes.
+                if (fluidTrails != null) fluidTrails.tickEnded();
+            }
             service.tick();
             scatter.housekeeping();
             if (server.getTickCount() % INDEX_FLUSH_TICKS == 0) clipboards.flushSoon();

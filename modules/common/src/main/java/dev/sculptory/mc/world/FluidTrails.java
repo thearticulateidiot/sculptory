@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -794,14 +795,30 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
         }
     }
 
+    /**
+     * Notes {@code pos} for {@code r}. A cell an earlier recording noted and has no new state for yet is settled first,
+     * so no two recordings claim the same change: if the cell already differs from that recording's first state (its
+     * own change happened inside this one's cause, before its physics event: lava set into air turning to cobble in
+     * its add callback), that recording takes the state it has now; else (its change did not happen: lava falling onto
+     * water forms stone instead) the cell is dropped from it, and the change is this one's.
+     */
     private void eventNote(Recording r, BlockPos pos) {
-        if (r.note(pos)) eventCells.computeIfAbsent(pos.asLong(), k -> new ArrayList<>(1)).add(r);
-    }
-
-    /** Whether a recording of an announced change is open this tick (the platform reports cell changes meanwhile). */
-    public static boolean recordingEventChanges() {
-        FluidTrails trails = active;
-        return trails != null && !trails.eventCells.isEmpty();
+        long key = pos.asLong();
+        List<Recording> earlier = eventCells.get(key);
+        if (earlier != null) {
+            for (Iterator<Recording> it = earlier.iterator(); it.hasNext(); ) {
+                Recording e = it.next();
+                if (e == r || e.world != r.world || e.firstAfter.containsKey(key)) continue;
+                Before before = e.touched.get(key);
+                if (before != null && Block.getId(r.world.getBlockState(pos)) != before.state()) {
+                    e.changed(key, pos);
+                } else {
+                    e.touched.remove(key);
+                    it.remove();
+                }
+            }
+        }
+        if (r.note(pos)) eventCells.computeIfAbsent(key, k -> new ArrayList<>(1)).add(r);
     }
 
     /**
