@@ -9,14 +9,19 @@ import dev.sculptory.mc.world.McTile;
 import dev.sculptory.paper.nms.PaperAccess;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Vec3i;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Clearable;
@@ -28,12 +33,18 @@ import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SignBlock;
+import net.minecraft.world.level.block.StructureBlock;
 import net.minecraft.world.level.block.TripWireHookBlock;
 import net.minecraft.world.level.block.WitherSkullBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
+import net.minecraft.world.level.block.entity.StructureBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.StructureMode;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructurePlaceSettings;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate;
 import org.bukkit.Bukkit;
 import org.bukkit.craftbukkit.block.CraftBlock;
 import org.bukkit.craftbukkit.block.CraftBlockEntityState;
@@ -82,12 +93,18 @@ import org.slf4j.LoggerFactory;
  *       physics event (registered for the action only, first in line) notes every cell within {@value #WATCH_RADIUS}
  *       blocks of each cell an update reaches, before that cell reacts. Paper fires the event for every neighbour update
  *       before the block reacts, and for every changed cell before its shape updates go out, so a cell the cascade
- *       changes has been noted before it changes; its block entity is saved when it is noted, before any reaction (a
- *       crafter sets its block and its block entity's {@code triggered} in one reaction). At the end every noted cell
- *       whose state differs is a change of the action. A tripwire hook is the one block found that changes cells far
- *       from any update: the hook a string's or hook's change reaches sets the opposite hook and the strings between,
- *       up to 41 blocks away, each before its own event; so whenever a string or a hook is noted, the cells along its
- *       line (both ways along each horizontal axis of a string, along a hook's axis) are noted too, 42 blocks each way.
+ *       changes has been noted before it changes. A noted cell's block entity is saved when an update reaches the
+ *       cell, before it reacts (a crafter sets its block and its block entity's {@code triggered} in one reaction;
+ *       block entities react only to neighbour updates); one no update reached is saved at the end from the object
+ *       noted (a sign popping off keeps its data), so a wall of full chests beside the action costs nothing. The
+ *       action's own targets and emptied containers are saved at once. At the end every noted cell whose state
+ *       differs is a change of the action. Two blocks change cells far from any update, before their own events: a
+ *       structure block in LOAD mode, powered, places its template at once, so its load box is noted when the block
+ *       is (bounded by the cap); and a tripwire hook a string's or hook's change reaches sets the opposite hook and
+ *       the strings between, up to 41 blocks away, so whenever a string or a hook is noted, the cells along its line
+ *       (both ways along each horizontal axis of a string, along a hook's axis) are noted too, 42 blocks each way.
+ *       Not followed: what other plugins write from inside the events these physics fire (a listener may change any
+ *       cell anywhere); it stays and is not undone with the action.
  *       At most {@value #DEFAULT_MAX_WATCHED_CELLS} cells are noted around the physics per action; past that (a long
  *       redstone contraption) the rest of the cascade still runs, but what it changes further out is not recorded for
  *       the undo (logged). The action's own targets and the containers it empties are always noted, cap or not.</li>
@@ -120,7 +137,10 @@ import org.slf4j.LoggerFactory;
  */
 public final class PaperBuilderSteps implements BuilderSteps {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
-    /** The most cells one action notes around its physics, by default (each a state, about 100 bytes, plus a tile). */
+    /**
+     * The most cells one action notes around its physics, by default: each a state and a reference, roughly 100 bytes
+     * (a block entity is saved only for a cell an update reaches before it reacts, or that changed).
+     */
     public static final int DEFAULT_MAX_WATCHED_CELLS = 32768;
     /** How far around a changed or updated cell the cells are noted before they may change. */
     static final int WATCH_RADIUS = 2;
@@ -147,18 +167,34 @@ public final class PaperBuilderSteps implements BuilderSteps {
         if (world.captureBlockStates || world.captureTreeGeneration) {
             throw new IllegalStateException("another block capture is open on " + world.dimension().location());
         }
-        return new PaperAction(plugin, maxWatchedCells, world, player, keepShape);
+        return new PaperAction(plugin, maxWatchedCells, unnotified, world, player, keepShape);
     }
 
+    /**
+     * Puts the changes back physics-free. For the changes an aborted action gave ({@link Action#abort}), the cells its
+     * captured steps changed are put back without touching points of interest, as Paper's own revert of a cancelled
+     * placement does: their deferred updates never ran, so they never registered theirs (removing one now would log a
+     * point-of-interest mismatch).
+     */
     @Override
     public void revert(ServerLevel world, List<BuilderChange> changes) {
+        LongSet quiet = unnotified.remove(changes);
         for (int i = changes.size() - 1; i >= 0; i--) {
             BuilderChange change = changes.get(i);
-            putBack(world, change.pos(), Block.stateById(change.before()));
-            change.putBackTile(world, Block.stateById(change.before()));
+            boolean prevent = world.preventPoiUpdated;
+            if (quiet != null && quiet.contains(change.pos().asLong())) world.preventPoiUpdated = true;
+            try {
+                putBack(world, change.pos(), Block.stateById(change.before()));
+                change.putBackTile(world, Block.stateById(change.before()));
+            } finally {
+                world.preventPoiUpdated = prevent;
+            }
             world.getChunkSource().blockChanged(change.pos());
         }
     }
+
+    /** Per list an aborted action gave: the cells whose deferred updates never ran (server thread only). */
+    private final Map<List<BuilderChange>, LongSet> unnotified = new IdentityHashMap<>();
 
     /**
      * Writes {@code state} at {@code pos} physics-free: no callbacks (nothing drops), no neighbour or comparator
@@ -170,10 +206,11 @@ public final class PaperBuilderSteps implements BuilderSteps {
     }
 
     /**
-     * A cell as it was before the action first changed it, its block entity saved then. A cell only noted around the
-     * physics ({@code watched}) counts as changed only when its block did (as on Fabric, whose hook sees block changes).
+     * A cell as it was before the action first changed it: its block entity saved ({@code tile}), or for a cell only
+     * noted around the physics ({@code watched}) possibly only referenced ({@code entity}) until an update reaches it.
+     * A watched cell counts as changed only when its block did (as on Fabric, whose hook sees block changes).
      */
-    private record Before(int state, BlockEntityData tile, boolean watched) {
+    private record Before(int state, BlockEntityData tile, BlockEntity entity, boolean watched) {
     }
 
     /** A changed cell whose deferred updates are still to run: its state before the action and its last change's flags. */
@@ -190,6 +227,9 @@ public final class PaperBuilderSteps implements BuilderSteps {
     private static final class PaperAction implements Action, Listener, EventExecutor {
         private final Plugin plugin;
         private final int maxWatchedCells;
+        private final Map<List<BuilderChange>, LongSet> unnotified;
+        /** The pending cells whose deferred updates (or Keep shape notification) have run. */
+        private final LongOpenHashSet notified = new LongOpenHashSet();
         private final ServerLevel world;
         private final ServerPlayer player;
         private final boolean keepShape;
@@ -206,9 +246,11 @@ public final class PaperBuilderSteps implements BuilderSteps {
         private boolean captureFailureLogged;
         private LevelChunk lastChunk;
 
-        PaperAction(Plugin plugin, int maxWatchedCells, ServerLevel world, ServerPlayer player, boolean keepShape) {
+        PaperAction(Plugin plugin, int maxWatchedCells, Map<List<BuilderChange>, LongSet> unnotified, ServerLevel world,
+                    ServerPlayer player, boolean keepShape) {
             this.plugin = plugin;
             this.maxWatchedCells = maxWatchedCells;
+            this.unnotified = unnotified;
             this.world = world;
             this.player = player;
             this.keepShape = keepShape;
@@ -260,7 +302,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
             startWatching();
             // The target itself is always noted, whatever the cascade of an earlier target of the message noted.
             note(pos);
-            noteTripwireLine(pos, world.getBlockState(pos));
+            noteFarReach(pos, world.getBlockState(pos));
             watchAround(pos);
             removed[0] = BuilderPlacement.breakBlock(world, player, pos);
             // The break's own updates have run: an emptied container's deferred ones are not run again.
@@ -304,9 +346,19 @@ public final class PaperBuilderSteps implements BuilderSteps {
                 BlockState now = world.getBlockState(pos);
                 int after = Block.getId(now);
                 if (before.watched() && after == before.state()) continue;
+                // A watched cell not snapshotted before it changed (no update reached it): the object noted, saved now.
+                BlockEntityData beforeTile = before.tile() != null ? before.tile() : saved(pos, before.entity());
                 BlockEntityData tile = now.hasBlockEntity() ? tileAt(pos) : null;
-                if (after == before.state() && sameTile(before.tile(), tile)) continue;
-                changes.add(new BuilderChange(pos.immutable(), before.state(), before.tile(), after, tile));
+                if (after == before.state() && sameTile(beforeTile, tile)) continue;
+                changes.add(new BuilderChange(pos.immutable(), before.state(), beforeTile, after, tile));
+            }
+            if (!physics) {
+                // Aborted: the cells whose deferred updates never ran are put back without touching points of interest.
+                LongSet quiet = new LongOpenHashSet();
+                for (long key : pending.keySet()) {
+                    if (!notified.contains(key)) quiet.add(key);
+                }
+                if (!quiet.isEmpty()) unnotified.put(changes, quiet);
             }
             return changes;
         }
@@ -314,6 +366,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
         /** Keep shape: clients and points of interest hear of each changed cell; nothing around it is updated. */
         private void notifyOnly() {
             for (Pending p : pending.values()) {
+                notified.add(p.pos().asLong());
                 BlockState now = world.getBlockState(p.pos());
                 int flags = (p.flags() | Block.UPDATE_KNOWN_SHAPE) & ~Block.UPDATE_NEIGHBORS;
                 world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, now, flags, 0);
@@ -331,8 +384,8 @@ public final class PaperBuilderSteps implements BuilderSteps {
             startWatching();
             for (Pending p : pending.values()) {
                 // A string or hook placed or replaced: its far hook is reached by the add or replace callback.
-                noteTripwireLine(p.pos(), p.old());
-                noteTripwireLine(p.pos(), world.getBlockState(p.pos()));
+                noteFarReach(p.pos(), p.old());
+                noteFarReach(p.pos(), world.getBlockState(p.pos()));
                 watchAround(p.pos());
             }
             for (Pending p : pending.values()) update(p);
@@ -346,6 +399,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
 
         /** What Paper runs after a placement event for each placed cell: the block's add callback, then its updates. */
         private void update(Pending p) {
+            notified.add(p.pos().asLong());
             BlockState now = world.getBlockState(p.pos());
             if (now == p.old()) {
                 // Changed and changed back by the steps: nothing to set off; the clients still hear (they were not told).
@@ -381,12 +435,23 @@ public final class PaperBuilderSteps implements BuilderSteps {
                     || BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0;
         }
 
-        /** The physics listener: the cell the update reaches and those around it are noted before it reacts. */
+        /**
+         * The physics listener: the cell the update reaches and those around it are noted before it reacts, and the
+         * cell's own block entity is saved now if it is still as noted (a block entity reacts only to a neighbour
+         * update, whose event fires at its cell before it does: a crafter sets its {@code triggered} with its block).
+         */
         @Override
         public void execute(Listener listener, Event event) {
             if (!(event instanceof BlockPhysicsEvent physics)) return;
             if (!(physics.getBlock() instanceof CraftBlock block) || block.getHandle() != world) return;
-            watchAround(block.getPosition());
+            BlockPos pos = block.getPosition();
+            long key = pos.asLong();
+            Before noted = befores.get(key);
+            if (noted != null && noted.watched() && noted.entity() != null && noted.tile() == null
+                    && Block.getId(world.getBlockState(pos)) == noted.state()) {
+                befores.put(key, new Before(noted.state(), saved(pos, noted.entity()), noted.entity(), true));
+            }
+            watchAround(pos);
         }
 
         /**
@@ -402,7 +467,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
                     for (int dx = -WATCH_RADIUS; dx <= WATCH_RADIUS; dx++) {
                         BlockState state = noteWatched(center.getX() + dx, y, center.getZ() + dz);
                         if (watchFull) return;
-                        if (state != null) noteTripwireLine(new BlockPos(center.getX() + dx, y, center.getZ() + dz), state);
+                        if (state != null) noteFarReach(new BlockPos(center.getX() + dx, y, center.getZ() + dz), state);
                     }
                 }
             }
@@ -425,14 +490,16 @@ public final class PaperBuilderSteps implements BuilderSteps {
             }
             for (Direction direction : directions) {
                 for (int i = 1; i <= TRIPWIRE_REACH && !watchFull; i++) {
-                    noteWatched(pos.getX() + direction.getStepX() * i, pos.getY(), pos.getZ() + direction.getStepZ() * i);
+                    noteWatched(pos.getX() + direction.getStepX() * i, pos.getY(),
+                            pos.getZ() + direction.getStepZ() * i);
                 }
             }
         }
 
         /**
-         * Notes loaded cell (x, y, z) as it is now, block entity saved, unless noted already or the action's cap is
-         * reached (then {@link #watchFull}). Returns the state noted now, or null.
+         * Notes loaded cell (x, y, z) as it is now, with a reference to its block entity (saved when an update reaches
+         * the cell, {@link #execute}, or at the end if the block changed without one), unless noted already or the
+         * action's cap is reached (then {@link #watchFull}). Returns the state noted now, or null.
          */
         private BlockState noteWatched(int x, int y, int z) {
             cursor.set(x, y, z);
@@ -445,14 +512,48 @@ public final class PaperBuilderSteps implements BuilderSteps {
                 return null;
             }
             BlockState state = chunk.getBlockState(cursor);
-            BlockEntityData tile = null;
-            if (state.hasBlockEntity()) {
-                BlockEntity entity = chunk.getBlockEntity(cursor, LevelChunk.EntityCreationType.CHECK);
-                if (entity != null && !entity.isRemoved()) tile = saved(cursor, entity);
-            }
-            befores.put(key, new Before(Block.getId(state), tile, true));
+            BlockEntity entity = state.hasBlockEntity()
+                    ? chunk.getBlockEntity(cursor, LevelChunk.EntityCreationType.CHECK) : null;
+            befores.put(key, new Before(Block.getId(state), null, entity, true));
             watched++;
             return state;
+        }
+
+        /** The far-reaching blocks: a tripwire's line, a structure block's load box. */
+        private void noteFarReach(BlockPos pos, BlockState state) {
+            noteTripwireLine(pos, state);
+            noteStructureLoad(pos, state);
+        }
+
+        /**
+         * Pre-notes a structure block's load box when {@code state} at {@code pos} is one in LOAD mode: powered, it
+         * places its template at once (as far as its offset and size reach, without events for its cells). The box is
+         * the template's, placed as the block would (the template is read now if the block names one), else the
+         * block's offset and size turned every way; the cap bounds it like any other note.
+         */
+        private void noteStructureLoad(BlockPos pos, BlockState state) {
+            if (!(state.getBlock() instanceof StructureBlock)) return;
+            if (state.getValue(StructureBlock.MODE) != StructureMode.LOAD) return;
+            if (!(world.getBlockEntity(pos) instanceof StructureBlockEntity structure)) return;
+            BlockPos origin = pos.offset(structure.getStructurePos());
+            BoundingBox box;
+            ResourceLocation name = structure.hasStructureName()
+                    ? ResourceLocation.tryParse(structure.getStructureName()) : null;
+            StructureTemplate template = name == null ? null : world.getStructureManager().get(name).orElse(null);
+            if (template != null) {
+                box = template.getBoundingBox(new StructurePlaceSettings().setMirror(structure.getMirror())
+                        .setRotation(structure.getRotation()), origin);
+            } else {
+                Vec3i size = structure.getStructureSize();
+                box = new BoundingBox(origin.getX() - size.getX(), origin.getY(), origin.getZ() - size.getZ(),
+                        origin.getX() + size.getX(), origin.getY() + size.getY(), origin.getZ() + size.getZ());
+            }
+            for (int y = box.minY(); y <= box.maxY() && !watchFull; y++) {
+                if (world.isOutsideBuildHeight(y)) continue;
+                for (int z = box.minZ(); z <= box.maxZ() && !watchFull; z++) {
+                    for (int x = box.minX(); x <= box.maxX() && !watchFull; x++) noteWatched(x, y, z);
+                }
+            }
         }
 
         /** The chunk at (cx, cz) if it is loaded (never loads one). */
@@ -584,7 +685,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
             if (known != null && !known.watched()) return;
             BlockState state = world.getBlockState(pos);
             if (known != null && known.state() != Block.getId(state)) return;
-            befores.put(key, new Before(Block.getId(state), state.hasBlockEntity() ? tileAt(pos) : null, false));
+            befores.put(key, new Before(Block.getId(state), state.hasBlockEntity() ? tileAt(pos) : null, null, false));
         }
 
         /** A cell's first state as CraftBukkit captured it, its block entity included. */
@@ -600,7 +701,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
                     logCaptureFailure(state.getPosition(), e);
                 }
             }
-            return new Before(Block.getId(state.getHandle()), tile, false);
+            return new Before(Block.getId(state.getHandle()), tile, null, false);
         }
 
         /**

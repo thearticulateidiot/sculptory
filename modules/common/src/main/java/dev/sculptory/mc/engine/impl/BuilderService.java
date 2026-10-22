@@ -315,7 +315,9 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         } catch (Error e) {
             throw ended(world, action, e);
         }
-        List<BuilderChange> changes = action.finish();
+        Ended done = end(world, action, failure);
+        List<BuilderChange> changes = done.changes();
+        failure = done.failure();
         if (refused) {
             // What the refused step changed is already put back; a container emptied for Replace is not.
             steps.revert(world, changes);
@@ -335,6 +337,28 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         }
         if (failure != null) return new BuilderOutcome(Refusal.FAILED, failure.toString(), changed, skipped);
         return BuilderOutcome.done(changed, skipped);
+    }
+
+    /** How an action ended: every cell it changed, and the failure to report (a step's, or the deferred physics'). */
+    private record Ended(List<BuilderChange> changes, RuntimeException failure) {
+    }
+
+    /**
+     * Ends the action: what the platform deferred runs now ({@code finish}; Paper's physics of the steps). If that
+     * throws a RuntimeException halfway, what changed is still given ({@code abort}) and recorded like a step that
+     * failed, as on Fabric, whose physics run inside the steps; an Error ends the action and puts it back
+     * ({@link #ended}).
+     */
+    private Ended end(ServerLevel world, BuilderSteps.Action action, RuntimeException failure) {
+        try {
+            return new Ended(action.finish(), failure);
+        } catch (RuntimeException e) {
+            LOG.error("Sculptory: what a builder action set off failed; what it changed stays in the history", e);
+            if (failure != null) failure.addSuppressed(e);
+            return new Ended(action.abort(), failure != null ? failure : e);
+        } catch (Error e) {
+            throw ended(world, action, e);
+        }
     }
 
     /**
@@ -456,7 +480,9 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         } catch (Error e) {
             throw ended(world, action, e);
         }
-        List<BuilderChange> changes = action.finish();
+        Ended done = end(world, action, failure);
+        List<BuilderChange> changes = done.changes();
+        failure = done.failure();
         // What a break took with it (a door's other half, a piston's base) must be writable too, else nothing of this
         // message stands; the drag's earlier messages are untouched.
         Blocked secondary = failure == null ? blocked(p, world, changes) : null;
