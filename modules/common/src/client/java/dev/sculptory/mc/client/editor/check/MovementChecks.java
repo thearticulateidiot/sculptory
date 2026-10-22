@@ -2,6 +2,7 @@ package dev.sculptory.mc.client.editor.check;
 
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.sculptory.mc.client.editor.EditorClient;
+import dev.sculptory.mc.client.editor.EditorScreen;
 import dev.sculptory.mc.client.mixin.MouseAccessor;
 import dev.sculptory.mc.loader.ClientLoaders;
 import java.util.Arrays;
@@ -11,6 +12,7 @@ import java.util.OptionalInt;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Options;
+import net.minecraft.client.gui.screens.ChatScreen;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.Vec3;
 import org.lwjgl.glfw.GLFW;
@@ -19,8 +21,10 @@ import org.lwjgl.glfw.GLFW;
  * The player's own controls with the editor open: the keys bound to forward, jump, sneak and sprint go in through
  * vanilla's keyboard handler (as a player's keys do), through the editor screen and its router, and must move, lift,
  * lower and speed up the flying player, and stop it again once released; a right-drag turns it; the editor's own
- * toggle key leaves and reopens the editor. On NeoForge the movement bindings belong to a context that is switched off
- * under screens, so this is the scenario that shows the editor screen lets them through there.
+ * toggle key leaves and reopens the editor. Negative checks: under the chat screen the forward key does not move the
+ * player, and (on NeoForge) another in-game mapping on the forward key is not pressed under the editor screen. On
+ * NeoForge the movement bindings belong to a context that is switched off under screens, so this is the scenario that
+ * shows the editor screen lets them, and only them, through there.
  */
 final class MovementChecks {
     static final String AREA = "movement";
@@ -30,15 +34,36 @@ final class MovementChecks {
     private static final long SETTLE_MS = 3_000;
     /** The player's eye height above the area's floor. */
     private static final int EYE = 12;
+    /** NeoForge's key conflict contexts, looked up by name: the common code doesn't compile against a loader. */
+    private static final String CONTEXTS = "net.neoforged.neoforge.client.settings.KeyConflictContext";
+    private static final String CONTEXT_TYPE = "net.neoforged.neoforge.client.settings.IKeyConflictContext";
 
     static final ScenarioGroup GROUP = ScenarioGroup.solo(
             List.of(new Fixtures.Fixture(AREA, b -> {
             })),
             List.of(Scenario.of("editor-movement", AREA, "With the editor open, the player's bound keys: forward flies"
                     + " forward, jump up, sneak down, sprint with forward sprints, each stops once released; a"
-                    + " right-drag turns the player", MovementChecks::movement)));
+                    + " right-drag turns the player; the toggle key leaves and reopens the editor; chat still"
+                    + " blocks the keys, and another in-game mapping on forward stays up", MovementChecks::movement)));
 
     private MovementChecks() {}
+
+    /** A throwaway in-game mapping that records whether anything pressed it. */
+    private static final class Probe extends KeyMapping {
+        private volatile boolean pressed;
+
+        Probe(int key) {
+            super("key.sculptory.check.probe", InputConstants.Type.KEYSYM, key, KeyMapping.CATEGORY_MISC);
+        }
+
+        @Override
+        public void setDown(boolean down) {
+            if (down) {
+                pressed = true;
+            }
+            super.setDown(down);
+        }
+    }
 
     private static void movement(CheckRun run) {
         CheckDriver d = run.driver();
@@ -51,6 +76,35 @@ final class MovementChecks {
         run.require("the editor screen is open", d.onClient(() -> d.client().screen != null
                 && d.editor().mode().isActive()), "no editor screen");
 
+        // Toggle Sneak / Toggle Sprint turn a release into nothing (the key stays on until pressed again): the
+        // scenario holds and releases, so it runs with both off and puts the player's choice back after.
+        boolean toggleCrouch = d.onClient(() -> options.toggleCrouch().get());
+        boolean toggleSprint = d.onClient(() -> options.toggleSprint().get());
+        d.onClient(() -> {
+            options.toggleCrouch().set(false);
+            options.toggleSprint().set(false);
+        });
+        OptionalInt forward;
+        try {
+            forward = keys(run, d, options);
+        } finally {
+            d.onClient(() -> {
+                options.toggleCrouch().set(toggleCrouch);
+                options.toggleSprint().set(toggleSprint);
+            });
+        }
+        // The right-drag first: leaving the editor (for chat or with the toggle key) and coming back shows the quick start
+        // card again in a game directory where it was never dismissed, in the middle of the screen.
+        look(run, d);
+        if (forward.isPresent()) {
+            otherMappingStaysUp(run, d, options, forward.getAsInt());
+            chatBlocks(run, d, options, forward.getAsInt());
+        }
+        toggle(run, d);
+    }
+
+    /** The movement keys, each held and released; returns the forward key (empty when it was skipped). */
+    private static OptionalInt keys(CheckRun run, CheckDriver d, Options options) {
         OptionalInt forward = key(run, d, options.keyUp);
         if (forward.isPresent()) {
             Vec3 start = position(d);
@@ -101,9 +155,73 @@ final class MovementChecks {
             run.check("sprint with forward under the editor screen sprints", sprinting, held);
             stops(run, d, options.keySprint);
         }
+        return forward;
+    }
 
-        look(run, d);
-        toggle(run, d);
+    /**
+     * On NeoForge, a second in-game mapping on the forward key (another mod's, here a throwaway one) is not pressed
+     * under the editor screen: only the movement bindings are let through. Fabric keeps one mapping per key, so there
+     * is no second mapping to press there.
+     */
+    private static void otherMappingStaysUp(CheckRun run, CheckDriver d, Options options, int forward) {
+        String what = "another in-game mapping on the forward key stays up under the editor screen";
+        Object inGame;
+        Class<?> contextType;
+        try {
+            inGame = Class.forName(CONTEXTS).getField("IN_GAME").get(null);
+            contextType = Class.forName(CONTEXT_TYPE);
+        } catch (ReflectiveOperationException noContexts) {
+            run.skip(what, "this loader has no key conflict contexts: one mapping per key");
+            return;
+        }
+        Probe probe = d.onClient(() -> {
+            Probe made = new Probe(forward);
+            made.getClass().getMethod("setKeyConflictContext", contextType).invoke(made, inGame);
+            return made;
+        });
+        try {
+            d.keyDown(forward);
+            d.millis(300);
+            boolean forwardDown = d.onClient(() -> options.keyUp.isDown());
+            d.keyUp(forward);
+            run.check(what, !probe.pressed && forwardDown, "probe pressed " + probe.pressed + ", forward down "
+                    + forwardDown);
+        } finally {
+            // Off the key, out of the key lookup.
+            d.onClient(() -> {
+                probe.setKey(InputConstants.UNKNOWN);
+                KeyMapping.resetMapping();
+            });
+        }
+        d.millis(SETTLE_MS);
+    }
+
+    /** The chat screen (opened from the editor with the chat key) keeps the forward key from moving the player. */
+    private static void chatBlocks(CheckRun run, CheckDriver d, Options options, int forward) {
+        OptionalInt chat = key(run, d, options.keyChat);
+        if (chat.isEmpty()) {
+            return;
+        }
+        d.key(chat.getAsInt(), 0);
+        boolean open = d.until(5_000, () -> d.client().screen instanceof ChatScreen);
+        if (!run.check("the chat key opens chat from the editor", open,
+                "screen: " + d.onClient(() -> String.valueOf(d.client().screen)))) {
+            return;
+        }
+        Vec3 start = position(d);
+        d.keyDown(forward);
+        d.millis(HOLD_MS);
+        String held = d.onClient(() -> state(d.client(), options.keyUp));
+        Vec3 moved = position(d);
+        d.keyUp(forward);
+        run.check("forward held under the chat screen does not move the player", start.distanceTo(moved) < 0.1,
+                travel(start, moved) + "; " + held);
+        d.key(GLFW.GLFW_KEY_ESCAPE, 0);
+        boolean back = d.until(5_000, () -> d.client().screen instanceof EditorScreen && d.editor().mode().isActive());
+        if (!back) {
+            run.note("the editor did not come back by itself after chat; reopened");
+            d.enterEditor();
+        }
     }
 
     /** Right-drag: the cursor moves 200 window pixels right while the right button is held. */
@@ -149,14 +267,33 @@ final class MovementChecks {
                 && d.client().screen != null), "screen: " + d.onClient(() -> String.valueOf(d.client().screen)));
     }
 
-    /** The keyboard key the player bound to {@code binding}; empty (and the check skipped) for a mouse button or none. */
+    /**
+     * The keyboard key the player bound to {@code binding}. Empty, with the binding's checks skipped, for a mouse
+     * button, no key, or a key with a modifier (NeoForge's Ctrl+W): NeoForge reads a binding's modifier from the
+     * keyboard itself ({@code Screen.hasControlDown}), which keys sent through the keyboard handler don't hold down.
+     */
     private static OptionalInt key(CheckRun run, CheckDriver d, KeyMapping binding) {
         InputConstants.Key bound = d.onClient(() -> ClientLoaders.get().boundKey(binding));
+        String modifier = modifier(binding);
+        if (!modifier.equals("NONE")) {
+            run.skip(binding.getName(), "bound with the modifier " + modifier + " (" + bound.getName() + "): the check"
+                    + " can't hold a modifier key the way the game reads it");
+            return OptionalInt.empty();
+        }
         if (bound.getType() == InputConstants.Type.KEYSYM && bound.getValue() > 0) {
             return OptionalInt.of(bound.getValue());
         }
         run.skip(binding.getName(), "not bound to a keyboard key: " + bound.getName());
         return OptionalInt.empty();
+    }
+
+    /** NeoForge's key modifier of a binding ({@code NONE}, {@code CONTROL}, ...); {@code NONE} on Fabric, which has none. */
+    private static String modifier(KeyMapping binding) {
+        try {
+            return String.valueOf(binding.getClass().getMethod("getKeyModifier").invoke(binding));
+        } catch (ReflectiveOperationException noModifiers) {
+            return "NONE";
+        }
     }
 
     /** After a key is released its binding is up and the player comes to rest (no key stuck down). */
