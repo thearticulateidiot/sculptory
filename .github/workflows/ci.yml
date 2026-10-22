@@ -61,11 +61,19 @@ jobs:
   # The Paper plugin's self-test on a real Paper server (Paper has no GameTests): Paper 1.21.1 build 133 with WorldEdit
   # and WorldGuard, the plugin built from this commit, the self-test run at start as a fake player, then the server
   # stops. Every download is pinned: Paper by its build and SHA-256 (PaperMC's Fill v3 API), WorldEdit and WorldGuard by
-  # their Modrinth version ids and SHA-512. A separate job, so the check above is unchanged.
+  # their Modrinth version ids and SHA-512. A separate job, so the check above is unchanged. It runs once per Paper
+  # redstone implementation (misc.redstone-implementation): Eigencraft sets wires without physics events, which the
+  # builder steps follow through the wire power event.
   paper-selftest:
+    name: paper-selftest (${{ matrix.redstone }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        redstone: [VANILLA, EIGENCRAFT]
     env:
+      REDSTONE: ${{ matrix.redstone }}
       PAPER_VERSION: "1.21.1"
       PAPER_BUILD: "133"
       PAPER_SHA256: 39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9
@@ -109,6 +117,20 @@ jobs:
           echo "eula=true" > eula.txt
           printf 'server-port=25580\nonline-mode=false\nspawn-protection=16\n' > server.properties
 
+      - name: Set the redstone implementation
+        working-directory: paper-server
+        run: |
+          set -euo pipefail
+          mkdir -p config
+          file=config/paper-world-defaults.yml
+          if [ -f "$file" ]; then
+            sed -i -E "s/^(  redstone-implementation: ).*/\1${REDSTONE}/" "$file"
+          else
+            # Paper writes the whole file at its first start and keeps what is set here (version 31: Paper 1.21.1).
+            printf '_version: 31\nmisc:\n  redstone-implementation: %s\n' "$REDSTONE" > "$file"
+          fi
+          grep -n 'redstone-implementation' "$file"
+
       - name: Run the Paper self-test
         working-directory: paper-server
         run: |
@@ -125,11 +147,18 @@ jobs:
           echo "${tests} checks ran (at least ${SELFTEST_MIN_TESTS} expected)"
           test "${tests}" -ge "${SELFTEST_MIN_TESTS}"
 
+      - name: Check the redstone implementation in force
+        working-directory: paper-server
+        run: |
+          set -euo pipefail
+          grep -n 'redstone-implementation' config/paper-world-defaults.yml
+          grep -q "redstone ${REDSTONE}" selftest-report.xml
+
       - name: Upload the self-test report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: paper-selftest
+          name: paper-selftest-${{ matrix.redstone }}
           path: |
             paper-server/selftest-report.xml
             paper-server/logs/latest.log
