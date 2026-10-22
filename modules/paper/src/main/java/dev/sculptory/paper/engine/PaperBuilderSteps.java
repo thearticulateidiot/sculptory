@@ -19,7 +19,6 @@ import java.util.Map;
 import java.util.Objects;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.core.Vec3i;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
@@ -99,15 +98,19 @@ import org.slf4j.LoggerFactory;
  *       noted (a sign popping off keeps its data), so a wall of full chests beside the action costs nothing. The
  *       action's own targets and emptied containers are saved at once. At the end every noted cell whose state
  *       differs is a change of the action. Two blocks change cells far from any update, before their own events: a
- *       structure block in LOAD mode, powered, places its template at once, so its load box is noted when the block
- *       is (bounded by the cap); and a tripwire hook a string's or hook's change reaches sets the opposite hook and
- *       the strings between, up to 41 blocks away, so whenever a string or a hook is noted, the cells along its line
- *       (both ways along each horizontal axis of a string, along a hook's axis) are noted too, 42 blocks each way.
- *       Not followed: what other plugins write from inside the events these physics fire (a listener may change any
- *       cell anywhere); it stays and is not undone with the action.
+ *       tripwire hook a string's or hook's change reaches sets the opposite hook and the strings between, up to 41
+ *       blocks away, so whenever a string or a hook is noted, the cells along its line (both ways along each
+ *       horizontal axis of a string, along a hook's axis) are noted too, 42 blocks each way; and a structure block in
+ *       LOAD mode, powered, places its template at once (emptying the containers under it first, without an event),
+ *       so its template's box is noted after the cells around the change that found it, each cell with its block
+ *       entity saved and counting as changed when only its data changed. Not followed: what other plugins write from
+ *       inside the events these physics fire (a listener may change any cell anywhere); it stays and is not undone
+ *       with the action.
  *       At most {@value #DEFAULT_MAX_WATCHED_CELLS} cells are noted around the physics per action; past that (a long
- *       redstone contraption) the rest of the cascade still runs, but what it changes further out is not recorded for
- *       the undo (logged). The action's own targets and the containers it empties are always noted, cap or not.</li>
+ *       redstone contraption, a large template) the rest of the cascade still runs, but what it changes further out is
+ *       not recorded for the undo (logged). The action's own targets and the containers it empties are always noted,
+ *       cap or not, and the cells around the action's own changes are noted before any load box; with several break
+ *       targets in one message, a load box found around one target is noted before the next target's cells.</li>
  *   <li><b>Keep shape:</b> nothing around reacts: the replaced blocks' callbacks do not run during the step
  *       ({@code isBlockPlaceCancelled}), their add callbacks are deferred by the capture and never run, and each
  *       changed cell only tells the clients and the points of interest. Breaks run captured for this.</li>
@@ -237,6 +240,8 @@ public final class PaperBuilderSteps implements BuilderSteps {
         /** The cells the captured steps changed, each once, in the order first changed. */
         private final Long2ObjectLinkedOpenHashMap<Pending> pending = new Long2ObjectLinkedOpenHashMap<>();
         private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        /** Structure blocks in LOAD mode met while noting, whose load boxes are still to be noted. */
+        private final List<BlockPos> loadBlocks = new ArrayList<>();
         /** The physics listener while the action watches, else null. */
         private RegisteredListener watch;
         private boolean physicsEventBefore;
@@ -303,6 +308,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
             // The target itself is always noted, whatever the cascade of an earlier target of the message noted.
             note(pos);
             noteFarReach(pos, world.getBlockState(pos));
+            // The cells around the target first, then the load boxes found (the target's own among them).
             watchAround(pos);
             removed[0] = BuilderPlacement.breakBlock(world, player, pos);
             // The break's own updates have run: an emptied container's deferred ones are not run again.
@@ -386,8 +392,10 @@ public final class PaperBuilderSteps implements BuilderSteps {
                 // A string or hook placed or replaced: its far hook is reached by the add or replace callback.
                 noteFarReach(p.pos(), p.old());
                 noteFarReach(p.pos(), world.getBlockState(p.pos()));
-                watchAround(p.pos());
+                noteAround(p.pos());
             }
+            // The load boxes last, against what the cap leaves: the cells around every changed cell come first.
+            noteLoadBoxes();
             for (Pending p : pending.values()) update(p);
             for (Pending p : pending.values()) {
                 BlockState now = world.getBlockState(p.pos());
@@ -436,29 +444,37 @@ public final class PaperBuilderSteps implements BuilderSteps {
         }
 
         /**
-         * The physics listener: the cell the update reaches and those around it are noted before it reacts, and the
-         * cell's own block entity is saved now if it is still as noted (a block entity reacts only to a neighbour
-         * update, whose event fires at its cell before it does: a crafter sets its {@code triggered} with its block).
+         * The physics listener: the cell the update reaches and those around it are noted before it reacts, then the
+         * cell's own block entity is saved if it is still as noted (a block entity reacts only to a neighbour update,
+         * whose event fires at its cell before it does: a crafter sets its {@code triggered} with its block). Noting
+         * comes first, so a cell first reached by its own event (a crafter beside a far tripwire hook) is saved too.
          */
         @Override
         public void execute(Listener listener, Event event) {
             if (!(event instanceof BlockPhysicsEvent physics)) return;
             if (!(physics.getBlock() instanceof CraftBlock block) || block.getHandle() != world) return;
             BlockPos pos = block.getPosition();
+            watchAround(pos);
             long key = pos.asLong();
             Before noted = befores.get(key);
             if (noted != null && noted.watched() && noted.entity() != null && noted.tile() == null
                     && Block.getId(world.getBlockState(pos)) == noted.state()) {
                 befores.put(key, new Before(noted.state(), saved(pos, noted.entity()), noted.entity(), true));
             }
-            watchAround(pos);
+        }
+
+        /** Notes the cells around {@code center} ({@link #noteAround}), then the load boxes found among them. */
+        private void watchAround(BlockPos center) {
+            noteAround(center);
+            noteLoadBoxes();
         }
 
         /**
          * Notes every loaded cell within {@value #WATCH_RADIUS} blocks of {@code center} not noted yet, as it is now
-         * (a string or hook among them: its line too).
+         * (a string or hook among them: its line too; a structure block in LOAD mode: its load box later,
+         * {@link #noteLoadBoxes}).
          */
-        private void watchAround(BlockPos center) {
+        private void noteAround(BlockPos center) {
             if (watchFull) return;
             for (int dy = -WATCH_RADIUS; dy <= WATCH_RADIUS; dy++) {
                 int y = center.getY() + dy;
@@ -519,41 +535,82 @@ public final class PaperBuilderSteps implements BuilderSteps {
             return state;
         }
 
-        /** The far-reaching blocks: a tripwire's line, a structure block's load box. */
+        /**
+         * The far-reaching blocks: a tripwire's line is noted now; a structure block in LOAD mode is kept for
+         * {@link #noteLoadBoxes}, so its box (up to a template's 48 by 48 by 48 cells) does not take the cap from the
+         * cells around the action.
+         */
         private void noteFarReach(BlockPos pos, BlockState state) {
             noteTripwireLine(pos, state);
-            noteStructureLoad(pos, state);
+            if (state.getBlock() instanceof StructureBlock && state.getValue(StructureBlock.MODE) == StructureMode.LOAD) {
+                loadBlocks.add(pos.immutable());
+            }
+        }
+
+        /** Notes the load boxes of the structure blocks {@link #noteFarReach} kept, against what the cap leaves. */
+        private void noteLoadBoxes() {
+            for (int i = 0; i < loadBlocks.size() && !watchFull; i++) noteStructureLoad(loadBlocks.get(i));
+            loadBlocks.clear();
         }
 
         /**
-         * Pre-notes a structure block's load box when {@code state} at {@code pos} is one in LOAD mode: powered, it
-         * places its template at once (as far as its offset and size reach, without events for its cells). The box is
-         * the template's, placed as the block would (the template is read now if the block names one), else the
-         * block's offset and size turned every way; the cap bounds it like any other note.
+         * Pre-notes the load box of the structure block at {@code pos} if it is one in LOAD mode naming a template:
+         * powered, it places the template at once, as far as its offset and size reach, and its cells fire no event
+         * before they change (a cell with block entity data is emptied, set to a barrier without updates, then set).
+         * So each cell is noted with its block entity saved now, and counts as changed when its data did even if its
+         * block is the same (a chest the template puts back empty). The box is the template's, placed as the block
+         * would; the template is read now. Without a template nothing is noted: the block places nothing, unless a
+         * structure block in SAVE mode makes the template in the same cascade (not followed: what it then places is
+         * not undone with the action). The cap bounds the box like any other note.
          */
-        private void noteStructureLoad(BlockPos pos, BlockState state) {
+        private void noteStructureLoad(BlockPos pos) {
+            BlockState state = world.getBlockState(pos);
             if (!(state.getBlock() instanceof StructureBlock)) return;
             if (state.getValue(StructureBlock.MODE) != StructureMode.LOAD) return;
             if (!(world.getBlockEntity(pos) instanceof StructureBlockEntity structure)) return;
-            BlockPos origin = pos.offset(structure.getStructurePos());
-            BoundingBox box;
             ResourceLocation name = structure.hasStructureName()
                     ? ResourceLocation.tryParse(structure.getStructureName()) : null;
             StructureTemplate template = name == null ? null : world.getStructureManager().get(name).orElse(null);
-            if (template != null) {
-                box = template.getBoundingBox(new StructurePlaceSettings().setMirror(structure.getMirror())
-                        .setRotation(structure.getRotation()), origin);
-            } else {
-                Vec3i size = structure.getStructureSize();
-                box = new BoundingBox(origin.getX() - size.getX(), origin.getY(), origin.getZ() - size.getZ(),
-                        origin.getX() + size.getX(), origin.getY() + size.getY(), origin.getZ() + size.getZ());
-            }
+            if (template == null) return;
+            BoundingBox box = template.getBoundingBox(new StructurePlaceSettings().setMirror(structure.getMirror())
+                    .setRotation(structure.getRotation()), pos.offset(structure.getStructurePos()));
             for (int y = box.minY(); y <= box.maxY() && !watchFull; y++) {
                 if (world.isOutsideBuildHeight(y)) continue;
                 for (int z = box.minZ(); z <= box.maxZ() && !watchFull; z++) {
-                    for (int x = box.minX(); x <= box.maxX() && !watchFull; x++) noteWatched(x, y, z);
+                    for (int x = box.minX(); x <= box.maxX() && !watchFull; x++) noteSaved(x, y, z);
                 }
             }
+        }
+
+        /**
+         * Notes loaded cell (x, y, z) as it is now with its block entity saved, as a cell of the action's own (a change
+         * of its block entity alone counts). A cell noted around the physics before, still as noted, becomes one too.
+         * Counts against the cap like {@link #noteWatched}.
+         */
+        private void noteSaved(int x, int y, int z) {
+            cursor.set(x, y, z);
+            long key = cursor.asLong();
+            Before known = befores.get(key);
+            if (known != null) {
+                if (!known.watched()) return;
+                if (known.tile() != null || known.entity() == null) {
+                    befores.put(key, new Before(known.state(), known.tile(), null, false));
+                } else if (Block.getId(world.getBlockState(cursor)) == known.state()) {
+                    befores.put(key, new Before(known.state(), saved(cursor.immutable(), known.entity()), null, false));
+                }
+                return;
+            }
+            LevelChunk chunk = loadedChunk(x >> 4, z >> 4);
+            if (chunk == null) return;
+            if (watched >= maxWatchedCells) {
+                watchFull = true;
+                return;
+            }
+            BlockState state = chunk.getBlockState(cursor);
+            BlockEntity entity = state.hasBlockEntity()
+                    ? chunk.getBlockEntity(cursor, LevelChunk.EntityCreationType.CHECK) : null;
+            befores.put(key, new Before(Block.getId(state), saved(cursor.immutable(), entity), null, false));
+            watched++;
         }
 
         /** The chunk at (cx, cz) if it is loaded (never loads one). */

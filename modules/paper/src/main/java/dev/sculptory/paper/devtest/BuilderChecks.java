@@ -39,6 +39,7 @@ import net.minecraft.world.item.component.ItemContainerContents;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.ComparatorBlock;
 import net.minecraft.world.level.block.CrafterBlock;
 import net.minecraft.world.level.block.CrossCollisionBlock;
@@ -169,7 +170,9 @@ final class BuilderChecks {
                 .thenAccept(v -> errorThroughService(r, x0 + 16, z0 + 30))
                 .thenCompose(v -> structureLoad(r, x0 + 20, z0 + 21, work))
                 .thenCompose(v -> deferredFailure(r, x0 + 25, z0 + 2, work))
-                .thenAccept(v -> chestWall(r, x0 + 24, z0 + 11));
+                .thenAccept(v -> chestWall(r, x0 + 24, z0 + 11))
+                .thenCompose(v -> loadBoxUnderDoor(r, x0 + 2, z0 + 17, work))
+                .thenCompose(v -> crafterBesideFarHook(r, x0 + 1, z0, work));
     }
 
     /**
@@ -582,17 +585,24 @@ final class BuilderChecks {
     private static final int WALL_LIMIT_MS = 50;
 
     /**
-     * A structure block in LOAD mode, a template of 3 by 3 by 3 stone set 2 to 4 blocks east of it: a redstone block
-     * placed beside it (without Keep shape) powers it and it places the template at once, cells no update reaches. Its
-     * load box was noted when the block was, so the step holds the placed template and its undo removes it exactly.
+     * A structure block in LOAD mode, a template of 3 by 3 by 3 stone with two empty chests facing north in its bottom
+     * row, set 1 to 3 blocks east of it: a redstone block placed beside it (without Keep shape) powers it and it places
+     * the template at once, cells no update reaches. Under the template's chests stand two chests with items, one
+     * facing north as the template's (2 blocks from the redstone block, so noted around it first), one facing south
+     * (in the load box only); the template empties both before it sets its own. The load box was noted with its block
+     * entities saved, so the step holds the template's 27 cells (the north chest too, whose block stayed the same) and
+     * its undo removes the template and puts back both chests with their items.
      */
     private static CompletableFuture<Void> structureLoad(SelfTestRun r, int x0, int z, Box work) {
         StructureTemplateManager manager = r.level.getStructureManager();
         ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "selftest_" + r.runId);
         BlockPos source = new BlockPos(x0 + 8, FLOOR + 1, z - 3);
+        BlockState north = Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.NORTH);
         for (BlockPos cell : BlockPos.betweenClosed(source, source.offset(2, 2, 2))) {
             set(r, cell.immutable(), Blocks.STONE.defaultBlockState());
         }
+        set(r, source, north);
+        set(r, source.east(2), north);
         StructureTemplate template = manager.getOrCreate(id);
         template.fillFromWorld(r.level, source, new Vec3i(3, 3, 3), false, null);
         r.cleanup(() -> manager.remove(id));
@@ -604,19 +614,131 @@ final class BuilderChecks {
         if (r.level.getBlockEntity(block) instanceof StructureBlockEntity entity) {
             entity.setMode(StructureMode.LOAD);
             entity.setStructureName(id);
-            entity.setStructurePos(new BlockPos(2, 0, 0));
+            entity.setStructurePos(new BlockPos(1, 0, 0));
             entity.setStructureSize(new Vec3i(3, 3, 3));
         }
+        BlockPos origin = block.east();
+        BlockPos sameChest = origin;
+        BlockPos turnedChest = origin.east(2);
+        set(r, sameChest, north);
+        set(r, turnedChest, Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.SOUTH));
+        fillChest(r, sameChest, new ItemStack(Items.DIAMOND, 5));
+        fillChest(r, turnedChest, new ItemStack(Items.EMERALD, 7));
         r.stand(x0 - 1.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.REDSTONE_BLOCK, 64));
         int[] before = r.snapshot(work);
         BuilderOutcome placed = place(r, x0 + 1, FLOOR, z, 0);
-        BlockPos far = block.offset(4, 2, 2);
-        boolean loaded = r.level.getBlockState(block.offset(2, 0, 0)).is(Blocks.STONE)
-                && r.level.getBlockState(far).is(Blocks.STONE);
+        BlockPos far = origin.offset(2, 2, 2);
+        boolean loaded = r.level.getBlockState(origin.east()).is(Blocks.STONE)
+                && r.level.getBlockState(far).is(Blocks.STONE)
+                && r.level.getBlockState(turnedChest).getValue(ChestBlock.FACING) == Direction.NORTH
+                && chestItem(r, sameChest).isEmpty() && chestItem(r, turnedChest).isEmpty();
         r.record("builder: a structure block powered by a placed redstone block loads its template (recorded)",
-                placed.accepted() && loaded && placed.changed() >= 28, placed + ", template placed " + loaded);
-        return r.undo().thenAccept(v -> r.record("builder: its undo removes the loaded template exactly",
-                r.countDiffering(work, before) == 0, r.countDiffering(work, before) + " cells differ"));
+                placed.accepted() && loaded && placed.changed() == 28, placed + ", template placed (its chests "
+                        + "empty) " + loaded);
+        return r.undo().thenAccept(v -> {
+            r.record("builder: its undo removes the loaded template exactly",
+                    r.countDiffering(work, before) == 0, r.countDiffering(work, before) + " cells differ");
+            ItemStack same = chestItem(r, sameChest), turned = chestItem(r, turnedChest);
+            boolean back = same.is(Items.DIAMOND) && same.getCount() == 5 && turned.is(Items.EMERALD)
+                    && turned.getCount() == 7
+                    && r.level.getBlockState(turnedChest).getValue(ChestBlock.FACING) == Direction.SOUTH;
+            r.record("builder: the undo puts back the items of the chests the template emptied (same facing and turned)",
+                    back, "same-facing chest " + same + ", turned chest " + turned + " facing "
+                            + r.level.getBlockState(turnedChest).getValue(ChestBlock.FACING));
+        });
+    }
+
+    private static void fillChest(SelfTestRun r, BlockPos pos, ItemStack stack) {
+        if (r.level.getBlockEntity(pos) instanceof ChestBlockEntity chest) chest.setItem(0, stack);
+    }
+
+    /** The first slot of the chest at {@code pos}, or empty without a chest. */
+    private static ItemStack chestItem(SelfTestRun r, BlockPos pos) {
+        return r.level.getBlockEntity(pos) instanceof ChestBlockEntity chest ? chest.getItem(0) : ItemStack.EMPTY;
+    }
+
+    /**
+     * A structure block in LOAD mode under a door, naming a template of 33 by 33 by 33 cells whose box lies below the
+     * floor (larger than the cap of noted cells, {@value PaperBuilderSteps#DEFAULT_MAX_WATCHED_CELLS}): breaking the
+     * door's lower half notes the cells around it first, its upper half among them, and the load box only with what the
+     * cap leaves. Both halves are the step and its undo puts the whole door back.
+     */
+    private static CompletableFuture<Void> loadBoxUnderDoor(SelfTestRun r, int x0, int z, Box work) {
+        StructureTemplateManager manager = r.level.getStructureManager();
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "selftest_large_" + r.runId);
+        StructureTemplate template = manager.getOrCreate(id);
+        // Its size is all that counts here (the block is never powered): air is left out of the template.
+        template.fillFromWorld(r.level, new BlockPos(x0, FLOOR + 20, z), new Vec3i(33, 33, 33), false, Blocks.AIR);
+        r.cleanup(() -> manager.remove(id));
+        BlockPos lower = new BlockPos(x0 + 1, FLOOR + 1, z);
+        BlockPos block = lower.below();
+        set(r, block, Blocks.STRUCTURE_BLOCK.defaultBlockState().setValue(StructureBlock.MODE, StructureMode.LOAD));
+        if (r.level.getBlockEntity(block) instanceof StructureBlockEntity entity) {
+            entity.setMode(StructureMode.LOAD);
+            entity.setStructureName(id);
+            // The box: from 4 blocks west and 16 north of the block, 40 down; 33 cells each way (y 60 to 92).
+            entity.setStructurePos(new BlockPos(-4, -40, -16));
+            entity.setStructureSize(new Vec3i(33, 33, 33));
+        }
+        BlockState door = Blocks.OAK_DOOR.defaultBlockState().setValue(DoorBlock.FACING, Direction.EAST);
+        set(r, lower, door.setValue(DoorBlock.HALF, DoubleBlockHalf.LOWER));
+        set(r, lower.above(), door.setValue(DoorBlock.HALF, DoubleBlockHalf.UPPER));
+        r.stand(x0 - 1.5, FLOOR + 1, z + 0.5, -90f, ItemStack.EMPTY);
+        int[] before = r.snapshot(work);
+        BuilderOutcome broken = breakCells(r, 9, List.of(lower), 0);
+        boolean gone = r.level.getBlockState(lower).isAir() && r.level.getBlockState(lower.above()).isAir();
+        r.record("builder: a door broken above a LOAD structure block with a large template: both halves recorded",
+                broken.accepted() && broken.changed() == 2 && gone, broken + ", both halves gone " + gone);
+        return r.undo().thenAccept(v -> {
+            BlockState upper = r.level.getBlockState(lower.above());
+            r.record("builder: its undo puts the whole door back",
+                    r.countDiffering(work, before) == 0 && upper.is(Blocks.OAK_DOOR),
+                    r.countDiffering(work, before) + " cells differ, upper half " + upper);
+        });
+    }
+
+    /**
+     * A tripwire running north-south, one of its strings powered (as by an entity on it), the middle string missing,
+     * and a crafter beside the north hook (west of it, the first neighbour the hook's updates reach). Placing the middle
+     * string (without Keep shape) attaches and powers both hooks; the north hook, set from the south one's calculation
+     * 5 blocks away, updates the crafter first, whose own physics event is the first to reach it: it is noted then,
+     * its block entity saved before it reacts, and it triggers. The undo puts back an untriggered crafter whose data
+     * agrees, and the line as it was.
+     */
+    private static CompletableFuture<Void> crafterBesideFarHook(SelfTestRun r, int x, int z0, Box work) {
+        BlockPos northHook = new BlockPos(x, FLOOR + 1, z0 + 1);
+        BlockPos southHook = northHook.south(11);
+        BlockPos middle = northHook.south(6);
+        BlockPos crafter = northHook.west();
+        set(r, northHook.north(), Blocks.STONE.defaultBlockState());
+        set(r, southHook.south(), Blocks.STONE.defaultBlockState());
+        BlockState hook = Blocks.TRIPWIRE_HOOK.defaultBlockState();
+        set(r, northHook, hook.setValue(TripWireHookBlock.FACING, Direction.SOUTH));
+        set(r, southHook, hook.setValue(TripWireHookBlock.FACING, Direction.NORTH));
+        BlockState string = Blocks.TRIPWIRE.defaultBlockState().setValue(TripWireBlock.NORTH, true)
+                .setValue(TripWireBlock.SOUTH, true);
+        for (int i = 1; i < 11; i++) {
+            BlockPos cell = northHook.south(i);
+            if (cell.equals(middle)) continue;
+            set(r, cell, i == 2 ? string.setValue(TripWireBlock.POWERED, true) : string);
+        }
+        set(r, crafter, Blocks.CRAFTER.defaultBlockState());
+        r.stand(x + 3.5, FLOOR + 1, middle.getZ() + 0.5, 90f, new ItemStack(Items.STRING, 64));
+        int[] before = r.snapshot(work);
+        BuilderOutcome placed = place(r, middle.getX(), FLOOR, middle.getZ(), 0);
+        boolean powered = r.level.getBlockState(northHook).getValue(TripWireHookBlock.POWERED);
+        boolean triggered = r.level.getBlockState(crafter).getValue(CrafterBlock.TRIGGERED);
+        r.record("builder: a string powering a far hook triggers the crafter beside it (recorded)",
+                placed.accepted() && powered && triggered, placed + ", north hook powered " + powered
+                        + ", crafter triggered " + triggered);
+        return r.undo().thenAccept(v -> {
+            boolean data = r.level.getBlockEntity(crafter) instanceof CrafterBlockEntity entity && entity.isTriggered();
+            boolean state = r.level.getBlockState(crafter).getValue(CrafterBlock.TRIGGERED);
+            r.record("builder: its undo puts back an untriggered crafter, block and data alike",
+                    r.countDiffering(work, before) == 0 && !state && !data,
+                    r.countDiffering(work, before) + " cells differ, TRIGGERED " + state + ", block entity triggered "
+                            + data);
+        });
     }
 
     /**
