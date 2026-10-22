@@ -186,7 +186,12 @@ final class BuilderChecks {
                     return loadThroughWire(r, x0 + 18, z0 + 1, 1, work);
                 })
                 .thenCompose(v -> loadThroughWire(r, x0 + 18, z0 + 4, 3, work))
-                .thenCompose(v -> placedLoadBesidePower(r, x0 + 16, z0 + 8, work));
+                .thenCompose(v -> placedLoadBesidePower(r, x0 + 16, z0 + 8, work))
+                .thenCompose(v -> {
+                    platform(r, x0 + 14, z0 + 12, x0 + 30, z0 + 20);
+                    return unpoweredLoadBesideDust(r, x0 + 16, z0 + 13, work);
+                })
+                .thenCompose(v -> armedLoadBesideFallingDust(r, x0 + 16, z0 + 17, work));
     }
 
     /** Stone at height {@link #UPPER} over the rectangle (the area above it is air from the start). */
@@ -840,6 +845,124 @@ final class BuilderChecks {
 
     /** The cap for {@link #placedLoadBesidePower}: the action's own cells and its cascade fit (about 1400), a 20^3 box does not. */
     private static final int PLACED_CAP = 2500;
+
+    /**
+     * Paper's steps directly, with the same small cap: a structure block in LOAD mode (not powered, a 20 by 20 by 20
+     * template) stands north of the second of five dust running east-west, which do not point into it. One action
+     * places a redstone block at the line's west end. The dust powers up; the structure block gets no signal and does
+     * not load. With Paper's vanilla redstone or Alternate Current nothing notes its box: no cap warning, and the dust 5
+     * along is among the changes. With Eigencraft a LOAD block within 2 blocks of a wire gaining power has its box noted
+     * without a signal to test (documented over-noting), which this checks too: the cap warning is logged. The changes
+     * are put back after.
+     */
+    private static CompletableFuture<Void> unpoweredLoadBesideDust(SelfTestRun r, int x0, int z, Box work) {
+        StructureTemplateManager manager = r.level.getStructureManager();
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "selftest_beside_" + r.runId);
+        StructureTemplate template = manager.getOrCreate(id);
+        template.fillFromWorld(r.level, new BlockPos(x0, FLOOR + 20, z), new Vec3i(20, 20, 20), false, Blocks.AIR);
+        r.cleanup(() -> manager.remove(id));
+        BlockPos power = new BlockPos(x0, UPPER + 1, z);
+        BlockState dust = Blocks.REDSTONE_WIRE.defaultBlockState().setValue(RedStoneWireBlock.EAST, RedstoneSide.SIDE)
+                .setValue(RedStoneWireBlock.WEST, RedstoneSide.SIDE);
+        for (int i = 1; i <= 5; i++) set(r, power.east(i), dust);
+        BlockPos far = power.east(5);
+        BlockPos block = power.east(2).north();
+        set(r, block, Blocks.STRUCTURE_BLOCK.defaultBlockState().setValue(StructureBlock.MODE, StructureMode.LOAD));
+        if (r.level.getBlockEntity(block) instanceof StructureBlockEntity entity) {
+            entity.setMode(StructureMode.LOAD);
+            entity.setStructureName(id);
+            entity.setStructurePos(new BlockPos(0, -40, 0));
+            entity.setStructureSize(new Vec3i(20, 20, 20));
+        }
+        r.stand(x0 - 1.5, UPPER + 1, z + 2.5, -90f, ItemStack.EMPTY);
+        int[] before = r.snapshot(work);
+        boolean eigencraft = r.level.paperConfig().misc.redstoneImplementation
+                == io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.EIGENCRAFT;
+        LogLines capped = LogLines.attach(LogLines.CAP_REACHED);
+        r.cleanup(capped::detach);
+        PaperBuilderSteps steps = new PaperBuilderSteps(SculptoryPlugin.instance(), PLACED_CAP);
+        BuilderSteps.Action action = steps.open(r.level, r.player, false);
+        action.place((BlockItem) Items.REDSTONE_BLOCK, context(r, power, Items.REDSTONE_BLOCK),
+                Blocks.REDSTONE_BLOCK.defaultBlockState(), false);
+        List<BuilderChange> changes = action.finish();
+        boolean farPowered = r.level.getBlockState(far).getValue(RedStoneWireBlock.POWER) > 0;
+        boolean farRecorded = changes.stream().anyMatch(c -> c.pos().equals(far));
+        boolean loaded = r.level.getBlockEntity(block) instanceof StructureBlockEntity entity && entity.isPowered();
+        steps.revert(r.level, changes);
+        String implementation = String.valueOf(r.level.paperConfig().misc.redstoneImplementation);
+        return r.ticks(3).thenAccept(v -> {
+            capped.detach();
+            int differ = r.countDiffering(work, before);
+            // With Eigencraft the box fills the cap, so the dust further out is not among the changes and stays
+            // powered after they are put back (the documented cost of that over-noting); the check expects exactly that.
+            boolean expected = eigencraft ? capped.seen() >= 1
+                    : capped.seen() == 0 && farRecorded && differ == 0;
+            r.record("builder: an unpowered LOAD block beside dust that does not point into it notes its box only with "
+                            + "Eigencraft", expected && farPowered && !loaded,
+                    capped.seen() + " cap warnings (cap " + PLACED_CAP + "), redstone " + implementation
+                            + ", dust 5 along powered " + farPowered + " and recorded " + farRecorded
+                            + ", structure block powered " + loaded + ", " + changes.size() + " changes, " + differ
+                            + " cells differ after they were put back");
+            // The line as it was, whatever was left powered, for the checks after.
+            for (int i = 1; i <= 5; i++) set(r, power.east(i), dust);
+        });
+    }
+
+    /**
+     * An armed structure block in LOAD mode: a redstone block beside it gives it a signal its block entity never saw
+     * (set without updates), so any neighbour update makes it load. Two blocks from it run three dust a lever on the
+     * floor powers. Breaking the lever (without Keep shape) powers the dust down; the updates of the dust losing power
+     * reach the structure block (with Eigencraft, directly from the wire walk, no physics event) and it loads its
+     * template over a chest with items. Its box was noted (with Eigencraft at the wire power event, the signal from the
+     * redstone block tested), so the undo takes the template back and the chest's items with it.
+     */
+    private static CompletableFuture<Void> armedLoadBesideFallingDust(SelfTestRun r, int x0, int z, Box work) {
+        StructureTemplateManager manager = r.level.getStructureManager();
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "selftest_armed_" + r.runId);
+        BlockPos lever = new BlockPos(x0, UPPER + 1, z);
+        BlockPos block = lever.east(2).south(2);
+        BlockPos origin = block.east(2);
+        BlockPos chest = origin.east();
+        set(r, origin, Blocks.STONE.defaultBlockState());
+        set(r, chest, Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.NORTH));
+        StructureTemplate template = manager.getOrCreate(id);
+        template.fillFromWorld(r.level, origin, new Vec3i(2, 1, 1), false, null);
+        r.cleanup(() -> manager.remove(id));
+        set(r, origin, Blocks.AIR.defaultBlockState());
+        set(r, chest, Blocks.AIR.defaultBlockState());
+        set(r, chest, Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.SOUTH));
+        fillChest(r, chest, new ItemStack(Items.LAPIS_LAZULI, 13));
+        set(r, lever, Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR)
+                .setValue(LeverBlock.FACING, Direction.EAST).setValue(LeverBlock.POWERED, true));
+        BlockState dust = Blocks.REDSTONE_WIRE.defaultBlockState().setValue(RedStoneWireBlock.EAST, RedstoneSide.SIDE)
+                .setValue(RedStoneWireBlock.WEST, RedstoneSide.SIDE);
+        for (int i = 1; i <= 3; i++) set(r, lever.east(i), dust.setValue(RedStoneWireBlock.POWER, 16 - i));
+        set(r, block.south(), Blocks.REDSTONE_BLOCK.defaultBlockState());
+        set(r, block, Blocks.STRUCTURE_BLOCK.defaultBlockState().setValue(StructureBlock.MODE, StructureMode.LOAD));
+        if (r.level.getBlockEntity(block) instanceof StructureBlockEntity entity) {
+            entity.setMode(StructureMode.LOAD);
+            entity.setStructureName(id);
+            entity.setStructurePos(new BlockPos(2, 0, 0));
+            entity.setStructureSize(new Vec3i(2, 1, 1));
+        }
+        r.stand(x0 - 1.5, UPPER + 1, z + 0.5, -90f, ItemStack.EMPTY);
+        int[] before = r.snapshot(work);
+        String implementation = String.valueOf(r.level.paperConfig().misc.redstoneImplementation);
+        BuilderOutcome broken = breakCells(r, 11, List.of(lever), 0);
+        boolean down = r.level.getBlockState(lever.east()).getValue(RedStoneWireBlock.POWER) == 0;
+        boolean loaded = r.level.getBlockState(origin).is(Blocks.STONE) && chestItem(r, chest).isEmpty();
+        r.record("builder: dust losing power beside an armed LOAD structure block makes it load (recorded)",
+                broken.accepted() && down && loaded, broken + ", dust off " + down + ", template placed " + loaded
+                        + ", redstone " + implementation);
+        return r.undo().thenAccept(v -> {
+            ItemStack back = chestItem(r, chest);
+            boolean whole = back.is(Items.LAPIS_LAZULI) && back.getCount() == 13
+                    && r.level.getBlockState(origin).isAir();
+            r.record("builder: its undo (redstone " + implementation + ") takes the template back and the chest's items "
+                    + "with it", r.countDiffering(work, before) == 0 && whole, r.countDiffering(work, before)
+                    + " cells differ, chest " + back + ", template's stone cell " + r.level.getBlockState(origin));
+        });
+    }
 
     /** A placement context for {@code cell}, clicked on the top of the block below it, holding {@code item}. */
     private static BlockPlaceContext context(SelfTestRun r, BlockPos cell, Item item) {

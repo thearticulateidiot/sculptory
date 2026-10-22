@@ -267,6 +267,9 @@ public final class PaperBuilderSteps implements BuilderSteps {
         /** The cells the captured steps changed, each once, in the order first changed. */
         private final Long2ObjectLinkedOpenHashMap<Pending> pending = new Long2ObjectLinkedOpenHashMap<>();
         private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        /** The last physics event's cell and source (BlockPos keys), to skip its immediate repeat. */
+        private long lastEventCell = Long.MIN_VALUE;
+        private long lastEventSource = Long.MIN_VALUE;
         /** The structure blocks whose load boxes this action noted (each once). */
         private final LongOpenHashSet loadsNoted = new LongOpenHashSet();
         /** The physics listener while the action watches, else null. */
@@ -522,8 +525,15 @@ public final class PaperBuilderSteps implements BuilderSteps {
             if (!(event instanceof BlockPhysicsEvent physics)) return;
             if (!(physics.getBlock() instanceof CraftBlock block) || block.getHandle() != world) return;
             BlockPos pos = block.getPosition();
-            watchAround(pos);
             long key = pos.asLong();
+            org.bukkit.block.Block source = physics.getSourceBlock();
+            long sourceKey = BlockPos.asLong(source.getX(), source.getY(), source.getZ());
+            // A multi-neighbour update fires the event twice in a row for each neighbour (runNext, then executeUpdate)
+            // with nothing changed between: the second is the first again.
+            if (key == lastEventCell && sourceKey == lastEventSource) return;
+            lastEventCell = key;
+            lastEventSource = sourceKey;
+            watchAround(pos);
             Before noted = befores.get(key);
             if (noted != null && noted.watched() && noted.entity() != null && noted.tile() == null
                     && Block.getId(world.getBlockState(pos)) == noted.state()) {
@@ -533,13 +543,12 @@ public final class PaperBuilderSteps implements BuilderSteps {
             // own shape) names the cell as its own source; a neighbour update names the neighbour that sent it. The
             // game never runs a block's neighbour reaction for its own change, so a structure block placed beside
             // power does not load (and its box is not noted) until a neighbour updates it.
-            org.bukkit.block.Block source = physics.getSourceBlock();
-            boolean ownChange = source.getX() == pos.getX() && source.getY() == pos.getY()
-                    && source.getZ() == pos.getZ();
-            if (!ownChange) noteLoad(pos, true);
+            if (sourceKey == key) return;
+            noteLoad(pos, true);
             // A block powered without an event of its own (Eigencraft's wires update their neighbours directly):
             // tested at its neighbours' events, as long as the action did not place it (its own placement does not
             // make it load; see above). A signal present without an update ever arriving notes a box that never loads.
+            // Not at a cell's own event: what changed there sends its neighbours updates of their own.
             for (Direction direction : Direction.values()) {
                 BlockPos next = pos.relative(direction);
                 if (!pending.containsKey(next.asLong())) noteLoad(next, true);
@@ -547,24 +556,33 @@ public final class PaperBuilderSteps implements BuilderSteps {
         }
 
         /**
-         * Paper's wire power event, fired before a redstone wire's power changes, with every redstone implementation
-         * (Eigencraft sets the wires of a network without physics events and updates the blocks beside them directly):
-         * the wire and the cells around it are noted before it changes, and a structure block in LOAD mode within 2
-         * blocks of a wire gaining power has its load box noted (its signal is not there yet to test; a block the wire
-         * does not point at notes a box that never loads).
+         * Paper's wire power event, fired before a redstone wire's power changes, with every redstone implementation:
+         * the wire and the cells around it are noted before it changes. With Eigencraft, which sets the wires of a
+         * network without physics events and updates the 24 cells around each changed wire directly (whether it gains
+         * or loses power), the structure blocks in LOAD mode within 2 blocks are tested here too: beside a wire gaining
+         * power its box is noted without a signal to test (not there yet; a block the wire does not point at notes a
+         * box that never loads), beside one losing power only with a signal from elsewhere (an armed block loads on
+         * any update). The other implementations update those cells through the neighbour updater, whose physics
+         * events test the signal, so they note nothing here.
          */
         private void wireChanging(BlockRedstoneEvent event) {
             if (!(event.getBlock() instanceof CraftBlock block) || block.getHandle() != world) return;
             BlockPos pos = block.getPosition();
             if (!world.getBlockState(pos).is(Blocks.REDSTONE_WIRE)) return;
+            lastEventCell = Long.MIN_VALUE;
             watchAround(pos);
-            if (event.getNewCurrent() <= event.getOldCurrent()) return;
+            if (world.paperConfig().misc.redstoneImplementation
+                    != io.papermc.paper.configuration.WorldConfiguration.Misc.RedstoneImplementation.EIGENCRAFT) {
+                return;
+            }
+            if (event.getNewCurrent() == event.getOldCurrent()) return;
+            boolean gaining = event.getNewCurrent() > event.getOldCurrent();
             BlockPos.MutableBlockPos near = new BlockPos.MutableBlockPos();
             for (int dy = -2; dy <= 2; dy++) {
                 for (int dz = -2; dz <= 2; dz++) {
                     for (int dx = -2; dx <= 2; dx++) {
                         if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 2) continue;
-                        noteLoad(near.setWithOffset(pos, dx, dy, dz).immutable(), false);
+                        noteLoad(near.setWithOffset(pos, dx, dy, dz).immutable(), !gaining);
                     }
                 }
             }
