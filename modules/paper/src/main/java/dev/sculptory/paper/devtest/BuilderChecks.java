@@ -13,6 +13,7 @@ import dev.sculptory.mc.engine.impl.BuilderService;
 import dev.sculptory.mc.world.McTile;
 import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.engine.PaperBuilderSteps;
+import dev.sculptory.paper.engine.SelfTestSteps;
 import dev.sculptory.paper.nms.PaperAccess;
 import dev.sculptory.paper.perm.WorldGuardTestRegions;
 import dev.sculptory.protocol.v2.BuilderPower;
@@ -178,7 +179,8 @@ final class BuilderChecks {
                 .thenCompose(v -> deferredFailure(r, x0 + 25, z0 + 2, work))
                 .thenAccept(v -> chestWall(r, x0 + 24, z0 + 11))
                 .thenCompose(v -> loadBoxUnderDoor(r, x0 + 2, z0 + 17, work))
-                .thenCompose(v -> crafterBesideFarHook(r, x0 + 1, z0, work));
+                .thenCompose(v -> crafterBesideFarHook(r, x0 + 1, z0, work))
+                .thenCompose(v -> loadAlongTripwire(r, x0 + 13, z0, work));
     }
 
     /**
@@ -670,8 +672,8 @@ final class BuilderChecks {
     /**
      * A structure block in LOAD mode under a door, naming a template of 33 by 33 by 33 cells whose box lies below the
      * floor (larger than the cap of noted cells, {@value PaperBuilderSteps#DEFAULT_MAX_WATCHED_CELLS}): breaking the
-     * door's lower half notes the cells around it first, its upper half among them, and the load box only with what the
-     * cap leaves. Both halves are the step and its undo puts the whole door back.
+     * door's lower half does not power the block, so its load box is never noted and cannot take the cap from the
+     * cells around the break, the upper half among them. Both halves are the step and its undo puts the whole door back.
      */
     private static CompletableFuture<Void> loadBoxUnderDoor(SelfTestRun r, int x0, int z, Box work) {
         StructureTemplateManager manager = r.level.getStructureManager();
@@ -704,6 +706,65 @@ final class BuilderChecks {
             r.record("builder: its undo puts the whole door back",
                     r.countDiffering(work, before) == 0 && upper.is(Blocks.OAK_DOOR),
                     r.countDiffering(work, before) + " cells differ, upper half " + upper);
+        });
+    }
+
+    /**
+     * A structure block in LOAD mode reached only along a tripwire's line: an attached north-south line whose north
+     * hook hangs on the structure block, which names a template of a stone and an empty chest set 2 and 3 blocks west of
+     * it, over a chest with items and an empty cell. Breaking a string in the middle (without Keep shape) powers both
+     * hooks for a moment (a string's removal counts as a step on it), the north hook powers the structure block and it
+     * loads its template. The block was first noted along the line, not around a change; its load box is noted when the
+     * update that powers it reaches it, so the undo takes the template back and puts the chest back with its items.
+     */
+    private static CompletableFuture<Void> loadAlongTripwire(SelfTestRun r, int x, int z0, Box work) {
+        StructureTemplateManager manager = r.level.getStructureManager();
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "selftest_line_" + r.runId);
+        BlockPos block = new BlockPos(x, FLOOR + 1, z0);
+        BlockPos origin = block.west(3);
+        BlockPos chest = origin.east();
+        set(r, origin, Blocks.STONE.defaultBlockState());
+        set(r, chest, Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.NORTH));
+        StructureTemplate template = manager.getOrCreate(id);
+        template.fillFromWorld(r.level, origin, new Vec3i(2, 1, 1), false, null);
+        r.cleanup(() -> manager.remove(id));
+        set(r, origin, Blocks.AIR.defaultBlockState());
+        set(r, chest, Blocks.AIR.defaultBlockState());
+        set(r, chest, Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.SOUTH));
+        fillChest(r, chest, new ItemStack(Items.GOLD_INGOT, 9));
+        set(r, block, Blocks.STRUCTURE_BLOCK.defaultBlockState().setValue(StructureBlock.MODE, StructureMode.LOAD));
+        if (r.level.getBlockEntity(block) instanceof StructureBlockEntity entity) {
+            entity.setMode(StructureMode.LOAD);
+            entity.setStructureName(id);
+            entity.setStructurePos(new BlockPos(-3, 0, 0));
+            entity.setStructureSize(new Vec3i(2, 1, 1));
+        }
+        BlockPos northHook = block.south();
+        BlockPos southHook = northHook.south(11);
+        set(r, southHook.south(), Blocks.STONE.defaultBlockState());
+        BlockState hook = Blocks.TRIPWIRE_HOOK.defaultBlockState().setValue(TripWireHookBlock.ATTACHED, true);
+        set(r, northHook, hook.setValue(TripWireHookBlock.FACING, Direction.SOUTH));
+        set(r, southHook, hook.setValue(TripWireHookBlock.FACING, Direction.NORTH));
+        BlockState string = Blocks.TRIPWIRE.defaultBlockState().setValue(TripWireBlock.NORTH, true)
+                .setValue(TripWireBlock.SOUTH, true).setValue(TripWireBlock.ATTACHED, true);
+        for (int i = 1; i < 11; i++) set(r, northHook.south(i), string);
+        BlockPos broken = northHook.south(6);
+        r.stand(x + 3.5, FLOOR + 1, broken.getZ() + 0.5, 90f, ItemStack.EMPTY);
+        int[] before = r.snapshot(work);
+        BuilderOutcome outcome = breakCells(r, 10, List.of(broken), 0);
+        boolean loaded = r.level.getBlockState(origin).is(Blocks.STONE)
+                && r.level.getBlockState(chest).getValue(ChestBlock.FACING) == Direction.NORTH
+                && chestItem(r, chest).isEmpty();
+        r.record("builder: breaking a string powers a LOAD structure block down the line, which loads (recorded)",
+                outcome.accepted() && loaded, outcome + ", template placed " + loaded);
+        return r.undo().thenAccept(v -> {
+            ItemStack back = chestItem(r, chest);
+            boolean whole = back.is(Items.GOLD_INGOT) && back.getCount() == 9
+                    && r.level.getBlockState(origin).isAir();
+            r.record("builder: its undo takes the template back and the chest's items with it",
+                    r.countDiffering(work, before) == 0 && whole,
+                    r.countDiffering(work, before) + " cells differ, chest " + back + ", template's stone cell "
+                            + r.level.getBlockState(origin));
         });
     }
 
@@ -759,7 +820,7 @@ final class BuilderChecks {
      * (FAILED, one history step, both halves placed), the head still registered as a point of interest (it tells the
      * clients and the points of interest though its updates never ran); the step's undo removes the bed and its point.
      * An Error puts the placement back without a step (the head's point never registered, nor removed) and reaches the
-     * caller. No "POI data mismatch" is logged throughout.
+     * caller. No "POI data mismatch" is logged throughout but the one a deliberate removal makes (the counter's control).
      */
     private static CompletableFuture<Void> deferredFailure(SelfTestRun r, int x0, int z, Box work) {
         r.stand(x0 + 0.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.RED_BED, 1));
@@ -768,11 +829,10 @@ final class BuilderChecks {
         BlockPos errorFoot = runtimeFoot.south(2);
         BlockPos errorHead = errorFoot.east();
         // The physics fail as the head's updates are about to run (after the foot's).
-        PaperBuilderSteps throwing = new PaperBuilderSteps(SculptoryPlugin.instance(),
-                PaperBuilderSteps.DEFAULT_MAX_WATCHED_CELLS, pos -> {
-                    if (pos.equals(runtimeHead)) throw new IllegalStateException("deferred physics failed (test)");
-                    if (pos.equals(errorHead)) throw new StackOverflowError("deferred physics failed (test)");
-                });
+        PaperBuilderSteps throwing = SelfTestSteps.failingBeforeUpdate(SculptoryPlugin.instance(), pos -> {
+            if (pos.equals(runtimeHead)) throw new IllegalStateException("deferred physics failed (test)");
+            if (pos.equals(errorHead)) throw new StackOverflowError("deferred physics failed (test)");
+        });
         BuilderService failing = new BuilderService(r.service, r.host.engine(), r.host.engine().server(), throwing,
                 r.service.executor(), r.service.historyService(), System::nanoTime);
         // A point of interest registered in the beds' section: the game logs a mismatch only for a section holding
@@ -782,6 +842,8 @@ final class BuilderChecks {
         boolean sectionHeld = r.level.getPoiManager().getType(composter).isPresent();
         PoiMismatches mismatches = PoiMismatches.attach();
         r.cleanup(mismatches::detach);
+        // The counter's positive control: one deliberate removal of a point never registered logs one mismatch.
+        r.level.getPoiManager().remove(composter.east());
         int[] before = r.snapshot(work);
         List<String> labelsBefore = labels(r);
         BuilderOutcome failed = failing.place(r.player, new C2S.BuilderPlace(seq++, false,
@@ -820,9 +882,12 @@ final class BuilderChecks {
             return r.ticks(5);
         }).thenAccept(v -> {
             mismatches.detach();
+            int seen = mismatches.seen();
+            r.record("builder: the log counter sees a deliberate point-of-interest mismatch (positive control)",
+                    sectionHeld && seen >= 1, seen + " \"POI data mismatch\" lines in all, the section holding a "
+                            + "composter's point " + sectionHeld);
             r.record("builder: no point-of-interest mismatch logged by the failed physics, their undo or revert",
-                    sectionHeld && mismatches.seen() == 0, mismatches.seen() + " \"POI data mismatch\" lines, the "
-                            + "section holding a composter's point " + sectionHeld);
+                    seen == 1, (seen - 1) + " lines besides the deliberate one");
         });
     }
 
