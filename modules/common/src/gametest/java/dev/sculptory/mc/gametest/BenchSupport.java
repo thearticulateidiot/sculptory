@@ -7,6 +7,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
@@ -28,6 +29,7 @@ import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
+import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
 import net.minecraft.network.protocol.game.GameProtocols;
 import net.minecraft.server.MinecraftServer;
@@ -281,7 +283,8 @@ final class BenchSupport {
 
         /**
          * Sends and acknowledges chunk batches; true once every chunk under {@code box} is tracked by the player
-         * (so block and light updates there reach it). Call once per tick until true.
+         * (so block and light updates there reach it) and every chunk in its view has reached it. Call once per tick
+         * until true.
          */
         boolean ready(Box box) {
             player.connection.chunkSender.sendNextChunks(player);
@@ -289,28 +292,23 @@ final class BenchSupport {
             var loading = world.getChunkSource().chunkMap;
             for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
                 for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
-                    if (!loading.getPlayers(new ChunkPos(cx, cz), false).contains(player)) {
-                        lastChunkPacketNanos = System.nanoTime();
-                        return false;
-                    }
+                    if (!loading.getPlayers(new ChunkPos(cx, cz), false).contains(player)) return false;
                 }
             }
-            // The rest of the view too, so later chunk packets are the edits' own: every chunk in view loaded (they may
-            // still be generating; vanilla counts those as tracked) and sent, then 250 ms without a chunk packet.
+            // The rest of the view too, so later chunk packets are the edits' own: every chunk in view received. A
+            // loaded chunk is not enough: vanilla sends a chunk only once it ticks and its light is ready
+            // (ChunkHolder.getChunkToSend), and only then queues it for the player, so a chunk loaded but not yet
+            // queued reached the watcher after the test had started counting.
+            drain();
             boolean[] all = {true};
             player.getChunkTrackingView().forEach(pos -> {
-                if (!all[0]) return;
-                if (world.getChunkSource().getChunkNow(pos.x, pos.z) == null
-                        || player.connection.chunkSender.isPending(pos.toLong())) {
-                    all[0] = false;
-                }
+                if (all[0] && !received.contains(pos.toLong())) all[0] = false;
             });
-            drain();
-            if (!all[0]) lastChunkPacketNanos = System.nanoTime();
-            return System.nanoTime() - lastChunkPacketNanos > 250_000_000L;
+            return all[0];
         }
 
-        private long lastChunkPacketNanos = System.nanoTime();
+        /** The chunks the player was sent and not told to forget. */
+        private final LongOpenHashSet received = new LongOpenHashSet();
 
         /** Drops what was sent so far and keeps what is sent from now on. */
         void record() {
@@ -335,14 +333,22 @@ final class BenchSupport {
             Object message;
             while ((message = channel.readOutbound()) != null) {
                 if (!(message instanceof Packet<?> packet)) continue;
-                if (packet instanceof ClientboundLevelChunkWithLightPacket) lastChunkPacketNanos = System.nanoTime();
                 if (packet instanceof ClientboundBundlePacket bundle) {
-                    for (Packet<?> inner : bundle.subPackets()) observer.accept(inner);
+                    for (Packet<?> inner : bundle.subPackets()) see(inner);
                 } else {
-                    observer.accept(packet);
+                    see(packet);
                 }
                 if (recording) packets.add(packet);
             }
+        }
+
+        private void see(Packet<?> packet) {
+            if (packet instanceof ClientboundLevelChunkWithLightPacket chunk) {
+                received.add(ChunkPos.asLong(chunk.getX(), chunk.getZ()));
+            } else if (packet instanceof ClientboundForgetLevelChunkPacket forget) {
+                received.remove(forget.pos().toLong());
+            }
+            observer.accept(packet);
         }
 
         /** Per packet type: count, raw bytes, wire bytes; plus a total line. Clears the kept packets. */
