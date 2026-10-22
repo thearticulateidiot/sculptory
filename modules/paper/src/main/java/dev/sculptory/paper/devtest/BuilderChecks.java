@@ -711,9 +711,11 @@ final class BuilderChecks {
      * A tripwire running north-south, one of its strings powered (as by an entity on it), the middle string missing,
      * and a crafter beside the north hook (west of it, the first neighbour the hook's updates reach). Placing the middle
      * string (without Keep shape) attaches and powers both hooks; the north hook, set from the south one's calculation
-     * 5 blocks away, updates the crafter first, whose own physics event is the first to reach it: it is noted then,
-     * its block entity saved before it reacts, and it triggers. The undo puts back an untriggered crafter whose data
-     * agrees, and the line as it was.
+     * 6 blocks from the string, updates the crafter first: no event has reached a cell near it before, so it is noted
+     * at its own event and its block entity saved before it reacts; it triggers. The undo puts back an untriggered
+     * crafter whose data agrees, and the line as it was. (Paper fires the physics event twice for each neighbour of a
+     * multi-neighbour update, so this case also passed when the cell was saved only from its second event; the
+     * order noted-then-saved covers a cell first reached by a single neighbour update.)
      */
     private static CompletableFuture<Void> crafterBesideFarHook(SelfTestRun r, int x, int z0, Box work) {
         BlockPos northHook = new BlockPos(x, FLOOR + 1, z0 + 1);
@@ -773,6 +775,11 @@ final class BuilderChecks {
                 });
         BuilderService failing = new BuilderService(r.service, r.host.engine(), r.host.engine().server(), throwing,
                 r.service.executor(), r.service.historyService(), System::nanoTime);
+        // A point of interest registered in the beds' section: the game logs a mismatch only for a section holding
+        // points already (an empty one is not even loaded for the removal).
+        BlockPos composter = new BlockPos(x0 + 5, FLOOR + 1, z + 5);
+        r.level.setBlockAndUpdate(composter, Blocks.COMPOSTER.defaultBlockState());
+        boolean sectionHeld = r.level.getPoiManager().getType(composter).isPresent();
         PoiMismatches mismatches = PoiMismatches.attach();
         r.cleanup(mismatches::detach);
         int[] before = r.snapshot(work);
@@ -814,7 +821,8 @@ final class BuilderChecks {
         }).thenAccept(v -> {
             mismatches.detach();
             r.record("builder: no point-of-interest mismatch logged by the failed physics, their undo or revert",
-                    mismatches.seen() == 0, mismatches.seen() + " \"POI data mismatch\" lines");
+                    sectionHeld && mismatches.seen() == 0, mismatches.seen() + " \"POI data mismatch\" lines, the "
+                            + "section holding a composter's point " + sectionHeld);
         });
     }
 

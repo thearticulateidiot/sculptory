@@ -501,7 +501,8 @@ public final class PaperBuilderSteps implements BuilderSteps {
          * The physics listener: the cell the update reaches and those around it are noted before it reacts, then the
          * cell's own block entity is saved if it is still as noted (a block entity reacts only to a neighbour update,
          * whose event fires at its cell before it does: a crafter sets its {@code triggered} with its block). Noting
-         * comes first, so a cell first reached by its own event (a crafter beside a far tripwire hook) is saved too.
+         * comes first, so a cell first reached by its own event is saved too (Paper fires the event twice for each
+         * neighbour of a multi-neighbour update, a single neighbour update fires it once).
          */
         @Override
         public void execute(Listener listener, Event event) {
