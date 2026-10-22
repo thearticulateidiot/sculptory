@@ -77,6 +77,7 @@ public final class PaperEditHost {
     private final ServerScatter<ServerPlayer, ServerLevel> scatter;
     /** The crash-safe history hooks (set once by {@link #start}). */
     private HistorySaveHooks saveHooks;
+    private PaperFluidTrails fluidTrails;
 
     private PaperEditHost(PaperEngine engine, EngineEditService<ServerPlayer, ServerLevel> service,
                           ServerClipboards<ServerPlayer, ServerLevel> clipboards,
@@ -111,7 +112,7 @@ public final class PaperEditHost {
         host.registerHooks(loader);
         host.saveHooks = HistorySaveHooks.register(plugin, service);
         // After the history hooks: on a chunk unload the trails are folded before the marks are written.
-        PaperFluidTrails.register(plugin, engine.fluidTrails());
+        host.fluidTrails = PaperFluidTrails.register(plugin, engine.fluidTrails());
         dev.sculptory.paper.perm.PermissionWatch.register(plugin, service, planning);
         org.bukkit.Bukkit.getPluginManager().registerEvents(new BuilderModeListener(service), plugin);
         ServerNet.install(new NetFacade(service), clips, planning, service, engine.permissions(),
@@ -142,6 +143,8 @@ public final class PaperEditHost {
         loader.onStartServerTick(server -> engine.tickStart());
         loader.onEndServerTick(server -> {
             engine.tickEnd();
+            // After the tick's announced fluid changes went into their trails.
+            if (fluidTrails != null) fluidTrails.tickEnded();
             service.tick();
             scatter.housekeeping();
             if (server.getTickCount() % INDEX_FLUSH_TICKS == 0) clipboards.flushSoon();

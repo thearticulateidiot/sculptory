@@ -134,8 +134,10 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
     private final List<WeakReference<Supplier<Set<UUID>>>> holders = new ArrayList<>();
     /** The tick being recorded, or {@code null}. */
     private Recording recording;
-    /** The fluid change an event-driven platform announced last ({@link #eventChange}), until it is closed. */
-    private Recording eventRecording;
+    /** The fluid changes an event-driven platform announced this tick ({@link #eventChange}), in order. */
+    private final List<Recording> eventRecordings = new ArrayList<>();
+    /** The cells those recordings noted, each with the recordings that noted it. */
+    private final Long2ObjectOpenHashMap<List<Recording>> eventCells = new Long2ObjectOpenHashMap<>();
     /** Sections holding marks, over all worlds: the block-change hook does nothing while there are none. */
     private int markedSections;
     private int ticks;
@@ -329,12 +331,22 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
         private final WorldTrails state;
         private final UUID owner;
         private final Long2ObjectLinkedOpenHashMap<Before> touched = new Long2ObjectLinkedOpenHashMap<>();
+        /**
+         * An event-driven change's recording only: each noted cell's state right after its first change, taken when
+         * the platform reports it ({@link #eventCellChanged}); a noted cell without one is left out.
+         */
+        private final Long2ObjectOpenHashMap<Before> firstAfter;
 
         private Recording(FluidTrails trails, ServerLevel world, WorldTrails state, UUID owner) {
+            this(trails, world, state, owner, false);
+        }
+
+        private Recording(FluidTrails trails, ServerLevel world, WorldTrails state, UUID owner, boolean event) {
             this.trails = trails;
             this.world = world;
             this.state = state;
             this.owner = owner;
+            this.firstAfter = event ? new Long2ObjectOpenHashMap<>() : null;
         }
 
         /** Ends the tick: its changes go into the owner's trail, and the cells it left holding fluid are marked. */
@@ -344,12 +356,27 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
             trails.finish(this);
         }
 
-        /** Notes cell {@code pos} as it is now, unless already noted (an event-driven change; a loaded cell only). */
-        private void note(BlockPos pos) {
+        /**
+         * Notes cell {@code pos} as it is now, unless already noted (an event-driven change; a loaded cell only);
+         * returns whether it was noted now.
+         */
+        private boolean note(BlockPos pos) {
             long key = pos.asLong();
-            if (touched.containsKey(key) || !WorldChecks.isChunkLoaded(world, pos.getX() >> 4, pos.getZ() >> 4)) return;
+            if (touched.containsKey(key) || !WorldChecks.isChunkLoaded(world, pos.getX() >> 4, pos.getZ() >> 4)) {
+                return false;
+            }
             BlockState old = world.getBlockState(pos);
             touched.put(key, new Before(Block.getId(old), old.hasBlockEntity() ? trails.capture(world, pos) : null));
+            return true;
+        }
+
+        /** The noted cell at {@code key} has just changed: its first new state is kept (later changes are not its). */
+        private void changed(long key, BlockPos pos) {
+            if (firstAfter.containsKey(key)) return;
+            Before before = touched.get(key);
+            BlockState now = world.getBlockState(pos);
+            if (before == null || Block.getId(now) == before.state()) return;
+            firstAfter.put(key, new Before(Block.getId(now), now.hasBlockEntity() ? trails.capture(world, pos) : null));
         }
     }
 
@@ -669,7 +696,8 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
      */
     public void restart() {
         worlds.clear();
-        eventRecording = null;
+        eventRecordings.clear();
+        eventCells.clear();
         frozen.clear();
         trailCaps.clear();
         recording = null;
@@ -694,7 +722,7 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
 
     // A platform without the mixins (Paper) has no hook into every block change or every tick. It reports the fluid
     // changes its events announce instead (a flow, a level change, a block forming or fading), each before it happens;
-    // each change is recorded on its own, from just before it until its effect has happened, as a recorded tick is.
+    // each change is recorded on its own: its named cell from just before it to just after its own change.
 
     /**
      * The entry a fluid change at {@code pos} is attributed to, by the rules the tick hooks use for a fluid tick there:
@@ -744,40 +772,64 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
      * Cell {@code pos} is about to change by {@code owner}'s fluid (the event announcing it is being handled): its state
      * now is noted as its first state, and so is the other half of a double block there (a tall plant whose lower half
      * the water takes pops off whole); nothing else is noted, so what other game logic changes nearby is never taken for
-     * the fluid's. The change gets its own recording, closed when the event's own effect has happened: at the next fluid
-     * event, before a player's change is applied ({@link #changedOtherwise}), or at the end of the tick
-     * ({@link #finishEventChanges}), whichever comes first; then each noted cell that differs goes into the entry's
-     * trail with its first and last state.
+     * the fluid's. The change gets a recording of its own: each noted cell's last state is the one right after its first
+     * change, which the platform reports as it happens ({@link #eventCellChanged}; Paper: the physics event a change
+     * fires right after it). So what changes the cell later in the tick (a piston pushing a block into the water) is not
+     * the fluid's, and an event fired inside this change's effect (lava beside it turning to obsidian) is a recording of
+     * its own that ends nothing early. At the end of the tick ({@link #finishEventChanges}) each noted cell that changed
+     * goes into the entry's trail with its first state and that state; a noted cell that did not change is left out.
      */
     public static void eventChange(ServerLevel world, BlockPos pos, UUID owner) {
         FluidTrails trails = active;
         if (trails == null || owner == null || Thread.currentThread() != trails.thread) return;
-        trails.closeEventChange();
         WorldTrails w = trails.worlds.computeIfAbsent(world, k -> new WorldTrails());
-        Recording r = new Recording(trails, world, w, owner);
-        trails.eventRecording = r;
-        r.note(pos);
+        Recording r = new Recording(trails, world, w, owner, true);
+        trails.eventRecordings.add(r);
+        trails.eventNote(r, pos);
         if (!WorldChecks.isChunkLoaded(world, pos.getX() >> 4, pos.getZ() >> 4)) return;
         BlockState state = world.getBlockState(pos);
         if (state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)) {
-            r.note(state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER ? pos.above()
-                    : pos.below());
+            trails.eventNote(r, state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER
+                    ? pos.above() : pos.below());
         }
     }
 
-    /** The last announced fluid change's effect has happened: its recording goes into the entry's trail. */
-    private void closeEventChange() {
-        Recording r = eventRecording;
-        if (r == null) return;
-        eventRecording = null;
-        finish(r);
+    private void eventNote(Recording r, BlockPos pos) {
+        if (r.note(pos)) eventCells.computeIfAbsent(pos.asLong(), k -> new ArrayList<>(1)).add(r);
     }
 
-    /** End of the tick: the last announced change is closed, and the wakes used are spent. */
+    /** Whether a recording of an announced change is open this tick (the platform reports cell changes meanwhile). */
+    public static boolean recordingEventChanges() {
+        FluidTrails trails = active;
+        return trails != null && !trails.eventCells.isEmpty();
+    }
+
+    /**
+     * Cell {@code pos} of {@code world} has just changed (Paper: the physics event fired right after a block change, or
+     * as a neighbour update reaches it): a recording of an announced change that noted the cell and has no state after
+     * its first change yet takes the cell's state now.
+     */
+    public static void eventCellChanged(ServerLevel world, BlockPos pos) {
+        FluidTrails trails = active;
+        if (trails == null || trails.eventCells.isEmpty() || Thread.currentThread() != trails.thread) return;
+        long key = pos.asLong();
+        List<Recording> recordings = trails.eventCells.get(key);
+        if (recordings == null) return;
+        for (Recording r : recordings) {
+            if (r.world == world) r.changed(key, pos);
+        }
+    }
+
+    /** End of the tick: the announced changes go into their entries' trails, and the wakes used are spent. */
     public static void finishEventChanges() {
         FluidTrails trails = active;
         if (trails == null || Thread.currentThread() != trails.thread) return;
-        trails.closeEventChange();
+        if (!trails.eventRecordings.isEmpty()) {
+            List<Recording> done = new ArrayList<>(trails.eventRecordings);
+            trails.eventRecordings.clear();
+            trails.eventCells.clear();
+            for (Recording r : done) trails.finish(r);
+        }
         for (WorldTrails w : trails.worlds.values()) {
             if (w.wakesUsed.isEmpty()) continue;
             for (long key : w.wakesUsed) w.woken.remove(key);
@@ -786,15 +838,13 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
     }
 
     /**
-     * Cell {@code pos} is about to change in a way no fluid of an entry does (a player places or breaks a block there,
-     * empties or fills a bucket): its mark is cleared, as the block-change hook clears it on Fabric and NeoForge, so
-     * fluid poured there later is not taken for the entry's.
+     * Cell {@code pos} changes in a way no fluid of an entry does (a player placed or broke a block there, emptied or
+     * filled a bucket; Bukkit announces a placement after the block is set): its mark is cleared, as the block-change
+     * hook clears it on Fabric and NeoForge, so fluid poured there later is not taken for the entry's.
      */
     public static void changedOtherwise(ServerLevel world, BlockPos pos) {
         FluidTrails trails = active;
         if (trails == null || Thread.currentThread() != trails.thread) return;
-        // The player's change comes after the fluid's last one: that recording ends before it.
-        trails.closeEventChange();
         trails.overwritten(world, pos.getX(), pos.getY(), pos.getZ());
     }
 
@@ -852,8 +902,20 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
             pos.set(entry.getLongKey());
             Before before = entry.getValue();
             BlockState now = r.world.getBlockState(pos);
-            int after = Block.getId(now);
-            BlockEntityData tile = now.hasBlockEntity() ? capture(r.world, pos) : null;
+            int after;
+            BlockEntityData tile;
+            if (r.firstAfter != null) {
+                // An announced change: the cell as its own change left it, or nothing when it did not change.
+                Before first = r.firstAfter.get(entry.getLongKey());
+                if (first == null) continue;
+                after = first.state();
+                tile = first.tile();
+                // Marked only while it still holds what the fluid left (not a block pushed in later).
+                if (Block.getId(now) != after) now = Blocks.AIR.defaultBlockState();
+            } else {
+                after = Block.getId(now);
+                tile = now.hasBlockEntity() ? capture(r.world, pos) : null;
+            }
             if (after == before.state() && sameTile(before.tile(), tile)) continue;
             if (trail.full) {
                 unmark(w, pos.getX(), pos.getY(), pos.getZ());

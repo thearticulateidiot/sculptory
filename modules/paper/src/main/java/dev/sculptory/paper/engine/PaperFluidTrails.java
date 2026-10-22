@@ -5,6 +5,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
@@ -19,6 +20,7 @@ import net.minecraft.world.level.material.FluidState;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.craftbukkit.CraftWorld;
+import org.bukkit.craftbukkit.block.CraftBlock;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -28,6 +30,7 @@ import org.bukkit.event.block.BlockFormEvent;
 import org.bukkit.event.block.BlockFromToEvent;
 import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockMultiPlaceEvent;
+import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.block.FluidLevelChangeEvent;
 import org.bukkit.event.player.PlayerBucketEmptyEvent;
@@ -36,14 +39,15 @@ import org.bukkit.event.world.ChunkLoadEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
 import org.bukkit.event.world.WorldSaveEvent;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.RegisteredListener;
 
 /**
  * Fluid trails on Paper ({@link FluidTrails}), fed by Bukkit's fluid events instead of Fabric's mixins: what the fluid
  * a history step wrote does afterwards is recorded so the entry's next undo takes it back too.
  *
  * <p><b>Covered</b> (each change noted on its own before it happens, the cell the event names and the other half of a
- * double block there; read again once its effect has happened: at the next fluid event, a player's change, or the end
- * of the tick, {@link FluidTrails#eventChange}):
+ * double block there; each cell's new state taken right after its own first change, reported by the physics event,
+ * so later changes of the cell in the tick are not the fluid's; {@link FluidTrails#eventChange}):
  * <ul>
  *   <li>flowing out and down ({@link BlockFromToEvent}: the cell flowed into, a torch or plant it washes away, a tall
  *       plant's other half);</li>
@@ -57,8 +61,8 @@ import org.bukkit.plugin.Plugin;
  * redstone line losing power along its length when water washes away its first dust, a chain of vines, a block on top
  * of a washed-away one); block changes other plugins or commands make in a marked cell do not clear its mark (only
  * player placements and breaks, buckets and Sculptory's own edits do), so fluid poured there later may be taken for the
- * entry's. Something else changing the very cell the fluid just changed, later in the same tick and before the next
- * fluid event (rare: the cell holds the fluid by then), is recorded as the fluid's.
+ * entry's. A noted cell whose own change fires no physics event (none of the fluid's writes above) is not recorded;
+ * a tall plant's other half that does not pop, but is changed by something else later in that tick, is.
  *
  * <p>While an entry's step writes (frozen), its flows and level changes are cancelled and the fluid's tick is scheduled
  * again, as Fabric's tick hook puts them off; its random-tick changes (forming, fading, fire) are cancelled.
@@ -78,15 +82,21 @@ final class PaperFluidTrails implements Listener {
     static final int FLUSH_TICKS = 100;
 
     private final FluidTrails trails;
+    private final Plugin plugin;
     /** Per world: columns whose container holds marks (as last written). */
     private final Map<ServerLevel, LongSet> written = new java.util.IdentityHashMap<>();
+    /** The physics listener while announced changes are being recorded this tick, else null. */
+    private RegisteredListener physics;
+    /** The worlds whose physics event was switched on for it. */
+    private final Set<ServerLevel> physicsOn = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
 
-    private PaperFluidTrails(FluidTrails trails) {
+    private PaperFluidTrails(Plugin plugin, FluidTrails trails) {
+        this.plugin = Objects.requireNonNull(plugin);
         this.trails = Objects.requireNonNull(trails);
     }
 
     static PaperFluidTrails register(Plugin plugin, FluidTrails trails) {
-        PaperFluidTrails listener = new PaperFluidTrails(trails);
+        PaperFluidTrails listener = new PaperFluidTrails(plugin, trails);
         Bukkit.getPluginManager().registerEvents(listener, plugin);
         // Chunks loaded before the plugin was enabled: their marks are read now.
         for (org.bukkit.World world : Bukkit.getWorlds()) {
@@ -94,6 +104,40 @@ final class PaperFluidTrails implements Listener {
         }
         Bukkit.getScheduler().runTaskTimer(plugin, listener::flush, FLUSH_TICKS, FLUSH_TICKS);
         return listener;
+    }
+
+    // ================================================================== recording an announced change
+
+    /**
+     * An event announced a change of {@code owner}'s fluid at {@code pos} (null: no entry's): it is recorded on its
+     * own ({@link FluidTrails#eventChange}), and until the end of the tick the cells' changes are reported to it
+     * through the physics event, which Paper fires right after each block change (and as a neighbour update reaches a
+     * cell). A listener is registered for the rest of the tick only and the world's physics event is switched on (Paper
+     * decides it once per tick from whether any plugin listens).
+     */
+    private void announced(ServerLevel level, BlockPos pos, UUID owner) {
+        if (owner == null) return;
+        FluidTrails.eventChange(level, pos, owner);
+        if (physics == null) {
+            physics = new RegisteredListener(this, (listener, event) -> {
+                if (event instanceof BlockPhysicsEvent changed && changed.getBlock() instanceof CraftBlock block
+                        && block.getHandle() instanceof ServerLevel world) {
+                    FluidTrails.eventCellChanged(world, block.getPosition());
+                }
+            }, EventPriority.LOWEST, plugin, false);
+            BlockPhysicsEvent.getHandlerList().register(physics);
+        }
+        if (physicsOn.add(level)) level.hasPhysicsEvent = true;
+    }
+
+    /** After the tick's announced changes went into their trails: the physics listener goes, as do the switches. */
+    void tickEnded() {
+        if (physics == null) return;
+        BlockPhysicsEvent.getHandlerList().unregister(physics);
+        physics = null;
+        boolean others = BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0;
+        for (ServerLevel level : physicsOn) level.hasPhysicsEvent = others;
+        physicsOn.clear();
     }
 
     // ================================================================== fluid changes
@@ -114,7 +158,7 @@ final class PaperFluidTrails implements Listener {
         ServerLevel level = level(event.getBlock().getWorld());
         BlockPos from = pos(event.getBlock());
         if (level.getFluidState(from).isEmpty()) return; // a dragon egg teleporting, not a fluid
-        FluidTrails.eventChange(level, pos(event.getToBlock()), FluidTrails.eventOwner(level, from));
+        announced(level, pos(event.getToBlock()), FluidTrails.eventOwner(level, from));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -131,7 +175,7 @@ final class PaperFluidTrails implements Listener {
     public void level(FluidLevelChangeEvent event) {
         ServerLevel level = level(event.getBlock().getWorld());
         BlockPos pos = pos(event.getBlock());
-        FluidTrails.eventChange(level, pos, FluidTrails.eventOwner(level, pos));
+        announced(level, pos, FluidTrails.eventOwner(level, pos));
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -142,7 +186,7 @@ final class PaperFluidTrails implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void form(BlockFormEvent event) {
         UUID owner = formOwner(event);
-        if (owner != null) FluidTrails.eventChange(level(event.getBlock().getWorld()), pos(event.getBlock()), owner);
+        if (owner != null) announced(level(event.getBlock().getWorld()), pos(event.getBlock()), owner);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -153,7 +197,7 @@ final class PaperFluidTrails implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void fade(BlockFadeEvent event) {
         UUID owner = fadeOwner(event);
-        if (owner != null) FluidTrails.eventChange(level(event.getBlock().getWorld()), pos(event.getBlock()), owner);
+        if (owner != null) announced(level(event.getBlock().getWorld()), pos(event.getBlock()), owner);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -164,7 +208,7 @@ final class PaperFluidTrails implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void fire(BlockIgniteEvent event) {
         UUID owner = fireOwner(event);
-        if (owner != null) FluidTrails.eventChange(level(event.getBlock().getWorld()), pos(event.getBlock()), owner);
+        if (owner != null) announced(level(event.getBlock().getWorld()), pos(event.getBlock()), owner);
     }
 
     /** A block formed at a cell: by the cell's own fluid (it freezes, lava turns to stone) or the fluid beside it. */

@@ -13,12 +13,16 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoublePlantBlock;
 import net.minecraft.world.level.block.RedStoneWireBlock;
+import net.minecraft.world.level.block.piston.PistonBaseBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.material.Fluids;
 import org.bukkit.Bukkit;
@@ -36,7 +40,9 @@ import org.bukkit.event.block.BlockFromToEvent;
  *       flow and level events record it into the fill's trail, its marks reach the chunk's data container at a full
  *       save, and the fill's undo takes every cell of it back;</li>
  *   <li>only what the fluid explains: a furnace beside the flow that another plugin lights in the flow's own tick is
- *       left lit by the fill's undo;</li>
+ *       left lit by the fill's undo; a stone a piston pushes into the flowed cell later that tick is left by the undo;
+ *       water into a tall plant beside another entry's lava (whose form event comes inside the water's effect):
+ *       the undo puts back both halves;</li>
  *   <li>uncovered (information, not failures): the same water washing away the first dust of a powered redstone line:
  *       the line's far dust loses power in that same tick with no event, so after the undo it stays unpowered; and a
  *       block another plugin sets in a marked cell keeps the cell's mark.</li>
@@ -58,7 +64,8 @@ final class FluidChecks {
             r.level.getChunkSource().blockChanged(cell);
         }
         return covered(r, x0, z0).thenCompose(v -> redstone(r, x0 + 16, z0)).thenCompose(v -> otherPlugin(r, x0, z0))
-                .thenCompose(v -> furnaceBeside(r, x0, z0 + 16));
+                .thenCompose(v -> furnaceBeside(r, x0, z0 + 16))
+                .thenCompose(v -> unexplained(r, x0 + 16, z0 + 16));
     }
 
     /** Water from a fill flows out; its trail and marks are recorded; the fill's undo takes all of it back. */
@@ -208,6 +215,119 @@ final class FluidChecks {
                     "lit by the flow's event " + lighter.lit + " time(s), lit after the undo " + lit + ", " + wet
                             + " wet cells left");
         });
+    }
+
+    /** Lays a stone floor with air above over {@code area} (its lowest layer the floor), physics-free. */
+    private static void floor(SelfTestRun r, Box area) {
+        for (BlockPos cell : cells(area)) {
+            BlockState state = cell.getY() == FLOOR ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState();
+            if (r.level.getBlockState(cell) != state) PaperAccess.setBlockWithoutCallbacks(r.level, cell, state);
+            r.level.getChunkSource().blockChanged(cell);
+        }
+    }
+
+    /** Powers a piston when water flows into the cell in front of the block it pushes (another plugin, same tick). */
+    static final class PistonPowerer implements Listener {
+        private final BlockPos into;
+        private final BlockPos power;
+        int powered;
+
+        PistonPowerer(BlockPos into, BlockPos power) {
+            this.into = into;
+            this.power = power;
+        }
+
+        @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+        public void flowed(BlockFromToEvent event) {
+            org.bukkit.block.Block to = event.getToBlock();
+            if (powered > 0 || to.getX() != into.getX() || to.getY() != into.getY() || to.getZ() != into.getZ()) return;
+            ServerLevel level = ((CraftWorld) to.getWorld()).getHandle();
+            level.setBlock(power, Blocks.REDSTONE_BLOCK.defaultBlockState(), Block.UPDATE_ALL);
+            powered++;
+        }
+    }
+
+    /**
+     * Only the cell's own change is the fluid's: water flows into a cell, and in that same tick (its block events, after
+     * the fluid's) a piston another plugin powered from the flow's event pushes a stone into that cell. The fill's undo
+     * takes the water back and leaves the pushed stone: the cell's change by the piston was never the water's.
+     */
+    private static CompletableFuture<Void> pistonInto(SelfTestRun r, int x0, int z0) {
+        BlockPos source = new BlockPos(x0 + 4, FLOOR + 1, z0 + 4);
+        BlockPos into = source.north();
+        BlockPos pushed = into.west();
+        BlockPos piston = pushed.west();
+        set(r, pushed, Blocks.STONE.defaultBlockState());
+        set(r, piston, Blocks.PISTON.defaultBlockState().setValue(PistonBaseBlock.FACING, Direction.EAST));
+        PistonPowerer powerer = new PistonPowerer(into, piston.north());
+        Bukkit.getPluginManager().registerEvents(powerer, SculptoryPlugin.instance());
+        r.cleanup(() -> HandlerList.unregisterAll(powerer));
+        Box one = box(source.getX(), source.getY(), source.getZ(), source.getX(), source.getY(), source.getZ());
+        return r.fill(one, Block.getId(Blocks.WATER.defaultBlockState())).thenCompose(result -> {
+            r.level.scheduleTick(source, Fluids.WATER, 1);
+            return r.ticks(60);
+        }).thenCompose(v -> {
+            HandlerList.unregisterAll(powerer);
+            boolean pushedIn = r.level.getBlockState(into).is(Blocks.STONE);
+            r.info("fluid trails: the piston pushed its stone into the flowed cell", "powered " + powerer.powered
+                    + " time(s), stone in the cell " + pushedIn);
+            return r.undo();
+        }).thenCompose(result -> r.ticks(20)).thenAccept(v -> {
+            boolean stone = r.level.getBlockState(into).is(Blocks.STONE);
+            boolean wetSource = !r.level.getFluidState(source).isEmpty();
+            r.record("fluid trails: the fill's undo leaves a block a piston pushed into the flowed cell",
+                    powerer.powered == 1 && stone && !wetSource,
+                    "powered " + powerer.powered + ", stone still in the cell " + stone + ", water left at the source "
+                            + wetSource);
+        });
+    }
+
+    /**
+     * An event inside another change's effect is a recording of its own and ends nothing early: water flows into a
+     * tall plant's lower half beside lava another entry wrote; the water's neighbour update turns the lava to obsidian
+     * (a form event, the lava entry's) before the plant's upper half pops off (the water's shape update). The water
+     * fill's undo puts back both halves of the plant.
+     */
+    private static CompletableFuture<Void> plantBesideLava(SelfTestRun r, int x0, int z0) {
+        BlockPos source = new BlockPos(x0 + 3, FLOOR + 1, z0 + 4);
+        BlockPos lower = source.east();
+        BlockPos lava = lower.east();
+        set(r, lower, Blocks.TALL_GRASS.defaultBlockState().setValue(DoublePlantBlock.HALF, DoubleBlockHalf.LOWER));
+        set(r, lower.above(), Blocks.TALL_GRASS.defaultBlockState().setValue(DoublePlantBlock.HALF,
+                DoubleBlockHalf.UPPER));
+        Box lavaBox = box(lava.getX(), lava.getY(), lava.getZ(), lava.getX(), lava.getY(), lava.getZ());
+        Box waterBox = box(source.getX(), source.getY(), source.getZ(), source.getX(), source.getY(), source.getZ());
+        return r.fill(lavaBox, Block.getId(Blocks.LAVA.defaultBlockState()))
+                .thenCompose(result -> r.fill(waterBox, Block.getId(Blocks.WATER.defaultBlockState())))
+                .thenCompose(result -> {
+                    r.level.scheduleTick(source, Fluids.WATER, 1);
+                    return r.ticks(40);
+                }).thenCompose(v -> {
+                    boolean obsidian = r.level.getBlockState(lava).is(Blocks.OBSIDIAN);
+                    boolean popped = r.level.getBlockState(lower.above()).isAir();
+                    r.info("fluid trails: water into a plant beside lava", "lava turned to obsidian " + obsidian
+                            + ", upper half gone " + popped);
+                    return r.undo();
+                }).thenCompose(result -> r.ticks(10)).thenAccept(v -> {
+                    BlockState below = r.level.getBlockState(lower), above = r.level.getBlockState(lower.above());
+                    boolean whole = below.is(Blocks.TALL_GRASS) && above.is(Blocks.TALL_GRASS)
+                            && above.getValue(DoublePlantBlock.HALF) == DoubleBlockHalf.UPPER;
+                    r.record("fluid trails: the water's undo puts back both halves of the plant beside lava", whole,
+                            "lower " + below + ", upper " + above);
+                });
+    }
+
+    /** The cells the fluid does not explain, in an area of their own: a piston's push, a plant beside lava. */
+    private static CompletableFuture<Void> unexplained(SelfTestRun r, int x0, int z0) {
+        Box area = box(x0, FLOOR, z0, x0 + 15, FLOOR + 4, z0 + 15);
+        r.claim(area);
+        floor(r, area);
+        return pistonInto(r, x0, z0).thenCompose(v -> plantBesideLava(r, x0 + 8, z0));
+    }
+
+    private static void set(SelfTestRun r, BlockPos pos, BlockState state) {
+        PaperAccess.setBlockWithoutCallbacks(r.level, pos, state);
+        r.level.getChunkSource().blockChanged(pos);
     }
 
     private static UUID newest(SelfTestRun r) {
