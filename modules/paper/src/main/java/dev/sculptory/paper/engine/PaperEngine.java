@@ -41,6 +41,7 @@ import dev.sculptory.server.platform.BorderBounds;
 import dev.sculptory.server.platform.Profile;
 import dev.sculptory.server.platform.WorldBiomes;
 import dev.sculptory.server.platform.WriteOptions;
+import io.papermc.paper.entity.TeleportFlag;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -200,12 +201,18 @@ public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>,
 
     /**
      * Navigate's move through Bukkit's {@code Player.teleport} (cause PLUGIN), so {@code PlayerTeleportEvent} fires:
-     * CMI's {@code /back} notes where the player was, WorldGuard's entry rules may refuse it (then nothing moves).
+     * CMI's {@code /back} notes where the player was, WorldGuard's entry rules may refuse it (then nothing moves, and
+     * the player keeps riding: {@code CraftPlayer.teleport} dismounts only after the event).
+     *
+     * <p>{@code CraftPlayer.teleport} also returns false before any event for a dead or disconnected player (Navigate
+     * does not ask for those) and for one carrying passengers: they come along instead ({@code RETAIN_PASSENGERS}, a
+     * move within the player's world), as with vanilla's teleport. So false here always means a plugin cancelled it.
      */
     @Override
     public boolean teleport(ServerPlayer player, double x, double y, double z, float yaw, float pitch) {
         Location to = new Location(player.serverLevel().getWorld(), x, y, z, yaw, pitch);
-        return player.getBukkitEntity().teleport(to, PlayerTeleportEvent.TeleportCause.PLUGIN);
+        return player.getBukkitEntity().teleport(to, PlayerTeleportEvent.TeleportCause.PLUGIN,
+                TeleportFlag.EntityState.RETAIN_PASSENGERS);
     }
 
     @Override

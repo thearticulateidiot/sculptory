@@ -74,7 +74,13 @@ public final class NavigateService {
             return S2C.NavigateResult.refused(request.reqId(), decision.reason());
         }
         BlockPos feet = decision.feet();
-        player.stopRiding();
+        if (!player.isAlive() || player.connection == null || player.hasDisconnected()) {
+            // Nobody to move (dead, or gone while the request waited): refused without a notice, and no plugin is asked,
+            // so the "blocked" notice below only ever means a plugin stopped the move.
+            return S2C.NavigateResult.refused(request.reqId(), RejectReason.INVALID);
+        }
+        // The host dismounts the player as part of the move (vanilla's teleport does; Paper's only once no plugin has
+        // stopped it), so a refused move leaves the player riding.
         if (!runtime.teleport(player, feet.x() + 0.5, feet.y(), feet.z() + 0.5, player.getYRot(), player.getXRot())) {
             // Something on the server refused the move (on Paper a plugin cancelled the teleport event): nothing moved.
             Decision blocked = Decision.refused(RejectReason.PROTECTED, BLOCKED);
