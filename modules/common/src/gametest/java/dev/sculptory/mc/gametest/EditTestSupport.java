@@ -18,6 +18,7 @@ import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.world.WorldReader;
 import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.server.engine.ChunkPermit;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
@@ -354,6 +355,14 @@ final class EditTestSupport {
             dabRejections.add(reason);
         }
 
+        /** "stroke:last dab index" per acknowledged batch of dabs (the lane finished them). */
+        final List<String> dabsApplied = new ArrayList<>();
+
+        @Override
+        public void dabsApplied(ServerPlayer player, int strokeId, int lastIndex) {
+            dabsApplied.add(strokeId + ":" + lastIndex);
+        }
+
         final List<Long> scatterSkips = new ArrayList<>();
 
         @Override
@@ -404,15 +413,30 @@ final class EditTestSupport {
      * protects (a GameTest can set no such protection up); everything else is the runtime's. Its clipboards
      * ({@code ClipTestSupport.clipboards(EngineEditService, Path)}) check the same protection.
      */
-    @SuppressWarnings("unchecked")
     static EngineEditService<ServerPlayer, ServerLevel> protectedService(Harness h, EditExecutor<ServerLevel> executor,
                                                                          ChunkPermits.CellTest allowed) {
+        return permitService(h, executor, (cx, cz, bounds) -> ChunkPermits.rasterize(cx, cz, bounds, allowed));
+    }
+
+    /** What a test's permission service answers for chunk (cx, cz) asked for {@code bounds}. */
+    @FunctionalInterface
+    interface PermitMaker {
+        ChunkPermit chunk(int cx, int cz, Box bounds);
+    }
+
+    /**
+     * An edit service over the live engine (with {@code executor}) whose chunk permits come from {@code permits};
+     * everything else is the runtime's.
+     */
+    @SuppressWarnings("unchecked")
+    static EngineEditService<ServerPlayer, ServerLevel> permitService(Harness h, EditExecutor<ServerLevel> executor,
+                                                                      PermitMaker permits) {
         PlatformPermissions<ServerPlayer, ServerLevel> real = h.runtime.permissions();
         PlatformPermissions<ServerPlayer, ServerLevel> perCell = (PlatformPermissions<ServerPlayer, ServerLevel>)
                 Proxy.newProxyInstance(PlatformPermissions.class.getClassLoader(),
                         new Class<?>[] {PlatformPermissions.class}, (proxy, method, args) -> {
                             if (method.getName().equals("chunk") && args != null && args.length == 5) {
-                                return ChunkPermits.rasterize((int) args[2], (int) args[3], (Box) args[4], allowed);
+                                return permits.chunk((int) args[2], (int) args[3], (Box) args[4]);
                             }
                             return invoke(method, real, args);
                         });

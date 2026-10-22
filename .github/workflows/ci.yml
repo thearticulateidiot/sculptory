@@ -66,6 +66,8 @@ jobs:
       PAPER_VERSION: "1.21.1"
       PAPER_BUILD: "133"
       PAPER_SHA256: 39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9
+      # The checks the fake-player run makes: fewer means a group was skipped or never ran (raise it with new checks).
+      SELFTEST_MIN_TESTS: "63"
       # WorldEdit 7.3.9 and WorldGuard 7.0.12 (Modrinth version ids), the versions the plugin is built against.
       WORLDEDIT_VERSION_ID: Bu1zaaoc
       WORLDEDIT_SHA512: ce19097ab93a3ff75a929a1efec58138adc5b700f876ec8ac7a96c97d98d77a06f22661f0418c3407d644ca2d9713fde417d5789c79864d9c2094f203f372c76
@@ -116,6 +118,9 @@ jobs:
           test -f selftest-report.xml
           grep -o '<testsuite[^>]*>' selftest-report.xml
           grep -q 'failures="0" errors="0"' selftest-report.xml
+          tests=$(grep -o '<testsuite[^>]*>' selftest-report.xml | sed -E 's/.* tests="([0-9]+)".*/\1/')
+          echo "${tests} checks ran (at least ${SELFTEST_MIN_TESTS} expected)"
+          test "${tests}" -ge "${SELFTEST_MIN_TESTS}"
 
       - name: Upload the self-test report
         if: always()
