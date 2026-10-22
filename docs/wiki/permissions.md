@@ -49,6 +49,17 @@ More examples:
 - Keep an operator out of the editor: `/lp user Guest permission set sculptory.use false`.
 - Everything for admins: `/lp group admin permission set sculptory.* true`.
 
+## NeoForge and Paper
+
+The nodes are the same on every server; only what decides them differs.
+
+- **Fabric:** a permissions mod that works with Fabric's permissions API, such as LuckPerms.
+- **NeoForge:** a permissions mod that works with NeoForge's permission system.
+- **Paper:** Bukkit permission nodes, set with LuckPerms or another permissions plugin (the `/lp` commands above work as they are). A wildcard such as `sculptory.*` needs a permissions plugin that understands wildcards; LuckPerms does.
+- **`sculptory.selftest`** (Paper only) allows the developers' self-test. It is false by default, operators included, and does nothing unless the server was started with the self-test switched on: leave it alone on a real server. See [On Paper](server-setup.md#on-paper).
+
+Without a permissions mod or plugin, operators of level 2 or higher hold the nodes on all three (all but `sculptory.selftest`).
+
 ## Tips
 
 - Upgrading from Builder Suite: grants under `buildersuite.*` don't carry over. Grant them again as `sculptory.*`.

@@ -46,7 +46,7 @@ Yes: every tool's settings, your keys, the UI size, opacity and window layouts a
 
 ### Do players need the mod to join?
 
-No. Only players who edit need the same Sculptory build as the server: see [Server setup](server-setup.md).
+No. Only players who edit need Sculptory on their client, speaking the same network protocol as the server's. Their loader may differ from the server's, and on a Paper server they use the Fabric or NeoForge mod: see [Server setup](server-setup.md).
 
 ### Who can edit by default?
 
@@ -66,14 +66,15 @@ Yes: protected blocks are skipped, and a click there in builder mode is refused.
 
 ### Is there a Paper, Forge or NeoForge version?
 
-Not yet. A Paper port is planned.
+NeoForge and Paper, yes, for Minecraft 1.21.1: the NeoForge mod works like the Fabric one, and the Paper plugin is the server side, with players editing through the mod for their loader. Both are coming soon as releases and can be built from source today. Fabric and NeoForge players can edit on each other's servers. Forge isn't there yet. See [Server setup](server-setup.md).
 
 ## Known limits
 
 Sculptory is a beta. The limits you are most likely to meet:
 
-- Fabric 1.21.1 only: no Paper, Forge, NeoForge or other Minecraft versions yet.
-- The server and every editing client need the same build; see [Server setup](server-setup.md#updating).
+- Minecraft 1.21.1 only, on Fabric, NeoForge and Paper (NeoForge and Paper built from source until their first releases): no Forge or other Minecraft versions yet.
+- On Paper, undo after a crash, undo of water and lava, builder mode's chain reactions and the commands differ a little from Fabric and NeoForge: see [Known limits on Paper](server-setup.md#known-limits-on-paper).
+- The server and every editing client need the same network protocol, and the same build to avoid a warning; see [Server setup](server-setup.md#updating).
 - Most of it is covered by automated tests, but two players editing at once, and Sodium and Iris, haven't been tried much in a real game yet. Keep backups of worlds you care about.
 - With an Iris shader pack on, ghost previews are drawn as outlines.
 - WorldEdit and Sculptory share only `.schem` files: selections, clipboards and undo histories are separate.
