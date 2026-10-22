@@ -128,6 +128,8 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
     /** Caps lowered for single entries (tests of what happens past the cap); their size is checked every cell. */
     private final Map<UUID, Long> trailCaps = new HashMap<>();
     private boolean captureFailureLogged;
+    /** Whether a noted cell of an announced change that changed without a physics event was logged (once, DEBUG). */
+    private boolean silentChangeLogged;
     /** The kinds of chunk-data problem met so far (each logged once): {@link #chunkDataProblem}. */
     private final Set<String> chunkDataProblems = new LinkedHashSet<>();
     private final Map<ServerLevel, WorldTrails> worlds = new IdentityHashMap<>();
@@ -809,6 +811,12 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
      *   <li>else (its change did not happen: lava falling onto water forms stone instead) the cell is dropped from the
      *       earlier recording, and the change is this one's.</li>
      * </ul>
+     * Known limit of the first rule: it takes "differs, no after-state yet" for nesting, so a change of the cell that
+     * fires no physics event at all (a write with {@code UPDATE_KNOWN_SHAPE} or update depth 0, one made while a block
+     * capture is on, a plugin writing the chunk directly) looks the same. A later fluid event at that cell is then left
+     * out of its own recording while the earlier one never gets an after-state, so that change is in neither entry's
+     * undo. The fluid's own writes fire the event (flags 3), so no case is known; {@code finish} logs such a cell once
+     * at DEBUG.
      */
     private void eventNote(Recording r, BlockPos pos) {
         long key = pos.asLong();
@@ -934,7 +942,15 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
             if (r.firstAfter != null) {
                 // An announced change: the cell as its own change left it, or nothing when it did not change.
                 Before first = r.firstAfter.get(entry.getLongKey());
-                if (first == null) continue;
+                if (first == null) {
+                    if (Block.getId(now) != before.state() && !silentChangeLogged) {
+                        // A change without a physics event at a noted cell (see eventNote): visible when it happens.
+                        silentChangeLogged = true;
+                        LOG.debug("Sculptory: fluid cell {} changed without a physics event; that change is in no "
+                                + "entry's trail (logged once)", pos.toShortString());
+                    }
+                    continue;
+                }
                 after = first.state();
                 tile = first.tile();
                 // Marked only while it still holds what the fluid left (not a block pushed in later).
