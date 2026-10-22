@@ -9,6 +9,7 @@ import it.unimi.dsi.fastutil.longs.Long2DoubleOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -127,9 +128,12 @@ public final class RoadKernel {
         private final int[] nodeVertex;
         private final boolean closed;
         private final List<Column> columns;
+        /** Columns nearest a straight segment (world column keys): their exact relative heights and climb axes. */
+        private final Long2DoubleOpenHashMap straightHeights;
+        private final Long2IntOpenHashMap straightAxes;
 
         private Path(List<BlockPos> nodes, int originX, int originY, int originZ, double[] xs, double[] zs, double[] along,
-                     double[] nodeAlong, int[] nodeVertex, boolean closed, List<Column> columns) {
+                     double[] nodeAlong, int[] nodeVertex, boolean closed, Footprint footprint) {
             this.nodes = nodes;
             this.originX = originX;
             this.originY = originY;
@@ -140,7 +144,9 @@ public final class RoadKernel {
             this.nodeAlong = nodeAlong;
             this.nodeVertex = nodeVertex;
             this.closed = closed;
-            this.columns = columns;
+            this.columns = footprint.columns();
+            this.straightHeights = footprint.straightHeights();
+            this.straightAxes = footprint.straightAxes();
         }
 
         public List<BlockPos> nodes() {
@@ -226,8 +232,9 @@ public final class RoadKernel {
                     double span = nodeAlong[i] - nodeAlong[i - 1];
                     int from = nodes.get(i - 1).y() - originY, to = nodes.get(i).y() - originY;
                     if (span <= 0) return to;
-                    // (from (span - u) + to u) / span: exact where the true height is a half or whole block (a column
-                    // centre at a whole arc length on a straight segment), so deckHeight rounds that tie up as it is.
+                    // (from (span - u) + to u) / span: exact when the arc lengths are (an axis-aligned straight
+                    // segment). A column nearest a straight segment takes its height from its exact projection instead
+                    // (deckHeight); this serves curved segments and the drawing.
                     double u = s - nodeAlong[i - 1];
                     return (from * (span - u) + to * u) / span;
                 }
@@ -247,9 +254,14 @@ public final class RoadKernel {
         public Long2IntMap climbAxes() {
             Long2IntOpenHashMap axes = new Long2IntOpenHashMap();
             for (Column column : columns) {
+                long key = GroundMap.column(column.x(), column.z());
+                // A straight segment's axis is its chord's (exact, so a 45-degree road takes the same axis both ways).
+                if (straightAxes.containsKey(key)) {
+                    axes.put(key, straightAxes.get(key));
+                    continue;
+                }
                 double[] a = relativePointAt(column.along() - 0.5), b = relativePointAt(column.along() + 0.5);
-                int axis = SlopeSteps.axisOf(b[0] - a[0], 0, b[1] - a[1]);
-                axes.put(GroundMap.column(column.x(), column.z()), axis);
+                axes.put(key, SlopeSteps.axisOf(b[0] - a[0], 0, b[1] - a[1]));
             }
             return axes;
         }
@@ -293,6 +305,7 @@ public final class RoadKernel {
             pz[i] = (nodes.get(i).z() - originZ) + offset;
         }
         List<double[]> vertices = new ArrayList<>();
+        boolean[] straightSegments = new boolean[Math.max(0, n)];
         double[] nodeAlong = new double[n];
         int[] nodeVertex = new int[n];
         if (n == 1) {
@@ -306,9 +319,11 @@ public final class RoadKernel {
                 int steps = Math.max(1, (int) Math.ceil(chord / SAMPLE_STEP));
                 nodeVertex[s] = vertices.size();
                 double[] c0 = {px[i0], pz[i0]}, c1 = {px[i1], pz[i1]}, c2 = {px[i2], pz[i2]}, c3 = {px[i3], pz[i3]};
-                // A straight segment is sampled on its line exactly (CatmullRom.lerp), so its vertices, arc lengths and
-                // heights land exactly on the half and whole blocks the geometry puts them on.
+                // A straight segment's vertices are put on its line exactly (CatmullRom.lerp). They serve the drawing,
+                // the arc lengths and Follow terrain; the footprint and the deck measure a straight segment from its
+                // nodes directly (footprint), since its arc lengths are not exact off the axes.
                 boolean straight = CatmullRom.straight(c0, c1, c2, c3);
+                straightSegments[s] = straight;
                 for (int j = 0; j < steps; j++) {
                     double[] vertex = new double[2];
                     if (straight) {
@@ -330,8 +345,11 @@ public final class RoadKernel {
             along[i] = i == 0 ? 0 : along[i - 1] + Math.hypot(xs[i] - xs[i - 1], zs[i] - zs[i - 1]);
         }
         for (int i = 0; i < n; i++) nodeAlong[i] = along.length == 0 ? 0 : along[nodeVertex[i]];
-        List<Column> columns = n >= 2 ? footprint(xs, zs, along, spec.width(), closed, originX, originZ) : List.of();
-        return new Path(nodes, originX, originY, originZ, xs, zs, along, nodeAlong, nodeVertex, closed, columns);
+        Footprint footprint = n >= 2
+                ? footprint(pieces(px, pz, xs, zs, along, nodeVertex, straightSegments, nodes, originY, closed),
+                        along[along.length - 1], px, pz, closed, spec.width(), originX, originZ)
+                : new Footprint(List.of(), new Long2DoubleOpenHashMap(), new Long2IntOpenHashMap());
+        return new Path(nodes, originX, originY, originZ, xs, zs, along, nodeAlong, nodeVertex, closed, footprint);
     }
 
     private static int control(int index, int points, boolean closed) {
@@ -340,52 +358,148 @@ public final class RoadKernel {
     }
 
     /**
-     * Every column whose centre lies strictly within {@code width / 2} of the polyline, with its nearest point. An open
-     * path ends square at its first and last vertex: a column whose centre projects past an end is not part of the
-     * end segment (it may still be near an earlier one).
+     * A piece of the centre line the footprint is measured from: one step of a curved segment's polyline, or a whole
+     * straight segment ({@link CatmullRom#straight}) with its nodes' heights. Relative to the first node.
      */
-    private static List<Column> footprint(double[] xs, double[] zs, double[] along, int width, boolean closed,
-                                          int originX, int originZ) {
+    private record Piece(double ax, double az, double bx, double bz, double alongA, double alongB, boolean straight,
+                         int fromY, int toY) {}
+
+    /** The footprint, and for the columns nearest a straight segment their exact relative heights and climb axes. */
+    private record Footprint(List<Column> columns, Long2DoubleOpenHashMap straightHeights,
+                             Long2IntOpenHashMap straightAxes) {}
+
+    /** The pieces of the centre line: a straight segment whole, a curved one step by step. */
+    private static List<Piece> pieces(double[] px, double[] pz, double[] xs, double[] zs, double[] along, int[] nodeVertex,
+                                      boolean[] straight, List<BlockPos> nodes, int originY, boolean closed) {
+        int points = px.length;
+        int segments = closed ? points : points - 1;
+        List<Piece> pieces = new ArrayList<>();
+        for (int s = 0; s < segments; s++) {
+            int first = nodeVertex[s], next = nodeVertex[s + 1];
+            if (straight[s]) {
+                int i2 = Math.floorMod(s + 1, points);
+                pieces.add(new Piece(px[s], pz[s], px[i2], pz[i2], along[first], along[next], true,
+                        nodes.get(s).y() - originY, nodes.get(s + 1).y() - originY));
+            } else {
+                for (int i = first; i < next; i++) {
+                    pieces.add(new Piece(xs[i], zs[i], xs[i + 1], zs[i + 1], along[i], along[i + 1], false, 0, 0));
+                }
+            }
+        }
+        return pieces;
+    }
+
+    /**
+     * Every column whose centre lies strictly within {@code width / 2} of the centre line, with its nearest point. An
+     * open path ends square at its first and last node: a column whose centre lies behind the start (or past the end),
+     * along the line's direction there, is not part of the end piece (it may still be near an earlier one).
+     *
+     * <p>A straight segment is measured exactly: a column centre's projection on it, {@code P = (c - a) . d}, the cross
+     * product and {@code |d|^2} are whole multiples of a quarter block, so whether the column is inside, on the border
+     * and on which side of a cap it lies are decided exactly, and its height, {@code (from (|d|^2 - P) + to P) / |d|^2},
+     * is exact where it is a whole or half block. The caps' directions are the first and last chords between nodes: an
+     * open spline leaves and reaches its ends along them.
+     */
+    private static Footprint footprint(List<Piece> pieces, double total, double[] px, double[] pz, boolean closed,
+                                       int width, int originX, int originZ) {
         double radius = width / 2.0;
-        double radius2 = radius * radius - EPSILON;
+        double radiusSquared = radius * radius;
+        double radius2 = radiusSquared - EPSILON;
+        double inner = Math.max(0, radius - 1);
         double borderFrom = radius - 1 - EPSILON;
         Long2DoubleOpenHashMap distance = new Long2DoubleOpenHashMap();
         distance.defaultReturnValue(Double.MAX_VALUE);
         Long2DoubleOpenHashMap nearest = new Long2DoubleOpenHashMap();
+        Long2DoubleOpenHashMap straightHeights = new Long2DoubleOpenHashMap();
+        Long2IntOpenHashMap straightAxes = new Long2IntOpenHashMap();
+        LongOpenHashSet border = new LongOpenHashSet();
         LongArrayList keys = new LongArrayList();
         int reach = (int) Math.ceil(radius) + 1;
-        int last = xs.length - 1;
-        // The end caps of an open path: the planes through the first and last vertex across the path's direction.
-        double startDx = xs[Math.min(1, last)] - xs[0], startDz = zs[Math.min(1, last)] - zs[0];
-        double endDx = xs[last] - xs[Math.max(0, last - 1)], endDz = zs[last] - zs[Math.max(0, last - 1)];
-        double total = along[last];
-        for (int i = 0; i + 1 < xs.length; i++) {
-            double ax = xs[i], az = zs[i];
-            double bx = xs[i + 1], bz = zs[i + 1];
+        int last = px.length - 1;
+        // The end caps of an open path: the planes through the first and last node, square to the first and last
+        // chords that are not empty.
+        double startDx = 0, startDz = 0, endDx = 0, endDz = 0;
+        for (int i = 0; i < last && startDx == 0 && startDz == 0; i++) {
+            startDx = px[i + 1] - px[i];
+            startDz = pz[i + 1] - pz[i];
+        }
+        for (int i = last; i > 0 && endDx == 0 && endDz == 0; i--) {
+            endDx = px[i] - px[i - 1];
+            endDz = pz[i] - pz[i - 1];
+        }
+        for (Piece piece : pieces) {
+            double ax = piece.ax(), az = piece.az(), bx = piece.bx(), bz = piece.bz();
             double dx = bx - ax, dz = bz - az;
             double length2 = dx * dx + dz * dz;
-            boolean nearStart = !closed && along[i] < radius;
-            boolean nearEnd = !closed && total - along[i + 1] < radius;
+            boolean nearStart = !closed && piece.alongA() < radius;
+            boolean nearEnd = !closed && total - piece.alongB() < radius;
             int minX = (int) Math.floor(Math.min(ax, bx)) - reach, maxX = (int) Math.floor(Math.max(ax, bx)) + reach;
             int minZ = (int) Math.floor(Math.min(az, bz)) - reach, maxZ = (int) Math.floor(Math.max(az, bz)) + reach;
             for (int cx = minX; cx <= maxX; cx++) {
                 for (int cz = minZ; cz <= maxZ; cz++) {
-                    double px = cx + 0.5, pz = cz + 0.5;
-                    double raw = length2 <= 0 ? 0 : ((px - ax) * dx + (pz - az) * dz) / length2;
-                    // A column behind the start (or past the end) is not part of a segment that only reaches it
-                    // through the cap's vertex: the road ends square at its nodes.
-                    if (nearStart && raw <= 0 && (px - xs[0]) * startDx + (pz - zs[0]) * startDz < 0) continue;
-                    if (nearEnd && raw >= 1 && (px - xs[last]) * endDx + (pz - zs[last]) * endDz > 0) continue;
-                    double t = Math.max(0, Math.min(1, raw));
-                    double qx = ax + t * dx - px, qz = az + t * dz - pz;
-                    double d2 = qx * qx + qz * qz;
-                    if (d2 >= radius2) continue;
+                    double cpx = cx + 0.5, cpz = cz + 0.5;
+                    double ex = cpx - ax, ez = cpz - az;
+                    double projection = ex * dx + ez * dz;
+                    // A column behind the start (or past the end) is not part of a piece that only reaches it through
+                    // the cap's node: the road ends square at its nodes.
+                    if (nearStart && projection <= 0 && (cpx - px[0]) * startDx + (cpz - pz[0]) * startDz < 0) continue;
+                    if (nearEnd && projection >= length2
+                            && (cpx - px[last]) * endDx + (cpz - pz[last]) * endDz > 0) {
+                        continue;
+                    }
+                    double d2;
+                    double t;
+                    boolean inside;
+                    boolean onBorder;
+                    if (piece.straight()) {
+                        // Exact: every product here is a whole number of sixteenths of a block.
+                        if (projection <= 0 || length2 <= 0) {
+                            d2 = ex * ex + ez * ez;
+                            inside = d2 < radiusSquared;
+                            onBorder = d2 >= inner * inner;
+                            t = 0;
+                        } else if (projection >= length2) {
+                            double fx = cpx - bx, fz = cpz - bz;
+                            d2 = fx * fx + fz * fz;
+                            inside = d2 < radiusSquared;
+                            onBorder = d2 >= inner * inner;
+                            t = 1;
+                        } else {
+                            double cross = ex * dz - ez * dx;
+                            inside = cross * cross < radiusSquared * length2;
+                            onBorder = cross * cross >= inner * inner * length2;
+                            d2 = cross * cross / length2;
+                            t = projection / length2;
+                        }
+                    } else {
+                        t = length2 <= 0 ? 0 : Math.max(0, Math.min(1, projection / length2));
+                        double qx = ax + t * dx - cpx, qz = az + t * dz - cpz;
+                        d2 = qx * qx + qz * qz;
+                        inside = d2 < radius2;
+                        onBorder = Math.sqrt(d2) >= borderFrom;
+                    }
+                    if (!inside) continue;
                     long key = GroundMap.column(cx, cz);
                     double known = distance.get(key);
                     if (known == Double.MAX_VALUE) keys.add(key);
                     if (d2 < known - EPSILON) {
                         distance.put(key, d2);
-                        nearest.put(key, along[i] + t * Math.sqrt(length2));
+                        nearest.put(key, piece.alongA() + t * (piece.alongB() - piece.alongA()));
+                        if (onBorder) {
+                            border.add(key);
+                        } else {
+                            border.remove(key);
+                        }
+                        long world = GroundMap.column(originX + cx, originZ + cz);
+                        if (piece.straight()) {
+                            double clamped = Math.max(0, Math.min(length2, projection));
+                            straightHeights.put(world, length2 <= 0 ? piece.toY()
+                                    : (piece.fromY() * (length2 - clamped) + piece.toY() * clamped) / length2);
+                            straightAxes.put(world, SlopeSteps.axisOf(dx, 0, dz));
+                        } else {
+                            straightHeights.remove(world);
+                            straightAxes.remove(world);
+                        }
                     }
                 }
             }
@@ -395,10 +509,10 @@ public final class RoadKernel {
         for (long key : keys) {
             double d = Math.sqrt(distance.get(key));
             columns.add(new Column(originX + GroundMap.columnX(key), originZ + GroundMap.columnZ(key), nearest.get(key), d,
-                    d >= borderFrom));
+                    border.contains(key)));
         }
         columns.sort((a, b) -> Long.compare(GroundMap.column(a.x(), a.z()), GroundMap.column(b.x(), b.z())));
-        return List.copyOf(columns);
+        return new Footprint(List.copyOf(columns), straightHeights, straightAxes);
     }
 
     /** {@link #generate(Spec, Path, SurfaceReader, int, int, long)} of {@link #path(Spec)}. */
@@ -407,10 +521,13 @@ public final class RoadKernel {
     }
 
     /**
-     * A Straight road's deck height in a footprint column: the nodes' heights interpolated at its arc length, rounded
-     * to a block relative to the first node (so the same anywhere, {@link Path}).
+     * A Straight road's deck height in a footprint column: the nodes' heights interpolated where the column projects on
+     * the centre line, rounded to a block (a half up) relative to the first node, so the same anywhere ({@link Path}).
+     * Next to a straight segment the height is the exact one of its projection, so a true half rounds up.
      */
     public static int deckHeight(Path path, Column column) {
+        long key = GroundMap.column(column.x(), column.z());
+        if (path.straightHeights.containsKey(key)) return path.roundedHeight(path.straightHeights.get(key));
         return path.roundedHeight(path.relativeHeightAt(column.along()));
     }
 

@@ -10,8 +10,10 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -353,6 +355,62 @@ class RoadKernelTest {
         // Follow terrain still refuses unloaded columns.
         RoadKernel.Spec follow = spec(nodes(0, 63, 0, 4, 63, 0), 1, null, RoadKernel.HeightMode.FOLLOW_TERRAIN, true, 2, 0);
         assertEquals(5, RoadKernel.generate(follow, new GroundMap(), -64, 320, 1000).unloaded().size());
+    }
+
+    /**
+     * Straight roads in every direction (45 degrees and 2:1, all four quadrants), widths 1 to 6, rising one block per
+     * step of the larger axis or half that: every column's deck is its exact projected height rounded with a half up,
+     * worked out here in whole numbers. Many of those heights are exact halves. Also checked: the road mirrored across
+     * x or z is the same road mirrored, its caps and deck included.
+     */
+    @Test
+    void straightRoadsInEveryDirectionRoundTheirHalvesUpAndMirrorExactly() {
+        int halves = 0, roads = 0;
+        for (int width = 1; width <= 6; width++) {
+            for (int k = 2; k <= 24; k++) {
+                for (int[] step : new int[][] {{1, 1}, {2, 1}, {1, 2}}) {
+                    for (int rise : new int[] {k, (k + 1) / 2}) {
+                        Map<String, Integer> reference = null;
+                        for (int sx = -1; sx <= 1; sx += 2) {
+                            for (int sz = -1; sz <= 1; sz += 2) {
+                                int dx = sx * step[0] * k, dz = sz * step[1] * k;
+                                RoadKernel.Spec spec = spec(nodes(0, 99, 0, dx, 99 + rise, dz), width, null,
+                                        RoadKernel.HeightMode.STRAIGHT, true, 0, 0);
+                                RoadKernel.Path path = RoadKernel.path(spec);
+                                // Doubled offsets from the first node's centre line point (whole numbers).
+                                int centre2 = (width & 1) == 1 ? 1 : 2;
+                                long length2 = (long) dx * dx + (long) dz * dz;
+                                Map<String, Integer> mirrored = new HashMap<>();
+                                for (RoadKernel.Column column : path.columns()) {
+                                    long ex2 = 2L * column.x() + 1 - centre2, ez2 = 2L * column.z() + 1 - centre2;
+                                    long p2 = Math.max(0, Math.min(2 * length2, ex2 * dx + ez2 * dz));
+                                    long numerator = rise * p2 + length2, denominator = 2 * length2;
+                                    if ((rise * p2) % length2 == 0 && ((rise * p2) / length2) % 2 != 0) halves++;
+                                    int expected = 99 + (int) Math.floorDiv(numerator, denominator);
+                                    String what = "width " + width + " to " + dx + ", " + (99 + rise) + ", " + dz
+                                            + " at " + column.x() + "," + column.z();
+                                    assertEquals(expected, RoadKernel.deckHeight(path, column), what);
+                                    // Mirrored into the first quadrant about the first node's centre line point.
+                                    int mx = sx < 0 ? centre2 - 1 - column.x() : column.x();
+                                    int mz = sz < 0 ? centre2 - 1 - column.z() : column.z();
+                                    mirrored.put(mx + "," + mz + (column.border() ? " border" : ""),
+                                            RoadKernel.deckHeight(path, column));
+                                }
+                                roads++;
+                                if (reference == null) {
+                                    reference = mirrored;
+                                } else {
+                                    assertEquals(reference, mirrored, "width " + width + ", " + step[0] + ":" + step[1]
+                                            + " k " + k + " rise " + rise + " mirrored to " + sx + ", " + sz);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertEquals(6 * 23 * 3 * 2 * 4, roads);
+        assertTrue(halves > 1000, "exact half-block columns checked: " + halves);
     }
 
     /**
