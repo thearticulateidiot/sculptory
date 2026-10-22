@@ -26,9 +26,11 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.entity.decoration.ArmorStand;
 
 /**
- * Entities as Paper saves them: CraftBukkit adds its own keys to every saved entity ({@code Bukkit.*},
- * {@code Paper.*}, {@code Spigot.ticksLived}, the world id); a capture leaves them out, and an entity pasted from data
- * without them (a schematic made elsewhere) is undone without a conflict.
+ * Entities as Paper saves them: CraftBukkit writes keys of its own into every saved entity. A capture leaves out the
+ * world-bound and volatile ones ({@code CraftBukkitKeys.STRIPPED}: the world id, the spawn origin and reason, the tick
+ * age, the data version) and keeps the rest, such as a plugin's {@code Bukkit.visibleByDefault}; an entity pasted from
+ * data without the stripped keys (a schematic made elsewhere) but with a plugin setting keeps the setting and is undone
+ * without a conflict.
  */
 final class EntityChecks {
     private EntityChecks() {
@@ -43,25 +45,30 @@ final class EntityChecks {
                 throw new IllegalStateException("the entity check's area holds entities already; it changes nothing");
             }
             ArmorStand stand = RegionChecks.stand(r, x + 1.5, 101, z + 1.5);
+            // A setting a plugin makes through Paper's API, saved under a key of CraftBukkit's own.
+            stand.getBukkitEntity().setVisibleByDefault(false);
             CompoundTag raw = new CompoundTag();
             stand.saveAsPassenger(raw);
-            List<String> rawKeys = raw.getAllKeys().stream().filter(CraftBukkitKeys::isCraftBukkit).sorted().toList();
+            List<String> stripped = raw.getAllKeys().stream().filter(CraftBukkitKeys::stripped).sorted().toList();
             CompoundTag captured = McEntities.save(stand, EntityFilter.DECORATIONS);
-            List<String> left = captured.getAllKeys().stream().filter(CraftBukkitKeys::isCraftBukkit).sorted().toList();
-            r.record("entities: a capture leaves CraftBukkit's keys out", !rawKeys.isEmpty() && left.isEmpty(),
-                    "the game saves " + rawKeys + ", the capture keeps " + left);
+            List<String> left = captured.getAllKeys().stream().filter(CraftBukkitKeys::stripped).sorted().toList();
+            boolean kept = captured.contains("Bukkit.visibleByDefault");
+            r.record("entities: a capture leaves the world and spawn keys out and keeps plugin settings",
+                    !stripped.isEmpty() && left.isEmpty() && kept, "the game saves " + stripped + ", the capture "
+                            + "keeps " + left + "; Bukkit.visibleByDefault kept " + kept);
             stand.discard();
             return pasteWithoutPaperKeys(r, x, z);
         });
     }
 
     /**
-     * An armor stand pasted from data with none of CraftBukkit's keys (as a schematic from another platform holds it),
-     * then undone: the undo compares the stand with what the paste recorded after placing it, so it must find no
-     * conflict and take the stand away.
+     * An armor stand pasted from data with none of the stripped keys (as a schematic from another platform holds it) but
+     * with a plugin setting ({@code Bukkit.visibleByDefault: false}), then undone: the placed stand keeps the setting, and
+     * the undo compares it with what the paste recorded after placing it, so it must find no conflict and take it away.
      */
     private static CompletableFuture<Void> pasteWithoutPaperKeys(SelfTestRun r, int x, int z) {
-        byte[] data = NbtIo.toBytes(NbtCompound.builder().putByte("NoGravity", (byte) 1).build());
+        byte[] data = NbtIo.toBytes(NbtCompound.builder().putByte("NoGravity", (byte) 1)
+                .putByte("Bukkit.visibleByDefault", (byte) 0).build());
         Clipboard clipboard = Clipboard.builder(r.host.engine().states(), new BlockPos(3, 3, 3)).build()
                 .withEntities(List.of(new EntitySnapshot("minecraft:armor_stand", 1.5, 0, 1.5, 0f, 0f, null, data,
                         false)));
@@ -72,9 +79,11 @@ final class EntityChecks {
         Box pasted = box(origin.x(), origin.y(), origin.z(), origin.x() + 2, origin.y() + 2, origin.z() + 2);
         return r.job("paste", listener -> r.service.run(r.player, paste, RunOptions.DEFAULT, listener))
                 .thenCompose(result -> {
-                    int placed = r.level.getEntitiesOfClass(ArmorStand.class, aabb(pasted)).size();
-                    r.record("entities: a pasted stand without CraftBukkit's keys is placed", placed == 1,
-                            placed + " stands placed (" + result.outcome() + ")");
+                    List<ArmorStand> placed = r.level.getEntitiesOfClass(ArmorStand.class, aabb(pasted));
+                    boolean hidden = placed.size() == 1 && !placed.get(0).getBukkitEntity().isVisibleByDefault();
+                    r.record("entities: a pasted stand keeps the plugin setting it was saved with",
+                            placed.size() == 1 && hidden, placed.size() + " stands placed, visible by default "
+                                    + !hidden + " (" + result.outcome() + ")");
                     // A few ticks, as a player would undo later: CraftBukkit's tick counter moves on meanwhile.
                     return ticks(10).thenCompose(v -> r.undo());
                 })

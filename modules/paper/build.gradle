@@ -24,7 +24,7 @@ repositories {
 
 // The plugin takes the loader-free Minecraft code of modules/common as source, like the loader modules do, but through
 // a copy (commonForPaper) with the few Paper-only changes no seam covers: the physics-off write and the light marker go
-// through PaperAccess, captured entities lose CraftBukkit's own keys (CraftBukkitKeys), and the methods Paper's
+// through PaperAccess, captured entities lose CraftBukkit's world and spawn keys (CraftBukkitKeys), and the methods Paper's
 // patched level interfaces declare abstract are added. (The access-widened reads go through the McInternals seam,
 // which PaperAccess implements.) Every patch must match, so a change in modules/common that moves one fails here
 // instead of silently compiling the old behaviour.
@@ -86,7 +86,7 @@ def commonPatches = [
                 ['final class LoadedOnlyView implements LevelReader {',
                  'final class LoadedOnlyView implements LevelReader {\n' + levelReaderMethods],
         ],
-        // CraftBukkit's own entity keys (Bukkit.*, Paper.*, Spigot.*, the world id) are not part of a captured entity.
+        // CraftBukkit's world-bound and volatile entity keys (CraftBukkitKeys.STRIPPED) are not part of a captured entity.
         'dev/sculptory/mc/world/McEntities.java': [
                 ['if (!entity.saveAsPassenger(nbt)) return null;',
                  'if (!entity.saveAsPassenger(nbt)) return null;\n        dev.sculptory.paper.nms.CraftBukkitKeys.strip(nbt);'],
@@ -105,7 +105,7 @@ def commonDriftGuards = [
         [/setBlock\([^;]*UPDATE_KNOWN_SHAPE/, '0',
          'A physics-off write needs PaperAccess.setBlockWithoutCallbacks on Paper (no mixin cancels onPlace/onRemove).'],
         [/saveAsPassenger\(|saveWithoutId\(|\.save\(new CompoundTag/, '1',
-         "Entity NBT is captured in McEntities.save alone, where CraftBukkit's keys are stripped (a patch); another capture would keep them."],
+         "Entity NBT is captured in McEntities.save alone, where CraftBukkit's world and spawn keys are stripped (a patch); another capture would keep them."],
         [/EditScope\.suppressPhysics\(\)/, '2',
          "EditScope suppresses nothing on Paper (its mixin is absent): BlockWriter's two uses are covered, a new one is not."],
 ].collect { it.collect { s -> s.toString() } }
