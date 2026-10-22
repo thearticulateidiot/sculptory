@@ -29,7 +29,11 @@ import org.bukkit.plugin.Plugin;
  *       (joining, respawning, changing world, {@code /op} and {@code /deop}, a plugin's {@code updateCommands()}, which
  *       LuckPerms calls after a change by default). The jobs are checked in the player's current world, since a
  *       permissions plugin may grant a node in one world only; after an op change (the player's op status differs from
- *       when it was last seen), which holds in every world, in every world.</li>
+ *       when it was last seen), which holds in every world, in every world. Paper builds the tree off the server thread
+ *       and fires the event back on it later, so it may come for a player who has quit meanwhile: then nothing is
+ *       checked and the player's op entry is dropped. With {@code tab-complete: -1} in spigot.yml Paper sends an empty
+ *       tree and never fires this event: {@code /op} and {@code /deop} then apply at the periodic re-checks below
+ *       (within {@value EngineEditService#PERMISSION_RECHECK_TICKS} ticks), unless LuckPerms reports them.</li>
  *   <li>LuckPerms' {@code UserDataRecalculateEvent}, when LuckPerms is installed ({@link LuckPermsHook}).</li>
  *   <li>Otherwise the engine's own periodic re-checks catch a change within two seconds: the dispatcher re-reads every
  *       session's permissions and the edit service re-checks its job owners every
@@ -98,6 +102,12 @@ public final class PermissionWatch implements Listener {
     /** Applies the player's current rights: their client's permissions, their jobs and their scatter preview. */
     void recheck(Player bukkit) {
         ServerPlayer player = ((CraftPlayer) bukkit).getHandle();
+        if (player.hasDisconnected()) {
+            // A late event for a player who has quit (the command tree is built off the thread): nothing to apply, and
+            // no op entry may outlive them.
+            ops.remove(bukkit.getUniqueId());
+            return;
+        }
         boolean op = bukkit.isOp();
         Boolean wasOp = ops.put(bukkit.getUniqueId(), op);
         boolean allWorlds = wasOp != null && wasOp != op;
