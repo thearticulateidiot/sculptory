@@ -40,6 +40,8 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SpreadingSnowyDirtBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.levelgen.Heightmap;
@@ -132,8 +134,8 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
     private final List<WeakReference<Supplier<Set<UUID>>>> holders = new ArrayList<>();
     /** The tick being recorded, or {@code null}. */
     private Recording recording;
-    /** Per world, per entry: the changes event-driven platforms noted this tick ({@link #eventChange}). */
-    private final Map<ServerLevel, Map<UUID, Recording>> eventRecordings = new IdentityHashMap<>();
+    /** The fluid change an event-driven platform announced last ({@link #eventChange}), until it is closed. */
+    private Recording eventRecording;
     /** Sections holding marks, over all worlds: the block-change hook does nothing while there are none. */
     private int markedSections;
     private int ticks;
@@ -667,7 +669,7 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
      */
     public void restart() {
         worlds.clear();
-        eventRecordings.clear();
+        eventRecording = null;
         frozen.clear();
         trailCaps.clear();
         recording = null;
@@ -692,7 +694,7 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
 
     // A platform without the mixins (Paper) has no hook into every block change or every tick. It reports the fluid
     // changes its events announce instead (a flow, a level change, a block forming or fading), each before it happens;
-    // the changes noted in a tick go into their entries' trails at the end of that tick, as a recorded tick's would.
+    // each change is recorded on its own, from just before it until its effect has happened, as a recorded tick is.
 
     /**
      * The entry a fluid change at {@code pos} is attributed to, by the rules the tick hooks use for a fluid tick there:
@@ -739,32 +741,43 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
     }
 
     /**
-     * Cell {@code pos} is about to change by {@code owner}'s fluid: its state now is noted as its first state in the
-     * tick (the first note of a cell in a tick wins), and its last state is read when the tick's changes end. Its six
-     * neighbours are noted too, so what the change sets off right beside it (a tall plant's other half popping off) is
-     * recorded; those that end the tick unchanged are left out, as in a recorded tick.
+     * Cell {@code pos} is about to change by {@code owner}'s fluid (the event announcing it is being handled): its state
+     * now is noted as its first state, and so is the other half of a double block there (a tall plant whose lower half
+     * the water takes pops off whole); nothing else is noted, so what other game logic changes nearby is never taken for
+     * the fluid's. The change gets its own recording, closed when the event's own effect has happened: at the next fluid
+     * event, before a player's change is applied ({@link #changedOtherwise}), or at the end of the tick
+     * ({@link #finishEventChanges}), whichever comes first; then each noted cell that differs goes into the entry's
+     * trail with its first and last state.
      */
     public static void eventChange(ServerLevel world, BlockPos pos, UUID owner) {
         FluidTrails trails = active;
         if (trails == null || owner == null || Thread.currentThread() != trails.thread) return;
+        trails.closeEventChange();
         WorldTrails w = trails.worlds.computeIfAbsent(world, k -> new WorldTrails());
-        Map<UUID, Recording> open = trails.eventRecordings.computeIfAbsent(world, k -> new LinkedHashMap<>());
-        Recording r = open.computeIfAbsent(owner, k -> new Recording(trails, world, w, owner));
+        Recording r = new Recording(trails, world, w, owner);
+        trails.eventRecording = r;
         r.note(pos);
-        BlockPos.MutableBlockPos next = new BlockPos.MutableBlockPos();
-        for (Direction direction : Direction.values()) r.note(next.setWithOffset(pos, direction));
+        if (!WorldChecks.isChunkLoaded(world, pos.getX() >> 4, pos.getZ() >> 4)) return;
+        BlockState state = world.getBlockState(pos);
+        if (state.hasProperty(BlockStateProperties.DOUBLE_BLOCK_HALF)) {
+            r.note(state.getValue(BlockStateProperties.DOUBLE_BLOCK_HALF) == DoubleBlockHalf.LOWER ? pos.above()
+                    : pos.below());
+        }
     }
 
-    /** End of the tick: the changes noted since go into their entries' trails, and the wakes used are spent. */
+    /** The last announced fluid change's effect has happened: its recording goes into the entry's trail. */
+    private void closeEventChange() {
+        Recording r = eventRecording;
+        if (r == null) return;
+        eventRecording = null;
+        finish(r);
+    }
+
+    /** End of the tick: the last announced change is closed, and the wakes used are spent. */
     public static void finishEventChanges() {
         FluidTrails trails = active;
         if (trails == null || Thread.currentThread() != trails.thread) return;
-        if (!trails.eventRecordings.isEmpty()) {
-            List<Recording> done = new ArrayList<>();
-            for (Map<UUID, Recording> open : trails.eventRecordings.values()) done.addAll(open.values());
-            trails.eventRecordings.clear();
-            for (Recording r : done) trails.finish(r);
-        }
+        trails.closeEventChange();
         for (WorldTrails w : trails.worlds.values()) {
             if (w.wakesUsed.isEmpty()) continue;
             for (long key : w.wakesUsed) w.woken.remove(key);
@@ -780,6 +793,8 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
     public static void changedOtherwise(ServerLevel world, BlockPos pos) {
         FluidTrails trails = active;
         if (trails == null || Thread.currentThread() != trails.thread) return;
+        // The player's change comes after the fluid's last one: that recording ends before it.
+        trails.closeEventChange();
         trails.overwritten(world, pos.getX(), pos.getY(), pos.getZ());
     }
 

@@ -6,18 +6,28 @@ import static dev.sculptory.paper.devtest.SelfTestRun.cells;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.mc.world.FluidTrails;
+import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.nms.PaperAccess;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.AbstractFurnaceBlock;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.RedStoneWireBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.material.Fluids;
+import org.bukkit.Bukkit;
+import org.bukkit.craftbukkit.CraftWorld;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockFromToEvent;
 
 /**
  * Fluid trails on Paper (PaperFluidTrails), one covered case and the recorded result of uncovered ones:
@@ -25,6 +35,8 @@ import net.minecraft.world.level.material.Fluids;
  *   <li>covered: water written by a fill (still, physics off) is set flowing; it spreads over a stone floor, Bukkit's
  *       flow and level events record it into the fill's trail, its marks reach the chunk's data container at a full
  *       save, and the fill's undo takes every cell of it back;</li>
+ *   <li>only what the fluid explains: a furnace beside the flow that another plugin lights in the flow's own tick is
+ *       left lit by the fill's undo;</li>
  *   <li>uncovered (information, not failures): the same water washing away the first dust of a powered redstone line:
  *       the line's far dust loses power in that same tick with no event, so after the undo it stays unpowered; and a
  *       block another plugin sets in a marked cell keeps the cell's mark.</li>
@@ -45,7 +57,8 @@ final class FluidChecks {
             if (r.level.getBlockState(cell) != state) PaperAccess.setBlockWithoutCallbacks(r.level, cell, state);
             r.level.getChunkSource().blockChanged(cell);
         }
-        return covered(r, x0, z0).thenCompose(v -> redstone(r, x0 + 16, z0)).thenCompose(v -> otherPlugin(r, x0, z0));
+        return covered(r, x0, z0).thenCompose(v -> redstone(r, x0 + 16, z0)).thenCompose(v -> otherPlugin(r, x0, z0))
+                .thenCompose(v -> furnaceBeside(r, x0, z0 + 16));
     }
 
     /** Water from a fill flows out; its trail and marks are recorded; the fill's undo takes all of it back. */
@@ -132,6 +145,68 @@ final class FluidChecks {
             r.info("fluid trails, uncovered: another plugin's block in a marked cell", "marked before " + before
                     + ", after the plugin set stone there " + after + (after ? " (the mark stays; on Fabric the "
                     + "block-change hook clears it)" : ""));
+        });
+    }
+
+    /** Lights the furnace beside a cell water flows into, during that flow's own event (another plugin, same tick). */
+    static final class FurnaceLighter implements Listener {
+        private final BlockPos furnace;
+        int lit;
+
+        FurnaceLighter(BlockPos furnace) {
+            this.furnace = furnace;
+        }
+
+        @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+        public void flowed(BlockFromToEvent event) {
+            org.bukkit.block.Block to = event.getToBlock();
+            BlockPos into = new BlockPos(to.getX(), to.getY(), to.getZ());
+            if (lit > 0 || into.distManhattan(furnace) != 1) return;
+            ServerLevel level = ((CraftWorld) to.getWorld()).getHandle();
+            BlockState state = level.getBlockState(furnace);
+            if (!state.is(Blocks.FURNACE)) return;
+            level.setBlock(furnace, state.setValue(AbstractFurnaceBlock.LIT, true), Block.UPDATE_ALL);
+            lit++;
+        }
+    }
+
+    /**
+     * Only what the fluid explains is recorded: water a fill wrote flows past a furnace, and in the very tick the water
+     * reaches the furnace's side, another plugin lights the furnace (from the flow's own event). The fill's undo takes
+     * the water back and leaves the furnace lit: its change was never the water's.
+     */
+    private static CompletableFuture<Void> furnaceBeside(SelfTestRun r, int x0, int z0) {
+        Box area = box(x0, FLOOR, z0, x0 + 15, FLOOR + 4, z0 + 15);
+        r.claim(area);
+        for (BlockPos cell : cells(area)) {
+            BlockState state = cell.getY() == FLOOR ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState();
+            if (r.level.getBlockState(cell) != state) PaperAccess.setBlockWithoutCallbacks(r.level, cell, state);
+            r.level.getChunkSource().blockChanged(cell);
+        }
+        BlockPos source = new BlockPos(x0 + 8, FLOOR + 1, z0 + 8);
+        BlockPos furnace = source.east(2).north();
+        PaperAccess.setBlockWithoutCallbacks(r.level, furnace, Blocks.FURNACE.defaultBlockState());
+        r.level.getChunkSource().blockChanged(furnace);
+        FurnaceLighter lighter = new FurnaceLighter(furnace);
+        Bukkit.getPluginManager().registerEvents(lighter, SculptoryPlugin.instance());
+        r.cleanup(() -> HandlerList.unregisterAll(lighter));
+        Box one = box(source.getX(), source.getY(), source.getZ(), source.getX(), source.getY(), source.getZ());
+        return r.fill(one, Block.getId(Blocks.WATER.defaultBlockState())).thenCompose(result -> {
+            r.level.scheduleTick(source, Fluids.WATER, 1);
+            return r.ticks(60);
+        }).thenCompose(v -> {
+            HandlerList.unregisterAll(lighter);
+            return r.undo();
+        }).thenCompose(result -> r.ticks(20)).thenAccept(v -> {
+            boolean lit = r.level.getBlockState(furnace).getValue(AbstractFurnaceBlock.LIT);
+            int wet = 0;
+            for (BlockPos cell : cells(box(x0, FLOOR + 1, z0, x0 + 15, FLOOR + 1, z0 + 15))) {
+                if (!r.level.getFluidState(cell).isEmpty()) wet++;
+            }
+            r.record("fluid trails: the fill's undo leaves a furnace lit in the flow's tick alone",
+                    lighter.lit == 1 && lit && wet == 0,
+                    "lit by the flow's event " + lighter.lit + " time(s), lit after the undo " + lit + ", " + wet
+                            + " wet cells left");
         });
     }
 

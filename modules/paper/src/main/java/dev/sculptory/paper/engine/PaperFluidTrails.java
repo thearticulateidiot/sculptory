@@ -41,27 +41,37 @@ import org.bukkit.plugin.Plugin;
  * Fluid trails on Paper ({@link FluidTrails}), fed by Bukkit's fluid events instead of Fabric's mixins: what the fluid
  * a history step wrote does afterwards is recorded so the entry's next undo takes it back too.
  *
- * <p><b>Covered</b> (each change noted before it happens, with its six neighbours; read again at the end of the tick):
+ * <p><b>Covered</b> (each change noted on its own before it happens, the cell the event names and the other half of a
+ * double block there; read again once its effect has happened: at the next fluid event, a player's change, or the end
+ * of the tick, {@link FluidTrails#eventChange}):
  * <ul>
- *   <li>flowing out and down ({@link BlockFromToEvent}: the cell flowed into, a torch or plant it washes away);</li>
+ *   <li>flowing out and down ({@link BlockFromToEvent}: the cell flowed into, a torch or plant it washes away, a tall
+ *       plant's other half);</li>
  *   <li>a fluid cell's own level changing or drying up, flowing water becoming a source ({@link FluidLevelChangeEvent});</li>
  *   <li>blocks formed by the fluid: obsidian, cobblestone, stone and basalt where water and lava meet, ice where water
  *       freezes, concrete where powder meets water ({@link BlockFormEvent});</li>
  *   <li>grass dying under a full block of the fluid, ice melting ({@link BlockFadeEvent});</li>
  *   <li>fire lava sets ({@link BlockIgniteEvent} with cause LAVA).</li>
  * </ul>
- * <b>Not covered</b> (Paper fires no event a plugin could attribute): what those changes set off beyond the cells next
- * to them (a redstone line losing power along its length when water washes away its first dust, a chain of vines);
- * block changes other plugins or commands make in a marked cell do not clear its mark (only player placements and
- * breaks, buckets and Sculptory's own edits do), so fluid poured there later may be taken for the entry's.
+ * <b>Not covered</b> (Paper fires no event a plugin could attribute): what those changes set off in other cells (a
+ * redstone line losing power along its length when water washes away its first dust, a chain of vines, a block on top
+ * of a washed-away one); block changes other plugins or commands make in a marked cell do not clear its mark (only
+ * player placements and breaks, buckets and Sculptory's own edits do), so fluid poured there later may be taken for the
+ * entry's. Something else changing the very cell the fluid just changed, later in the same tick and before the next
+ * fluid event (rare: the cell holds the fluid by then), is recorded as the fluid's.
  *
  * <p>While an entry's step writes (frozen), its flows and level changes are cancelled and the fluid's tick is scheduled
  * again, as Fabric's tick hook puts them off; its random-tick changes (forming, fading, fire) are cancelled.
  *
  * <p><b>Marks with the chunks.</b> A column's marks live in its chunk's persistent data container under
  * {@value FluidTrails#NBT_KEY} (the key Fabric writes into the chunk data): read when the chunk loads, written before it
- * unloads, before a full world save, and every {@value #FLUSH_TICKS} ticks for the columns whose marks changed (Moonrise's
- * incremental autosave has no event, so a chunk it saves may carry marks that old).
+ * unloads, before a full world save, and every {@value #FLUSH_TICKS} ticks for the loaded columns whose marks changed
+ * (Moonrise's incremental autosave has no event, so a chunk it saves may carry marks up to that old). After a crash the
+ * marks of up to the last ~5 s are lost: fluid an entry wrote just before is then no longer followed (its later flow is
+ * not undone with it), and marks cleared in those seconds come back stale (fluid poured there later may be taken for
+ * the entry's until the cell changes). A column whose trail still holds a part the history could not fold yet (its
+ * player's step in flight, its history not loaded) is flagged unsaved at every flush ({@link FluidTrails#chunkSaved}),
+ * so the autosave writes that chunk again every flush until the part is folded.
  */
 final class PaperFluidTrails implements Listener {
     /** How often (ticks) changed marks are copied into their chunks' data containers. */
@@ -235,8 +245,12 @@ final class PaperFluidTrails implements Listener {
     /** After the history hook (registered earlier at the same priority) folded the column's trails. */
     @EventHandler(priority = EventPriority.LOWEST)
     public void chunkUnloading(ChunkUnloadEvent event) {
-        if (!event.isSaveChunk()) return;
-        save(level(event.getWorld()), event.getChunk().getX(), event.getChunk().getZ());
+        ServerLevel level = level(event.getWorld());
+        int cx = event.getChunk().getX(), cz = event.getChunk().getZ();
+        if (event.isSaveChunk()) save(level, cx, cz);
+        // Its container is on disk now (read again when the chunk loads): the flushes leave the column alone meanwhile.
+        LongSet columns = written.get(level);
+        if (columns != null) columns.remove(ChunkPos.asLong(cx, cz));
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
