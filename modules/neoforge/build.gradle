@@ -263,6 +263,9 @@ sourceSets {
 }
 neoForge.addModdingDependenciesTo(sourceSets.gametest)
 neoForge.addModdingDependenciesTo(sourceSets.fidelity)
+// Unit tests of the NeoForge layer's own logic (EditorMovementContextTest) compile against NeoForge's types; they run as
+// plain JUnit, without the game.
+neoForge.addModdingDependenciesTo(sourceSets.test)
 // The fidelity tests are placed on the shared empty structure too.
 tasks.named('processFidelityResources') {
     from(project(':common').sourceSets.gametest.resources.srcDirs) { include 'data/**' }

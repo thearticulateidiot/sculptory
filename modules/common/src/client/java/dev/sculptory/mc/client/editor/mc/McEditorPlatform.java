@@ -200,7 +200,14 @@ public final class McEditorPlatform implements EditorPlatform {
     }
 
     private List<KeyMapping> movementBindings() {
-        Options options = client.options;
+        return movementBindings(client.options);
+    }
+
+    /**
+     * The player's movement bindings, which the editor screen lets through: forward, back, left, right, jump, sneak and
+     * sprint. A loader that switches bindings off while a screen is open has to keep these on under the editor screen.
+     */
+    public static List<KeyMapping> movementBindings(Options options) {
         return List.of(options.keyUp, options.keyDown, options.keyLeft, options.keyRight, options.keyJump,
                 options.keyShift, options.keySprint);
     }

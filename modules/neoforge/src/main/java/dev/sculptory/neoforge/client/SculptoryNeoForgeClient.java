@@ -3,12 +3,14 @@ package dev.sculptory.neoforge.client;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.client.builder.BuilderClient;
 import dev.sculptory.mc.client.editor.EditorClient;
+import dev.sculptory.mc.client.editor.EditorScreen;
 import dev.sculptory.mc.client.editor.SessionProvider;
 import dev.sculptory.mc.client.editor.biomes.BiomeView;
 import dev.sculptory.mc.client.editor.check.CheckConfig;
 import dev.sculptory.mc.client.editor.check.PlayCheck;
 import dev.sculptory.mc.client.editor.demo.DemoConfig;
 import dev.sculptory.mc.client.editor.demo.PlayDemo;
+import dev.sculptory.mc.client.editor.mc.McEditorPlatform;
 import dev.sculptory.mc.client.editor.tour.TourConfig;
 import dev.sculptory.mc.client.editor.tour.UiTour;
 import dev.sculptory.mc.client.net.ClientNet;
@@ -76,6 +78,9 @@ public final class SculptoryNeoForgeClient {
             SessionProvider.set(new ClientEditorBackend(session, states, () -> Minecraft.getInstance().level));
         }
         EditorClient editor = EditorClient.init();
+        // NeoForge switches the movement keys off under any screen; the editor screen lets them through (as on Fabric).
+        EditorMovementContext.install(McEditorPlatform.movementBindings(Minecraft.getInstance().options),
+                () -> Minecraft.getInstance().screen instanceof EditorScreen);
         EditorHudLayers.install();
         NeoForgeFlySpeedCommand.register(editor.flight(), editor.mode()::isEditing);
         // Builder mode (hold G): the same session and state space as the editor.
