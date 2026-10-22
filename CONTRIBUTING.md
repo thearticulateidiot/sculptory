@@ -72,13 +72,13 @@ By making a contribution to this project, I certify that:
 
 ## Where the code lives
 
-The code is in five Gradle modules under `modules/`:
+The code is in seven Gradle modules under `modules/`:
 
 - `core`: the editing engine without Minecraft: regions, masks, brushes, edit programs, scatter planning, undo
   history and its saved format, schematic and NBT reading. Plain Java, tested with JUnit.
 - `protocol`: the client-server network protocol (messages, codecs, the handshake), also free of Minecraft
   imports, with golden wire samples in its tests.
-- `server`: the server side that every platform shares (Fabric now; Paper and NeoForge are planned): the edit,
+- `server`: the server side that every platform shares (Fabric, NeoForge and Paper): the edit,
   clipboard and scatter services, the job executor, undo history, the library, config, permission and protection
   rules and file sanitizing. No Minecraft imports either: it reaches the game through the interfaces in
   `dev.sculptory.server.platform`, which each platform implements.
@@ -96,6 +96,47 @@ The code is in five Gradle modules under `modules/`:
   networking, permissions api, key bindings), the client commands typed on Fabric's command source, `fabric.mod.json`;
   `src/test` the JUnit tests (for the common code too), and `src/gametest` and `src/fidelity` the Fabric test mods
   that run the shared GameTests.
+- `neoforge`: the NeoForge mod, built with ModDevGradle beside Loom in the same Gradle build: `SculptoryNeoForge` (the
+  one `@Mod` entrypoint), `NeoForgeServerLoader` and `NeoForgeClientLoader` over NeoForge's events, networking,
+  permission API and key mappings, and a few mixins of its own where NeoForge has no event with the meaning the seams
+  promise (join, server stopping, after-save, the client's interaction hooks). Common's sources compile into its
+  single source set; the access transformer is generated from common's access widener at build time, so the two
+  never drift, and the engine (`core`, `protocol`, `server`) is packed into the jar as classes. `src/gametest` and
+  `src/fidelity` register the shared GameTests with NeoForge's GameTest server (`src/gametestSupport` is their
+  `GameTestLoader`).
+- `paper`: the Paper plugin (a Bukkit `plugin.yml` plugin), built with paperweight-userdev against Paper's server in
+  Mojang's names, so nothing is reobfuscated. It takes common's `src/main` as source too, but through a **patched
+  copy**: the `commonForPaper` task copies those sources into `build/generated/commonForPaper`, leaves out what Paper
+  can't run (the mixins, the loaders' command tree and engine wiring, the mixin-backed builder steps) and applies a
+  handful of literal patches where no seam covers a Paper difference (the physics-off block write, the light marker,
+  CraftBukkit's entity keys, the methods Paper's level interfaces add). Every patch must match, and drift guards
+  forbid new uses of what the patches replace, so a change in `common` that moves one fails the Paper build instead
+  of compiling the old behaviour. `src/commonReplacements` holds the one class Paper swaps in whole (the light
+  batch), and the `probe` source set compiles all of common through the same patches as a check. The plugin wires the
+  engine itself (`PaperEngine`, `PaperEditHost`, `PaperCommands`), protection through WorldGuard when it is
+  installed, and builder mode through CraftBukkit's block events (`PaperBuilderSteps`).
+
+The loader seams are the interfaces common code reaches a platform through, and the only place a platform plugs in:
+`ServerLoader` and `ClientLoader` (`dev.sculptory.mc.loader`: events, networking, key bindings, folders),
+`McInternals` (reads of members the access widener opens; Paper's is `PaperAccess`), `McPermissions` (permission
+nodes and chunk permits), `McHost` (what Tinker and Navigate need from the host, such as a teleport), `BuilderSteps`
+(how builder mode runs and records one action: the mixin capture on the loaders, CraftBukkit's events on Paper) and,
+for the tests, `GameTestLoader`. New platform-specific behaviour goes behind one of these rather than into common.
+
+Paper has no GameTests, so the plugin carries a **self-test runner**: groups of checks against the real server (edits
+and exact undo, physics-off writes, WorldGuard refusals, entities, builder mode, Tinker and Navigate, fluid trails,
+scatter, permission changes, history saving, the join race). It exists only when the server starts with
+`-Dsculptory.selftest.enabled=true` (or the property below), and runs:
+
+- by `/sculptory selftest [player]`, from the console or for a player with the `sculptory.selftest` permission (false
+  by default, operators included);
+- at start-up with `-Dsculptory.selftest=<report.xml>`, writing a JUnit-style XML report there; add
+  `-Dsculptory.selftest.stop=true` to stop the server when it is done, and `-Dsculptory.selftest.player=<name>` to run
+  as a real client that has joined instead of a fake player (some checks run only then).
+
+The CI job `paper-selftest` (`.github/workflows/ci.yml`) runs it at start-up on Paper 1.21.1 with WorldEdit and
+WorldGuard, and fails on any failed check or on fewer checks than it expects. Every box a check touches is restored at
+the end.
 
 The wiki lives in `docs/wiki/` and is bundled into the mod for the in-game reader. Its page ids are frozen
 (`WikiPages`); `scripts/check-wiki.ps1` checks its links, pictures and Markdown subset, and `check` runs the same
@@ -119,8 +160,8 @@ failure, an exact undo).
 Useful tasks (the examples use `scripts/gradle.ps1`; `./gradlew` takes the same arguments):
 
 ```powershell
-scripts/gradle.ps1 build          # compile, test and assemble: modules/fabric/build/libs/sculptory-<build id>.jar
-scripts/gradle.ps1 assemble       # the jar only, without tests
+scripts/gradle.ps1 build          # compile, test and build every product's jar (modules/<product>/build/libs)
+scripts/gradle.ps1 assemble       # the jars only, without tests; :paper:assemble and so on for one product
 scripts/gradle.ps1 runClient      # dev client (singleplayer); add -PbsWorld="<world>" to open a world directly
 scripts/gradle.ps1 runServer      # dev server in .local/run/server
 scripts/gradle.ps1 :neoforge:runClient -PbsPlaytest -PbsWorld="<world>"  # NeoForge dev client, with the playtest setup
@@ -157,25 +198,38 @@ bundled.
 
 Sculptory is one engine with a product per platform, each released on its own schedule. `gradle.properties` holds the
 engine's version (`sculptory_engine_version`, for the `core`, `protocol`, `server` and `common` modules) and one
-version per product (`sculptory_fabric_version` for the Fabric mod; NeoForge, Paper and Forge get their own when they
-exist). A product's **build id** is its version plus the Minecraft version it is built for; it names the jar, is the
-version in the mod list and is shown by client and server when a player joins (`/sculptory version`):
+version per product: `sculptory_fabric_version` (the Fabric mod), `sculptory_neoforge_version` (the NeoForge mod) and
+`sculptory_paper_version` (the Paper plugin); Forge gets its own when it exists. A product's **build id** is its
+version plus the Minecraft version it is built for; it names the jar, is the version in the mod or plugin list and is
+shown by client and server when a player joins (`/sculptory version`):
 
 - A **dev build** (any ordinary build) adds the commit: `0.5.0-dev+1.21.1.6a043a85`, with `.dirty` for uncommitted
-  changes and `nogit` without git. Its jar is `sculptory-fabric-0.5.0-dev+1.21.1.6a043a85.jar`.
+  changes and `nogit` without git. Its jar is `sculptory-fabric-0.5.0-dev+1.21.1.6a043a85.jar` (and
+  `sculptory-neoforge-…`, `sculptory-paper-…` for the others).
 - A **release build** is the version and the Minecraft version alone: `0.5.0+1.21.1`, in
   `sculptory-fabric-0.5.0+1.21.1.jar`. Gradle makes one of every product with `-Prelease`
-  (`scripts/gradle.ps1 :fabric:remapJar -Prelease`), and one of a single product when it runs in GitHub Actions for
-  that product's tag, `<product>/v<build id>` (`fabric/v0.5.0+1.21.1`). The tag must match `gradle.properties`, or
-  the build stops; a bare `v…` tag stops it too. A local release build from a checkout with uncommitted changes
-  warns, since its id no longer says so.
+  (`scripts/gradle.ps1 :fabric:remapJar :neoforge:jar :paper:jar -Prelease`), and one of a single product when it
+  runs in GitHub Actions for that product's tag. The tag must match `gradle.properties`, or the build stops; a bare
+  `v…` tag stops it too. A local release build from a checkout with uncommitted changes warns, since its id no longer
+  says so.
+
+Each product has its own tag pattern, `<product>/v<build id>`:
+
+| Product | Tag | Release jar | GitHub Release title |
+|---|---|---|---|
+| Fabric mod | `fabric/v<build id>` (`fabric/v0.5.0+1.21.1`) | `sculptory-fabric-<build id>.jar` | Sculptory for Fabric `<build id>` |
+| NeoForge mod | `neoforge/v<build id>` (`neoforge/v0.5.0+1.21.1`) | `sculptory-neoforge-<build id>.jar` | Sculptory for NeoForge `<build id>` |
+| Paper plugin | `paper/v<build id>` (`paper/v0.1.0+1.21.1`) | `sculptory-paper-<build id>.jar` | Sculptory for Paper `<build id>` |
 
 To release a product: set its version in `gradle.properties`, add a `CHANGELOG.md` section headed
-`## <Product> <build id>` (for example `## Fabric 0.5.0+1.21.1`), commit, and push the tag `<product>/v<build id>`.
-The release workflow (`.github/workflows/release.yml`) runs `check`, builds that product's release jar, attaches it
-to a GitHub Release with the changelog entry (only the Fabric mod's releases become "Latest"), and uploads it to the
-product's Modrinth and CurseForge projects when their tokens are set up. A client and a server need the same
-protocol, not the same product version: a Fabric client can edit on any server whose Sculptory speaks its protocol.
+`## <Product> <build id>` (`## Fabric 0.5.0+1.21.1`, `## NeoForge 0.5.0+1.21.1`, `## Paper 0.1.0+1.21.1`), commit,
+and push the tag. The release workflow (`.github/workflows/release.yml`) runs `check`, builds that product's release
+jar, attaches it to a GitHub Release with the changelog entry (a pre-release for versions with a `-`; only the Fabric
+mod's releases become "Latest"), and uploads it to the product's stores when their tokens are set up: the Fabric and
+NeoForge mods to one Modrinth project and one CurseForge project (the loader tells their files apart), the Paper
+plugin to its own Modrinth project, a CurseForge Bukkit plugin project and Hangar. A client and a server need the
+same protocol, not the same product or version: a Fabric client can edit on any server whose Sculptory speaks its
+protocol.
 
 ## Pull requests
 

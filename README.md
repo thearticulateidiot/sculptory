@@ -2,10 +2,11 @@
 
 <p align="center"><img src="branding/sculptory-logo.png" alt="Sculptory" width="600"></p>
 
-Sculptory is an open-source world editor for Minecraft builders, for **Fabric 1.21.1**. Press `B` and the game turns
-into an editor: floating windows, a tool palette, brushes that shape terrain, selections you can fill, copy, turn and
-stack, schematics, a shared library, scatter and one undo history for all of it. It works in singleplayer and on
-dedicated servers, where the server decides who may edit.
+Sculptory is an open-source world editor for Minecraft builders, for **Minecraft 1.21.1** on **Fabric**, with
+**NeoForge** and **Paper** versions on the way (see [Install](#install)). Press `B` and the game turns into an editor:
+floating windows, a tool palette, brushes that shape terrain, selections you can fill, copy, turn and stack,
+schematics, a shared library, scatter and one undo history for all of it. It works in singleplayer and on dedicated
+servers, where the server decides who may edit.
 
 > **Beta.** The main tools are done, and what you save (settings, layouts, presets, undo history, the library) carries
 > over to newer Sculptory versions for the same Minecraft version: see [Updating Sculptory](docs/wiki/updating.md).
@@ -77,25 +78,61 @@ dedicated servers, where the server decides who may edit.
 
 ## Install
 
+Sculptory comes as one product per platform, each with its own jar and version, all for Minecraft: Java Edition
+1.21.1 and Java 21:
+
+| Product | What it is | Status |
+|---|---|---|
+| **Sculptory for Fabric** | The mod, for clients and servers | Released: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) and [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (a Modrinth page follows) |
+| **Sculptory for NeoForge** | The mod, for clients and servers | Coming soon; built from source today: `./gradlew :neoforge:assemble` makes `modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar` |
+| **Sculptory for Paper** | A server plugin; players edit with the mod | Coming soon; built from source today: `./gradlew :paper:assemble` makes `modules/paper/build/libs/sculptory-paper-<build id>.jar` |
+
+A client and a server need the same network protocol, not the same loader: a Fabric client can edit on a NeoForge
+server and a NeoForge client on a Fabric server, and on a Paper server players edit with the Sculptory mod for their
+loader. A client of another protocol can join and play but not edit. [Building from source](#building-from-source)
+says what a build needs.
+
+### Fabric
+
 | You need | Version |
 |---|---|
-| Minecraft: Java Edition | 1.21.1 |
 | [Fabric Loader](https://fabricmc.net/use/) | 0.16.14 or newer |
 | [Fabric API](https://modrinth.com/mod/fabric-api) | 0.116.4+1.21.1 or newer |
-| Java | 21 |
 
 1. Install Fabric Loader for 1.21.1 and put Fabric API and the Sculptory jar into your `mods` folder.
 2. **Singleplayer** works with that alone: you can edit in every world you own.
 3. **On a server**, put Fabric API and the **same Sculptory jar** on the server and on every client that wants to edit.
    By default operators (op level 2 or higher) may edit; a permissions mod can decide per player or group.
 
-**Updating:** replace the jar in `mods` (on a server, the same jar on the server and every editing client). Your
-settings, layouts, presets, undo history and library carry over: [Updating Sculptory](docs/wiki/updating.md) lists
-what is kept and where the files are.
+### NeoForge
 
-Downloads: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) and
-[GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (a Modrinth page follows). [Server setup](docs/wiki/server-setup.md) in the wiki has the details: updating, which build you have, removing
-the mod.
+| You need | Version |
+|---|---|
+| [NeoForge](https://neoforged.net/) | 21.1.264 or newer (for 1.21.1) |
+
+1. Install NeoForge for 1.21.1 and put the Sculptory for NeoForge jar into your `mods` folder. Nothing else is
+   needed.
+2. **Singleplayer** works with that alone.
+3. **On a server**, put the jar on the server and on every client that wants to edit. By default operators may edit;
+   a permissions mod can decide per player or group, with the same `sculptory.*` nodes as on Fabric.
+
+### Paper
+
+| You need | Version |
+|---|---|
+| [Paper](https://papermc.io/) | 1.21.1, build 133 |
+| [WorldGuard](https://enginehub.org/worldguard) (optional) | 7.0.12 for 1.21.1, if you want its regions respected |
+
+1. Put the Sculptory for Paper jar into the server's `plugins` folder and start the server.
+2. Players who want to edit install the Sculptory mod for their loader (Fabric or NeoForge) on their client; everyone
+   else joins with nothing installed.
+3. By default operators may edit; LuckPerms or another permissions plugin can decide per player or group, with the
+   same `sculptory.*` nodes.
+
+**Updating:** replace the jar (on a server, on the server and every editing client). Your settings, layouts, presets,
+undo history and library carry over: [Updating Sculptory](docs/wiki/updating.md) lists what is kept and where the
+files are. [Server setup](docs/wiki/server-setup.md) in the wiki has the details for each platform: updating, which
+build you have, removing the mod.
 
 ## Quick start
 
@@ -117,9 +154,9 @@ New to it? Open the editor and pick **Help > Tutorial**. All keys: [Keys](docs/w
 
 ## Servers
 
-[Server setup](docs/wiki/server-setup.md) covers installing, `config/sculptory/server.json` and the `/sculptory`
-commands; [Permissions](docs/wiki/permissions.md) lists the nodes, with LuckPerms examples. Every setting, command
-and limit is in [Server configuration](docs/wiki/config.md).
+[Server setup](docs/wiki/server-setup.md) covers installing on Fabric, NeoForge and Paper, `server.json`, the
+`/sculptory` commands and Paper's known limits; [Permissions](docs/wiki/permissions.md) lists the nodes, with
+LuckPerms examples. Every setting, command and limit is in [Server configuration](docs/wiki/config.md).
 
 ## Documentation
 
@@ -134,14 +171,18 @@ and limit is in [Server configuration](docs/wiki/config.md).
 You need a JDK 21; the Gradle wrapper fetches everything else.
 
 ```sh
-./gradlew build        # Linux and macOS: compile, test, and build modules/fabric/build/libs/sculptory-fabric-<build id>.jar
-./gradlew assemble     # the jar only, without tests
+./gradlew build                # Linux and macOS: compile, test, and build every product's jar
+./gradlew assemble             # the jars only, without tests
+./gradlew :fabric:assemble     # one product: modules/fabric/build/libs/sculptory-fabric-<build id>.jar
+./gradlew :neoforge:assemble   # modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar
+./gradlew :paper:assemble      # modules/paper/build/libs/sculptory-paper-<build id>.jar
 ```
 
 On Windows, `scripts/gradle.ps1 <tasks>` runs the wrapper with the JDK in `$env:SCULPTORY_JDK` (or a portable JDK in a
 `toolchains\jdk-21*` folder beside the repository, or `JAVA_HOME`). `check` runs the JUnit tests and the headless
-Fabric GameTests. [CONTRIBUTING.md](CONTRIBUTING.md) explains the dev client, GameTest filters, render-mod checks and
-release builds.
+GameTests on Fabric and on NeoForge; the Paper plugin has a self-test that runs on a Paper server.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains the dev client, GameTest filters, render-mod checks, the Paper self-test
+and release builds.
 
 ## Contributing
 
