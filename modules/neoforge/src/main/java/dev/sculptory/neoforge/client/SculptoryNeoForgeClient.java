@@ -3,12 +3,14 @@ package dev.sculptory.neoforge.client;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.client.builder.BuilderClient;
 import dev.sculptory.mc.client.editor.EditorClient;
+import dev.sculptory.mc.client.editor.EditorScreen;
 import dev.sculptory.mc.client.editor.SessionProvider;
 import dev.sculptory.mc.client.editor.biomes.BiomeView;
 import dev.sculptory.mc.client.editor.check.CheckConfig;
 import dev.sculptory.mc.client.editor.check.PlayCheck;
 import dev.sculptory.mc.client.editor.demo.DemoConfig;
 import dev.sculptory.mc.client.editor.demo.PlayDemo;
+import dev.sculptory.mc.client.editor.mc.McEditorPlatform;
 import dev.sculptory.mc.client.editor.tour.TourConfig;
 import dev.sculptory.mc.client.editor.tour.UiTour;
 import dev.sculptory.mc.client.net.ClientNet;
@@ -18,9 +20,13 @@ import dev.sculptory.mc.client.world.ClientEditorBackend;
 import dev.sculptory.mc.client.world.ClientStateSpaces;
 import dev.sculptory.mc.client.world.ResentChunks;
 import dev.sculptory.mc.loader.ClientLoaders;
+import dev.sculptory.mc.loader.DevClasses;
 import dev.sculptory.mc.world.McStateSpace;
+import java.util.List;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.neoforged.bus.api.IEventBus;
+import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 
 /**
@@ -46,6 +52,11 @@ public final class SculptoryNeoForgeClient {
     /** Called from the mod's constructor on a client: starts the client side once keys can be registered. */
     public static void init(IEventBus modBus) {
         modBus.addListener(SculptoryNeoForgeClient::start);
+        // Another mod may set a movement key's conflict context after ours was put on (later in the same event, or in
+        // its client setup); that would switch the keys off under the editor screen again. Checked again at the end of
+        // client setup (here) and at the first client tick (wire).
+        modBus.addListener((FMLClientSetupEvent setup) ->
+                setup.enqueueWork(() -> keepMovementKeys("client setup")));
     }
 
     private static void start(RegisterKeyMappingsEvent keys) {
@@ -76,6 +87,15 @@ public final class SculptoryNeoForgeClient {
             SessionProvider.set(new ClientEditorBackend(session, states, () -> Minecraft.getInstance().level));
         }
         EditorClient editor = EditorClient.init();
+        // NeoForge switches the movement keys off under any screen; the editor screen lets them through (as on Fabric).
+        EditorMovementContext.install(movementBindings(), SculptoryNeoForgeClient::editorScreenOpen);
+        boolean[] firstTick = {true};
+        ClientLoaders.get().onClientTickEnd(() -> {
+            if (firstTick[0]) {
+                firstTick[0] = false;
+                keepMovementKeys("the first client tick");
+            }
+        });
         EditorHudLayers.install();
         NeoForgeFlySpeedCommand.register(editor.flight(), editor.mode()::isEditing);
         // Builder mode (hold G): the same session and state space as the editor.
@@ -93,13 +113,29 @@ public final class SculptoryNeoForgeClient {
         }
     }
 
-    /** Whether the dev-only harness started by {@code -D<property>} should run (as in the Fabric layer). */
+    private static List<KeyMapping> movementBindings() {
+        return McEditorPlatform.movementBindings(Minecraft.getInstance().options);
+    }
+
+    private static boolean editorScreenOpen() {
+        return Minecraft.getInstance().screen instanceof EditorScreen;
+    }
+
+    /** Puts the editor's context back on any movement key another mod has given a context of its own since. */
+    private static void keepMovementKeys(String when) {
+        List<String> rewrapped = EditorMovementContext.install(movementBindings(),
+                SculptoryNeoForgeClient::editorScreenOpen);
+        if (!rewrapped.isEmpty()) {
+            Sculptory.LOG.info("Sculptory: by {} another mod had set the key conflict context of {}; wrapped again so"
+                    + " the editor screen lets these keys through", when, String.join(", ", rewrapped));
+        }
+    }
+
+    /**
+     * Whether the dev-only harness started by {@code -D<property>} should run: the property is set and the harness's
+     * class is on this entrypoint's classpath (as in the Fabric layer; see {@link DevClasses}).
+     */
     private static boolean devHarness(String property, String className) {
-        if (System.getProperty(property) == null) return false;
-        String resource = className.replace('.', '/') + ".class";
-        if (SculptoryNeoForgeClient.class.getClassLoader().getResource(resource) != null) return true;
-        Sculptory.LOG.warn("Sculptory: -D{} is set, but this jar has no dev harnesses (they run from a dev checkout only)",
-                property);
-        return false;
+        return DevClasses.requested(SculptoryNeoForgeClient.class.getClassLoader(), property, className);
     }
 }

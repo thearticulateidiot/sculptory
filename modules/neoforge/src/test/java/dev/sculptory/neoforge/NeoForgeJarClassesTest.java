@@ -25,9 +25,10 @@ import org.junit.jupiter.api.Test;
  * split compile does for the common code; this covers the NeoForge layer and the compiled result). A dedicated server
  * loads every class outside the client packages: none may name a client-only class, or it fails to load there. The one
  * allowed way in is {@link SculptoryNeoForge} calling {@code SculptoryNeoForgeClient.init} on a client. Also, as
- * modules/fabric's DevHarnessClassesTest: the jar leaves the dev-only harnesses out, and no shipped class but the client
- * entrypoint names them. Paths come from the build ({@code sculptory.mainClassDirs}, {@code sculptory.mainResourceDir},
- * {@code sculptory.jar}, {@code sculptory.devHarnessPackages}).
+ * modules/fabric's DevHarnessClassesTest: the jar leaves the dev-only packages out (the client harnesses and the
+ * server-side playtest setup), and no shipped class but the entrypoint that starts one names it. Paths come from the
+ * build ({@code sculptory.mainClassDirs}, {@code sculptory.mainResourceDir}, {@code sculptory.jar},
+ * {@code sculptory.devHarnessPackages}, {@code sculptory.devServerPackages}).
  */
 class NeoForgeJarClassesTest {
     /** Internal-name prefixes only a client has, or that hold client-only code of the mod. */
@@ -92,44 +93,66 @@ class NeoForgeJarClassesTest {
     }
 
     @Test
-    void theJarLeavesTheDevHarnessesOut() throws IOException {
-        List<String> packages = devHarnessPackages();
-        int presentInOutput = 0;
+    void theJarLeavesTheDevPackagesOut() throws IOException {
+        List<String> harnesses = devPackages("sculptory.devHarnessPackages");
+        List<String> server = devPackages("sculptory.devServerPackages");
+        int harnessesInOutput = 0;
+        int serverInOutput = 0;
         for (Path root : classDirs()) {
             for (Path file : classFiles(root)) {
                 String name = root.relativize(file).toString().replace(File.separatorChar, '/');
-                if (packages.stream().anyMatch(name::startsWith)) presentInOutput++;
+                if (harnesses.stream().anyMatch(name::startsWith)) harnessesInOutput++;
+                if (server.stream().anyMatch(name::startsWith)) serverInOutput++;
             }
         }
         // Otherwise the check below would pass for the wrong reason.
-        assertTrue(presentInOutput > 0, "no dev harness classes in the compiled output");
+        assertTrue(harnessesInOutput > 0, "no dev harness classes in the compiled output");
+        assertTrue(serverInOutput > 0, "no playtest setup classes in the compiled output");
+        List<String> packages = new ArrayList<>(harnesses);
+        packages.addAll(server);
         List<String> inJar = new ArrayList<>();
-        boolean entrypointInJar;
         try (ZipFile jar = new ZipFile(property("sculptory.jar"))) {
-            entrypointInJar = jar.getEntry(CLIENT_ENTRYPOINT + ".class") != null;
+            assertNotNull(jar.getEntry(CLIENT_ENTRYPOINT + ".class"), "the jar has no client entrypoint");
+            assertNotNull(jar.getEntry(ENTRYPOINT), "the jar has no common entrypoint");
             for (ZipEntry entry : jar.stream().toList()) {
                 if (packages.stream().anyMatch(entry.getName()::startsWith)) inJar.add(entry.getName());
             }
         }
-        assertTrue(entrypointInJar, "the jar has no client entrypoint");
         assertEquals(List.of(), inJar);
     }
 
+    /**
+     * No shipped class names a dev package, except the entrypoint that starts it when its class is there: the client
+     * entrypoint the client harnesses, the common entrypoint the playtest setup.
+     */
     @Test
-    void noShippedClassButTheClientEntrypointNamesADevHarness() throws IOException {
-        List<String> packages = devHarnessPackages();
+    void noShippedClassButItsEntrypointNamesADevPackage() throws IOException {
+        List<String> harnesses = devPackages("sculptory.devHarnessPackages");
+        List<String> server = devPackages("sculptory.devServerPackages");
+        List<String> packages = new ArrayList<>(harnesses);
+        packages.addAll(server);
         List<String> offenders = new ArrayList<>();
+        String entrypoint = null;
         for (Path root : classDirs()) {
             for (Path file : classFiles(root)) {
                 String name = root.relativize(file).toString().replace(File.separatorChar, '/');
-                if (packages.stream().anyMatch(name::startsWith) || name.equals(CLIENT_ENTRYPOINT + ".class")) continue;
+                if (packages.stream().anyMatch(name::startsWith)) continue;
                 String bytes = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
-                for (String pkg : packages) {
+                List<String> named = packages;
+                if (name.equals(CLIENT_ENTRYPOINT + ".class")) named = server;
+                if (name.equals(ENTRYPOINT)) {
+                    entrypoint = bytes;
+                    named = harnesses;
+                }
+                for (String pkg : named) {
                     if (bytes.contains(pkg)) offenders.add(name + " references " + pkg);
                 }
             }
         }
         assertEquals(List.of(), offenders);
+        assertNotNull(entrypoint, "the common entrypoint was not among the scanned classes");
+        assertTrue(entrypoint.contains("dev.sculptory.mc.playtest.PlaytestSetup"),
+                "SculptoryNeoForge looks for PlaytestSetup by name");
     }
 
     private static List<Path> classDirs() {
@@ -143,9 +166,9 @@ class NeoForgeJarClassesTest {
         }
     }
 
-    /** The dev harness packages as internal-name prefixes ({@code dev/.../tour/}). */
-    private static List<String> devHarnessPackages() {
-        return Arrays.stream(property("sculptory.devHarnessPackages").split(","))
+    /** A build-passed list of dev packages as internal-name prefixes ({@code dev/.../tour/}). */
+    private static List<String> devPackages(String propertyName) {
+        return Arrays.stream(property(propertyName).split(","))
                 .map(glob -> glob.endsWith("**") ? glob.substring(0, glob.length() - 2) : glob).toList();
     }
 

@@ -95,7 +95,8 @@ public final class GameTestSuite {
             ResamplingGameTest.class,
             AirPathsGameTest.class,
             PathPointsGameTest.class,
-            ExtendToGroundGameTest.class
+            ExtendToGroundGameTest.class,
+            PlaytestSetupGameTest.class
     );
 
     private GameTestSuite() {
