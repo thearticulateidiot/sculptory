@@ -65,6 +65,22 @@ neoForge {
                 programArgument '--quickPlayMultiplayer'
                 programArgument project.property('bsServer').toString()
             }
+            // -PbsSize=<width>x<height> and the dev-only play check (-PbsCheck=<absolute dir>, its role, suite, scenario
+            // name prefixes and renderer label), as in modules/fabric.
+            if (project.hasProperty('bsSize')) {
+                def size = project.property('bsSize').toString().split('x')
+                if (size.length != 2 || !size.every { it.isInteger() }) {
+                    throw new GradleException("-PbsSize wants <width>x<height>, e.g. 1600x900")
+                }
+                programArguments.addAll('--width', size[0], '--height', size[1])
+            }
+            ['bsCheck': 'sculptory.check', 'bsCheckRole': 'sculptory.check.role',
+             'bsCheckSuite': 'sculptory.check.suite', 'bsCheckOnly': 'sculptory.check.only',
+             'bsCheckLabel': 'sculptory.check.label'].each { gradleProperty, javaProperty ->
+                if (project.hasProperty(gradleProperty)) {
+                    systemProperty javaProperty, project.property(gradleProperty).toString()
+                }
+            }
         }
         server {
             server()
