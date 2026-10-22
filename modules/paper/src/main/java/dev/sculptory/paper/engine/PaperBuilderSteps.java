@@ -56,6 +56,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockMultiPlaceEvent;
 import org.bukkit.event.block.BlockPhysicsEvent;
+import org.bukkit.event.block.BlockRedstoneEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.EventExecutor;
@@ -138,9 +139,11 @@ import org.slf4j.LoggerFactory;
  * power), as for a Paper player placing into a replaceable block; a block entity block ({@code BaseEntityBlock}, such as
  * a hopper) still runs its own add callback during a Keep shape step (CraftBukkit does not defer those); with Keep shape
  * a wither skull completing the pattern builds no wither (its pattern could only be cleared with physics); with
- * Paper's alternate redstone implementations (Eigencraft, Alternate Current) the wires a network update sets at once
- * beyond {@value #WATCH_RADIUS} blocks of an updated cell are not recorded; a block entity a cascade changes without
- * changing the block (a command block's powered flag) is not recorded, as on Fabric.
+ * Paper's alternate redstone implementations (Eigencraft, Alternate Current), which set a network's wires without
+ * physics events, each wire and the cells around it are noted at the wire power event fired before it changes, but
+ * Eigencraft updates the blocks beside its wires directly (no event): a block entity reacting there (a crafter) is
+ * saved only at the end, after it reacted; a block entity a cascade changes without changing the block (a command
+ * block's powered flag) is not recorded, as on Fabric.
  */
 public final class PaperBuilderSteps implements BuilderSteps {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
@@ -485,12 +488,16 @@ public final class PaperBuilderSteps implements BuilderSteps {
             physicsEventBefore = world.hasPhysicsEvent;
             watch = new RegisteredListener(this, this, EventPriority.LOWEST, plugin, false);
             BlockPhysicsEvent.getHandlerList().register(watch);
+            // Paper's Eigencraft redstone sets wires and updates their neighbours without physics events; the wire
+            // power event still fires before each wire changes (wireChanging).
+            BlockRedstoneEvent.getHandlerList().register(watch);
             world.hasPhysicsEvent = true;
         }
 
         private void stopWatching() {
             if (watch == null) return;
             BlockPhysicsEvent.getHandlerList().unregister(watch);
+            BlockRedstoneEvent.getHandlerList().unregister(watch);
             watch = null;
             // What the server would decide at the next tick: another plugin may have started listening meanwhile.
             world.hasPhysicsEvent = physicsEventBefore
@@ -503,10 +510,15 @@ public final class PaperBuilderSteps implements BuilderSteps {
          * whose event fires at its cell before it does: a crafter sets its {@code triggered} with its block). Noting
          * comes first, so a cell first reached by its own event is saved too (Paper fires the event twice for each
          * neighbour of a multi-neighbour update, a single neighbour update fires it once). A structure block this
-         * update is about to make load its template has its load box noted now ({@link #noteLoadIfTriggered}).
+         * update is about to make load its template has its load box noted now ({@link #noteLoad}): the cell itself
+         * unless the event is for its own change, and its six neighbours unless the action placed them.
          */
         @Override
         public void execute(Listener listener, Event event) {
+            if (event instanceof BlockRedstoneEvent redstone) {
+                wireChanging(redstone);
+                return;
+            }
             if (!(event instanceof BlockPhysicsEvent physics)) return;
             if (!(physics.getBlock() instanceof CraftBlock block) || block.getHandle() != world) return;
             BlockPos pos = block.getPosition();
@@ -517,7 +529,45 @@ public final class PaperBuilderSteps implements BuilderSteps {
                     && Block.getId(world.getBlockState(pos)) == noted.state()) {
                 befores.put(key, new Before(noted.state(), saved(pos, noted.entity()), noted.entity(), true));
             }
-            noteLoadIfTriggered(pos);
+            // The event Paper fires for a cell's own change (Level.notifyAndUpdatePhysics; also a plant checking its
+            // own shape) names the cell as its own source; a neighbour update names the neighbour that sent it. The
+            // game never runs a block's neighbour reaction for its own change, so a structure block placed beside
+            // power does not load (and its box is not noted) until a neighbour updates it.
+            org.bukkit.block.Block source = physics.getSourceBlock();
+            boolean ownChange = source.getX() == pos.getX() && source.getY() == pos.getY()
+                    && source.getZ() == pos.getZ();
+            if (!ownChange) noteLoad(pos, true);
+            // A block powered without an event of its own (Eigencraft's wires update their neighbours directly):
+            // tested at its neighbours' events, as long as the action did not place it (its own placement does not
+            // make it load; see above). A signal present without an update ever arriving notes a box that never loads.
+            for (Direction direction : Direction.values()) {
+                BlockPos next = pos.relative(direction);
+                if (!pending.containsKey(next.asLong())) noteLoad(next, true);
+            }
+        }
+
+        /**
+         * Paper's wire power event, fired before a redstone wire's power changes, with every redstone implementation
+         * (Eigencraft sets the wires of a network without physics events and updates the blocks beside them directly):
+         * the wire and the cells around it are noted before it changes, and a structure block in LOAD mode within 2
+         * blocks of a wire gaining power has its load box noted (its signal is not there yet to test; a block the wire
+         * does not point at notes a box that never loads).
+         */
+        private void wireChanging(BlockRedstoneEvent event) {
+            if (!(event.getBlock() instanceof CraftBlock block) || block.getHandle() != world) return;
+            BlockPos pos = block.getPosition();
+            if (!world.getBlockState(pos).is(Blocks.REDSTONE_WIRE)) return;
+            watchAround(pos);
+            if (event.getNewCurrent() <= event.getOldCurrent()) return;
+            BlockPos.MutableBlockPos near = new BlockPos.MutableBlockPos();
+            for (int dy = -2; dy <= 2; dy++) {
+                for (int dz = -2; dz <= 2; dz++) {
+                    for (int dx = -2; dx <= 2; dx++) {
+                        if (Math.abs(dx) + Math.abs(dy) + Math.abs(dz) > 2) continue;
+                        noteLoad(near.setWithOffset(pos, dx, dy, dz).immutable(), false);
+                    }
+                }
+            }
         }
 
         /**
@@ -588,24 +638,31 @@ public final class PaperBuilderSteps implements BuilderSteps {
         }
 
         /**
-         * The physics event has reached {@code pos}, right before the cell reacts: if it is a structure block in LOAD
-         * mode that this update powers ({@code StructureBlock.neighborChanged} loads when the cell has a signal and
-         * its block entity was not powered yet), the template it names is about to be placed, so its box is noted now
-         * (once per block and action). Its cells fire no event before they change (a cell with block entity data is
-         * emptied, set to a barrier without updates, then set), so each is noted with its block entity saved, and
-         * counts as changed when only its data changed (a chest the template puts back empty). Decided at the block's
-         * own event, so it holds however the power arrives (a tripwire hook far down a line, a block in another load
-         * box) and for a template a SAVE block made earlier in the cascade; an unpowered LOAD block nearby notes
-         * nothing. The cap bounds the box like any other note.
+         * If {@code pos} holds a structure block in LOAD mode that is about to be powered, notes the box of the template
+         * it names (once per block and action). {@code StructureBlock.neighborChanged} loads when the cell has a signal
+         * and its block entity was not powered yet; with {@code signal} that is tested here (at the physics event, right
+         * before the block reacts, or at a neighbour's event), without it the caller knows power is on its way (a wire
+         * gaining power beside it, whose signal is not set yet). The template's cells fire no event before they change
+         * (a cell with block entity data is emptied, set to a barrier without updates, then set), so each is noted with
+         * its block entity saved, and counts as changed when only its data changed (a chest the template puts back
+         * empty). Decided where the power arrives, so it holds however it travels (a tripwire hook far down a line, a
+         * block in another load box, a wire) and for a template a SAVE block made earlier in the cascade; an unpowered
+         * LOAD block nearby notes nothing. Only loaded cells are read (a block at a chunk's edge whose signal would read
+         * an unloaded chunk is left out). The cap bounds the box like any other note.
          */
-        private void noteLoadIfTriggered(BlockPos pos) {
+        private void noteLoad(BlockPos pos, boolean signal) {
+            for (int dx = -2; dx <= 2; dx += 4) {
+                for (int dz = -2; dz <= 2; dz += 4) {
+                    if (loadedChunk((pos.getX() + dx) >> 4, (pos.getZ() + dz) >> 4) == null) return;
+                }
+            }
+            if (world.isOutsideBuildHeight(pos.getY())) return;
             BlockState state = world.getBlockState(pos);
             if (!(state.getBlock() instanceof StructureBlock)) return;
             if (!(world.getBlockEntity(pos) instanceof StructureBlockEntity structure)) return;
-            if (structure.getMode() != StructureMode.LOAD || structure.isPowered() || !world.hasNeighborSignal(pos)) {
-                return;
-            }
-            if (!loadsNoted.add(pos.asLong())) return;
+            if (structure.getMode() != StructureMode.LOAD || structure.isPowered()) return;
+            if (loadsNoted.contains(pos.asLong()) || (signal && !world.hasNeighborSignal(pos))) return;
+            loadsNoted.add(pos.asLong());
             ResourceLocation name = structure.hasStructureName()
                     ? ResourceLocation.tryParse(structure.getStructureName()) : null;
             StructureTemplate template = name == null ? null : world.getStructureManager().get(name).orElse(null);
@@ -646,20 +703,22 @@ public final class PaperBuilderSteps implements BuilderSteps {
             BlockState state = chunk.getBlockState(cursor);
             BlockEntity entity = state.hasBlockEntity()
                     ? chunk.getBlockEntity(cursor, LevelChunk.EntityCreationType.CHECK) : null;
-            Before now = new Before(Block.getId(state), null, entity, false);
+            Before now = new Before(Block.getId(state), null, entity, true);
             befores.put(key, new Before(now.state(), beforeTile(cursor.immutable(), now), null, false));
             watched++;
         }
 
         /**
          * A noted cell's block entity data from before the action: saved already, else the object noted, saved now;
-         * else, for a block that has a block entity the chunk had not made yet when the cell was noted, a new block
-         * entity's defaults. That is what the chunk would have made for the block then; waiting for the object to
-         * appear instead would take whatever the cascade wrote into it as the data from before.
+         * else, for a cell read as it was ({@code watched}: its block has a block entity the chunk had not made yet), a
+         * new block entity's defaults. That is what the chunk would have made for the block then; waiting for the object
+         * to appear instead would take whatever the cascade wrote into it as the data from before. A cell of the
+         * action's own whose data could not be saved (the failure is logged) stays without data.
          */
         private BlockEntityData beforeTile(BlockPos pos, Before before) {
             if (before.tile() != null) return before.tile();
             if (before.entity() != null) return saved(pos, before.entity());
+            if (!before.watched()) return null;
             BlockState state = Block.stateById(before.state());
             if (!state.hasBlockEntity() || !(state.getBlock() instanceof EntityBlock block)) return null;
             return saved(pos, block.newBlockEntity(pos, state));
@@ -840,8 +899,8 @@ public final class PaperBuilderSteps implements BuilderSteps {
         private void logCaptureFailure(BlockPos pos, RuntimeException e) {
             if (captureFailureLogged) return;
             captureFailureLogged = true;
-            LOG.warn("Sculptory: a block entity at {} could not be saved for the history; it is taken as none",
-                    pos.toShortString(), e);
+            LOG.warn("Sculptory: a block entity at {} could not be saved for the history; the cell is recorded "
+                    + "without its data", pos.toShortString(), e);
         }
 
         private static boolean sameTile(BlockEntityData a, BlockEntityData b) {

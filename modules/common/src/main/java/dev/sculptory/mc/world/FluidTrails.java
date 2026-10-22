@@ -943,7 +943,7 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
                 // An announced change: the cell as its own change left it, or nothing when it did not change.
                 Before first = r.firstAfter.get(entry.getLongKey());
                 if (first == null) {
-                    if (Block.getId(now) != before.state() && !silentChangeLogged) {
+                    if (!silentChangeLogged && Block.getId(now) != before.state()) {
                         // A change without a physics event at a noted cell (see eventNote): visible when it happens.
                         silentChangeLogged = true;
                         LOG.debug("Sculptory: fluid cell {} changed without a physics event; that change is in no "

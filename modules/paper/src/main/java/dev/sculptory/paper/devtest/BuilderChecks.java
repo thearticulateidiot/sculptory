@@ -180,7 +180,20 @@ final class BuilderChecks {
                 .thenAccept(v -> chestWall(r, x0 + 24, z0 + 11))
                 .thenCompose(v -> loadBoxUnderDoor(r, x0 + 2, z0 + 17, work))
                 .thenCompose(v -> crafterBesideFarHook(r, x0 + 1, z0, work))
-                .thenCompose(v -> loadAlongTripwire(r, x0 + 13, z0, work));
+                .thenCompose(v -> loadAlongTripwire(r, x0 + 13, z0, work))
+                .thenCompose(v -> {
+                    platform(r, x0 + 14, z0, x0 + 30, z0 + 11);
+                    return loadThroughWire(r, x0 + 18, z0 + 1, 1, work);
+                })
+                .thenCompose(v -> loadThroughWire(r, x0 + 18, z0 + 4, 3, work))
+                .thenCompose(v -> placedLoadBesidePower(r, x0 + 16, z0 + 8, work));
+    }
+
+    /** Stone at height {@link #UPPER} over the rectangle (the area above it is air from the start). */
+    private static void platform(SelfTestRun r, int minX, int minZ, int maxX, int maxZ) {
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) set(r, new BlockPos(x, UPPER, z), Blocks.STONE.defaultBlockState());
+        }
     }
 
     /**
@@ -697,16 +710,142 @@ final class BuilderChecks {
         set(r, lower.above(), door.setValue(DoorBlock.HALF, DoubleBlockHalf.UPPER));
         r.stand(x0 - 1.5, FLOOR + 1, z + 0.5, -90f, ItemStack.EMPTY);
         int[] before = r.snapshot(work);
+        LogLines capped = LogLines.attach(LogLines.CAP_REACHED);
+        r.cleanup(capped::detach);
         BuilderOutcome broken = breakCells(r, 9, List.of(lower), 0);
         boolean gone = r.level.getBlockState(lower).isAir() && r.level.getBlockState(lower.above()).isAir();
         r.record("builder: a door broken above a LOAD structure block with a large template: both halves recorded",
                 broken.accepted() && broken.changed() == 2 && gone, broken + ", both halves gone " + gone);
-        return r.undo().thenAccept(v -> {
+        // The server's log may be written on another thread: a few ticks before the warning is counted.
+        return r.ticks(3).thenAccept(v -> {
+            capped.detach();
+            r.record("builder: the unpowered LOAD block notes nothing (no cap warning)", capped.seen() == 0,
+                    capped.seen() + " cap warnings");
+        }).thenCompose(v -> r.undo()).thenAccept(v -> {
             BlockState upper = r.level.getBlockState(lower.above());
             r.record("builder: its undo puts the whole door back",
                     r.countDiffering(work, before) == 0 && upper.is(Blocks.OAK_DOOR),
                     r.countDiffering(work, before) + " cells differ, upper half " + upper);
         });
+    }
+
+    /** The platform the checks of loads through redstone run on: stone at this height, the area above it air. */
+    private static final int UPPER = FLOOR + 6;
+
+    /**
+     * A structure block in LOAD mode at the end of a line of {@code wires} redstone dust, naming a template of a stone
+     * and an empty chest set 2 and 3 blocks east of it, over a chest with items. A redstone block placed at the line's
+     * other end (without Keep shape) powers the dust and the dust the structure block, which loads its template. With
+     * Paper's Eigencraft redstone the dust is set and the structure block updated without any physics event; the load
+     * box is noted at the wire power event of the dust beside it. The undo takes the template back and puts the chest
+     * back with its items. Reported: the redstone implementation in force.
+     */
+    private static CompletableFuture<Void> loadThroughWire(SelfTestRun r, int x0, int z, int wires, Box work) {
+        StructureTemplateManager manager = r.level.getStructureManager();
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "selftest_wire" + wires + "_"
+                + r.runId);
+        BlockPos power = new BlockPos(x0, UPPER + 1, z);
+        BlockPos block = power.east(wires + 1);
+        BlockPos origin = block.east(2);
+        BlockPos chest = origin.east();
+        set(r, origin, Blocks.STONE.defaultBlockState());
+        set(r, chest, Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.NORTH));
+        StructureTemplate template = manager.getOrCreate(id);
+        template.fillFromWorld(r.level, origin, new Vec3i(2, 1, 1), false, null);
+        r.cleanup(() -> manager.remove(id));
+        set(r, origin, Blocks.AIR.defaultBlockState());
+        set(r, chest, Blocks.AIR.defaultBlockState());
+        set(r, chest, Blocks.CHEST.defaultBlockState().setValue(ChestBlock.FACING, Direction.SOUTH));
+        fillChest(r, chest, new ItemStack(Items.REDSTONE, 11));
+        BlockState dust = Blocks.REDSTONE_WIRE.defaultBlockState().setValue(RedStoneWireBlock.EAST, RedstoneSide.SIDE)
+                .setValue(RedStoneWireBlock.WEST, RedstoneSide.SIDE);
+        for (int i = 1; i <= wires; i++) set(r, power.east(i), dust);
+        set(r, block, Blocks.STRUCTURE_BLOCK.defaultBlockState().setValue(StructureBlock.MODE, StructureMode.LOAD));
+        if (r.level.getBlockEntity(block) instanceof StructureBlockEntity entity) {
+            entity.setMode(StructureMode.LOAD);
+            entity.setStructureName(id);
+            entity.setStructurePos(new BlockPos(2, 0, 0));
+            entity.setStructureSize(new Vec3i(2, 1, 1));
+        }
+        r.stand(x0 - 2.5, UPPER + 1, z + 0.5, -90f, new ItemStack(Items.REDSTONE_BLOCK, 64));
+        int[] before = r.snapshot(work);
+        String implementation = String.valueOf(r.level.paperConfig().misc.redstoneImplementation);
+        BuilderOutcome placed = place(r, power.getX(), UPPER, z, 0);
+        boolean loaded = r.level.getBlockState(origin).is(Blocks.STONE)
+                && r.level.getBlockState(chest).getValue(ChestBlock.FACING) == Direction.NORTH
+                && chestItem(r, chest).isEmpty();
+        String through = wires + (wires == 1 ? " wire" : " wires");
+        r.record("builder: a redstone block powering a LOAD structure block through " + through + " loads it (recorded)",
+                placed.accepted() && loaded, placed + ", template placed " + loaded + ", redstone " + implementation);
+        return r.undo().thenAccept(v -> {
+            ItemStack back = chestItem(r, chest);
+            boolean whole = back.is(Items.REDSTONE) && back.getCount() == 11 && r.level.getBlockState(origin).isAir();
+            r.record("builder: its undo (" + through + ", redstone " + implementation + ") takes the template back and "
+                            + "the chest's items with it", r.countDiffering(work, before) == 0 && whole,
+                    r.countDiffering(work, before) + " cells differ, chest " + back + ", template's stone cell "
+                            + r.level.getBlockState(origin));
+        });
+    }
+
+    /**
+     * Paper's steps directly, with a small cap: one action places a structure block in LOAD mode beside a redstone
+     * block (named, its block entity not powered, a 20 by 20 by 20 template), then a redstone block at the start of a
+     * line of five dust. The structure block's own placement does not power it (the game never runs a block's
+     * neighbour reaction for its own change), so its box is not noted: no cap warning, and the dust 5 blocks along the
+     * line, noted only as the cascade reaches it, is among the action's changes. The changes are put back after.
+     */
+    private static CompletableFuture<Void> placedLoadBesidePower(SelfTestRun r, int x0, int z, Box work) {
+        StructureTemplateManager manager = r.level.getStructureManager();
+        ResourceLocation id = ResourceLocation.fromNamespaceAndPath("sculptory", "selftest_placed_" + r.runId);
+        StructureTemplate template = manager.getOrCreate(id);
+        template.fillFromWorld(r.level, new BlockPos(x0, FLOOR + 20, z), new Vec3i(20, 20, 20), false, Blocks.AIR);
+        r.cleanup(() -> manager.remove(id));
+        BlockPos block = new BlockPos(x0 + 1, UPPER + 1, z);
+        set(r, block.west(), Blocks.REDSTONE_BLOCK.defaultBlockState());
+        BlockPos power = block.east(4);
+        BlockState dust = Blocks.REDSTONE_WIRE.defaultBlockState().setValue(RedStoneWireBlock.EAST, RedstoneSide.SIDE)
+                .setValue(RedStoneWireBlock.WEST, RedstoneSide.SIDE);
+        for (int i = 1; i <= 5; i++) set(r, power.east(i), dust);
+        BlockPos far = power.east(5);
+        r.stand(x0 - 1.5, UPPER + 1, z + 2.5, -90f, ItemStack.EMPTY);
+        int[] before = r.snapshot(work);
+        LogLines capped = LogLines.attach(LogLines.CAP_REACHED);
+        r.cleanup(capped::detach);
+        PaperBuilderSteps steps = new PaperBuilderSteps(SculptoryPlugin.instance(), PLACED_CAP);
+        BuilderSteps.Action action = steps.open(r.level, r.player, false);
+        action.place((BlockItem) Items.STRUCTURE_BLOCK, context(r, block, Items.STRUCTURE_BLOCK),
+                Blocks.STRUCTURE_BLOCK.defaultBlockState().setValue(StructureBlock.MODE, StructureMode.LOAD), false);
+        // Named as a placed block with block entity data is, before its physics run (the template's box lies below).
+        if (r.level.getBlockEntity(block) instanceof StructureBlockEntity entity) {
+            entity.setMode(StructureMode.LOAD);
+            entity.setStructureName(id);
+            entity.setStructurePos(new BlockPos(0, -40, 0));
+            entity.setStructureSize(new Vec3i(20, 20, 20));
+        }
+        action.place((BlockItem) Items.REDSTONE_BLOCK, context(r, power, Items.REDSTONE_BLOCK),
+                Blocks.REDSTONE_BLOCK.defaultBlockState(), false);
+        List<BuilderChange> changes = action.finish();
+        boolean farPowered = r.level.getBlockState(far).getValue(RedStoneWireBlock.POWER) > 0;
+        boolean farRecorded = changes.stream().anyMatch(c -> c.pos().equals(far));
+        steps.revert(r.level, changes);
+        return r.ticks(3).thenAccept(v -> {
+            capped.detach();
+            r.record("builder: a LOAD structure block placed beside power notes no box; the cascade after is recorded",
+                    capped.seen() == 0 && farPowered && farRecorded && r.countDiffering(work, before) == 0,
+                    capped.seen() + " cap warnings (cap " + PLACED_CAP + "), dust 5 along powered " + farPowered
+                            + " and recorded " + farRecorded + ", " + changes.size() + " changes, "
+                            + r.countDiffering(work, before) + " cells differ after they were put back");
+        });
+    }
+
+    /** The cap for {@link #placedLoadBesidePower}: the action's own cells and its cascade fit (about 1400), a 20^3 box does not. */
+    private static final int PLACED_CAP = 2500;
+
+    /** A placement context for {@code cell}, clicked on the top of the block below it, holding {@code item}. */
+    private static BlockPlaceContext context(SelfTestRun r, BlockPos cell, Item item) {
+        return new BlockPlaceContext(r.level, r.player, net.minecraft.world.InteractionHand.MAIN_HAND,
+                new ItemStack(item), new BlockHitResult(Vec3.atCenterOf(cell.below()).add(0, 0.5, 0), Direction.UP,
+                cell.below(), false));
     }
 
     /**
@@ -840,7 +979,7 @@ final class BuilderChecks {
         BlockPos composter = new BlockPos(x0 + 5, FLOOR + 1, z + 5);
         r.level.setBlockAndUpdate(composter, Blocks.COMPOSTER.defaultBlockState());
         boolean sectionHeld = r.level.getPoiManager().getType(composter).isPresent();
-        PoiMismatches mismatches = PoiMismatches.attach();
+        LogLines mismatches = LogLines.attach(LogLines.POI_MISMATCH);
         r.cleanup(mismatches::detach);
         // The counter's positive control: one deliberate removal of a point never registered logs one mismatch.
         r.level.getPoiManager().remove(composter.east());
@@ -891,17 +1030,24 @@ final class BuilderChecks {
         });
     }
 
-    /** Counts the server log's "POI data mismatch" lines while attached to log4j's root logger. */
-    private static final class PoiMismatches extends AbstractAppender {
+    /** Counts the server log's lines holding a text while attached to log4j's root logger. */
+    private static final class LogLines extends AbstractAppender {
+        /** What the game logs for a point of interest removed or added against its data. */
+        static final String POI_MISMATCH = "POI data mismatch";
+        /** What PaperBuilderSteps logs when an action's noted cells reach the cap. */
+        static final String CAP_REACHED = "set off updates beyond the";
+
+        private final String text;
         private final AtomicInteger seen = new AtomicInteger();
         private boolean attached;
 
-        private PoiMismatches() {
-            super("sculptory-selftest-poi", null, null, true, Property.EMPTY_ARRAY);
+        private LogLines(String text) {
+            super("sculptory-selftest-log", null, null, true, Property.EMPTY_ARRAY);
+            this.text = text;
         }
 
-        static PoiMismatches attach() {
-            PoiMismatches appender = new PoiMismatches();
+        static LogLines attach(String text) {
+            LogLines appender = new LogLines(text);
             appender.start();
             ((org.apache.logging.log4j.core.Logger) LogManager.getRootLogger()).addAppender(appender);
             appender.attached = true;
@@ -921,7 +1067,7 @@ final class BuilderChecks {
 
         @Override
         public void append(LogEvent event) {
-            if (event.getMessage().getFormattedMessage().contains("POI data mismatch")) seen.incrementAndGet();
+            if (event.getMessage().getFormattedMessage().contains(text)) seen.incrementAndGet();
         }
     }
 
