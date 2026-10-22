@@ -4,6 +4,13 @@ All notable changes to Sculptory. From 0.5.0 on, each product has its own versio
 `## <Product> <version>+<Minecraft version>` (`## Fabric 0.5.0+1.21.1`); the releases up to 0.4.0-beta are the Fabric
 mod's. Client and server need the same network protocol (each section says which).
 
+## Unreleased
+
+### Changed
+
+- **Generate roads**: the ends of curved roads now follow the road's true end direction; straight roads round
+  half-block steps the same wherever they are built, and Use Stairs and Slabs on a 45° road always steps along x.
+
 ## 0.4.0-beta — first beta
 
 For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.3.0-alpha. Beta means the main

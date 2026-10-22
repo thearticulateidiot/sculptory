@@ -139,7 +139,11 @@ public final class SlopeSteps {
         return d > 0 ? "south" : "north";
     }
 
-    /** The axis of a level direction (dx, dz) against its tangent's full length, or {@link #NONE} when nearly upright. */
+    /**
+     * The axis of a level direction (dx, dz) against its tangent's full length, or {@link #NONE} when nearly upright:
+     * the axis of the larger part, and {@link #AXIS_X} when the two are equal, so stairs on a 45-degree line or road
+     * always step along x, whichever way it runs.
+     */
     public static int axisOf(double dx, double dy, double dz) {
         double level = Math.sqrt(dx * dx + dz * dz), length = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (!(length > 0) || level < STEEP * length) return NONE;
