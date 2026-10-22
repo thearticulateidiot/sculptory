@@ -312,6 +312,8 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
             failure = e;
             LOG.error("Sculptory: a builder placement at {} failed; what it changed stays in the history",
                     cell.toShortString(), e);
+        } catch (Error e) {
+            throw ended(world, action, e);
         }
         List<BuilderChange> changes = action.finish();
         if (refused) {
@@ -333,6 +335,20 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         }
         if (failure != null) return new BuilderOutcome(Refusal.FAILED, failure.toString(), changed, skipped);
         return BuilderOutcome.done(changed, skipped);
+    }
+
+    /**
+     * A step threw an {@link Error} (a stack overflow, a linkage error): the action is still ended, so its capture and
+     * Keep shape scope are released and the world's own block capture is left empty, and what it changed so far is put
+     * back (no history step is pushed for it); then the error goes on, with whatever the clean-up threw added to it.
+     */
+    private Error ended(ServerLevel world, BuilderSteps.Action action, Error error) {
+        try {
+            steps.revert(world, action.finish());
+        } catch (Throwable cleanup) {
+            error.addSuppressed(cleanup);
+        }
+        return error;
     }
 
     // ================================================================== breaking
@@ -430,6 +446,8 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         } catch (RuntimeException e) {
             failure = e;
             LOG.error("Sculptory: a builder break failed; what it changed stays in the history", e);
+        } catch (Error e) {
+            throw ended(world, action, e);
         }
         List<BuilderChange> changes = action.finish();
         // What a break took with it (a door's other half, a piston's base) must be writable too, else nothing of this

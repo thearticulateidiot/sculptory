@@ -39,7 +39,10 @@ public interface BuilderSteps {
      */
     void revert(ServerLevel world, List<BuilderChange> changes);
 
-    /** One open builder action: its steps, then {@link #finish} (always called, also after a step threw). */
+    /**
+     * One open builder action: its steps, then {@link #finish}, which is always called, also after a step threw (an
+     * {@link Error} included), and releases whatever the action holds even when it throws itself.
+     */
     interface Action {
         /**
          * Empties the container at {@code pos} (if one is there) into the record, not onto the ground, before it is

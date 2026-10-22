@@ -30,7 +30,14 @@ public final class CapturedBuilderSteps implements BuilderSteps {
     @Override
     public Action open(ServerLevel world, ServerPlayer player, boolean keepShape) {
         BuilderCapture capture = BuilderCapture.open(world, keepShape, true);
-        EditScope scope = keepShape ? EditScope.suppressPhysics() : null;
+        EditScope scope;
+        try {
+            scope = keepShape ? EditScope.suppressPhysics() : null;
+        } catch (RuntimeException | Error e) {
+            // The scope is held elsewhere: the capture must not stay open behind the refusal.
+            capture.close();
+            throw e;
+        }
         return new Action() {
             private boolean scopeClosed;
 
@@ -57,13 +64,18 @@ public final class CapturedBuilderSteps implements BuilderSteps {
 
             @Override
             public List<BuilderChange> finish() {
-                if (scope != null && !scopeClosed) {
-                    scopeClosed = true;
-                    scope.close();
-                }
                 List<BuilderChange> changes = new ArrayList<>();
-                capture.finish((x, y, z, before, beforeTile, after, afterTile) ->
-                        changes.add(new BuilderChange(new BlockPos(x, y, z), before, beforeTile, after, afterTile)));
+                // The scope is closed first and the capture finished after it, whatever closing the scope throws:
+                // a capture left open would note every later block change of the server thread.
+                try {
+                    if (scope != null && !scopeClosed) {
+                        scopeClosed = true;
+                        scope.close();
+                    }
+                } finally {
+                    capture.finish((x, y, z, before, beforeTile, after, afterTile) ->
+                            changes.add(new BuilderChange(new BlockPos(x, y, z), before, beforeTile, after, afterTile)));
+                }
                 return changes;
             }
         };

@@ -17,9 +17,15 @@ import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.region.Facing;
+import dev.sculptory.mc.builder.BuilderCapture;
+import dev.sculptory.mc.builder.BuilderChange;
+import dev.sculptory.mc.builder.BuilderSteps;
+import dev.sculptory.mc.builder.CapturedBuilderSteps;
+import dev.sculptory.mc.engine.impl.BuilderService;
 import dev.sculptory.mc.gametest.EditTestSupport.Harness;
 import dev.sculptory.mc.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.mc.gametest.EngineTestSupport.RecordingListener;
+import dev.sculptory.mc.world.EditScope;
 import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.JobOutcome;
@@ -46,8 +52,10 @@ import net.minecraft.server.players.ServerOpListEntry;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -824,6 +832,85 @@ public final class BuilderModeGameTest {
             }
             context.succeed();
         });
+    }
+
+    /**
+     * A step that throws an {@link Error} (here a stack overflow, after the game placed its block) still ends its
+     * action: the Keep shape scope and the builder capture are released (the server thread would otherwise suppress
+     * every block callback for the rest of the run), what the step changed is put back, no step is added, and the error
+     * goes on to the caller. A normal placement works right after.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_error", timeoutTicks = LIMIT)
+    public void anErrorInAStepStillEndsTheAction(GameTestHelper context) {
+        Harness h = new Harness(context);
+        Region r = region(h, context, 1078);
+        try {
+            stand(h.player, r.x + 2, r.z + 2, -90f);
+            hold(h.player, Items.STONE);
+            BuilderService failing = new BuilderService(h.service, h.runtime, h.world.getServer(), new ErrorSteps(),
+                    h.runtime.executor(), h.service.historyService(), System::nanoTime);
+            BlockPos cell = pos(r.x + 6, FLOOR + 1, r.z + 2);
+            StackOverflowError thrown = null;
+            try {
+                failing.place(h.player, new C2S.BuilderPlace(nextSeq++, false,
+                        new dev.sculptory.core.BlockPos(cell.getX(), FLOOR, cell.getZ()), Facing.UP, 0.5f, 1f, 0.5f,
+                        BuilderPower.KEEP_SHAPE.bit(), Symmetry.NONE));
+            } catch (StackOverflowError e) {
+                thrown = e;
+            }
+            check(thrown != null && ErrorSteps.MESSAGE.equals(thrown.getMessage()), "the error went on: " + thrown);
+            check(!EditScope.isSuppressing(), "the Keep shape scope is still held by the server thread");
+            try (BuilderCapture again = BuilderCapture.open(h.world, false, true)) {
+                check(again.touchedCells() == 0, "a fresh capture");
+            } catch (IllegalStateException e) {
+                throw new GameTestAssertException("the builder capture is still open: " + e.getMessage());
+            }
+            check(h.world.getBlockState(cell).isAir(), "what the step placed is put back: " + h.world.getBlockState(cell));
+            check(entries(h).isEmpty(), "no step: " + labels(entries(h)));
+            BuilderOutcome next = place(h, h.player, cell.getX(), FLOOR, cell.getZ(), Facing.UP, 0.5f, 1f, 0.5f, 0,
+                    Symmetry.NONE);
+            check(next.accepted() && next.changed() == 1, "a placement right after: " + next);
+        } finally {
+            cleanup(h, List.of(), r);
+        }
+        context.succeed();
+    }
+
+    /** Fabric's and NeoForge's steps, except that a placement throws a {@link StackOverflowError} once it is done. */
+    private static final class ErrorSteps implements BuilderSteps {
+        static final String MESSAGE = "a builder step failed (test)";
+
+        @Override
+        public Action open(ServerLevel world, ServerPlayer player, boolean keepShape) {
+            Action inner = CapturedBuilderSteps.INSTANCE.open(world, player, keepShape);
+            return new Action() {
+                @Override
+                public void emptyContainer(BlockPos pos) {
+                    inner.emptyContainer(pos);
+                }
+
+                @Override
+                public Step place(BlockItem item, BlockPlaceContext context, BlockState state, boolean copy) {
+                    inner.place(item, context, state, copy);
+                    throw new StackOverflowError(MESSAGE);
+                }
+
+                @Override
+                public Step breakBlock(BlockPos pos) {
+                    return inner.breakBlock(pos);
+                }
+
+                @Override
+                public List<BuilderChange> finish() {
+                    return inner.finish();
+                }
+            };
+        }
+
+        @Override
+        public void revert(ServerLevel world, List<BuilderChange> changes) {
+            CapturedBuilderSteps.INSTANCE.revert(world, changes);
+        }
     }
 
     /** A target in a chunk that is not loaded is refused and loads nothing. */
