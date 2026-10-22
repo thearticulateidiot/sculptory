@@ -45,9 +45,15 @@ import org.bukkit.plugin.Plugin;
 public final class PermissionWatch implements Listener {
     private final EngineEditService<ServerPlayer, ServerLevel> service;
     private final ServerScatter<ServerPlayer, ServerLevel> scatter;
-    /** Each online player's op status when last checked. */
-    private final Map<UUID, Boolean> ops = new ConcurrentHashMap<>();
+    /**
+     * Each online player's op status when last checked, with the session (the CraftPlayer, new at each join) it was
+     * seen for: a late event for an earlier session of the same player never touches the current one's entry.
+     */
+    private final Map<UUID, Seen> ops = new ConcurrentHashMap<>();
     private final Plugin plugin;
+
+    private record Seen(Player session, boolean op) {
+    }
 
     private PermissionWatch(Plugin plugin, EngineEditService<ServerPlayer, ServerLevel> service,
                             ServerScatter<ServerPlayer, ServerLevel> scatter) {
@@ -61,7 +67,7 @@ public final class PermissionWatch implements Listener {
                                            ServerScatter<ServerPlayer, ServerLevel> scatter) {
         PermissionWatch watch = new PermissionWatch(plugin, service, scatter);
         Bukkit.getPluginManager().registerEvents(watch, plugin);
-        for (Player online : Bukkit.getOnlinePlayers()) watch.ops.put(online.getUniqueId(), online.isOp());
+        for (Player online : Bukkit.getOnlinePlayers()) watch.ops.put(online.getUniqueId(), new Seen(online, online.isOp()));
         if (Bukkit.getPluginManager().isPluginEnabled("LuckPerms")) {
             try {
                 LuckPermsHook.register(plugin, watch);
@@ -83,7 +89,12 @@ public final class PermissionWatch implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void quit(PlayerQuitEvent event) {
-        ops.remove(event.getPlayer().getUniqueId());
+        forget(event.getPlayer());
+    }
+
+    /** Drops {@code session}'s op entry, unless the player has joined again since (the entry is the new session's). */
+    private void forget(Player session) {
+        ops.computeIfPresent(session.getUniqueId(), (id, seen) -> seen.session() == session ? null : seen);
     }
 
     /** Re-checks {@code player} on the server thread (now when on it, else on the next tick). */
@@ -105,12 +116,13 @@ public final class PermissionWatch implements Listener {
         if (player.hasDisconnected()) {
             // A late event for a player who has quit (the command tree is built off the thread): nothing to apply, and
             // no op entry may outlive them.
-            ops.remove(bukkit.getUniqueId());
+            forget(bukkit);
             return;
         }
         boolean op = bukkit.isOp();
-        Boolean wasOp = ops.put(bukkit.getUniqueId(), op);
-        boolean allWorlds = wasOp != null && wasOp != op;
+        Seen was = ops.put(bukkit.getUniqueId(), new Seen(bukkit, op));
+        // An op change of this session holds in every world; a new session starts from what it has.
+        boolean allWorlds = was != null && was.session() == bukkit && was.op() != op;
         // Each on its own: a failure in one must not skip the others.
         try {
             ServerNet.permissionsChanged(player);
