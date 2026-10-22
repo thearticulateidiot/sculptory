@@ -13,7 +13,9 @@ import net.minecraft.nbt.CompoundTag;
  * <p>Only the keys listed in {@link #STRIPPED} go, each for its reason. Every other CraftBukkit key stays, in particular
  * the settings a plugin made through Paper's API ({@code Bukkit.invisible}, {@code Bukkit.persist},
  * {@code Bukkit.Aware}, {@code Paper.ShouldBurnInDay}, {@code Bukkit.MaxHealth}, ...) and plugin data
- * ({@code BukkitValues}): they survive a copy, a paste and an undo.
+ * ({@code BukkitValues}): they survive a copy, a paste and an undo. So does {@code Paper.FromMobSpawner}: it is spawn
+ * context, but plugins read it through Paper's {@code Entity.fromMobSpawner()} (mob stackers, farm and skill plugins
+ * treat spawner mobs differently), so a copied spawner mob stays one.
  */
 public final class CraftBukkitKeys {
     /** The keys taken out, each with why (checked against Paper 1.21.1 build 133's Entity.saveWithoutId). */
@@ -25,7 +27,7 @@ public final class CraftBukkitKeys {
             "Paper.Origin", "where the entity was first spawned (spawn context of this world)",
             "Paper.OriginWorld", "the world the entity was first spawned in",
             "Paper.SpawnReason", "how the entity was first spawned (a copy is placed, not spawned that way)",
-            "Paper.FromMobSpawner", "whether a mob spawner spawned it (spawn context, not the entity)",
+            "Paper.SpawningEntity", "the player whose sleeplessness spawned a phantom (another entity of this world)",
             "Paper.FromNetherPortal", "whether a nether portal spawned it (spawn context, not the entity)");
 
     private CraftBukkitKeys() {

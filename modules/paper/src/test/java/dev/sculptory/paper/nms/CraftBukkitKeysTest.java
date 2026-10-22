@@ -22,8 +22,8 @@ class CraftBukkitKeysTest {
         entity.put("Paper.Origin", new ListTag());
         entity.putUUID("Paper.OriginWorld", java.util.UUID.randomUUID());
         entity.putString("Paper.SpawnReason", "DEFAULT");
-        entity.putBoolean("Paper.FromMobSpawner", true);
         entity.putBoolean("Paper.FromNetherPortal", true);
+        entity.putUUID("Paper.SpawningEntity", java.util.UUID.randomUUID());
         entity.putLong("WorldUUIDMost", 1L);
         entity.putLong("WorldUUIDLeast", 2L);
         // Kept: settings a plugin made through Paper's API, and plugin data.
@@ -31,12 +31,14 @@ class CraftBukkitKeysTest {
         entity.putBoolean("Bukkit.persist", true);
         entity.putBoolean("Bukkit.Aware", false);
         entity.putBoolean("Paper.ShouldBurnInDay", false);
+        // Kept: spawn context plugins act on (Entity.fromMobSpawner()).
+        entity.putBoolean("Paper.FromMobSpawner", true);
         CompoundTag pluginData = new CompoundTag();
         pluginData.putString("someplugin:owner", "x");
         entity.put("BukkitValues", pluginData);
         CraftBukkitKeys.strip(entity);
         assertEquals(Set.of("id", "Pos", "Invisible", "Bukkit.invisible", "Bukkit.persist", "Bukkit.Aware",
-                "Paper.ShouldBurnInDay", "BukkitValues"), entity.getAllKeys());
+                "Paper.ShouldBurnInDay", "Paper.FromMobSpawner", "BukkitValues"), entity.getAllKeys());
         assertEquals("x", entity.getCompound("BukkitValues").getString("someplugin:owner"));
     }
 
@@ -47,6 +49,9 @@ class CraftBukkitKeysTest {
         assertTrue(CraftBukkitKeys.stripped("Spigot.ticksLived"));
         assertFalse(CraftBukkitKeys.stripped("Bukkit.persist"));
         assertFalse(CraftBukkitKeys.stripped("Paper.ShouldBurnInDay"));
+        assertFalse(CraftBukkitKeys.stripped("Paper.FromMobSpawner"));
+        assertTrue(CraftBukkitKeys.stripped("Paper.FromNetherPortal"));
+        assertTrue(CraftBukkitKeys.stripped("Paper.SpawningEntity"));
         assertFalse(CraftBukkitKeys.stripped("BukkitValues"));
         assertFalse(CraftBukkitKeys.stripped("UUID"));
     }
