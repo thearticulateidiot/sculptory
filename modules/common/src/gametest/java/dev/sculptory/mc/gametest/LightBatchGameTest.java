@@ -18,13 +18,11 @@ import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
-import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
-import javax.management.ObjectName;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestAssertException;
@@ -74,15 +72,16 @@ public final class LightBatchGameTest {
         steps.add(() -> {
             writer[0] = h.runtime.writer(world, WriteOptions.DEFAULT);
             check(writer[0].lightTasks() == 0, "the writer batches its light checks: " + writer[0].lightTasks());
-            long before = lightTaskObjects();
+            long before = LightBatch.vanillaChecks();
             batched[0] = LightBatch.batchedCells();
             build((x, y, z, state) -> write(writer[0], ax + x, Y0 + y, az + z, state));
             writer[0].clearTicksAtWrittenCells();
-            long tasks = lightTaskObjects() - before;
+            long vanillaChecks = LightBatch.vanillaChecks() - before;
             // At most a thousand checks a task, and the block covers 2 x 2 chunk columns.
             check(writer[0].lightTasks() > 0 && writer[0].lightTasks() <= 4 + 34_000 / LightBatch.TASK_CELLS,
                     "light tasks for the batched copy: " + writer[0].lightTasks());
-            check(tasks < 1_000, "vanilla light tasks queued for ~34,000 batched writes: " + tasks);
+            // Counted as checks are handed over, so the light thread's progress does not matter.
+            check(vanillaChecks == 0, "checks of the ~34,000 batched writes that went the vanilla way: " + vanillaChecks);
             check(LightBatch.batchedCells() - batched[0] > 30_000, "checks batched: "
                     + (LightBatch.batchedCells() - batched[0]));
             vanilla(() -> build((x, y, z, state) -> set(world, bx + x, Y0 + y, az + z, state)));
@@ -190,16 +189,24 @@ public final class LightBatchGameTest {
         loadAndForce(world, area);
         LightBatch.setDisabled(true);
         try {
+            // Air first, so every one of the 256 writes below changes its cell's light and asks for a check.
+            vanilla(() -> {
+                for (int dx = 0; dx < 16; dx++) {
+                    for (int dz = 0; dz < 16; dz++) set(world, x + dx, Y0 + 4, z + dz, AIR);
+                }
+            });
             BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
             check(writer.lightTasks() == -1, "the writer does not batch");
-            long batched = LightBatch.batchedCells(), before = lightTaskObjects();
+            // Counted as the checks are handed to the light engine's checkBlock, not as its queued tasks: the light
+            // thread runs those concurrently, so how many were still queued depended on its timing.
+            long batched = LightBatch.batchedCells(), before = LightBatch.vanillaChecks();
             for (int dx = 0; dx < 16; dx++) {
                 for (int dz = 0; dz < 16; dz++) write(writer, x + dx, Y0 + 4, z + dz, STONE);
             }
             writer.clearTicksAtWrittenCells();
             check(LightBatch.batchedCells() == batched, "no check was batched");
-            long tasks = lightTaskObjects() - before;
-            check(tasks >= 200, "a vanilla light task for each of the 256 cells: " + tasks);
+            long checks = LightBatch.vanillaChecks() - before;
+            check(checks == 256, "a vanilla light check for each of the 256 cells: " + checks);
         } finally {
             LightBatch.setDisabled(false);
             forceChunks(world, area, false);
@@ -572,23 +579,6 @@ public final class LightBatchGameTest {
                 return false;
             }
             return ++settledTicks >= 5;
-        }
-    }
-
-    /** Live instances of vanilla's light tasks ({@code ServerLightingProvider} lambdas; a full GC). */
-    static long lightTaskObjects() {
-        try {
-            String out = (String) ManagementFactory.getPlatformMBeanServer().invoke(
-                    new ObjectName("com.sun.management:type=DiagnosticCommand"), "gcClassHistogram",
-                    new Object[] {new String[0]}, new String[] {String[].class.getName()});
-            long n = 0;
-            for (String line : out.split("\n")) {
-                if (!line.contains("net.minecraft.server.level.ThreadedLevelLightEngine$$Lambda")) continue;
-                n += Long.parseLong(line.trim().split(" +")[1]);
-            }
-            return n;
-        } catch (Exception e) {
-            throw new GameTestAssertException("no class histogram: " + e);
         }
     }
 }

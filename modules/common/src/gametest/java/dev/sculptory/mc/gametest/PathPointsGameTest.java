@@ -34,6 +34,8 @@ import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerPlayer;
@@ -167,11 +169,15 @@ public final class PathPointsGameTest {
         SlopeSteps.Result stepped = SlopeSteps.apply(line, SlopeSteps.along(PathSampler.sample(path, 0.5)), steps(h),
                 h.state("minecraft:air"));
         int stairs = h.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
-        int[] found = {0};
+        // Rising half a block a block, the line steps up at every odd block: a stair at x0 + 1, 3, 5, 7, 9 and 11, at
+        // y 102 to 107, wherever the test lands (exact straight sampling, LineKernel relative to its first point).
+        Set<String> expected = new TreeSet<>(), found = new TreeSet<>();
+        for (int k = 1; k <= 11; k += 2) expected.add(k + "," + (101 + (k + 1) / 2) + ",0");
         stepped.source().forEach((x, y, z, state) -> {
-            if (state == stairs) found[0]++;
+            if (state == stairs) found.add((x - x0) + "," + y + "," + (z - z0));
         });
-        check(found[0] >= 5 && stepped.plain() == 0, "stairs at the steps: " + found[0] + ", " + stepped.plain() + " plain");
+        check(found.equals(expected) && stepped.plain() == 0, "stairs at the 6 steps (x - x0, y, z - z0): " + found
+                + ", " + stepped.plain() + " plain");
         check(stepped.source().cells() == line.cells(), "no cell added or removed");
         ExtrudePathsGameTest.buildAndUndo(context, h, area, stepped.source(), OpLabel.LINE, undone -> {});
     }
@@ -194,11 +200,17 @@ public final class PathPointsGameTest {
         GeneratedSource stepped = SlopeSteps.apply(road, SlopeSteps.byColumn(laid.climbAxes()), steps(h),
                 h.state("minecraft:air")).source();
         int stairs = h.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
-        int[] found = {0};
+        // Rising half a block a column, the deck steps up at every odd column: a stair across all three columns of the
+        // width at x0 + 1, 3, 5, 7, 9 and 11, at y 100 to 105, wherever the test lands (exact straight sampling, RoadKernel
+        // relative to its first node).
+        Set<String> expected = new TreeSet<>(), found = new TreeSet<>();
+        for (int k = 1; k <= 11; k += 2) {
+            for (int side = -1; side <= 1; side++) expected.add(k + "," + (99 + (k + 1) / 2) + "," + side);
+        }
         stepped.forEach((x, y, z, state) -> {
-            if (state == stairs) found[0]++;
+            if (state == stairs) found.add((x - x0) + "," + y + "," + (z - z0));
         });
-        check(found[0] >= 15, "a stair across the width at each step: " + found[0]);
+        check(found.equals(expected), "stairs across the width at the 6 steps (x - x0, y, z - z0): " + found);
         ExtrudePathsGameTest.buildAndUndo(context, h, area, stepped, OpLabel.ROAD, undone -> {});
     }
 }

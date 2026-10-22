@@ -10,8 +10,10 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.testing.FakeStateSpace;
 import dev.sculptory.core.testing.FakeWorld;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 
@@ -353,6 +355,326 @@ class RoadKernelTest {
         // Follow terrain still refuses unloaded columns.
         RoadKernel.Spec follow = spec(nodes(0, 63, 0, 4, 63, 0), 1, null, RoadKernel.HeightMode.FOLLOW_TERRAIN, true, 2, 0);
         assertEquals(5, RoadKernel.generate(follow, new GroundMap(), -64, 320, 1000).unloaded().size());
+    }
+
+    /**
+     * Follow terrain, Level across, an even width (its centre line on a block boundary) over a 1:1 ramp: the columns lie
+     * at half-block arc lengths, where the smoothed centre heights interpolate to exact halves. Each deck must be the
+     * one an exact model gives (whole-number fractions, a half rounded up), for roads along +x, -x, +z and -z, rising
+     * and falling, widths 2 and 4, 4 to 16 blocks long, at the origin and far from it.
+     */
+    @Test
+    void followTerrainOnARampMatchesAnExactModel() {
+        int roads = 0, halves = 0;
+        for (int[] at : new int[][] {{0, 0}, {100, -200}, {-29_000_000, 1_234_560}}) {
+            for (int[] direction : new int[][] {{1, 0}, {-1, 0}, {0, 1}, {0, -1}}) {
+                for (int rise : new int[] {1, -1}) {
+                    for (int width : new int[] {2, 4}) {
+                        for (int length = 4; length <= 16; length++) {
+                            halves += checkRamp(at[0], at[1], direction[0], direction[1], rise, width, length);
+                            roads++;
+                        }
+                    }
+                }
+            }
+        }
+        assertEquals(3 * 4 * 2 * 2 * 13, roads);
+        assertTrue(halves > 500, "columns at exact halves: " + halves);
+    }
+
+    /** One ramp road of {@link #followTerrainOnARampMatchesAnExactModel}; the number of its columns at exact halves. */
+    private static int checkRamp(int x0, int z0, int sx, int sz, int rise, int width, int length) {
+        RoadKernel.Spec spec = spec(nodes(x0, 64, z0, x0 + sx * length, 64, z0 + sz * length), width, null,
+                RoadKernel.HeightMode.FOLLOW_TERRAIN, true, 0, 0);
+        SurfaceReader ground = (x, z) -> 64 + rise * ((x - x0) * sx + (z - z0) * sz);
+        RoadKernel.Path path = RoadKernel.path(spec);
+        Map<String, Integer> decks = new HashMap<>();
+        RoadKernel.generate(spec, path, ground, -64, 320, 1 << 16).source()
+                .forEach((x, y, z, state) -> decks.put(x + "," + z, y));
+        // The centre line runs from (x0 + 1, z0 + 1) (an even width's corner); sample k lies in the column k blocks on,
+        // whose ground (relative to 64) is rise (sx + sz + k).
+        int samples = length + 1, half = width / 2;
+        long[] sum = new long[samples], count = new long[samples];
+        for (int k = 0; k < samples; k++) {
+            for (int j = Math.max(0, k - half); j <= Math.min(samples - 1, k + half); j++) {
+                sum[k] += rise * (sx + sz + j);
+                count[k]++;
+            }
+        }
+        int halvesHere = 0;
+        String what = "ramp at " + x0 + "," + z0 + " toward " + sx + "," + sz + " rise " + rise + " width " + width
+                + " length " + length;
+        for (RoadKernel.Column column : path.columns()) {
+            // The column's arc length, doubled: its centre's offset from the start along the road (a whole number).
+            long s2 = Math.max(0, Math.min(2L * length, (2L * (column.x() - x0) - 1) * sx + (2L * (column.z() - z0) - 1) * sz));
+            int k = (int) Math.min(samples - 1, s2 / 2);
+            long numerator, denominator;
+            if (k >= samples - 1) {
+                numerator = 2 * sum[k];
+                denominator = 2 * count[k];
+            } else {
+                // smooth[k] + t (smooth[k + 1] - smooth[k]) with t = (s2 - 2k) / 2, over 2 count[k] count[k + 1].
+                long t2 = s2 - 2L * k;
+                numerator = 2 * sum[k] * count[k + 1] + t2 * (sum[k + 1] * count[k] - sum[k] * count[k + 1]);
+                denominator = 2 * count[k] * count[k + 1];
+            }
+            if ((2 * numerator) % denominator == 0 && ((2 * numerator) / denominator) % 2 != 0) halvesHere++;
+            int expected = 64 + (int) Math.floorDiv(2 * numerator + denominator, 2 * denominator);
+            assertEquals(expected, decks.get(column.x() + "," + column.z()), what + " at " + column.x() + "," + column.z());
+        }
+        return halvesHere;
+    }
+
+    /**
+     * A road found to step two blocks and dip: width 2 from (100, 64, -200) to (89, 64, -200), Follow terrain with Level
+     * across, over a ramp rising a block per block along it. Along each row of the road the deck never changes by
+     * more than a block from one column to the next.
+     */
+    @Test
+    void anEvenWidthRoadUpARampStepsABlockAtATime() {
+        RoadKernel.Spec spec = spec(nodes(100, 64, -200, 89, 64, -200), 2, null, RoadKernel.HeightMode.FOLLOW_TERRAIN,
+                true, 0, 0);
+        Map<String, Integer> decks = new HashMap<>();
+        RoadKernel.generate(spec, (x, z) -> 64 + (100 - x), -64, 320, 1 << 16).source()
+                .forEach((x, y, z, state) -> decks.put(x + "," + z, y));
+        for (int z = -200; z <= -199; z++) {
+            for (int x = 89; x < 100; x++) {
+                Integer here = decks.get(x + "," + z), next = decks.get((x + 1) + "," + z);
+                if (here == null || next == null) continue;
+                assertTrue(Math.abs(here - next) <= 1, "a step of " + (here - next) + " between x " + x + " and " + (x + 1)
+                        + " at z " + z + ": " + decks);
+            }
+        }
+    }
+
+    /**
+     * The first two nodes stacked in one column (a climb before the road sets off): the column they share keeps the
+     * road's climb axis, so Use Stairs and Slabs can step there, and the second node's height.
+     */
+    @Test
+    void stackedStartNodesKeepTheirClimbAxis() {
+        RoadKernel.Spec spec = spec(nodes(-12345, 73, 6789, -12345, 75, 6789, -12337, 79, 6789), 1, null,
+                RoadKernel.HeightMode.STRAIGHT, true, 0, 0);
+        RoadKernel.Path path = RoadKernel.path(spec);
+        long start = GroundMap.column(-12345, 6789);
+        assertEquals(SlopeSteps.AXIS_X, path.climbAxes().get(start), "the climb axis where the nodes stack");
+        for (RoadKernel.Column column : path.columns()) {
+            if (column.x() == -12345 && column.z() == 6789) {
+                assertEquals(75, RoadKernel.deckHeight(path, column), "the second node's height");
+            }
+        }
+    }
+
+    /**
+     * The ends of curved roads: their caps face the node chords (the spline's true end direction), and an end whose
+     * chord is empty (two nodes stacked in one column) stays round. The columns within half the width and a block and a
+     * half of an end node, with their deck and border, recorded from this kernel when the caps were set this way.
+     */
+    @Test
+    void curvedRoadEndsKeepTheirRecordedColumns() {
+        assertEquals(Set.of("0,0,64", "0,1,64b", "1,-1,64b", "1,0,64", "1,1,64", "1,2,64b", "10,0,66b", "10,1,66",
+                "10,2,66b", "11,-1,66b", "11,0,66", "11,1,66", "11,2,66b", "12,0,66", "12,1,66b", "2,0,64b", "2,1,64",
+                "2,2,64b"), endColumns(3, nodes(0, 64, 0, 6, 65, 3, 12, 66, 0)));
+        assertEquals(Set.of("0,1,64", "0,2,64b", "1,0,64", "1,1,64", "1,2,64", "1,3,64b", "12,8,64b", "12,9,64b",
+                "13,10,64b", "13,7,64", "13,8,64", "13,9,64b", "14,7,64", "14,8,64", "14,9,64", "15,7,64b", "15,8,64b",
+                "15,9,64", "2,0,64b", "2,1,64", "2,2,64", "2,3,64", "3,1,64b", "3,2,64"),
+                endColumns(4, nodes(0, 64, 0, 5, 64, 5, 10, 64, 3, 14, 64, 9)));
+        // The last two nodes stacked: a round end, at the height of the node the road arrives at.
+        assertEquals(Set.of("-1,2,64b", "0,0,64", "0,1,64", "0,2,64b", "0,3,64b", "1,-1,64", "1,0,64", "1,1,64", "1,2,64",
+                "1,3,64b", "10,2,64b", "10,3,64", "10,4,64", "10,5,64", "10,6,64b", "11,2,64b", "11,3,64", "11,4,64",
+                "11,5,64", "11,6,64b", "12,2,64b", "12,3,64", "12,4,64", "12,5,64", "12,6,64b", "13,2,64b", "13,3,64",
+                "13,4,64", "13,5,64", "13,6,64b", "14,3,64b", "14,4,64b", "14,5,64b", "2,-1,64b", "2,0,64", "2,1,64",
+                "2,2,64", "2,3,64", "3,0,64b", "3,1,64", "3,2,64", "4,0,64b", "8,4,64", "9,2,64b", "9,3,64", "9,4,64",
+                "9,5,64", "9,6,64b"), endColumns(5, nodes(0, 64, 0, 6, 64, 4, 12, 64, 4, 12, 66, 4)));
+        // The first two nodes stacked: a round start, at the height of the node the road leaves from.
+        assertEquals(Set.of("-1,-1,66b", "-1,0,66b", "-1,1,66b", "0,-1,66b", "0,0,66", "0,1,66b", "1,-1,66b", "1,0,66b",
+                "1,1,66", "1,2,66b", "2,0,66b", "2,1,66", "2,2,66", "5,3,66", "5,4,66", "5,5,66b", "6,3,66b", "6,4,66",
+                "6,5,66b", "6,6,66b", "7,4,66b", "7,5,66"), endColumns(3, nodes(0, 64, 0, 0, 66, 0, 7, 66, 5)));
+    }
+
+    /** A Straight road's columns within half its width and a block and a half of its first or last node, as x,z,deck[b]. */
+    private static Set<String> endColumns(int width, List<BlockPos> nodes) {
+        RoadKernel.Path path = RoadKernel.path(spec(nodes, width, null, RoadKernel.HeightMode.STRAIGHT, true, 0, 0));
+        double offset = (width & 1) == 1 ? 0.5 : 1.0, reach = width / 2.0 + 1.5;
+        BlockPos first = nodes.get(0), last = nodes.get(nodes.size() - 1);
+        Set<String> cells = new HashSet<>();
+        for (RoadKernel.Column c : path.columns()) {
+            double cx = c.x() + 0.5, cz = c.z() + 0.5;
+            if (Math.hypot(cx - first.x() - offset, cz - first.z() - offset) <= reach
+                    || Math.hypot(cx - last.x() - offset, cz - last.z() - offset) <= reach) {
+                cells.add(c.x() + "," + c.z() + "," + RoadKernel.deckHeight(path, c) + (c.border() ? "b" : ""));
+            }
+        }
+        return cells;
+    }
+
+    /**
+     * Straight roads in every direction (45 degrees and 2:1, all four quadrants), widths 1 to 6, rising one block per
+     * step of the larger axis or half that: every column's deck is its exact projected height rounded with a half up,
+     * worked out here in whole numbers. Many of those heights are exact halves. Also checked: the road mirrored across
+     * x or z is the same road mirrored, its caps and deck included.
+     */
+    @Test
+    void straightRoadsInEveryDirectionRoundTheirHalvesUpAndMirrorExactly() {
+        int halves = 0, roads = 0;
+        for (int width = 1; width <= 6; width++) {
+            for (int k = 2; k <= 24; k++) {
+                for (int[] step : new int[][] {{1, 1}, {2, 1}, {1, 2}}) {
+                    for (int rise : new int[] {k, (k + 1) / 2}) {
+                        Map<String, Integer> reference = null;
+                        for (int sx = -1; sx <= 1; sx += 2) {
+                            for (int sz = -1; sz <= 1; sz += 2) {
+                                int dx = sx * step[0] * k, dz = sz * step[1] * k;
+                                RoadKernel.Spec spec = spec(nodes(0, 99, 0, dx, 99 + rise, dz), width, null,
+                                        RoadKernel.HeightMode.STRAIGHT, true, 0, 0);
+                                RoadKernel.Path path = RoadKernel.path(spec);
+                                // Doubled offsets from the first node's centre line point (whole numbers).
+                                int centre2 = (width & 1) == 1 ? 1 : 2;
+                                long length2 = (long) dx * dx + (long) dz * dz;
+                                Map<String, Integer> mirrored = new HashMap<>();
+                                for (RoadKernel.Column column : path.columns()) {
+                                    long ex2 = 2L * column.x() + 1 - centre2, ez2 = 2L * column.z() + 1 - centre2;
+                                    long p2 = Math.max(0, Math.min(2 * length2, ex2 * dx + ez2 * dz));
+                                    long numerator = rise * p2 + length2, denominator = 2 * length2;
+                                    if ((rise * p2) % length2 == 0 && ((rise * p2) / length2) % 2 != 0) halves++;
+                                    int expected = 99 + (int) Math.floorDiv(numerator, denominator);
+                                    String what = "width " + width + " to " + dx + ", " + (99 + rise) + ", " + dz
+                                            + " at " + column.x() + "," + column.z();
+                                    assertEquals(expected, RoadKernel.deckHeight(path, column), what);
+                                    // Mirrored into the first quadrant about the first node's centre line point.
+                                    int mx = sx < 0 ? centre2 - 1 - column.x() : column.x();
+                                    int mz = sz < 0 ? centre2 - 1 - column.z() : column.z();
+                                    mirrored.put(mx + "," + mz + (column.border() ? " border" : ""),
+                                            RoadKernel.deckHeight(path, column));
+                                }
+                                roads++;
+                                if (reference == null) {
+                                    reference = mirrored;
+                                } else {
+                                    assertEquals(reference, mirrored, "width " + width + ", " + step[0] + ":" + step[1]
+                                            + " k " + k + " rise " + rise + " mirrored to " + sx + ", " + sz);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertEquals(6 * 23 * 3 * 2 * 4, roads);
+        assertTrue(halves > 1000, "exact half-block columns checked: " + halves);
+    }
+
+    /**
+     * A Straight road rising half a block a column (99 to 105 over 13 columns) is exactly on half blocks at every odd
+     * column, and rounds those up: its deck rises at columns 1, 3, 5, 7, 9 and 11, where Use Stairs and Slabs puts a
+     * stair across its width, wherever it is built (the moves of {@link #aRoadBuiltElsewhereIsTheSameRoadMoved}), along
+     * x and along z.
+     */
+    @Test
+    void aRoadRisingHalfABlockAColumnStepsAtEveryOddColumnAnywhere() {
+        int bricks = states.state("minecraft:stone_bricks");
+        int east = states.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
+        int south = states.state("minecraft:stone_brick_stairs[facing=south,half=bottom]");
+        SlopeSteps.Variants variants = new SlopeSteps.Variants() {
+            @Override
+            public int stairs(int state, String facing, String half) {
+                return state == bricks ? states.state("minecraft:stone_brick_stairs[facing=" + facing + ",half=" + half
+                        + "]") : -1;
+            }
+
+            @Override
+            public int slab(int state, String type) {
+                return state == bricks ? states.state("minecraft:stone_brick_slab[type=" + type + "]") : -1;
+            }
+        };
+        Set<String> expected = new HashSet<>();
+        for (int k = 1; k <= 11; k += 2) {
+            for (int side = -1; side <= 1; side++) expected.add(k + "," + (99 + (k + 1) / 2) + "," + side);
+        }
+        for (int dx : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
+            for (int step = -1024; step <= 1024; step += 16) {
+                int dz = step, dy = (Math.floorMod(dz / 16, 3) - 1) * 20;
+                for (boolean alongZ : new boolean[] {false, true}) {
+                    BlockPos end = alongZ ? new BlockPos(dx, 105 + dy, dz + 12) : new BlockPos(dx + 12, 105 + dy, dz);
+                    RoadKernel.Spec spec = new RoadKernel.Spec(List.of(new BlockPos(dx, 99 + dy, dz), end), 3,
+                            new Pattern.Single(bricks), null, RoadKernel.HeightMode.STRAIGHT, true, 0, 2, air);
+                    RoadKernel.Path laid = RoadKernel.path(spec);
+                    for (RoadKernel.Column column : laid.columns()) {
+                        int k = alongZ ? column.z() - dz : column.x() - dx;
+                        assertEquals(99 + dy + (k + 1) / 2, RoadKernel.deckHeight(laid, column),
+                                "the deck at column " + k + " moved by " + dx + ", " + dy + ", " + dz);
+                    }
+                    GeneratedSource road = RoadKernel.generate(spec, laid, new GroundMap(), -64, 320, 1 << 16).source();
+                    int stair = alongZ ? south : east;
+                    Set<String> found = new HashSet<>();
+                    SlopeSteps.apply(road, SlopeSteps.byColumn(laid.climbAxes()), variants, air).source()
+                            .forEach((x, y, z, state) -> {
+                                if (state != stair) return;
+                                int along = alongZ ? z - dz : x - dx, across = alongZ ? x - dx : z - dz;
+                                found.add(along + "," + (y - dy) + "," + across);
+                            });
+                    assertEquals(expected, found, "stairs " + (alongZ ? "along z" : "along x") + " moved by " + dx + ", "
+                            + dy + ", " + dz);
+                }
+            }
+        }
+    }
+
+    /**
+     * The same road built anywhere is the same road moved there. The spline's rounding noise grows with the size of
+     * its coordinates, and these roads have ties: a deck exactly on half blocks, column centres exactly on the end
+     * caps' planes, an even width's centre line on block boundaries, averaged ground exactly between two heights. Each
+     * road is built at (0, 0, 0) and moved by whole blocks up to 29 million out (and 20 up or down), over ground moved
+     * with it; its cells moved back must be the very same.
+     */
+    @Test
+    void aRoadBuiltElsewhereIsTheSameRoadMoved() {
+        // Ground for Follow terrain and fill below: uneven, so its averages fall on and between whole blocks.
+        HeightFunction terrain = (x, z) -> 100 + Math.floorMod(3 * x + 5 * z, 7) / 2;
+        RoadKernel.HeightMode straight = RoadKernel.HeightMode.STRAIGHT, follow = RoadKernel.HeightMode.FOLLOW_TERRAIN;
+        checkMoved("along x, rising half a block a column", nodes(0, 99, 0, 12, 105, 0), 3, straight, true, 0, 2,
+                terrain);
+        checkMoved("along z", nodes(0, 99, 0, 0, 105, 12), 3, straight, true, 0, 2, terrain);
+        checkMoved("diagonal", nodes(0, 99, 0, 9, 104, 7), 3, straight, true, 0, 2, terrain);
+        checkMoved("reversed", nodes(12, 105, 0, 0, 99, 0), 3, straight, true, 0, 2, terrain);
+        checkMoved("even width", nodes(0, 99, 0, 12, 105, 0), 2, straight, true, 0, 2, terrain);
+        checkMoved("even width, diagonal", nodes(0, 99, 0, 9, 104, 7), 4, straight, true, 2, 1, terrain);
+        checkMoved("a curve with fill below", nodes(0, 99, 0, 8, 102, 5, 16, 104, -3), 5, straight, true, 3, 2,
+                terrain);
+        checkMoved("Follow terrain, level across", nodes(0, 100, 0, 8, 100, 5, 16, 100, -3), 5, follow, true, 1, 2,
+                terrain);
+        checkMoved("Follow terrain, even width", nodes(0, 100, 0, 12, 100, 0), 2, follow, true, 0, 1, terrain);
+        checkMoved("Follow terrain, each column its own ground", nodes(0, 100, 0, 9, 100, 7), 3, follow, false, 1, 1,
+                terrain);
+    }
+
+    private static void checkMoved(String what, List<BlockPos> nodes, int width, RoadKernel.HeightMode mode, boolean level,
+                                   int fill, int clear, HeightFunction terrain) {
+        Set<String> reference = roadCells(nodes, width, mode, level, fill, clear, terrain, 0, 0, 0);
+        assertTrue(reference.size() > 20, what + ": the road is there");
+        int moves = 0;
+        for (int dx : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
+            for (int dz = -1024; dz <= 1024; dz += 16) {
+                int dy = (Math.floorMod(dz / 16, 3) - 1) * 20;
+                Set<String> moved = roadCells(nodes, width, mode, level, fill, clear, terrain, dx, dy, dz);
+                assertEquals(reference, moved, what + ": the road moved by " + dx + ", " + dy + ", " + dz);
+                moves++;
+            }
+        }
+        assertEquals(5 * 129, moves);
+    }
+
+    /** The road's cells built moved by (dx, dy, dz) over the terrain moved with it, moved back, as x,y,z keys. */
+    private static Set<String> roadCells(List<BlockPos> nodes, int width, RoadKernel.HeightMode mode, boolean level,
+                                         int fill, int clear, HeightFunction terrain, int dx, int dy, int dz) {
+        List<BlockPos> moved = new ArrayList<>();
+        for (BlockPos node : nodes) moved.add(new BlockPos(node.x() + dx, node.y() + dy, node.z() + dz));
+        RoadKernel.Spec spec = spec(moved, width, null, mode, level, fill, clear);
+        SurfaceReader ground = (x, z) -> terrain.at(x - dx, z - dz) + dy;
+        Set<String> cells = new HashSet<>();
+        RoadKernel.generate(spec, ground, -64, 320, 1 << 16).source()
+                .forEach((x, y, z, state) -> cells.add((x - dx) + "," + (y - dy) + "," + (z - dz) + "=" + state));
+        return cells;
     }
 
     @Test

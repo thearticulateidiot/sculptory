@@ -1446,7 +1446,7 @@ public final class GenerateTool implements Tool {
         Long2ObjectOpenHashMap<int[]> chunks = new Long2ObjectOpenHashMap<>();
         for (RoadKernel.Column column : built.unloaded()) {
             long key = GroundMap.column(column.x() >> 4, column.z() >> 4);
-            int y = (int) Math.floor(built.path().nodeHeightAt(column.along()) + 0.5);
+            int y = RoadKernel.deckHeight(built.path(), column);
             int[] box = chunks.get(key);
             if (box == null) {
                 chunks.put(key, new int[] {column.x(), y, column.z(), column.x(), y, column.z()});

@@ -149,10 +149,19 @@ public final class BuilderModeGameTest {
         hold(h.player, Items.AIR);
         // The sand set above has its own fall check scheduled (2 ticks): break its support only after that has run on
         // the stone, as for sand that has lain there a while; breaking first left the sand to that check and its timing.
+        // Waited for, not counted in ticks: scheduled ticks run only in a chunk that ticks with its entities loaded,
+        // which a loaded machine may reach later than 5 ticks after the chunk was forced. Once it ran, a fall can come
+        // only from a check the break schedules, and with Keep shape there must be none.
+        BlockPos sand = support.above();
         context.startSequence()
-                .thenExecuteAfter(5, () -> {
+                .thenWaitUntil(() -> check(!h.world.getBlockTicks().hasScheduledTick(sand, Blocks.SAND),
+                        "the sand's own fall check is still scheduled"))
+                .thenExecute(() -> {
+                    check(h.world.getBlockState(sand).is(Blocks.SAND), "the sand lay on its support");
                     BuilderOutcome broken = breakCells(h, h.player, 1, List.of(grass, support), keep, false, true);
                     check(broken.accepted() && broken.changed() == 2, "two blocks broken: " + broken);
+                    check(!h.world.getBlockTicks().hasScheduledTick(sand, Blocks.SAND),
+                            "Keep shape scheduled a fall check for the sand");
                 })
                 .thenExecuteAfter(10, () -> {
                     check(h.world.getBlockState(grass.above()).is(Blocks.POPPY), "the flower floats");

@@ -44,6 +44,11 @@ loader (Fabric or NeoForge) on their client; everyone else joins with nothing in
   `/sculptory` command has `version` and, for admins, `fill`, `undo` and `redo` only (restart the server after
   editing `server.json`).
 
+### Changed
+
+- **Generate roads**: the ends of curved roads now follow the road's true end direction; straight roads round
+  half-block steps the same wherever they are built, and Use Stairs and Slabs on a 45° road always steps along x.
+
 ## 0.4.0-beta — first beta
 
 For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.3.0-alpha. Beta means the main
