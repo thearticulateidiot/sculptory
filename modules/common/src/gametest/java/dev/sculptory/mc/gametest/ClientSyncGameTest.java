@@ -248,6 +248,9 @@ public final class ClientSyncGameTest {
                 .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "before the fill");
                     view.resetCounts();
+                })
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkQuiet(view, watcher, "before the fill");
                     before[0] = sync.columnsResent();
                     before[1] = sync.cellsMarked();
@@ -275,8 +278,9 @@ public final class ClientSyncGameTest {
     }
 
     /**
-     * Right after {@link ClientView#resetCounts}: one more drain brings no block or chunk update, so the counts read
-     * after the edit are the edit's own.
+     * A tick after {@link ClientView#resetCounts} (the steps call it after a {@code thenIdle(1)}): the watcher was sent
+     * no block or chunk update in that tick, so nothing was still on its way and the counts read after the next edit are
+     * the edit's own.
      */
     private static void checkQuiet(ClientView view, Watcher watcher, String what) {
         watcher.drain();
@@ -318,6 +322,9 @@ public final class ClientSyncGameTest {
                     checkView(h.world, plainView, plain, region, "plain, before");
                     predictingView.resetCounts();
                     plainView.resetCounts();
+                })
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkQuiet(predictingView, predicting, "predicting, before the fill");
                     checkQuiet(plainView, plain, "plain, before the fill");
                     sendDabs.run();
@@ -337,6 +344,9 @@ public final class ClientSyncGameTest {
                     check(plainView.chunkPackets >= 9, "plain: " + plainView.chunkPackets + " chunk packets");
                     predictingView.resetCounts();
                     plainView.resetCounts();
+                })
+                .thenIdle(1)
+                .thenExecute(() -> {
                     checkQuiet(predictingView, predicting, "predicting, before the undo");
                     checkQuiet(plainView, plain, "plain, before the undo");
                     sendDabs.run();

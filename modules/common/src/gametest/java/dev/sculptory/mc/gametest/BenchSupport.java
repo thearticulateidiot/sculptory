@@ -356,7 +356,10 @@ final class BenchSupport {
             } else if (packet instanceof ClientboundLoginPacket login) {
                 dimension = login.commonPlayerSpawnInfo().dimension();
             } else if (packet instanceof ClientboundRespawnPacket respawn) {
-                // A client that changes dimension drops every chunk it held (vanilla sends no forget packets for them).
+                // A client that changes dimension drops every chunk it held when the respawn packet arrives. Vanilla
+                // (ServerPlayer.changeDimension, 1.21.1) sends the respawn first and only then removes the player from
+                // the old level, whose ChunkMap.updatePlayerStatus drops its chunks (PlayerChunkSender.dropChunk): their
+                // forget packets come after the respawn, for chunks the client no longer holds. So the clear is here.
                 ResourceKey<Level> to = respawn.commonPlayerSpawnInfo().dimension();
                 if (!to.equals(dimension)) received.clear();
                 dimension = to;
