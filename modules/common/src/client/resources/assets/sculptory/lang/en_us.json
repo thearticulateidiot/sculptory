@@ -1120,6 +1120,7 @@
   "sculptory.navigate.no_spot": "Nowhere to stand on top of that block",
   "sculptory.navigate.no_spot_through": "No open space behind that wall within %s blocks",
   "sculptory.navigate.outside_world": "That spot is outside the world border",
+  "sculptory.navigate.blocked": "The server stopped that jump (a plugin there refused it)",
   "sculptory.navigate.nothing_looked_at": "Look at a block first",
   "sculptory.navigate.not_connected": "Jump needs a server with Sculptory",
   "sculptory.navigate.not_offered": "This server's Sculptory has no Jump yet",

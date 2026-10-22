@@ -7,6 +7,7 @@ import dev.sculptory.core.scatter.FeatureCatalog;
 import dev.sculptory.core.scatter.ScatterPlanner;
 import dev.sculptory.core.state.ModdedFacingFallback;
 import dev.sculptory.core.state.VerticalFlip;
+import dev.sculptory.mc.builder.CapturedBuilderSteps;
 import dev.sculptory.mc.config.FolderMigration;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.loader.ServerLoader;
@@ -335,7 +336,7 @@ public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel
     public BuilderMode<ServerPlayer> builderMode(EngineEditService<ServerPlayer, ServerLevel> edits,
                                                        HistoryService history, EditExecutor<ServerLevel> executor,
                                                        LongSupplier clock) {
-        return new BuilderService(edits, this, executor, history, clock);
+        return new BuilderService(edits, this, server, CapturedBuilderSteps.INSTANCE, executor, history, clock);
     }
 
     /** {@link TinkerEdits}. */
@@ -348,6 +349,13 @@ public final class EngineRuntime implements EngineHost<ServerPlayer, ServerLevel
     @Override
     public S2C.NavigateResult navigate(ServerPlayer player, C2S.Navigate request) {
         return NavigateService.navigate(this, player, request);
+    }
+
+    /** Navigate's move: the game's own teleport within the player's world (nothing on Fabric or NeoForge refuses it). */
+    @Override
+    public boolean teleport(ServerPlayer player, double x, double y, double z, float yaw, float pitch) {
+        player.teleportTo(player.serverLevel(), x, y, z, yaw, pitch);
+        return true;
     }
 
     @Override

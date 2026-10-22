@@ -24,7 +24,6 @@ import dev.sculptory.server.engine.EditService;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.RunOptions;
-import dev.sculptory.server.engine.TinkerService;
 import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistoryService;
 import dev.sculptory.server.engine.impl.ServerClipboards;
@@ -111,7 +110,11 @@ public final class PaperEditHost {
         PaperEditHost host = new PaperEditHost(engine, service, clips, planning);
         host.registerHooks(loader);
         host.saveHooks = HistorySaveHooks.register(plugin, service);
-        ServerNet.install(new NetFacade(service), clips, planning, TinkerService.disabled(), engine.permissions(),
+        // After the history hooks: on a chunk unload the trails are folded before the marks are written.
+        PaperFluidTrails.register(plugin, engine.fluidTrails());
+        dev.sculptory.paper.perm.PermissionWatch.register(plugin, service, planning);
+        org.bukkit.Bukkit.getPluginManager().registerEvents(new BuilderModeListener(service), plugin);
+        ServerNet.install(new NetFacade(service), clips, planning, service, engine.permissions(),
                 () -> engine.config().toLimits(), engine::states);
         LOG.info("Sculptory engine started on Paper ({} block states, editing {}, protection: {})", engine.states().size(),
                 config.editingEnabled ? "enabled" : "disabled", protection.name());

@@ -2,8 +2,7 @@ package dev.sculptory.mc.builder;
 
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.state.StateSpace;
-import dev.sculptory.mc.mixin.BlockItemInvoker;
-import dev.sculptory.mc.mixin.VerticallyAttachableBlockItemAccessor;
+import dev.sculptory.mc.world.McInternals;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -107,7 +106,7 @@ public final class BuilderPlacement {
         if (!context.canPlace()) return Outcome.refused(Refusal.OCCUPIED);
         BlockPlaceContext placing = item.updatePlacementContext(context);
         if (placing == null) return Outcome.refused(Refusal.GAME_REFUSES);
-        BlockState state = ((BlockItemInvoker) item).sculptory$getPlacementState(placing);
+        BlockState state = McInternals.get().placementState(item, placing);
         if (state == null && force) state = forcedState(item, placing);
         if (state == null) return Outcome.refused(Refusal.GAME_REFUSES);
         if (replace) state = keepOrientation(world.getBlockState(placing.getClickedPos()), state);
@@ -149,7 +148,7 @@ public final class BuilderPlacement {
      */
     public static BlockState forcedState(BlockItem item, BlockPlaceContext context) {
         if (item instanceof StandingAndWallBlockItem attachable && context.getClickedFace().getAxis().isHorizontal()) {
-            BlockState wall = ((VerticallyAttachableBlockItemAccessor) attachable).sculptory$wallBlock().defaultBlockState();
+            BlockState wall = McInternals.get().wallBlock(attachable).defaultBlockState();
             if (wall.hasProperty(BlockStateProperties.HORIZONTAL_FACING)) return wall.setValue(BlockStateProperties.HORIZONTAL_FACING, context.getClickedFace());
         }
         BlockState state = null;
@@ -167,26 +166,26 @@ public final class BuilderPlacement {
      * for the placed original only). Returns whether the item placed it.
      */
     public static boolean place(BlockItem item, BlockPlaceContext context, BlockState state, boolean copy) {
-        BlockItemInvoker invoker = (BlockItemInvoker) item;
-        if (!invoker.sculptory$place(context, state)) return false;
+        McInternals steps = McInternals.get();
+        if (!steps.placeBlock(item, context, state)) return false;
         BlockPos pos = context.getClickedPos();
         Level world = context.getLevel();
         Player player = context.getPlayer();
         ItemStack stack = context.getItemInHand();
         BlockState placed = world.getBlockState(pos);
         if (placed.is(state.getBlock())) {
-            placed = invoker.sculptory$placeFromNbt(pos, world, stack, placed);
+            placed = steps.updateBlockStateFromTag(item, pos, world, stack, placed);
             if (copy) {
                 BlockItem.updateCustomBlockEntityTag(world, player, pos, stack);
             } else {
-                invoker.sculptory$postPlacement(pos, world, player, stack, placed);
+                steps.updateCustomBlockEntityTag(item, pos, world, player, stack, placed);
             }
-            BlockItemInvoker.sculptory$copyComponentsToBlockEntity(world, pos, stack);
+            steps.updateBlockEntityComponents(world, pos, stack);
             placed.getBlock().setPlacedBy(world, pos, placed, player, stack);
             if (player instanceof ServerPlayer serverPlayer) CriteriaTriggers.PLACED_BLOCK.trigger(serverPlayer, pos, stack);
         }
         SoundType sounds = placed.getSoundType();
-        world.playSound(player, pos, invoker.sculptory$getPlaceSound(placed), SoundSource.BLOCKS,
+        world.playSound(player, pos, steps.placeSound(item, placed), SoundSource.BLOCKS,
                 (sounds.getVolume() + 1.0f) / 2.0f, sounds.getPitch() * 0.8f);
         world.gameEvent(GameEvent.BLOCK_PLACE, pos, GameEvent.Context.of(player, placed));
         return true;

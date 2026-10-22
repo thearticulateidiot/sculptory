@@ -6,7 +6,9 @@ import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.scatter.FeatureCatalog;
 import dev.sculptory.core.scatter.ScatterPlanner;
 import dev.sculptory.mc.engine.impl.McHost;
-import dev.sculptory.mc.engine.impl.PaperScatterSurvival;
+import dev.sculptory.mc.engine.impl.BuilderService;
+import dev.sculptory.mc.engine.impl.NavigateService;
+import dev.sculptory.mc.engine.impl.PaperEngineParts;
 import dev.sculptory.mc.perm.McPermissionService;
 import dev.sculptory.mc.world.BlockWriter;
 import dev.sculptory.mc.world.ClientSync;
@@ -26,7 +28,6 @@ import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.paper.perm.PaperPermissions;
 import dev.sculptory.paper.perm.Protection;
 import dev.sculptory.protocol.v2.C2S;
-import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.TinkerService;
@@ -40,6 +41,7 @@ import dev.sculptory.server.platform.BorderBounds;
 import dev.sculptory.server.platform.Profile;
 import dev.sculptory.server.platform.WorldBiomes;
 import dev.sculptory.server.platform.WriteOptions;
+import io.papermc.paper.entity.TeleportFlag;
 import java.util.Comparator;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -57,15 +59,19 @@ import net.minecraft.server.level.TicketType;
 import net.minecraft.server.players.GameProfileCache;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.border.WorldBorder;
+import org.bukkit.Location;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.plugin.java.JavaPlugin;
 
 /**
  * The engine host on Paper: the shared engine sees the game through this. P is the NMS {@link ServerPlayer} and W the
  * NMS {@link ServerLevel} (Paper's server classes, Mojang-named), the same types as on Fabric and NeoForge, so the
  * common world layer (reader, writer, client sync, entities, tiles, biomes, features) is used as it is, compiled from
  * modules/common through the Paper patches (PaperAccess). What differs from the loaders' {@code EngineRuntime}:
- * permissions add a region plugin ({@link PaperPermissions}); builder mode, Tinker and Navigate are not wired yet
- * (they need mixin replacements: {@link DisabledBuilderMode}, {@link TinkerService#disabled()}, a refusal); the light
- * batch is off (Paper's Moonrise light engine); fluid trails record nothing (their mixins are absent).
+ * permissions add a region plugin ({@link PaperPermissions}); builder mode carries out its steps with CraftBukkit's
+ * block capture and fires Bukkit's block events ({@link PaperBuilderSteps}); Navigate moves the player through
+ * Bukkit's teleport ({@link #teleport}); the light batch is off (Paper's Moonrise light engine); fluid trails are fed
+ * by Bukkit's fluid events instead of mixins ({@code PaperFluidTrails}).
  */
 public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>, McHost {
     /** Region-op chunk ticket, as on the loaders: radius 0, expires after 600 ticks unless refreshed. */
@@ -104,6 +110,8 @@ public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>,
     }
 
     void tickEnd() {
+        // The fluid changes Bukkit's events announced this tick go into their entries' trails (PaperFluidTrails).
+        FluidTrails.finishEventChanges();
         executor.endTick();
     }
 
@@ -177,17 +185,34 @@ public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>,
     public BuilderMode<ServerPlayer> builderMode(EngineEditService<ServerPlayer, ServerLevel> edits,
                                                  HistoryService history, EditExecutor<ServerLevel> executor,
                                                  LongSupplier clock) {
-        return new DisabledBuilderMode();
+        return new BuilderService(edits, this, server,
+                new PaperBuilderSteps(JavaPlugin.getProvidingPlugin(PaperEngine.class)), executor, history, clock);
     }
 
     @Override
     public TinkerService<ServerPlayer> tinker(EngineEditService<ServerPlayer, ServerLevel> edits) {
-        return TinkerService.disabled();
+        return PaperEngineParts.tinker(edits, this);
     }
 
     @Override
     public S2C.NavigateResult navigate(ServerPlayer player, C2S.Navigate request) {
-        return S2C.NavigateResult.refused(request.reqId(), RejectReason.DISABLED);
+        return NavigateService.navigate(this, player, request);
+    }
+
+    /**
+     * Navigate's move through Bukkit's {@code Player.teleport} (cause PLUGIN), so {@code PlayerTeleportEvent} fires:
+     * CMI's {@code /back} notes where the player was, WorldGuard's entry rules may refuse it (then nothing moves, and
+     * the player keeps riding: {@code CraftPlayer.teleport} dismounts only after the event).
+     *
+     * <p>{@code CraftPlayer.teleport} also returns false before any event for a dead or disconnected player (Navigate
+     * does not ask for those) and for one carrying passengers: they come along instead ({@code RETAIN_PASSENGERS}, a
+     * move within the player's world), as with vanilla's teleport. So false here always means a plugin cancelled it.
+     */
+    @Override
+    public boolean teleport(ServerPlayer player, double x, double y, double z, float yaw, float pitch) {
+        Location to = new Location(player.serverLevel().getWorld(), x, y, z, yaw, pitch);
+        return player.getBukkitEntity().teleport(to, PlayerTeleportEvent.TeleportCause.PLUGIN,
+                TeleportFlag.EntityState.RETAIN_PASSENGERS);
     }
 
     @Override
@@ -401,6 +426,6 @@ public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>,
 
     @Override
     public ScatterPlanner.SurvivalCheck survivalCheck(ServerLevel world, int[] blockStates) {
-        return PaperScatterSurvival.survivalCheck(states, world, blockStates);
+        return PaperEngineParts.survivalCheck(states, world, blockStates);
     }
 }

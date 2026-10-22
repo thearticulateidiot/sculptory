@@ -29,7 +29,9 @@ import net.minecraft.world.phys.Vec3;
  * is refused {@code NO_PERMISSION} with a notice saying which is missing. <b>Limits</b> ({@code navigate.*}): the block
  * looked at must lie within {@code maxDistance} blocks of the player's eyes ({@code TOO_LARGE}), in a loaded chunk
  * ({@code UNLOADED}); Through walks at most {@code maxThroughDepth} blocks. No spot, or one outside the world border, is
- * {@code INVALID}. Every refusal comes with a {@code sculptory.navigate.*} notice; nothing is changed.
+ * {@code INVALID}. The move itself goes through the host ({@link McHost#teleport}); one the platform refuses (a Paper
+ * plugin cancelling the teleport event) is {@code PROTECTED}. Every refusal comes with a {@code sculptory.navigate.*}
+ * notice; nothing is changed.
  * A Creative player put where nothing is under their feet (Through, under a floor) is set flying, so they don't fall.
  */
 public final class NavigateService {
@@ -44,6 +46,8 @@ public final class NavigateService {
     /** [depth]. */
     public static final String NO_SPOT_THROUGH = NOTICE_PREFIX + "no_spot_through";
     public static final String OUTSIDE = NOTICE_PREFIX + "outside_world";
+    /** The server (a plugin on it) stopped the move. */
+    public static final String BLOCKED = NOTICE_PREFIX + "blocked";
 
     private NavigateService() {}
 
@@ -70,9 +74,19 @@ public final class NavigateService {
             return S2C.NavigateResult.refused(request.reqId(), decision.reason());
         }
         BlockPos feet = decision.feet();
-        player.stopRiding();
-        player.teleportTo(player.serverLevel(), feet.x() + 0.5, feet.y(), feet.z() + 0.5, player.getYRot(),
-                player.getXRot());
+        if (!player.isAlive() || player.connection == null || player.hasDisconnected()) {
+            // Nobody to move (dead, or gone while the request waited): refused without a notice, and no plugin is asked,
+            // so the "blocked" notice below only ever means a plugin stopped the move.
+            return S2C.NavigateResult.refused(request.reqId(), RejectReason.INVALID);
+        }
+        // The host dismounts the player as part of the move (vanilla's teleport does; Paper's only once no plugin has
+        // stopped it), so a refused move leaves the player riding.
+        if (!runtime.teleport(player, feet.x() + 0.5, feet.y(), feet.z() + 0.5, player.getYRot(), player.getXRot())) {
+            // Something on the server refused the move (on Paper a plugin cancelled the teleport event): nothing moved.
+            Decision blocked = Decision.refused(RejectReason.PROTECTED, BLOCKED);
+            ServerNet.sendNotice(player, blocked.notice());
+            return S2C.NavigateResult.refused(request.reqId(), blocked.reason());
+        }
         player.setDeltaMovement(Vec3.ZERO);
         player.hurtMarked = true;
         player.fallDistance = 0;

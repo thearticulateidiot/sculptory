@@ -31,4 +31,12 @@ public interface McHost {
     String worldId(ServerLevel world);
 
     boolean isOnThread();
+
+    /**
+     * Moves {@code player} (alive and connected) to (x, y, z) in their own world, facing {@code yaw}/{@code pitch}
+     * (Navigate), off whatever they ride and with whatever rides them. Returns false when the platform refused the move
+     * (then nothing changed, the player still rides): on Paper a plugin cancelled the teleport event (WorldGuard's entry
+     * rules), on Fabric and NeoForge never.
+     */
+    boolean teleport(ServerPlayer player, double x, double y, double z, float yaw, float pitch);
 }

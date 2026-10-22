@@ -2,7 +2,6 @@ package dev.sculptory.paper.devtest;
 
 import static dev.sculptory.paper.devtest.SelfTestRun.aabb;
 import static dev.sculptory.paper.devtest.SelfTestRun.box;
-import static dev.sculptory.paper.devtest.SelfTestRun.ticks;
 
 import dev.sculptory.core.Box;
 import dev.sculptory.core.edit.OpSpec;
@@ -201,7 +200,7 @@ final class RegionChecks {
         int x = r.baseX + 160, z = r.baseZ + 4;
         SelfTestRun.Area area = r.claim(box(x - 2, 98, z - 2, x + 18, 108, z + 8));
         // Paper loads a chunk's entities a little after the chunk: look again once they are in.
-        return ticks(5).thenCompose(v -> {
+        return r.ticks(5).thenCompose(v -> {
             if (area.hadEntities() || !r.level.getEntitiesOfClass(ArmorStand.class, aabb(area.box)).isEmpty()) {
                 throw new IllegalStateException("the entity check's area holds entities already; it changes nothing");
             }
@@ -244,7 +243,7 @@ final class RegionChecks {
                                     + ", " + result.skippedProtected() + " cells skipped as protected)");
                     return r.undo();
                 })
-                .thenCompose(result -> ticks(2).thenApply(v -> result))
+                .thenCompose(result -> r.ticks(2).thenApply(v -> result))
                 .thenAccept(result -> {
                     int copyLeft = stands(r, x + 12.5, 101, z + 2.5);
                     int sources = stands(r, x + 2.5, 101, z + 2.5) + stands(r, x + 2.5, 104, z + 2.5);

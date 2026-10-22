@@ -116,4 +116,32 @@ class PermitSourceTest {
         assertThrows(IllegalStateException.class, () -> lowerLayer.column(3, 3, 10, 12));
         assertTrue(PermitSource.ALLOW_ALL.column(3, 3, -64, 319).allows(3, 0, 3), "a compact permit answers any height");
     }
+
+    /**
+     * A source of its own that knows the heights its permits were made for: its compact permit cannot vouch for heights
+     * outside them, so the default column() fails them under the check (a source answering other heights overrides it).
+     */
+    @Test
+    void theDefaultColumnChecksHeightsAgainstTheSourcesBounds() {
+        assertTrue(Boolean.getBoolean("sculptory.checkPermitBounds"), "the tests run with the permit-bounds check");
+        Box asked = box(0, 10, 0, 15, 11, 15);
+        PermitSource layers = new PermitSource() {
+            @Override
+            public ChunkPermit chunk(int cx, int cz) {
+                return ChunkPermit.ALLOW; // compact: derived from y 10..11 only
+            }
+
+            @Override
+            public Box bounds() {
+                return asked;
+            }
+        };
+        assertTrue(layers.column(3, 3, 10, 11).allows(3, 10, 3), "inside the bounds");
+        assertThrows(IllegalStateException.class, () -> layers.column(3, 3, 9, 11), "below the bounds");
+        assertThrows(IllegalStateException.class, () -> layers.column(3, 3, 10, 12), "above the bounds");
+        // A player's source overrides column(): it asks for the column at the heights given, wherever they are.
+        Region region = new Region();
+        PermitSource player = PermitSource.forPlayer(region, null, null, asked);
+        assertFalse(player.column(41, 5, 0, 30).allows(41, 15, 5), "asked for itself, not limited to the bounds");
+    }
 }
