@@ -18,13 +18,11 @@ import dev.sculptory.server.config.SculptoryConfig;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.platform.WriteOptions;
-import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
-import javax.management.ObjectName;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestAssertException;
@@ -581,23 +579,6 @@ public final class LightBatchGameTest {
                 return false;
             }
             return ++settledTicks >= 5;
-        }
-    }
-
-    /** Live instances of vanilla's light tasks ({@code ServerLightingProvider} lambdas; a full GC). */
-    static long lightTaskObjects() {
-        try {
-            String out = (String) ManagementFactory.getPlatformMBeanServer().invoke(
-                    new ObjectName("com.sun.management:type=DiagnosticCommand"), "gcClassHistogram",
-                    new Object[] {new String[0]}, new String[] {String[].class.getName()});
-            long n = 0;
-            for (String line : out.split("\n")) {
-                if (!line.contains("net.minecraft.server.level.ThreadedLevelLightEngine$$Lambda")) continue;
-                n += Long.parseLong(line.trim().split(" +")[1]);
-            }
-            return n;
-        } catch (Exception e) {
-            throw new GameTestAssertException("no class histogram: " + e);
         }
     }
 }

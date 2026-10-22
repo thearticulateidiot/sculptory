@@ -90,7 +90,7 @@ public final class HeightmapWideGameTest {
             int cx = x0 + SIDE / 2, cz = z0 + SIDE / 2;
             int top = surface(world, cx, cz);
             StringBuilder report = new StringBuilder();
-            long batchedBefore = LightBatch.batchedCells();
+            long batchedBefore = LightBatch.batchedCells(), vanillaBefore = LightBatch.vanillaChecks();
             int strokeId = 1;
             for (boolean lower : new boolean[] {false, true}) {
                 BrushSpec spec = heightmap(128, cone(128), 128, lower, SurfaceMask.ANY, null, Symmetry.NONE);
@@ -132,11 +132,13 @@ public final class HeightmapWideGameTest {
                         + ", was " + top);
             }
             // The light checks of the cells written so far went to the light engine a batch at a time (LightBatch): a
-            // vanilla light task per cell, about 100 bytes each, held 1.4 GB here.
+            // vanilla light task per cell, about 100 bytes each, held 1.4 GB here. Checks that went the per-cell way are
+            // counted as they are handed over (the world's own block changes during these ticks among them), so the
+            // light thread's progress does not matter.
             long batched = LightBatch.batchedCells() - batchedBefore;
             check(batched > 2_000_000, "light checks batched by the two dabs: " + batched);
-            long lightTasks = LightBatchGameTest.lightTaskObjects();
-            check(lightTasks < 50_000, "vanilla light tasks queued: " + lightTasks);
+            long perCell = LightBatch.vanillaChecks() - vanillaBefore;
+            check(perCell < 50_000, "light checks that went to the light engine one per cell: " + perCell);
             LoggerFactory.getLogger("sculptory").info("Heightmap radius-128 dabs on a dedicated server's lane:{}", report);
             check(h.service.historyService().undoEntries(h.player.getUUID()).size() == entries + 2, "one entry a stroke");
             for (int i = 0; i < 2; i++) {
