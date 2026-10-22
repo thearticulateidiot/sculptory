@@ -18,7 +18,10 @@ import net.minecraft.nbt.CompoundTag;
  * treat spawner mobs differently), so a copied spawner mob stays one.
  */
 public final class CraftBukkitKeys {
-    /** The keys taken out, each with why (checked against Paper 1.21.1 build 133's Entity.saveWithoutId). */
+    /**
+     * The keys taken out, each with why (checked against Paper 1.21.1 build 133: Entity.saveWithoutId writes them, but
+     * {@code Paper.SpawningEntity}, which Phantom.addAdditionalSaveData writes).
+     */
     public static final Map<String, String> STRIPPED = Map.of(
             "WorldUUIDMost", "the world the entity was saved in (with WorldUUIDLeast); a copy lands in another place",
             "WorldUUIDLeast", "the world the entity was saved in (with WorldUUIDMost)",

@@ -216,19 +216,30 @@ public final class BrushWorldEdgesGameTest {
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_brush_edges_control", timeoutTicks = LIMIT)
     public void aPermitNarrowedOnPurposeIsCaughtByTheEdgeCheck(GameTestHelper context) {
         try (Edges e = new Edges(context, 2609, BrushWorldEdgesGameTest::lowestLayerDenied)) {
-            WorldSnapshot before = capture(e.world, e.upper);
+            WorldSnapshot upperBefore = capture(e.world, e.upper), lowerBefore = capture(e.world, e.lower);
+            BrushSpec raise = terrain(BrushTool.RAISE, 4, 1L);
             GameTestAssertException caught = null;
             try {
-                e.run(new Case("Raise under narrowed permits", terrain(BrushTool.RAISE, 4, 1L),
-                        terrain(BrushTool.RAISE, 4, 1L), Expect.CHANGE, Expect.CHANGE));
+                e.run(new Case("Raise under narrowed permits", raise, raise, Expect.CHANGE, Expect.CHANGE));
             } catch (GameTestAssertException expected) {
                 caught = expected;
             }
             check(caught != null && caught.getMessage().contains("dabs rejected"),
-                    "the edge check did not fail on narrowed permits: " + caught);
-            check(e.h.events.dabRejections.contains(RejectReason.INVALID),
-                    "the dab was not refused INVALID: " + e.h.events.dabRejections);
-            checkSame(before, capture(e.world, e.upper), "a refused dab wrote something at the top");
+                    "the edge check did not fail on narrowed permits at the top: " + caught);
+            // The edge check stops at the top: the bottom dab on its own.
+            GameTestAssertException caughtBelow = null;
+            try {
+                e.stroke("Raise under narrowed permits at the bottom", raise, e.dab(e.bottom));
+            } catch (GameTestAssertException expected) {
+                caughtBelow = expected;
+            }
+            check(caughtBelow != null && caughtBelow.getMessage().contains("dabs rejected"),
+                    "the bottom dab was not refused under narrowed permits: " + caughtBelow);
+            long invalid = e.h.events.dabRejections.stream().filter(reason -> reason == RejectReason.INVALID).count();
+            check(invalid == 2 && e.h.events.dabRejections.size() == 2,
+                    "both dabs refused INVALID: " + e.h.events.dabRejections);
+            checkSame(upperBefore, capture(e.world, e.upper), "a refused dab wrote something at the top");
+            checkSame(lowerBefore, capture(e.world, e.lower), "a refused dab wrote something at the bottom");
             check(e.undoEntries() == 0, "a refused stroke recorded " + e.undoEntries() + " entries");
         }
         context.succeed();
@@ -424,6 +435,7 @@ public final class BrushWorldEdgesGameTest {
             check(outcome.accepted(), what + ": " + outcome);
             MultiplayerGameTest.tickUntil(executor, () -> service.queuedDabs(h.player.getUUID()) == 0, TICKS, what);
             String applied = id + ":" + dab.index();
+            check(!h.events.rejectedStrokes.contains(id), what + ": dabs rejected: " + h.events.dabRejections);
             check(h.events.dabsApplied.contains(applied), what + ": the dab was not run (acknowledged: "
                     + h.events.dabsApplied + ")");
             service.endStroke(h.player, id);

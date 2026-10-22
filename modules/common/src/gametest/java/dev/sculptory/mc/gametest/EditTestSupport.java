@@ -353,7 +353,11 @@ final class EditTestSupport {
         @Override
         public void dabRejected(ServerPlayer player, int strokeId, int dabIndex, RejectReason reason) {
             dabRejections.add(reason);
+            rejectedStrokes.add(strokeId);
         }
+
+        /** The stroke of each refusal in {@link #dabRejections}, in the same order. */
+        final List<Integer> rejectedStrokes = new ArrayList<>();
 
         /** "stroke:last dab index" per acknowledged batch of dabs (the lane finished them). */
         final List<String> dabsApplied = new ArrayList<>();
