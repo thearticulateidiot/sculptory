@@ -397,8 +397,9 @@ public final class RoadKernel {
      * <p>A straight segment is measured exactly: a column centre's projection on it, {@code P = (c - a) . d}, the cross
      * product and {@code |d|^2} are whole multiples of a quarter block, so whether the column is inside, on the border
      * and on which side of a cap it lies are decided exactly, and its height, {@code (from (|d|^2 - P) + to P) / |d|^2},
-     * is exact where it is a whole or half block. The caps' directions are the first and last chords between nodes: an
-     * open spline leaves and reaches its ends along them.
+     * is exact where it is a whole or half block, as is its arc length on an axis-aligned piece. The caps' directions are
+     * the first and last chords between nodes: an open spline leaves and reaches its ends along them (an empty end chord
+     * leaves that end round).
      */
     private static Footprint footprint(List<Piece> pieces, double total, double[] px, double[] pz, boolean closed,
                                        int width, int originX, int originZ) {
@@ -415,29 +416,54 @@ public final class RoadKernel {
         LongOpenHashSet border = new LongOpenHashSet();
         LongArrayList keys = new LongArrayList();
         int reach = (int) Math.ceil(radius) + 1;
-        int last = px.length - 1;
         // The end caps of an open path: the planes through the first and last node, square to the first and last
-        // chords that are not empty.
-        double startDx = 0, startDz = 0, endDx = 0, endDz = 0;
-        for (int i = 0; i < last && startDx == 0 && startDz == 0; i++) {
-            startDx = px[i + 1] - px[i];
-            startDz = pz[i + 1] - pz[i];
-        }
-        for (int i = last; i > 0 && endDx == 0 && endDz == 0; i--) {
-            endDx = px[i] - px[i - 1];
-            endDz = pz[i] - pz[i - 1];
+        // chords (the open spline's end tangents). An end whose chord is empty (its two nodes stacked in one column) has
+        // no cap: that end stays round, as it always was.
+        int last = px.length - 1;
+        double startDx = px[Math.min(1, last)] - px[0], startDz = pz[Math.min(1, last)] - pz[0];
+        double endDx = px[last] - px[Math.max(0, last - 1)], endDz = pz[last] - pz[Math.max(0, last - 1)];
+        // An empty piece (stacked nodes, or a curve's repeated point) only repeats the point of the pieces either side:
+        // it would win their exact distance ties and give its columns no direction (no stairs), so it is left out
+        // unless the whole road is one point.
+        boolean anyLength = false;
+        for (Piece piece : pieces) {
+            double dx = piece.bx() - piece.ax(), dz = piece.bz() - piece.az();
+            if (dx * dx + dz * dz > 0) anyLength = true;
         }
         for (Piece piece : pieces) {
             double ax = piece.ax(), az = piece.az(), bx = piece.bx(), bz = piece.bz();
             double dx = bx - ax, dz = bz - az;
             double length2 = dx * dx + dz * dz;
+            if (length2 <= 0 && anyLength) continue;
             boolean nearStart = !closed && piece.alongA() < radius;
             boolean nearEnd = !closed && total - piece.alongB() < radius;
             int minX = (int) Math.floor(Math.min(ax, bx)) - reach, maxX = (int) Math.floor(Math.max(ax, bx)) + reach;
             int minZ = (int) Math.floor(Math.min(az, bz)) - reach, maxZ = (int) Math.floor(Math.max(az, bz)) + reach;
-            for (int cx = minX; cx <= maxX; cx++) {
-                for (int cz = minZ; cz <= maxZ; cz++) {
-                    double cpx = cx + 0.5, cpz = cz + 0.5;
+            for (int cz = minZ; cz <= maxZ; cz++) {
+                double cpz = cz + 0.5;
+                int fromX = minX, toX = maxX;
+                if (piece.straight() && length2 > 0) {
+                    // Only the band within reach of a long straight piece, not its whole bounding box: a cell within
+                    // reach lies within reach (in x) of the piece's points within reach (in z) of its row. A superset
+                    // with a block to spare; every cell in it is still classified exactly below.
+                    double lo, hi;
+                    if (dz == 0) {
+                        if (Math.abs(az - cpz) > reach) continue;
+                        lo = Math.min(ax, bx);
+                        hi = Math.max(ax, bx);
+                    } else {
+                        double t0 = (cpz - reach - az) / dz, t1 = (cpz + reach - az) / dz;
+                        double ta = Math.max(0, Math.min(t0, t1)), tb = Math.min(1, Math.max(t0, t1));
+                        if (ta > tb) continue;
+                        double xa = ax + ta * dx, xb = ax + tb * dx;
+                        lo = Math.min(xa, xb);
+                        hi = Math.max(xa, xb);
+                    }
+                    fromX = Math.max(minX, (int) Math.floor(lo - reach) - 1);
+                    toX = Math.min(maxX, (int) Math.floor(hi + reach) + 1);
+                }
+                for (int cx = fromX; cx <= toX; cx++) {
+                    double cpx = cx + 0.5;
                     double ex = cpx - ax, ez = cpz - az;
                     double projection = ex * dx + ez * dz;
                     // A column behind the start (or past the end) is not part of a piece that only reaches it through
@@ -484,7 +510,15 @@ public final class RoadKernel {
                     if (known == Double.MAX_VALUE) keys.add(key);
                     if (d2 < known - EPSILON) {
                         distance.put(key, d2);
-                        nearest.put(key, piece.alongA() + t * (piece.alongB() - piece.alongA()));
+                        double span = piece.alongB() - piece.alongA();
+                        if (piece.straight() && length2 > 0) {
+                            // The arc length as (span P) / |d|^2: exact where it is a whole or half block (an axis-aligned
+                            // piece), so Follow terrain's centre heights are read where the column truly is.
+                            double clamped = Math.max(0, Math.min(length2, projection));
+                            nearest.put(key, piece.alongA() + span * clamped / length2);
+                        } else {
+                            nearest.put(key, piece.alongA() + t * span);
+                        }
                         if (onBorder) {
                             border.add(key);
                         } else {
