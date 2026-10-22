@@ -40,6 +40,15 @@ import net.minecraft.server.level.ServerPlayer;
  * {@code Location} and no query per cell, so {@code ChunkPermits.rasterize} can ask every cell of the part. A part
  * touched by more than {@value #MAX_KEYED_REGIONS} regions (the combination key is one bit per region) is answered
  * with two WorldGuard queries per cell instead: correct, only slower.
+ *
+ * <p>Polygons that meet a chunk only along a line (an edge on the chunk's first column or row, or a degenerate polygon
+ * with all its points on one line): Sculptory answers as WorldGuard does, decided on purpose. WorldGuard's region
+ * index ({@code ChunkHashTable}) files a region under a chunk only when the two overlap with a positive area (the same
+ * {@code java.awt.geom.Area} test as its region lookup), so such a polygon is not filed for that chunk, and every point
+ * query WorldGuard makes there (its own block listener's included) finds no region: a player may build on that line by
+ * hand. The region lookup here finds the polygon ({@link Probe}), but each cell's answer comes from WorldGuard's own
+ * query, which allows it; where the polygon also has area in the chunk, WorldGuard files it there and the line is
+ * protected, here as for a player.
  */
 final class WorldGuardProtection implements Protection {
     private static final String PROBE_ID = "__sculptory_probe__";

@@ -32,7 +32,9 @@ import org.bukkit.Bukkit;
  * A scatter of trees next to a WorldGuard region: a grass floor 32 x 16, the region over its east half (x0 + 16 on, the
  * whole height). The preview plans no tree whose cells reach into the region (those are skipped whole, PROTECTED) and
  * changes nothing in the world; the commit writes each planned tree whole and nothing in the region, and its undo is
- * exact. Trees as in the shared ScatterFeatureGameTest (oak and birch, spacing 7, three in ten columns).
+ * exact. Trees as in the shared ScatterFeatureGameTest (oak and birch, spacing 7, three in ten columns). Runs only with
+ * a connected player: the engine drops a preview whose player is not online, and the fake player never is (reported as
+ * skipped then; the engine's scatter is covered by the GameTests).
  */
 final class ScatterChecks {
     private static final int FLOOR = 100;
@@ -43,6 +45,12 @@ final class ScatterChecks {
     static CompletableFuture<Void> run(SelfTestRun r) {
         if (!r.worldGuard()) {
             r.info("scatter: skipped", "WorldGuard is not installed");
+            return CompletableFuture.completedFuture(null);
+        }
+        if (r.attachment != null) {
+            // A preview whose player is not online is dropped by the engine; the fake player never is.
+            r.info("scatter: skipped", "needs a connected player (-Dsculptory.selftest.player or /sculptory selftest "
+                    + "<player>); the engine's scatter is covered by the GameTests");
             return CompletableFuture.completedFuture(null);
         }
         int x0 = r.baseX + 496, z0 = r.baseZ; // chunk-aligned: the region starts at the next chunk

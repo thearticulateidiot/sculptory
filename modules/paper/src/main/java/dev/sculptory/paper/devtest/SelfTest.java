@@ -201,7 +201,6 @@ public final class SelfTest {
                             "SculptoryTest"), ClientInformation.createDefault());
             PermissionAttachment attachment = player.getBukkitEntity().addAttachment(SculptoryPlugin.instance());
             for (Perm perm : Perm.values()) attachment.setPermission(perm.node(), true);
-            host.engine().addDevPlayer(player);
             return new SelfTestRun(host, player, attachment);
         }
         ServerPlayer player = server.getPlayerList().getPlayerByName(playerName);

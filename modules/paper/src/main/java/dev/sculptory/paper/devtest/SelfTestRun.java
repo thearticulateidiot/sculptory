@@ -176,10 +176,7 @@ final class SelfTestRun {
             org.bukkit.World world = level.getWorld();
             for (long[] t : tickets) world.removePluginChunkTicket((int) t[0], (int) t[1], SculptoryPlugin.instance());
         });
-        if (attachment != null) {
-            steps.add(attachment::remove);
-            steps.add(() -> host.engine().removeDevPlayer(player));
-        }
+        if (attachment != null) steps.add(attachment::remove);
         for (Runnable step : steps) {
             try {
                 step.run();
