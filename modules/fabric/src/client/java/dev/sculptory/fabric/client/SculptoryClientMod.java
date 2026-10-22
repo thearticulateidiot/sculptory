@@ -21,6 +21,7 @@ import dev.sculptory.mc.client.world.ClientEditorBackend;
 import dev.sculptory.mc.client.world.ClientStateSpaces;
 import dev.sculptory.mc.client.world.ResentChunks;
 import dev.sculptory.mc.loader.ClientLoaders;
+import dev.sculptory.mc.loader.DevClasses;
 import dev.sculptory.mc.world.McStateSpace;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
@@ -59,7 +60,8 @@ public final class SculptoryClientMod implements ClientModInitializer {
         // The development-only client commands (/bsclient ghost, /bsclient rotation compare): dev runs only, and the
         // mod jar leaves them out like the harnesses below.
         if (FabricLoader.getInstance().isDevelopmentEnvironment()
-                && devClassPresent("dev.sculptory.fabric.client.editor.devtools.DevCommands")) {
+                && DevClasses.present(SculptoryClientMod.class.getClassLoader(),
+                        "dev.sculptory.fabric.client.editor.devtools.DevCommands")) {
             DevCommands.register(states);
         }
         // The dev-only harnesses: the screenshot tour, the play check and the scripted demo.
@@ -78,24 +80,10 @@ public final class SculptoryClientMod implements ClientModInitializer {
 
     /**
      * Whether the dev-only harness started by {@code -D<property>} should run: the property is set and the harness's
-     * class is on the classpath (a dev run; the mod jar leaves the harnesses out). Looks for the class file by name, so
-     * nothing is loaded when it is missing.
+     * class is on this entrypoint's classpath (a dev run; the mod jar leaves the harnesses out). See {@link DevClasses}.
      */
     private static boolean devHarness(String property, String className) {
-        if (System.getProperty(property) == null) return false;
-        if (devClassPresent(className)) return true;
-        Sculptory.LOG.warn("Sculptory: -D{} is set, but this jar has no dev harnesses (they run from a dev checkout only)",
-                property);
-        return false;
-    }
-
-    /**
-     * Whether the dev-only class {@code className} is on the classpath (a dev run; the mod jar leaves the dev packages
-     * out). Looks for the class file by name, so nothing is loaded.
-     */
-    private static boolean devClassPresent(String className) {
-        String resource = className.replace('.', '/') + ".class";
-        return SculptoryClientMod.class.getClassLoader().getResource(resource) != null;
+        return DevClasses.requested(SculptoryClientMod.class.getClassLoader(), property, className);
     }
 
     /** Reads {@code Block.STATE_IDS} and the bound block tags; touches no server-only class. */

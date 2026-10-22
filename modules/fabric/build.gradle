@@ -55,9 +55,14 @@ loom {
             if (project.hasProperty('bsDemoMaximize')) property 'sculptory.demo.maximize', 'true'
             if (project.hasProperty('bsDemoAutoStart')) property 'sculptory.demo.autoStart', project.property('bsDemoAutoStart').toString()
             if (project.hasProperty('bsDemoNoCaptions')) property 'sculptory.demo.captions', 'false'
+            // -PbsPlaytest: the dev-only playtest setup (PlaytestSetup: the tester is op, day is locked, mobs are off) on the
+            // integrated server of every world this client opens (scripts/playtest.ps1 passes it by default).
+            if (project.hasProperty('bsPlaytest')) property 'sculptory.playtest', 'true'
         }
         server {
             runDir '../../.local/run/server'
+            // -PbsPlaytest: the dev-only playtest setup (scripts/playtest-server.ps1 passes it by default).
+            if (project.hasProperty('bsPlaytest')) property 'sculptory.playtest', 'true'
         }
     }
 }
@@ -144,18 +149,26 @@ sourceSets {
 // The development-only /bsclient commands are typed on Fabric's client command API, so they live in the Fabric layer.
 def devHarnessPackages = ['check', 'demo', 'tour', 'ui/demo'].collect { "dev/sculptory/mc/client/editor/${it}/**".toString() } +
         ['dev/sculptory/fabric/client/editor/devtools/**']
-tasks.named('jar') { exclude devHarnessPackages }
+// The dev-only server side: the playtest setup (op, day, no mobs; modules/common), which SculptoryMod starts only when
+// its class is there.
+def devServerPackages = ['dev/sculptory/mc/playtest/**']
+tasks.named('jar') { exclude devHarnessPackages + devServerPackages }
 
 // DedicatedServerClassesTest scans the common/server output and the shared server module (what a dedicated server
 // loads) for client-only references;
-// DevHarnessClassesTest scans the client output for references to the dev harnesses the jar leaves out (above).
+// DevHarnessClassesTest scans the client and common outputs for references to the dev packages the jar leaves out
+// (above), and the remapped jar for the packages themselves.
 tasks.named('test') {
     def serverClasses = project(':server').sourceSets.main.output.classesDirs
-    dependsOn ':server:classes'
+    def remappedJar = tasks.named('remapJar').flatMap { it.archiveFile }
+    dependsOn ':server:classes', tasks.named('remapJar')
+    inputs.file remappedJar
+    doFirst { systemProperty 'sculptory.jar', remappedJar.get().asFile.absolutePath }
     systemProperty 'sculptory.mainClassDirs', (sourceSets.main.output.classesDirs + serverClasses).asPath
     systemProperty 'sculptory.mainResourceDir', sourceSets.main.output.resourcesDir.absolutePath
     systemProperty 'sculptory.clientClassDirs', sourceSets.client.output.classesDirs.asPath
     systemProperty 'sculptory.devHarnessPackages', devHarnessPackages.join(',')
+    systemProperty 'sculptory.devServerPackages', devServerPackages.join(',')
 }
 
 processResources {

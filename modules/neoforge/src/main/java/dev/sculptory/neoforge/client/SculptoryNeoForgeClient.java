@@ -20,6 +20,7 @@ import dev.sculptory.mc.client.world.ClientEditorBackend;
 import dev.sculptory.mc.client.world.ClientStateSpaces;
 import dev.sculptory.mc.client.world.ResentChunks;
 import dev.sculptory.mc.loader.ClientLoaders;
+import dev.sculptory.mc.loader.DevClasses;
 import dev.sculptory.mc.world.McStateSpace;
 import net.minecraft.client.Minecraft;
 import net.neoforged.bus.api.IEventBus;
@@ -98,13 +99,11 @@ public final class SculptoryNeoForgeClient {
         }
     }
 
-    /** Whether the dev-only harness started by {@code -D<property>} should run (as in the Fabric layer). */
+    /**
+     * Whether the dev-only harness started by {@code -D<property>} should run: the property is set and the harness's
+     * class is on this entrypoint's classpath (as in the Fabric layer; see {@link DevClasses}).
+     */
     private static boolean devHarness(String property, String className) {
-        if (System.getProperty(property) == null) return false;
-        String resource = className.replace('.', '/') + ".class";
-        if (SculptoryNeoForgeClient.class.getClassLoader().getResource(resource) != null) return true;
-        Sculptory.LOG.warn("Sculptory: -D{} is set, but this jar has no dev harnesses (they run from a dev checkout only)",
-                property);
-        return false;
+        return DevClasses.requested(SculptoryNeoForgeClient.class.getClassLoader(), property, className);
     }
 }

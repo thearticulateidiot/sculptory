@@ -4,8 +4,10 @@ import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.command.SculptoryCommands;
 import dev.sculptory.mc.engine.impl.EditServiceHost;
 import dev.sculptory.mc.engine.impl.EngineRuntime;
+import dev.sculptory.mc.loader.DevClasses;
 import dev.sculptory.mc.net.NetEditEvents;
 import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.mc.playtest.PlaytestSetup;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import net.fabricmc.api.ModInitializer;
 
@@ -22,6 +24,9 @@ import net.fabricmc.api.ModInitializer;
  * the dispatcher sends the history after the handshake, jobs, strokes and refused undo/redo.
  */
 public final class SculptoryMod implements ModInitializer {
+    /** The dev-only playtest setup, by name: the jar leaves its package out (DevHarnessClassesTest). */
+    static final String PLAYTEST_SETUP = "dev.sculptory.mc.playtest.PlaytestSetup";
+
     @Override
     public void onInitialize() {
         FabricServerLoader.install();
@@ -32,5 +37,10 @@ public final class SculptoryMod implements ModInitializer {
         ServerNet.install(EditServiceHost.service(), EditServiceHost.clipboards(), EditServiceHost.scatter(),
                 EditServiceHost.tinker(), EditServiceHost.permissions(), EditServiceHost::limits, EditServiceHost::states);
         SculptoryCommands.register();
+        // The dev-only playtest setup (the tester is op, day is locked, mobs are off) with -Dsculptory.playtest=true,
+        // from a dev checkout only. The property constant is inlined, so without it no class of the setup is loaded.
+        if (DevClasses.wanted(SculptoryMod.class.getClassLoader(), PlaytestSetup.PROPERTY, PLAYTEST_SETUP)) {
+            PlaytestSetup.install();
+        }
     }
 }
