@@ -60,6 +60,7 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.border.WorldBorder;
 import org.bukkit.Location;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.plugin.java.JavaPlugin;
 
 /**
  * The engine host on Paper: the shared engine sees the game through this. P is the NMS {@link ServerPlayer} and W the
@@ -183,7 +184,8 @@ public final class PaperEngine implements EngineHost<ServerPlayer, ServerLevel>,
     public BuilderMode<ServerPlayer> builderMode(EngineEditService<ServerPlayer, ServerLevel> edits,
                                                  HistoryService history, EditExecutor<ServerLevel> executor,
                                                  LongSupplier clock) {
-        return new BuilderService(edits, this, server, new PaperBuilderSteps(), executor, history, clock);
+        return new BuilderService(edits, this, server,
+                new PaperBuilderSteps(JavaPlugin.getProvidingPlugin(PaperEngine.class)), executor, history, clock);
     }
 
     @Override

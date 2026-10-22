@@ -25,19 +25,29 @@ import net.minecraft.world.item.SignItem;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.SignBlock;
+import net.minecraft.world.level.block.WitherSkullBlock;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SignBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.LevelChunk;
 import org.bukkit.Bukkit;
 import org.bukkit.craftbukkit.block.CraftBlock;
 import org.bukkit.craftbukkit.block.CraftBlockEntityState;
 import org.bukkit.craftbukkit.block.CraftBlockState;
 import org.bukkit.craftbukkit.inventory.CraftItemStack;
+import org.bukkit.event.Event;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockMultiPlaceEvent;
+import org.bukkit.event.block.BlockPhysicsEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.inventory.EquipmentSlot;
+import org.bukkit.plugin.EventExecutor;
+import org.bukkit.plugin.Plugin;
+import org.bukkit.plugin.RegisteredListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,41 +57,71 @@ import org.slf4j.LoggerFactory;
  * plugins (WorldGuard, CoreProtect) see each builder block as a player's and may cancel it.
  *
  * <ul>
- *   <li><b>Capture.</b> Each step runs with {@code Level.captureBlockStates} on: every {@code setBlock} of the step
- *       notes the cell's state (and block entity) from before its first change as a CraftBukkit block state, changes
- *       the cell, and defers its neighbour updates and client update; block entities the step sets wait in
- *       {@code capturedTileEntities}. So the action knows the first state of every cell it changed, exactly.</li>
+ *   <li><b>Capture.</b> A placement step runs with {@code Level.captureBlockStates} on: every {@code setBlock} of the
+ *       step notes the cell's state (and block entity) from before its first change as a CraftBukkit block state,
+ *       changes the cell, and defers its neighbour updates and client update; block entities the step sets wait in
+ *       {@code capturedTileEntities}. So the action knows the first state of every cell the step changed, exactly.</li>
  *   <li><b>Events.</b> A placement step then fires {@code BlockPlaceEvent} (one block) or {@code BlockMultiPlaceEvent}
  *       (a door, a bed: every block the step set), with {@code canBuild} true (the engine has checked spawn protection
  *       and the world border already). Cancelled, the step's cells are put back physics-free and the step is
  *       {@link Step#REFUSED}. A break fires {@code BlockBreakEvent} before anything changes, as a player's break does;
  *       cancelled, nothing happens. The cells vanilla's own steps reach beyond the target (a bed's other half) fire no
  *       event of their own, as for a player; the engine checks them against protection afterwards.</li>
- *   <li><b>Physics</b> ({@link Action#finish}): without Keep shape, what each kept cell's change sets off runs then,
- *       as Paper runs it after a placement event ({@code onPlace} and {@code notifyAndUpdatePhysics}), with the capture
- *       still on, so the cells that reacts change (a fence joining, a torch popping off) are noted too and their own
- *       updates run in turn, breadth first, until nothing more changes (at most {@value #MAX_CELLS} cells; past that the
- *       rest runs uncaptured, logged). With Keep shape nothing around reacts: the blocks' replace callbacks do not run
- *       during the step ({@code isBlockPlaceCancelled}), their add callbacks are deferred by the capture and never run,
- *       and each changed cell only tells the clients and the points of interest.</li>
+ *   <li><b>Physics</b> ({@link Action#finish}), without Keep shape: what each changed cell sets off runs then, with the
+ *       capture off, as Paper runs it after a placement event: the block's add callback once for the cell's final
+ *       state, then its neighbour and shape updates ({@code notifyAndUpdatePhysics}); everything those set off runs at
+ *       once, depth first, as in vanilla (Paper drops neighbour updates while a capture is on, so a lamp, a door or a
+ *       redstone line would not react). A wither skull completing a wither's pattern is checked then too, as Paper does
+ *       after the event. A break without Keep shape needs no capture (its event came first): it runs with its physics
+ *       at once, as a player's break does.</li>
+ *   <li><b>Recording what the physics change.</b> With the capture off, the cells the updates change are found through
+ *       {@link BlockPhysicsEvent}: before the updates run, every loaded cell within {@value #WATCH_RADIUS} blocks of
+ *       each changed cell (of the target, for a break) is noted with its state; while they run, a listener on the
+ *       physics event (registered for the action only, first in line) notes every cell within {@value #WATCH_RADIUS}
+ *       blocks of each cell an update reaches, before that cell reacts. Paper fires the event for every neighbour update
+ *       before the block reacts, and for every changed cell before its shape updates go out, so a cell the cascade
+ *       changes has been noted before it changes. At the end every noted cell whose state differs is a change of the
+ *       action, with the block entity it had (saved then, from the object noted). At most
+ *       {@value #MAX_WATCHED_CELLS} cells are noted per action; past that (a long redstone contraption) the rest of the
+ *       cascade still runs, but what it changes is not recorded for the undo (logged).</li>
+ *   <li><b>Keep shape:</b> nothing around reacts: the replaced blocks' callbacks do not run during the step
+ *       ({@code isBlockPlaceCancelled}), their add callbacks are deferred by the capture and never run, and each
+ *       changed cell only tells the clients and the points of interest. Breaks run captured for this.</li>
  * </ul>
  *
- * <p>Known differences from Fabric's mixin capture: the cascade runs breadth first rather than depth first (the same
- * end state for shape updates; redstone may settle in another order), a cell changed twice runs the updates of its last
- * state once, and a block entity block ({@code BaseEntityBlock}, such as a hopper) still runs its own add callback during
- * a Keep shape step (CraftBukkit does not defer those).
+ * <p><b>Events and the history.</b> The place and break events fire for every step, also for one the engine puts back
+ * afterwards (a secondary cell another protection refuses, the global mask, a failure), and undo and redo fire none:
+ * a logging plugin sees the builder action as placed and broken by the player, and does not see the undo.
+ *
+ * <p>Known differences from Fabric's mixin capture: what a replaced block's own removal sets off beyond its neighbours
+ * does not run when a placement replaces it (Replace over a powered lever: its attached block's neighbours keep their
+ * power), as for a Paper player placing into a replaceable block; a block entity block ({@code BaseEntityBlock}, such as
+ * a hopper) still runs its own add callback during a Keep shape step (CraftBukkit does not defer those); with Keep shape
+ * a wither skull completing the pattern builds no wither (its pattern could only be cleared with physics); with
+ * Paper's alternate redstone implementations (Eigencraft, Alternate Current) the wires a network update sets at once
+ * beyond {@value #WATCH_RADIUS} blocks of an updated cell are not recorded; a block entity a cascade changes without
+ * changing the block (a command block's powered flag) is not recorded, as on Fabric.
  */
-final class PaperBuilderSteps implements BuilderSteps {
+public final class PaperBuilderSteps implements BuilderSteps {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
-    /** The most cells one action's cascade of updates is followed through. */
-    static final int MAX_CELLS = 8192;
+    /** The most cells one action notes while its physics run (each a state and a reference, about 100 bytes). */
+    static final int MAX_WATCHED_CELLS = 32768;
+    /** How far around a changed or updated cell the cells are noted before they may change. */
+    static final int WATCH_RADIUS = 2;
+
+    private final Plugin plugin;
+
+    /** {@code plugin} owns the physics listener an action registers while it watches (PaperEngine; the self-test). */
+    public PaperBuilderSteps(Plugin plugin) {
+        this.plugin = Objects.requireNonNull(plugin);
+    }
 
     @Override
     public Action open(ServerLevel world, ServerPlayer player, boolean keepShape) {
         if (world.captureBlockStates || world.captureTreeGeneration) {
             throw new IllegalStateException("another block capture is open on " + world.dimension().location());
         }
-        return new PaperAction(world, player, keepShape);
+        return new PaperAction(plugin, world, player, keepShape);
     }
 
     @Override
@@ -103,11 +143,15 @@ final class PaperBuilderSteps implements BuilderSteps {
         PaperAccess.setBlockWithoutCallbacks(world, pos, state);
     }
 
-    /** A cell as it was before the action first changed it. */
-    private record Before(int state, BlockEntityData tile) {
+    /**
+     * A cell as it was before the action first changed it. A cell a step changed has its block entity saved
+     * ({@code tile}); a cell only noted around the physics ({@code watched}) keeps a reference to its block entity
+     * ({@code entity}), saved only if the cell's state turns out changed (most noted cells never change).
+     */
+    private record Before(int state, BlockEntityData tile, BlockEntity entity, boolean watched) {
     }
 
-    /** A changed cell whose deferred updates are still to run: its state before the change and the change's flags. */
+    /** A changed cell whose deferred updates are still to run: its state before the action and its last change's flags. */
     private record Pending(BlockPos pos, BlockState old, int flags) {
     }
 
@@ -118,16 +162,26 @@ final class PaperBuilderSteps implements BuilderSteps {
         }
     }
 
-    private static final class PaperAction implements Action {
+    private static final class PaperAction implements Action, Listener, EventExecutor {
+        private final Plugin plugin;
         private final ServerLevel world;
         private final ServerPlayer player;
         private final boolean keepShape;
         private final Long2ObjectLinkedOpenHashMap<Before> befores = new Long2ObjectLinkedOpenHashMap<>();
-        private final List<Pending> pending = new ArrayList<>();
+        /** The cells the captured steps changed, each once, in the order first changed. */
+        private final Long2ObjectLinkedOpenHashMap<Pending> pending = new Long2ObjectLinkedOpenHashMap<>();
+        private final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        /** The physics listener while the action watches, else null. */
+        private RegisteredListener watch;
+        private boolean physicsEventBefore;
+        private int watched;
+        private boolean watchFull;
         private boolean finished;
         private boolean captureFailureLogged;
+        private LevelChunk lastChunk;
 
-        PaperAction(ServerLevel world, ServerPlayer player, boolean keepShape) {
+        PaperAction(Plugin plugin, ServerLevel world, ServerPlayer player, boolean keepShape) {
+            this.plugin = plugin;
             this.world = world;
             this.player = player;
             this.keepShape = keepShape;
@@ -170,7 +224,17 @@ final class PaperBuilderSteps implements BuilderSteps {
             if (event.isCancelled()) return Step.REFUSED;
             emptyContainer(pos);
             boolean[] removed = {false};
-            keep(capture(() -> removed[0] = BuilderPlacement.breakBlock(world, player, pos)));
+            if (keepShape) {
+                keep(capture(() -> removed[0] = BuilderPlacement.breakBlock(world, player, pos)));
+                return removed[0] ? Step.DONE : Step.NOT_DONE;
+            }
+            // The event came first, so nothing needs deferring: the break runs with its physics now (a lever's or a
+            // torch's own updates included), watched like the deferred updates of a placement.
+            startWatching();
+            watchAround(pos);
+            removed[0] = BuilderPlacement.breakBlock(world, player, pos);
+            // The break's own updates have run: an emptied container's deferred ones are not run again.
+            pending.remove(pos.asLong());
             return removed[0] ? Step.DONE : Step.NOT_DONE;
         }
 
@@ -178,15 +242,18 @@ final class PaperBuilderSteps implements BuilderSteps {
         public List<BuilderChange> finish() {
             if (!finished) {
                 finished = true;
-                if (keepShape) {
-                    // Clients and points of interest hear of each change; nothing around it is updated.
-                    for (Pending p : pending) {
-                        BlockState now = world.getBlockState(p.pos());
-                        int flags = (p.flags() | Block.UPDATE_KNOWN_SHAPE) & ~Block.UPDATE_NEIGHBORS;
-                        world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, now, flags, 0);
+                try {
+                    if (keepShape) {
+                        notifyOnly();
+                    } else {
+                        runUpdates();
                     }
-                } else {
-                    runUpdates();
+                } finally {
+                    stopWatching();
+                }
+                if (watchFull) {
+                    LOG.warn("Sculptory: a builder action set off updates beyond the {} cells followed per action; what "
+                            + "they changed further out is not undone with it", MAX_WATCHED_CELLS);
                 }
             }
             List<BuilderChange> changes = new ArrayList<>();
@@ -196,64 +263,161 @@ final class PaperBuilderSteps implements BuilderSteps {
                 Before before = entry.getValue();
                 BlockState now = world.getBlockState(pos);
                 int after = Block.getId(now);
+                if (before.watched() && after == before.state()) continue;
+                BlockEntityData beforeTile = before.watched() ? saved(pos, before.entity()) : before.tile();
                 BlockEntityData tile = now.hasBlockEntity() ? tileAt(pos) : null;
-                if (after == before.state() && sameTile(before.tile(), tile)) continue;
-                changes.add(new BuilderChange(pos.immutable(), before.state(), before.tile(), after, tile));
+                if (after == before.state() && sameTile(beforeTile, tile)) continue;
+                changes.add(new BuilderChange(pos.immutable(), before.state(), beforeTile, after, tile));
             }
             return changes;
         }
 
+        /** Keep shape: clients and points of interest hear of each changed cell; nothing around it is updated. */
+        private void notifyOnly() {
+            for (Pending p : pending.values()) {
+                BlockState now = world.getBlockState(p.pos());
+                int flags = (p.flags() | Block.UPDATE_KNOWN_SHAPE) & ~Block.UPDATE_NEIGHBORS;
+                world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, now, flags, 0);
+            }
+        }
+
         /**
-         * Runs the deferred updates of every kept cell, breadth first, with the capture on: the cells they change are
-         * noted and their own updates run in turn.
+         * Without Keep shape: each changed cell's add callback (once, for its final state) and updates, with the
+         * capture off and the cells around watched; then a wither skull's pattern check, as Paper's {@code useOn} runs
+         * it after the event (it does nothing while a capture is on). An iron or snow golem is built by the pumpkin's
+         * add callback here.
          */
         private void runUpdates() {
-            for (int i = 0; i < pending.size(); i++) {
-                Pending p = pending.get(i);
-                if (i >= MAX_CELLS) {
-                    LOG.warn("Sculptory: a builder action set off updates in more than {} cells; the rest ran without "
-                            + "being recorded for its undo", MAX_CELLS);
-                    for (int j = i; j < pending.size(); j++) update(pending.get(j));
-                    return;
+            if (pending.isEmpty()) return;
+            startWatching();
+            for (Pending p : pending.values()) watchAround(p.pos());
+            for (Pending p : pending.values()) update(p);
+            for (Pending p : pending.values()) {
+                BlockState now = world.getBlockState(p.pos());
+                if (now.is(Blocks.WITHER_SKELETON_SKULL) || now.is(Blocks.WITHER_SKELETON_WALL_SKULL)) {
+                    WitherSkullBlock.checkSpawn(world, p.pos());
                 }
-                keep(capture(() -> update(p)));
             }
         }
 
         /** What Paper runs after a placement event for each placed cell: the block's add callback, then its updates. */
         private void update(Pending p) {
             BlockState now = world.getBlockState(p.pos());
+            if (now == p.old()) {
+                // Changed and changed back by the steps: nothing to set off; the clients still hear (they were not told).
+                world.getChunkSource().blockChanged(p.pos());
+                return;
+            }
             // A block entity block ran its add callback during the capture already (CraftBukkit lets it).
-            if (now != p.old() && !(now.getBlock() instanceof BaseEntityBlock)) now.onPlace(world, p.pos(), p.old(), false);
+            if (!(now.getBlock() instanceof BaseEntityBlock)) now.onPlace(world, p.pos(), p.old(), false);
             world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, world.getBlockState(p.pos()), p.flags(), 512);
         }
 
-        /** Runs {@code step} with CraftBukkit's block capture on; returns what it changed (taken out of the world's capture). */
+        // ============================================================ watching the physics
+
+        /**
+         * Starts noting the cells around every block update: a physics listener for this action only, called first,
+         * and the world's physics event switched on (Paper fires it for a changed cell's shape updates only while some
+         * plugin listens, decided once per tick).
+         */
+        private void startWatching() {
+            if (watch != null) return;
+            physicsEventBefore = world.hasPhysicsEvent;
+            watch = new RegisteredListener(this, this, EventPriority.LOWEST, plugin, false);
+            BlockPhysicsEvent.getHandlerList().register(watch);
+            world.hasPhysicsEvent = true;
+        }
+
+        private void stopWatching() {
+            if (watch == null) return;
+            BlockPhysicsEvent.getHandlerList().unregister(watch);
+            watch = null;
+            // What the server would decide at the next tick: another plugin may have started listening meanwhile.
+            world.hasPhysicsEvent = physicsEventBefore
+                    || BlockPhysicsEvent.getHandlerList().getRegisteredListeners().length > 0;
+        }
+
+        /** The physics listener: the cell the update reaches and those around it are noted before it reacts. */
+        @Override
+        public void execute(Listener listener, Event event) {
+            if (!(event instanceof BlockPhysicsEvent physics)) return;
+            if (!(physics.getBlock() instanceof CraftBlock block) || block.getHandle() != world) return;
+            watchAround(block.getPosition());
+        }
+
+        /** Notes every loaded cell within {@value #WATCH_RADIUS} blocks of {@code center} not noted yet, as it is now. */
+        private void watchAround(BlockPos center) {
+            if (watchFull) return;
+            for (int dy = -WATCH_RADIUS; dy <= WATCH_RADIUS; dy++) {
+                int y = center.getY() + dy;
+                if (world.isOutsideBuildHeight(y)) continue;
+                for (int dz = -WATCH_RADIUS; dz <= WATCH_RADIUS; dz++) {
+                    for (int dx = -WATCH_RADIUS; dx <= WATCH_RADIUS; dx++) {
+                        cursor.set(center.getX() + dx, y, center.getZ() + dz);
+                        long key = cursor.asLong();
+                        if (befores.containsKey(key)) continue;
+                        LevelChunk chunk = loadedChunk(cursor.getX() >> 4, cursor.getZ() >> 4);
+                        if (chunk == null) continue;
+                        if (watched >= MAX_WATCHED_CELLS) {
+                            watchFull = true;
+                            return;
+                        }
+                        BlockState state = chunk.getBlockState(cursor);
+                        BlockEntity entity = state.hasBlockEntity()
+                                ? chunk.getBlockEntity(cursor, LevelChunk.EntityCreationType.CHECK) : null;
+                        befores.put(key, new Before(Block.getId(state), null, entity, true));
+                        watched++;
+                    }
+                }
+            }
+        }
+
+        /** The chunk at (cx, cz) if it is loaded (never loads one). */
+        private LevelChunk loadedChunk(int cx, int cz) {
+            LevelChunk last = lastChunk;
+            if (last != null && last.getPos().x == cx && last.getPos().z == cz) return last;
+            LevelChunk chunk = world.getChunkSource().getChunkNow(cx, cz);
+            if (chunk != null) lastChunk = chunk;
+            return chunk;
+        }
+
+        // ============================================================ the capture
+
+        /**
+         * Runs {@code step} with CraftBukkit's block capture on; returns what it changed (taken out of the world's
+         * capture). Whatever the step throws, an {@link Error} included, the capture is switched off and the world's
+         * captured states and block entities are emptied before it goes on (the next placement anywhere would take
+         * them for its own); what the step changed so far is kept and recorded first.
+         */
         private Phase capture(Runnable step) {
             boolean cancelled = world.isBlockPlaceCancelled;
             world.captureBlockStates = true;
             // Keep shape: the replaced blocks' own callbacks do not run (nothing drops, no cleanup reacts).
             if (keepShape) world.isBlockPlaceCancelled = true;
-            RuntimeException failure = null;
+            Throwable failure = null;
             try {
                 step.run();
-            } catch (RuntimeException e) {
+            } catch (Throwable e) {
                 failure = e;
             } finally {
                 world.captureBlockStates = false;
                 world.isBlockPlaceCancelled = cancelled;
             }
-            Phase phase = new Phase(new ArrayList<>(world.capturedBlockStates.values()),
-                    new LinkedHashMap<>(world.capturedTileEntities));
-            world.capturedBlockStates.clear();
-            world.capturedTileEntities.clear();
-            if (failure != null) {
-                // The game failed halfway: what it changed so far stays and is recorded (BuilderService reports
-                // FAILED), and the world's capture is left empty for the next one.
-                keep(phase);
-                throw failure;
+            Phase phase;
+            try {
+                phase = new Phase(new ArrayList<>(world.capturedBlockStates.values()),
+                        new LinkedHashMap<>(world.capturedTileEntities));
+            } finally {
+                world.capturedBlockStates.clear();
+                world.capturedTileEntities.clear();
             }
-            return phase;
+            if (failure == null) return phase;
+            // The game failed halfway: what it changed so far stays and is recorded (BuilderService reports FAILED,
+            // or puts it back after an Error).
+            keep(phase);
+            if (failure instanceof RuntimeException e) throw e;
+            if (failure instanceof Error e) throw e;
+            throw new IllegalStateException(failure);
         }
 
         /** Keeps what a step changed: its block entities go into the world, its cells are noted and wait for updates. */
@@ -261,8 +425,14 @@ final class PaperBuilderSteps implements BuilderSteps {
             for (BlockEntity entity : phase.tiles().values()) world.setBlockEntity(entity);
             for (CraftBlockState state : phase.states()) {
                 BlockPos pos = state.getPosition();
-                if (!befores.containsKey(pos.asLong())) befores.put(pos.asLong(), before(state));
-                pending.add(new Pending(pos, state.getHandle(), state.getFlag()));
+                long key = pos.asLong();
+                Before known = befores.get(key);
+                // A cell only watched so far (unchanged since) takes the capture's exact first state instead.
+                if (known == null || (known.watched() && known.state() == Block.getId(state.getHandle()))) {
+                    befores.put(key, before(state));
+                }
+                Pending first = pending.get(key);
+                pending.put(key, new Pending(pos, first == null ? state.getHandle() : first.old(), state.getFlag()));
             }
         }
 
@@ -327,9 +497,11 @@ final class PaperBuilderSteps implements BuilderSteps {
         /** Notes the cell as it is now (before a change no capture sees: clearing a container). First state wins. */
         private void note(BlockPos pos) {
             long key = pos.asLong();
-            if (befores.containsKey(key)) return;
+            Before known = befores.get(key);
+            if (known != null && !known.watched()) return;
             BlockState state = world.getBlockState(pos);
-            befores.put(key, new Before(Block.getId(state), state.hasBlockEntity() ? tileAt(pos) : null));
+            if (known != null && known.state() != Block.getId(state)) return;
+            befores.put(key, new Before(Block.getId(state), state.hasBlockEntity() ? tileAt(pos) : null, null, false));
         }
 
         /** A cell's first state as CraftBukkit captured it, its block entity included. */
@@ -345,7 +517,22 @@ final class PaperBuilderSteps implements BuilderSteps {
                     logCaptureFailure(state.getPosition(), e);
                 }
             }
-            return new Before(Block.getId(state.getHandle()), tile);
+            return new Before(Block.getId(state.getHandle()), tile, null, false);
+        }
+
+        /**
+         * A watched cell's block entity as noted, saved now: the object keeps its data after the block is gone (a sign
+         * popping off), so its text comes back with the undo. A container a cascade destroyed has dropped its items by
+         * then and is saved empty (no duplicates; no block's physics destroys one in vanilla).
+         */
+        private BlockEntityData saved(BlockPos pos, BlockEntity entity) {
+            if (entity == null) return null;
+            try {
+                return McTile.capture(entity, world.registryAccess());
+            } catch (RuntimeException e) {
+                logCaptureFailure(pos, e);
+                return null;
+            }
         }
 
         private BlockEntityData tileAt(BlockPos pos) {

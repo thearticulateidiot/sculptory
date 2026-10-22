@@ -7,7 +7,10 @@ import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.region.Facing;
+import dev.sculptory.mc.builder.BuilderChange;
+import dev.sculptory.mc.builder.BuilderSteps;
 import dev.sculptory.paper.SculptoryPlugin;
+import dev.sculptory.paper.engine.PaperBuilderSteps;
 import dev.sculptory.paper.nms.PaperAccess;
 import dev.sculptory.paper.perm.WorldGuardTestRegions;
 import dev.sculptory.protocol.v2.BuilderPower;
@@ -18,17 +21,27 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.entity.animal.SnowGolem;
 import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ComparatorBlock;
 import net.minecraft.world.level.block.CrossCollisionBlock;
+import net.minecraft.world.level.block.DoorBlock;
 import net.minecraft.world.level.block.LecternBlock;
+import net.minecraft.world.level.block.LeverBlock;
+import net.minecraft.world.level.block.RedstoneLampBlock;
 import net.minecraft.world.level.block.entity.LecternBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.AttachFace;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import org.bukkit.Bukkit;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -44,7 +57,13 @@ import org.bukkit.event.block.BlockPlaceEvent;
  * (a fence joining its neighbour) are recorded with it, with Keep shape nothing around reacts (the old fence does not
  * join, sand whose support is broken stays); a placement or break another plugin cancels is refused and changes
  * nothing; a Keep shape bed whose head lands in a WorldGuard region is refused whole and put back without updating the
- * comparator beside its head. Runs on a stone floor of its own at y 100; the area is put back at the end of the run.
+ * comparator beside its head. Redstone: without Keep shape a redstone block placed beside a lamp lights it (both
+ * recorded, the undo exact), with Keep shape the lamp stays off; breaking a redstone block closes the door it powered
+ * (recorded, the undo exact), and breaking a lever turns off the lamp behind the block it hangs on (the lever's own
+ * removal updates, which Paper drops while a capture is on). A carved pumpkin placed on two snow blocks builds a snow
+ * golem (the pattern's cells recorded, the undo exact). A step that throws an {@link Error} leaves the world's block
+ * capture empty and its action can still end. Runs on a stone floor of its own at y 100; the area is put back at the
+ * end of the run.
  */
 final class BuilderChecks {
     private static final int FLOOR = 100;
@@ -111,7 +130,161 @@ final class BuilderChecks {
                 .thenCompose(v -> neighbours(r, events, x0, z0, work))
                 .thenCompose(v -> keepShape(r, x0, z0, work))
                 .thenCompose(v -> cancelled(r, events, x0, z0, work))
-                .thenCompose(v -> regionAndComparator(r, events, x0, z0, work));
+                .thenCompose(v -> regionAndComparator(r, events, x0, z0, work))
+                .thenCompose(v -> lamp(r, x0, z0 + 24, work, false))
+                .thenCompose(v -> lamp(r, x0, z0 + 27, work, true))
+                .thenCompose(v -> door(r, x0, z0 + 30, work))
+                .thenCompose(v -> lever(r, x0 + 16, z0 + 5, work))
+                .thenCompose(v -> golem(r, x0 + 16, z0 + 9, work))
+                .thenAccept(v -> errorInStep(r, new BlockPos(x0 + 24, FLOOR + 1, z0 + 13)));
+    }
+
+    /**
+     * A redstone block placed beside a lamp: without Keep shape the lamp lights at once and both cells are the step
+     * (undone exactly); with Keep shape only the block is placed and the lamp stays off, also five ticks later.
+     */
+    private static CompletableFuture<Void> lamp(SelfTestRun r, int x0, int z, Box work, boolean keepShape) {
+        String mode = keepShape ? "with Keep shape" : "without Keep shape";
+        BlockPos lamp = new BlockPos(x0 + 8, FLOOR + 1, z);
+        set(r, lamp, Blocks.REDSTONE_LAMP.defaultBlockState());
+        r.stand(x0 + 4.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.REDSTONE_BLOCK, 64));
+        int[] before = r.snapshot(work);
+        BuilderOutcome placed = place(r, x0 + 7, FLOOR, z, keepShape ? BuilderPower.KEEP_SHAPE.bit() : 0);
+        boolean lit = r.level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT);
+        if (!keepShape) {
+            r.record("builder: a redstone block placed beside a lamp lights it (both recorded)",
+                    placed.accepted() && placed.changed() == 2 && lit, placed + ", lamp lit " + lit);
+            return r.undo().thenAccept(v -> r.record("builder: the lamp step's undo is exact",
+                    r.countDiffering(work, before) == 0 && !r.level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT),
+                    r.countDiffering(work, before) + " cells differ, lamp " + r.level.getBlockState(lamp)));
+        }
+        return r.ticks(5).thenCompose(v -> {
+            boolean litLater = r.level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT);
+            r.record("builder: with Keep shape the lamp beside a placed redstone block stays off",
+                    placed.accepted() && placed.changed() == 1 && !lit && !litLater,
+                    placed + ", lamp lit " + lit + ", five ticks later " + litLater);
+            return r.undo();
+        }).thenAccept(v -> r.record("builder: the Keep shape lamp step's undo is exact",
+                r.countDiffering(work, before) == 0, r.countDiffering(work, before) + " cells differ"));
+    }
+
+    /**
+     * A door held open by a redstone block beside it: breaking the block (without Keep shape) closes the door at once,
+     * both halves recorded with the block, and the undo puts all three back exactly.
+     */
+    private static CompletableFuture<Void> door(SelfTestRun r, int x0, int z, Box work) {
+        BlockPos lower = new BlockPos(x0 + 8, FLOOR + 1, z);
+        BlockPos power = lower.west();
+        BlockState open = Blocks.OAK_DOOR.defaultBlockState().setValue(DoorBlock.FACING, Direction.EAST)
+                .setValue(DoorBlock.OPEN, true).setValue(DoorBlock.POWERED, true);
+        set(r, lower, open.setValue(DoorBlock.HALF, DoubleBlockHalf.LOWER));
+        set(r, lower.above(), open.setValue(DoorBlock.HALF, DoubleBlockHalf.UPPER));
+        set(r, power, Blocks.REDSTONE_BLOCK.defaultBlockState());
+        r.stand(x0 + 4.5, FLOOR + 1, z + 0.5, -90f, ItemStack.EMPTY);
+        int[] before = r.snapshot(work);
+        BuilderOutcome broken = breakCells(r, 4, List.of(power), 0);
+        boolean closed = !r.level.getBlockState(lower).getValue(DoorBlock.OPEN)
+                && !r.level.getBlockState(lower.above()).getValue(DoorBlock.OPEN);
+        r.record("builder: breaking the redstone block beside a door closes it (all three recorded)",
+                broken.accepted() && broken.changed() == 3 && closed, broken + ", door closed " + closed);
+        return r.undo().thenAccept(v -> r.record("builder: the door step's undo is exact",
+                r.countDiffering(work, before) == 0, r.countDiffering(work, before) + " cells differ"));
+    }
+
+    /**
+     * A powered lever hanging on a stone block with a lit lamp behind it: breaking the lever (without Keep shape) runs
+     * the lever's own removal updates, which reach the lamp through the block, and the lamp goes off (its own tick, four
+     * ticks later, as in vanilla). The undo puts the lever back (the lamp's later change is not part of the step).
+     */
+    private static CompletableFuture<Void> lever(SelfTestRun r, int x0, int z, Box work) {
+        BlockPos lever = new BlockPos(x0 + 5, FLOOR + 1, z);
+        BlockPos wall = lever.east();
+        BlockPos lamp = wall.east();
+        set(r, wall, Blocks.STONE.defaultBlockState());
+        set(r, lever, Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.WALL)
+                .setValue(LeverBlock.FACING, Direction.WEST).setValue(LeverBlock.POWERED, true));
+        set(r, lamp, Blocks.REDSTONE_LAMP.defaultBlockState().setValue(RedstoneLampBlock.LIT, true));
+        r.stand(x0 + 2.5, FLOOR + 1, z + 0.5, -90f, ItemStack.EMPTY);
+        BuilderOutcome broken = breakCells(r, 5, List.of(lever), 0);
+        return r.ticks(8).thenCompose(v -> {
+            boolean off = !r.level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT);
+            r.record("builder: breaking a lever turns off the lamp behind the block it hangs on",
+                    broken.accepted() && broken.changed() >= 1 && r.level.getBlockState(lever).isAir() && off,
+                    broken + ", lamp off " + off);
+            return r.undo();
+        }).thenAccept(v -> r.record("builder: the lever step's undo puts the lever back",
+                r.level.getBlockState(lever).is(Blocks.LEVER), "now " + r.level.getBlockState(lever)));
+    }
+
+    /**
+     * A carved pumpkin placed (without Keep shape) on two snow blocks builds a snow golem, as a player's placement does:
+     * the pumpkin's add callback runs once the place event has let it stand; the pattern's cells are the step and the
+     * undo puts the snow back exactly (the golem is an entity the step does not record; it is removed here).
+     */
+    private static CompletableFuture<Void> golem(SelfTestRun r, int x0, int z, Box work) {
+        BlockPos base = new BlockPos(x0 + 5, FLOOR + 1, z);
+        set(r, base, Blocks.SNOW_BLOCK.defaultBlockState());
+        set(r, base.above(), Blocks.SNOW_BLOCK.defaultBlockState());
+        r.stand(x0 + 2.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.CARVED_PUMPKIN, 64));
+        int[] before = r.snapshot(work);
+        BuilderOutcome placed = place(r, base.getX(), base.getY() + 1, z, 0);
+        List<SnowGolem> golems = r.level.getEntitiesOfClass(SnowGolem.class, aabb(work), e -> e.tickCount < 5);
+        boolean cleared = r.level.getBlockState(base).isAir() && r.level.getBlockState(base.above()).isAir()
+                && r.level.getBlockState(base.above(2)).isAir();
+        r.record("builder: a carved pumpkin on two snow blocks builds a snow golem (the pattern recorded)",
+                placed.accepted() && placed.changed() == 2 && golems.size() == 1 && cleared,
+                placed + ", " + golems.size() + " new snow golems, pattern cleared " + cleared);
+        // The golem would wander and leave snow on the floor: it goes before the undo is compared.
+        golems.forEach(SnowGolem::discard);
+        return r.undo().thenAccept(v -> r.record("builder: the golem step's undo puts the snow back exactly",
+                r.countDiffering(work, before) == 0, r.countDiffering(work, before) + " cells differ"));
+    }
+
+    /**
+     * Paper's steps directly (as {@code BuilderService} drives them): a placement step that throws an {@link Error}
+     * after the game placed its block (a stack overflow, here from the placement context) leaves the world's block
+     * capture switched off and empty (the next placement anywhere would take those states for its own), Keep shape's
+     * callback switch restored; the action still ends, gives the placed cell, and its revert puts it back.
+     */
+    private static void errorInStep(SelfTestRun r, BlockPos cell) {
+        PaperBuilderSteps steps = new PaperBuilderSteps(SculptoryPlugin.instance());
+        for (boolean keepShape : new boolean[] {false, true}) {
+            BuilderSteps.Action action = steps.open(r.level, r.player, keepShape);
+            BlockPlaceContext context = new FailingContext(r, cell);
+            StackOverflowError thrown = null;
+            try {
+                action.place((BlockItem) Items.STONE, context, Blocks.STONE.defaultBlockState(), false);
+            } catch (StackOverflowError e) {
+                thrown = e;
+            }
+            boolean clean = !r.level.captureBlockStates && r.level.capturedBlockStates.isEmpty()
+                    && r.level.capturedTileEntities.isEmpty() && !r.level.isBlockPlaceCancelled;
+            List<BuilderChange> changes = action.finish();
+            steps.revert(r.level, changes);
+            boolean back = r.level.getBlockState(cell).isAir();
+            r.record("builder: a step that throws an Error leaves the block capture empty ("
+                            + (keepShape ? "Keep shape" : "no Keep shape") + ")",
+                    thrown != null && clean && changes.size() == 1 && back,
+                    "thrown " + thrown + ", capture clean " + clean + ", " + changes.size() + " cells given, put back "
+                            + back);
+        }
+    }
+
+    /** A placement context whose player cannot be read once the block is in its cell (a step failing halfway). */
+    private static final class FailingContext extends BlockPlaceContext {
+        private final BlockPos cell;
+
+        FailingContext(SelfTestRun r, BlockPos cell) {
+            super(r.level, r.player, net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(Items.STONE),
+                    new BlockHitResult(Vec3.atCenterOf(cell.below()).add(0, 0.5, 0), Direction.UP, cell.below(), false));
+            this.cell = cell;
+        }
+
+        @Override
+        public net.minecraft.world.entity.player.Player getPlayer() {
+            if (getLevel().getBlockState(cell).is(Blocks.STONE)) throw new StackOverflowError("a builder step failed (test)");
+            return super.getPlayer();
+        }
     }
 
     /** A place on a block's top, then its break: each one step with its event, undone exactly. */
