@@ -12,8 +12,20 @@ body:
     id: sculptory
     attributes:
       label: Sculptory version
-      description: The build id from `/sculptory version` or the jar's name, e.g. `0.4.0-beta`. On a server, the server's and your client's.
+      description: The build id from `/sculptory version` or the jar's name, e.g. `0.4.0-beta` or `0.5.0+1.21.1`. On a server, the server's and your client's.
       placeholder: 0.4.0-beta
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: Which Sculptory you run. On a server, pick both the server's and your client's (for example Paper and Fabric).
+      multiple: true
+      options:
+        - Fabric (mod)
+        - NeoForge (mod)
+        - Paper (server plugin)
     validations:
       required: true
   - type: input
@@ -24,10 +36,11 @@ body:
     validations:
       required: true
   - type: input
-    id: fabric
+    id: loader
     attributes:
-      label: Fabric Loader and Fabric API versions
-      placeholder: "Loader 0.16.14, Fabric API 0.116.4+1.21.1"
+      label: Loader or server versions
+      description: Fabric Loader and Fabric API, the NeoForge version, or the Paper build (the first line of `/version` on the server).
+      placeholder: "Loader 0.16.14, Fabric API 0.116.4+1.21.1 / NeoForge 21.1.264 / Paper 1.21.1 build 133"
     validations:
       required: true
   - type: dropdown
@@ -44,8 +57,8 @@ body:
   - type: textarea
     id: mods
     attributes:
-      label: Other mods
-      description: The other mods installed (on the client, and on the server if there is one), or "none". A permissions mod such as LuckPerms matters too.
+      label: Other mods and plugins
+      description: The other mods installed (on the client, and on the server if there is one), or "none". Plugins too on a Paper server. A permissions mod or plugin such as LuckPerms, and WorldGuard, matter too.
     validations:
       required: true
   - type: textarea
