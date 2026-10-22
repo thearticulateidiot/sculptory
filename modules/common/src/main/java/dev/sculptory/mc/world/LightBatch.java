@@ -65,6 +65,8 @@ public final class LightBatch {
     private static boolean disabled;
     /** Checks every batch has taken so far. */
     private static long batchedCells;
+    /** Checks the wrap saw and handed on to the light engine's own {@code checkBlock} (a task per cell) so far. */
+    private static long vanillaChecks;
     private static final Set<String> LOGGED = new HashSet<>();
     /** {@code LightBatchMixin} has handed a check to {@link #take}: its wrap is in place. */
     private static boolean wrapSeen;
@@ -150,6 +152,15 @@ public final class LightBatch {
     }
 
     /**
+     * Checks {@link #take} handed back for the light engine's own per-cell {@code checkBlock} so far (tests: the
+     * vanilla way was in use). Counted as each check is handed over, so the count does not depend on how many of
+     * their tasks the light thread has run yet.
+     */
+    public static long vanillaChecks() {
+        return vanillaChecks;
+    }
+
+    /**
      * Collects the light checks of the writes made until the scope is closed. A write made while another batch collects
      * (a write inside a write) leaves that collection as it is: its checks go to that batch when it is of the same
      * light engine, else the vanilla way.
@@ -189,7 +200,10 @@ public final class LightBatch {
                     + " at a time");
         }
         LightBatch batch = collecting;
-        if (batch == null || batch.provider != light || Thread.currentThread() != collectingThread) return false;
+        if (batch == null || batch.provider != light || Thread.currentThread() != collectingThread) {
+            vanillaChecks++;
+            return false;
+        }
         batch.add(pos.asLong(), ChunkPos.asLong(pos.getX() >> 4, pos.getZ() >> 4));
         return true;
     }

@@ -190,16 +190,24 @@ public final class LightBatchGameTest {
         loadAndForce(world, area);
         LightBatch.setDisabled(true);
         try {
+            // Air first, so every one of the 256 writes below changes its cell's light and asks for a check.
+            vanilla(() -> {
+                for (int dx = 0; dx < 16; dx++) {
+                    for (int dz = 0; dz < 16; dz++) set(world, x + dx, Y0 + 4, z + dz, AIR);
+                }
+            });
             BlockWriter writer = h.runtime.writer(world, WriteOptions.DEFAULT);
             check(writer.lightTasks() == -1, "the writer does not batch");
-            long batched = LightBatch.batchedCells(), before = lightTaskObjects();
+            // Counted as the checks are handed to the light engine's checkBlock, not as its queued tasks: the light
+            // thread runs those concurrently, so how many were still queued depended on its timing.
+            long batched = LightBatch.batchedCells(), before = LightBatch.vanillaChecks();
             for (int dx = 0; dx < 16; dx++) {
                 for (int dz = 0; dz < 16; dz++) write(writer, x + dx, Y0 + 4, z + dz, STONE);
             }
             writer.clearTicksAtWrittenCells();
             check(LightBatch.batchedCells() == batched, "no check was batched");
-            long tasks = lightTaskObjects() - before;
-            check(tasks >= 200, "a vanilla light task for each of the 256 cells: " + tasks);
+            long checks = LightBatch.vanillaChecks() - before;
+            check(checks == 256, "a vanilla light check for each of the 256 cells: " + checks);
         } finally {
             LightBatch.setDisabled(false);
             forceChunks(world, area, false);
