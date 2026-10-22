@@ -22,6 +22,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
@@ -64,6 +65,10 @@ import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemp
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.bukkit.Bukkit;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -742,90 +747,103 @@ final class BuilderChecks {
     }
 
     /**
-     * What the deferred physics throw, through {@code BuilderService}: a stone placement whose physics then fail. A
-     * RuntimeException leaves the step recorded (FAILED, one history step, the block placed; its undo removes it), as
-     * on Fabric, whose physics run inside the step; an Error puts the placement back without a step and reaches the
-     * caller.
+     * What the deferred physics throw halfway, through {@code BuilderService}: a bed placed (foot, then head), its
+     * physics failing after the foot's updates ran and before the head's. A RuntimeException leaves the step recorded
+     * (FAILED, one history step, both halves placed), the head still registered as a point of interest (it tells the
+     * clients and the points of interest though its updates never ran); the step's undo removes the bed and its point.
+     * An Error puts the placement back without a step (the head's point never registered, nor removed) and reaches the
+     * caller. No "POI data mismatch" is logged throughout.
      */
     private static CompletableFuture<Void> deferredFailure(SelfTestRun r, int x0, int z, Box work) {
-        r.stand(x0 + 0.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.STONE, 64));
-        PaperBuilderSteps paper = new PaperBuilderSteps(SculptoryPlugin.instance());
-        BuilderService failing = new BuilderService(r.service, r.host.engine(), r.host.engine().server(),
-                new PhysicsFailingSteps(paper, false), r.service.executor(), r.service.historyService(),
-                System::nanoTime);
+        r.stand(x0 + 0.5, FLOOR + 1, z + 0.5, -90f, new ItemStack(Items.RED_BED, 1));
+        BlockPos runtimeFoot = new BlockPos(x0 + 3, FLOOR + 1, z);
+        BlockPos runtimeHead = runtimeFoot.east();
+        BlockPos errorFoot = runtimeFoot.south(2);
+        BlockPos errorHead = errorFoot.east();
+        // The physics fail as the head's updates are about to run (after the foot's).
+        PaperBuilderSteps throwing = new PaperBuilderSteps(SculptoryPlugin.instance(),
+                PaperBuilderSteps.DEFAULT_MAX_WATCHED_CELLS, pos -> {
+                    if (pos.equals(runtimeHead)) throw new IllegalStateException("deferred physics failed (test)");
+                    if (pos.equals(errorHead)) throw new StackOverflowError("deferred physics failed (test)");
+                });
+        BuilderService failing = new BuilderService(r.service, r.host.engine(), r.host.engine().server(), throwing,
+                r.service.executor(), r.service.historyService(), System::nanoTime);
+        PoiMismatches mismatches = PoiMismatches.attach();
+        r.cleanup(mismatches::detach);
         int[] before = r.snapshot(work);
         List<String> labelsBefore = labels(r);
-        BlockPos runtimeCell = new BlockPos(x0 + 3, FLOOR + 1, z);
         BuilderOutcome failed = failing.place(r.player, new C2S.BuilderPlace(seq++, false,
-                core(runtimeCell.below()), Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE));
-        boolean stays = r.level.getBlockState(runtimeCell).is(Blocks.STONE);
-        r.record("builder: a RuntimeException in the deferred physics leaves the step recorded (FAILED)",
-                failed.refusal() == BuilderOutcome.Refusal.FAILED && failed.changed() == 1 && stays
+                core(runtimeFoot.below()), Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE));
+        boolean stays = r.level.getBlockState(runtimeFoot).is(Blocks.RED_BED)
+                && r.level.getBlockState(runtimeHead).is(Blocks.RED_BED);
+        boolean point = r.level.getPoiManager().getType(runtimeHead).isPresent();
+        r.record("builder: a RuntimeException halfway through the deferred physics leaves the step recorded (FAILED)",
+                failed.refusal() == BuilderOutcome.Refusal.FAILED && failed.changed() == 2 && stays && point
                         && labels(r).size() == labelsBefore.size() + 1,
-                failed + ", block stays " + stays + ", history " + labels(r));
-        return r.undo().thenAccept(v -> {
-            r.record("builder: that step's undo removes the block", r.countDiffering(work, before) == 0,
-                    r.countDiffering(work, before) + " cells differ");
-            BuilderService erroring = new BuilderService(r.service, r.host.engine(), r.host.engine().server(),
-                    new PhysicsFailingSteps(paper, true), r.service.executor(), r.service.historyService(),
-                    System::nanoTime);
+                failed + ", bed stays " + stays + ", head's point of interest registered " + point + ", history "
+                        + labels(r));
+        return r.undo().thenCompose(v -> {
+            boolean pointLeft = r.level.getPoiManager().getType(runtimeHead).isPresent();
+            r.record("builder: that step's undo removes the bed and its point of interest",
+                    r.countDiffering(work, before) == 0 && !pointLeft,
+                    r.countDiffering(work, before) + " cells differ, point of interest left " + pointLeft);
+            r.stand(x0 + 0.5, FLOOR + 1, errorFoot.getZ() + 0.5, -90f, new ItemStack(Items.RED_BED, 1));
             List<String> labelsNow = labels(r);
             boolean physicsBefore = r.level.hasPhysicsEvent;
-            BlockPos errorCell = new BlockPos(x0 + 3, FLOOR + 1, z + 2);
             StackOverflowError thrown = null;
             try {
-                erroring.place(r.player, new C2S.BuilderPlace(seq++, false, core(errorCell.below()), Facing.UP, 0.5f,
+                failing.place(r.player, new C2S.BuilderPlace(seq++, false, core(errorFoot.below()), Facing.UP, 0.5f,
                         1f, 0.5f, 0, Symmetry.NONE));
             } catch (StackOverflowError e) {
                 thrown = e;
             }
             String left = physicsLeftOn(r, physicsBefore);
-            boolean gone = r.level.getBlockState(errorCell).isAir();
-            r.record("builder: an Error in the deferred physics puts the placement back without a step",
-                    thrown != null && gone && labels(r).equals(labelsNow) && left == null,
-                    "thrown " + thrown + ", put back " + gone + ", history " + labels(r) + ", "
-                            + (left == null ? "physics released" : left));
+            boolean gone = r.level.getBlockState(errorFoot).isAir() && r.level.getBlockState(errorHead).isAir();
+            boolean errorPoint = r.level.getPoiManager().getType(errorHead).isPresent();
+            r.record("builder: an Error halfway through the deferred physics puts the placement back without a step",
+                    thrown != null && gone && !errorPoint && labels(r).equals(labelsNow) && left == null,
+                    "thrown " + thrown + ", put back " + gone + ", head's point of interest " + errorPoint
+                            + ", history " + labels(r) + ", " + (left == null ? "physics released" : left));
+            // The server's log may be written on another thread: a few ticks for it.
+            return r.ticks(5);
+        }).thenAccept(v -> {
+            mismatches.detach();
+            r.record("builder: no point-of-interest mismatch logged by the failed physics, their undo or revert",
+                    mismatches.seen() == 0, mismatches.seen() + " \"POI data mismatch\" lines");
         });
     }
 
-    /** Paper's steps, except that ending an action fails once its deferred physics have run. */
-    private record PhysicsFailingSteps(PaperBuilderSteps inner, boolean error) implements BuilderSteps {
-        @Override
-        public Action open(ServerLevel world, ServerPlayer player, boolean keepShape) {
-            Action action = inner.open(world, player, keepShape);
-            return new Action() {
-                @Override
-                public void emptyContainer(BlockPos pos) {
-                    action.emptyContainer(pos);
-                }
+    /** Counts the server log's "POI data mismatch" lines while attached to log4j's root logger. */
+    private static final class PoiMismatches extends AbstractAppender {
+        private final AtomicInteger seen = new AtomicInteger();
+        private boolean attached;
 
-                @Override
-                public Step place(BlockItem item, BlockPlaceContext context, BlockState state, boolean copy) {
-                    return action.place(item, context, state, copy);
-                }
+        private PoiMismatches() {
+            super("sculptory-selftest-poi", null, null, true, Property.EMPTY_ARRAY);
+        }
 
-                @Override
-                public Step breakBlock(BlockPos pos) {
-                    return action.breakBlock(pos);
-                }
+        static PoiMismatches attach() {
+            PoiMismatches appender = new PoiMismatches();
+            appender.start();
+            ((org.apache.logging.log4j.core.Logger) LogManager.getRootLogger()).addAppender(appender);
+            appender.attached = true;
+            return appender;
+        }
 
-                @Override
-                public List<BuilderChange> finish() {
-                    action.finish();
-                    if (error) throw new StackOverflowError("deferred physics failed (test)");
-                    throw new IllegalStateException("deferred physics failed (test)");
-                }
+        void detach() {
+            if (!attached) return;
+            attached = false;
+            ((org.apache.logging.log4j.core.Logger) LogManager.getRootLogger()).removeAppender(this);
+            stop();
+        }
 
-                @Override
-                public List<BuilderChange> abort() {
-                    return action.abort();
-                }
-            };
+        int seen() {
+            return seen.get();
         }
 
         @Override
-        public void revert(ServerLevel world, List<BuilderChange> changes) {
-            inner.revert(world, changes);
+        public void append(LogEvent event) {
+            if (event.getMessage().getFormattedMessage().contains("POI data mismatch")) seen.incrementAndGet();
         }
     }
 

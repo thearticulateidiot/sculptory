@@ -12,11 +12,11 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Consumer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -127,7 +127,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>An Error in a step</b> ends the action through {@link Action#abort}: the capture and the physics listener are
  * released and the changed cells given for the revert, without running the deferred physics (no golem or wither built,
- * nothing primed) of half-done work.
+ * nothing primed) of half-done work. <b>A RuntimeException in the deferred physics</b> leaves the action as it stands
+ * (recorded, reported FAILED): the changed cells whose updates did not run yet only tell the clients and the points of
+ * interest, as with Keep shape.
  *
  * <p>Known differences from Fabric's mixin capture: what a replaced block's own removal sets off beyond its neighbours
  * does not run when a placement replaces it (Replace over a powered lever: its attached block's neighbours keep their
@@ -152,6 +154,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
 
     private final Plugin plugin;
     private final int maxWatchedCells;
+    private final Consumer<BlockPos> beforeUpdate;
 
     /** {@code plugin} owns the physics listener an action registers while it watches (PaperEngine; the self-test). */
     public PaperBuilderSteps(Plugin plugin) {
@@ -160,9 +163,18 @@ public final class PaperBuilderSteps implements BuilderSteps {
 
     /** With another cap on the cells noted around an action's physics (the self-test checks what happens past it). */
     public PaperBuilderSteps(Plugin plugin, int maxWatchedCells) {
+        this(plugin, maxWatchedCells, null);
+    }
+
+    /**
+     * With {@code beforeUpdate} called before each changed cell's deferred updates run (null: none). The self-test makes
+     * the deferred physics fail halfway through it.
+     */
+    public PaperBuilderSteps(Plugin plugin, int maxWatchedCells, Consumer<BlockPos> beforeUpdate) {
         if (maxWatchedCells < 0) throw new IllegalArgumentException("a negative cap: " + maxWatchedCells);
         this.plugin = Objects.requireNonNull(plugin);
         this.maxWatchedCells = maxWatchedCells;
+        this.beforeUpdate = beforeUpdate;
     }
 
     @Override
@@ -170,18 +182,18 @@ public final class PaperBuilderSteps implements BuilderSteps {
         if (world.captureBlockStates || world.captureTreeGeneration) {
             throw new IllegalStateException("another block capture is open on " + world.dimension().location());
         }
-        return new PaperAction(plugin, maxWatchedCells, unnotified, world, player, keepShape);
+        return new PaperAction(plugin, maxWatchedCells, beforeUpdate, world, player, keepShape);
     }
 
     /**
      * Puts the changes back physics-free. For the changes an aborted action gave ({@link Action#abort}), the cells its
-     * captured steps changed are put back without touching points of interest, as Paper's own revert of a cancelled
-     * placement does: their deferred updates never ran, so they never registered theirs (removing one now would log a
+     * captured steps changed whose deferred updates never ran are put back without touching points of interest, as
+     * Paper's own revert of a cancelled placement does: they never registered theirs (removing one now would log a
      * point-of-interest mismatch).
      */
     @Override
     public void revert(ServerLevel world, List<BuilderChange> changes) {
-        LongSet quiet = unnotified.remove(changes);
+        LongSet quiet = changes instanceof AbortedChanges aborted ? aborted.quiet : null;
         for (int i = changes.size() - 1; i >= 0; i--) {
             BuilderChange change = changes.get(i);
             boolean prevent = world.preventPoiUpdated;
@@ -196,8 +208,18 @@ public final class PaperBuilderSteps implements BuilderSteps {
         }
     }
 
-    /** Per list an aborted action gave: the cells whose deferred updates never ran (server thread only). */
-    private final Map<List<BuilderChange>, LongSet> unnotified = new IdentityHashMap<>();
+    /**
+     * The changes an aborted action gave, with the cells whose deferred updates never ran ({@code quiet}). The set
+     * travels with the list, so nothing is kept for an aborted action whose changes are never reverted.
+     */
+    private static final class AbortedChanges extends ArrayList<BuilderChange> {
+        private final LongSet quiet;
+
+        AbortedChanges(List<BuilderChange> changes, LongSet quiet) {
+            super(changes);
+            this.quiet = quiet;
+        }
+    }
 
     /**
      * Writes {@code state} at {@code pos} physics-free: no callbacks (nothing drops), no neighbour or comparator
@@ -230,8 +252,8 @@ public final class PaperBuilderSteps implements BuilderSteps {
     private static final class PaperAction implements Action, Listener, EventExecutor {
         private final Plugin plugin;
         private final int maxWatchedCells;
-        private final Map<List<BuilderChange>, LongSet> unnotified;
-        /** The pending cells whose deferred updates (or Keep shape notification) have run. */
+        private final Consumer<BlockPos> beforeUpdate;
+        /** The pending cells whose deferred updates (or Keep shape notification) have run to the end. */
         private final LongOpenHashSet notified = new LongOpenHashSet();
         private final ServerLevel world;
         private final ServerPlayer player;
@@ -251,11 +273,11 @@ public final class PaperBuilderSteps implements BuilderSteps {
         private boolean captureFailureLogged;
         private LevelChunk lastChunk;
 
-        PaperAction(Plugin plugin, int maxWatchedCells, Map<List<BuilderChange>, LongSet> unnotified, ServerLevel world,
+        PaperAction(Plugin plugin, int maxWatchedCells, Consumer<BlockPos> beforeUpdate, ServerLevel world,
                     ServerPlayer player, boolean keepShape) {
             this.plugin = plugin;
             this.maxWatchedCells = maxWatchedCells;
-            this.unnotified = unnotified;
+            this.beforeUpdate = beforeUpdate;
             this.world = world;
             this.player = player;
             this.keepShape = keepShape;
@@ -336,6 +358,12 @@ public final class PaperBuilderSteps implements BuilderSteps {
                     } else if (physics) {
                         runUpdates();
                     }
+                } catch (RuntimeException e) {
+                    // The deferred physics failed halfway: the action is recorded as it stands (BuilderService reports
+                    // it FAILED, its step undoable). The changed cells whose updates did not run still reach the
+                    // clients and the points of interest, so the step's undo finds a bed's point registered.
+                    notifyRest(e);
+                    throw e;
                 } finally {
                     stopWatching();
                 }
@@ -364,19 +392,38 @@ public final class PaperBuilderSteps implements BuilderSteps {
                 for (long key : pending.keySet()) {
                     if (!notified.contains(key)) quiet.add(key);
                 }
-                if (!quiet.isEmpty()) unnotified.put(changes, quiet);
+                if (!quiet.isEmpty()) return new AbortedChanges(changes, quiet);
             }
             return changes;
         }
 
         /** Keep shape: clients and points of interest hear of each changed cell; nothing around it is updated. */
         private void notifyOnly() {
+            for (Pending p : pending.values()) notifyQuietly(p);
+        }
+
+        /**
+         * After the deferred physics failed: each changed cell whose updates did not run to the end is notified as with
+         * Keep shape (no neighbour updates, no add callback: nothing more of the failed physics runs). What fails here
+         * is added to {@code failure}.
+         */
+        private void notifyRest(RuntimeException failure) {
             for (Pending p : pending.values()) {
-                notified.add(p.pos().asLong());
-                BlockState now = world.getBlockState(p.pos());
-                int flags = (p.flags() | Block.UPDATE_KNOWN_SHAPE) & ~Block.UPDATE_NEIGHBORS;
-                world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, now, flags, 0);
+                if (notified.contains(p.pos().asLong())) continue;
+                try {
+                    notifyQuietly(p);
+                } catch (RuntimeException e) {
+                    failure.addSuppressed(e);
+                }
             }
+        }
+
+        /** The clients and the points of interest hear of the cell's change; nothing around it is updated. */
+        private void notifyQuietly(Pending p) {
+            BlockState now = world.getBlockState(p.pos());
+            int flags = (p.flags() | Block.UPDATE_KNOWN_SHAPE) & ~Block.UPDATE_NEIGHBORS;
+            world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, now, flags, 0);
+            notified.add(p.pos().asLong());
         }
 
         /**
@@ -396,7 +443,10 @@ public final class PaperBuilderSteps implements BuilderSteps {
             }
             // The load boxes last, against what the cap leaves: the cells around every changed cell come first.
             noteLoadBoxes();
-            for (Pending p : pending.values()) update(p);
+            for (Pending p : pending.values()) {
+                if (beforeUpdate != null) beforeUpdate.accept(p.pos());
+                update(p);
+            }
             for (Pending p : pending.values()) {
                 BlockState now = world.getBlockState(p.pos());
                 if (now.is(Blocks.WITHER_SKELETON_SKULL) || now.is(Blocks.WITHER_SKELETON_WALL_SKULL)) {
@@ -405,18 +455,22 @@ public final class PaperBuilderSteps implements BuilderSteps {
             }
         }
 
-        /** What Paper runs after a placement event for each placed cell: the block's add callback, then its updates. */
+        /**
+         * What Paper runs after a placement event for each placed cell: the block's add callback, then its updates. The
+         * cell counts as notified only once they ran to the end: the point of interest is registered last
+         * ({@code notifyAndUpdatePhysics}), so a cell whose updates threw has not registered it.
+         */
         private void update(Pending p) {
-            notified.add(p.pos().asLong());
             BlockState now = world.getBlockState(p.pos());
             if (now == p.old()) {
                 // Changed and changed back by the steps: nothing to set off; the clients still hear (they were not told).
                 world.getChunkSource().blockChanged(p.pos());
-                return;
+            } else {
+                // A block entity block ran its add callback during the capture already (CraftBukkit lets it).
+                if (!(now.getBlock() instanceof BaseEntityBlock)) now.onPlace(world, p.pos(), p.old(), false);
+                world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, world.getBlockState(p.pos()), p.flags(), 512);
             }
-            // A block entity block ran its add callback during the capture already (CraftBukkit lets it).
-            if (!(now.getBlock() instanceof BaseEntityBlock)) now.onPlace(world, p.pos(), p.old(), false);
-            world.notifyAndUpdatePhysics(p.pos(), null, p.old(), now, world.getBlockState(p.pos()), p.flags(), 512);
+            notified.add(p.pos().asLong());
         }
 
         // ============================================================ watching the physics
