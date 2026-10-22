@@ -248,6 +248,7 @@ public final class ClientSyncGameTest {
                 .thenExecute(() -> {
                     checkView(h.world, view, watcher, region, "before the fill");
                     view.resetCounts();
+                    checkQuiet(view, watcher, "before the fill");
                     before[0] = sync.columnsResent();
                     before[1] = sync.cellsMarked();
                     h.fill(small, "minecraft:gold_block", fill);
@@ -271,6 +272,16 @@ public final class ClientSyncGameTest {
                     h.close();
                 })
                 .thenSucceed();
+    }
+
+    /**
+     * Right after {@link ClientView#resetCounts}: one more drain brings no block or chunk update, so the counts read
+     * after the edit are the edit's own.
+     */
+    private static void checkQuiet(ClientView view, Watcher watcher, String what) {
+        watcher.drain();
+        check(view.deltaPackets == 0 && view.blockPackets == 0 && view.chunkPackets == 0, what + ": updates still arriving: "
+                + view.deltaPackets + " delta, " + view.blockPackets + " block, " + view.chunkPackets + " chunk packets");
     }
 
     private static boolean watcherDrained(Watcher watcher, ClientView view) {
@@ -307,6 +318,8 @@ public final class ClientSyncGameTest {
                     checkView(h.world, plainView, plain, region, "plain, before");
                     predictingView.resetCounts();
                     plainView.resetCounts();
+                    checkQuiet(predictingView, predicting, "predicting, before the fill");
+                    checkQuiet(plainView, plain, "plain, before the fill");
                     sendDabs.run();
                     check(executor.mayHavePredictions(predicting.player.getUUID())
                             && !executor.mayHavePredictions(plain.player.getUUID()), "prediction bookkeeping");
@@ -324,6 +337,8 @@ public final class ClientSyncGameTest {
                     check(plainView.chunkPackets >= 9, "plain: " + plainView.chunkPackets + " chunk packets");
                     predictingView.resetCounts();
                     plainView.resetCounts();
+                    checkQuiet(predictingView, predicting, "predicting, before the undo");
+                    checkQuiet(plainView, plain, "plain, before the undo");
                     sendDabs.run();
                     h.undo(undo);
                     tick(executor);

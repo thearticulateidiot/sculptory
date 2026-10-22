@@ -31,7 +31,10 @@ import net.minecraft.network.protocol.game.ClientGamePacketListener;
 import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundForgetLevelChunkPacket;
 import net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket;
+import net.minecraft.network.protocol.game.ClientboundLoginPacket;
+import net.minecraft.network.protocol.game.ClientboundRespawnPacket;
 import net.minecraft.network.protocol.game.GameProtocols;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
@@ -41,6 +44,7 @@ import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.player.ChatVisiblity;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -307,8 +311,10 @@ final class BenchSupport {
             return all[0];
         }
 
-        /** The chunks the player was sent and not told to forget. */
+        /** The chunks the player was sent and not told to forget, in {@link #dimension}. */
         private final LongOpenHashSet received = new LongOpenHashSet();
+        /** The dimension the player was last sent to (login or respawn). */
+        private ResourceKey<Level> dimension;
 
         /** Drops what was sent so far and keeps what is sent from now on. */
         void record() {
@@ -347,6 +353,13 @@ final class BenchSupport {
                 received.add(ChunkPos.asLong(chunk.getX(), chunk.getZ()));
             } else if (packet instanceof ClientboundForgetLevelChunkPacket forget) {
                 received.remove(forget.pos().toLong());
+            } else if (packet instanceof ClientboundLoginPacket login) {
+                dimension = login.commonPlayerSpawnInfo().dimension();
+            } else if (packet instanceof ClientboundRespawnPacket respawn) {
+                // A client that changes dimension drops every chunk it held (vanilla sends no forget packets for them).
+                ResourceKey<Level> to = respawn.commonPlayerSpawnInfo().dimension();
+                if (!to.equals(dimension)) received.clear();
+                dimension = to;
             }
             observer.accept(packet);
         }
