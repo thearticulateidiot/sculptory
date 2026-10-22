@@ -207,10 +207,58 @@ class LineKernelTest {
     }
 
     /**
-     * A thin line rising half a block a block (101 to 107 over 13 blocks) crosses a block boundary exactly at the middle
-     * of every odd block, and its samples land on those crossings: it steps up at blocks 1, 3, 5, 7, 9 and 11, where Use
-     * Stairs and Slabs puts a stair, wherever it is drawn (the moves of {@link #aLineDrawnElsewhereIsTheSameLineMoved}),
-     * along x and along z.
+     * A Curve whose points are in a line keeps the spline's sample spacing (it is not sampled as a Straight line, whose
+     * evenly spaced samples can land on block corners): its cells are the ones it had before the exact straight sampling,
+     * recorded here from that code.
+     */
+    @Test
+    void aCurveThroughPointsInALineKeepsItsCells() {
+        // Diagonal, with unevenly spaced points: as a Straight line these took the blocks beside each corner too.
+        assertEquals(Set.of("0,0,0", "-1,0,1", "-2,0,2", "-3,0,3"),
+                cells(line(path(PathKind.CURVE, 0, 0, 0, -1, 0, 1, -3, 0, 3), 1, LineKernel.Profile.ROUND)));
+        assertEquals(Set.of("0,0,0", "1,0,-1", "2,0,-2", "3,0,-3"),
+                cells(line(path(PathKind.CURVE, 0, 0, 0, 1, 0, -1, 3, 0, -3), 1, LineKernel.Profile.ROUND)));
+        assertEquals(Set.of("0,0,0", "1,0,0", "1,1,0", "2,1,0", "3,1,0", "3,2,0", "4,2,0", "5,2,0", "5,3,0", "6,3,0",
+                        "7,3,0", "7,4,0", "8,4,0", "9,4,0", "9,5,0", "10,5,0", "11,5,0", "11,6,0", "12,6,0"),
+                cells(line(path(PathKind.CURVE, 0, 0, 0, 4, 2, 0, 12, 6, 0), 1, LineKernel.Profile.ROUND)));
+        assertEquals(Set.of("0,0,0", "1,0,1", "2,0,2", "3,0,3", "4,0,4", "5,0,5", "6,0,6", "7,0,7", "8,0,8", "9,0,9"),
+                cells(line(path(PathKind.CURVE, 0, 0, 0, 3, 0, 3, 9, 0, 9), 1, LineKernel.Profile.ROUND)));
+        assertEquals(Set.of("0,0,0", "0,0,1", "0,1,0", "0,1,1", "1,0,0", "1,0,1", "1,0,2", "1,1,0", "1,1,1", "1,1,2",
+                        "1,1,3", "1,2,3", "2,0,2", "2,1,2", "2,1,3", "2,1,4", "2,1,5", "2,2,3", "2,2,4", "2,2,5", "3,1,4",
+                        "3,1,5", "3,1,6", "3,2,4", "3,2,5", "3,2,6", "3,2,7", "3,3,7", "4,1,6", "4,2,6", "4,2,7", "4,2,8",
+                        "4,2,9", "4,3,7", "4,3,8", "4,3,9", "5,2,10", "5,2,8", "5,2,9", "5,3,10", "5,3,11", "5,3,8", "5,3,9",
+                        "5,4,11", "6,2,10", "6,3,10", "6,3,11", "6,3,12", "6,4,11"),
+                cells(line(path(PathKind.CURVE, 0, 0, 0, 2, 1, 4, 6, 3, 12), 2, LineKernel.Profile.SQUARE)));
+        Set<String> tube = new HashSet<>();
+        for (int x = 0; x <= 16; x++) {
+            for (int y = -1; y <= 1; y++) {
+                for (int z = -1; z <= 1; z++) tube.add(x + "," + y + "," + z);
+            }
+        }
+        assertEquals(tube, cells(line(path(PathKind.CURVE, 0, 0, 0, 5, 0, 0, 16, 0, 0), 3, LineKernel.Profile.ROUND)));
+    }
+
+    /**
+     * A Straight line's samples are exact: from (0, 0, 0) to (-1, 0, 1) the middle one of its 6 steps is exactly on the
+     * corner between the two end blocks, and counts toward +x and +z ({@code floor}), so the line also takes block
+     * (0, 0, 1). That bias toward the + side of a boundary a sample lies on is how Straight lines have always behaved.
+     */
+    @Test
+    void aStraightLineSampleOnACornerIsExactlyThere() {
+        assertEquals(Set.of("0,0,0", "0,0,1", "-1,0,1"),
+                cells(line(path(PathKind.STRAIGHT, 0, 0, 0, -1, 0, 1), 1, LineKernel.Profile.ROUND)));
+        List<double[]> corner = new ArrayList<>();
+        PathSampler.visit(path(PathKind.STRAIGHT, 0, 0, 0, -1, 0, 1), LineKernel.CORE_SPACING, (x, y, z, along) -> {
+            if (x == 0 && z == 1) corner.add(new double[] {x, y, z});
+        });
+        assertEquals(1, corner.size(), "one sample exactly on the corner");
+    }
+
+    /**
+     * A thin line rising half a block a block (101 to 107 over 13 blocks) rises through a block boundary in the middle
+     * of every odd block (no sample lands exactly there): it steps up at blocks 1, 3, 5, 7, 9 and 11, where Use Stairs
+     * and Slabs puts a stair, wherever it is drawn (the moves of {@link #aLineDrawnElsewhereIsTheSameLineMoved}), along x
+     * and along z.
      */
     @Test
     void aLineRisingHalfABlockABlockStepsAtEveryOddBlockAnywhere() {

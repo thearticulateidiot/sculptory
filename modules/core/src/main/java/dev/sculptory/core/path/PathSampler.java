@@ -160,10 +160,8 @@ public final class PathSampler {
         private int i0, i1, i2, i3;
         /** Curve: the four control points of the segment selected. */
         private final double[] c0 = new double[3], c1 = new double[3], c2 = new double[3], c3 = new double[3];
-        /** The segment's ends, for its straight line (a curve's straight segments too). */
+        /** The segment's ends: a straight line's, or a hanging line's chord. */
         private final double[] a = new double[3], b = new double[3];
-        /** Curve: the selected segment is straight ({@link CatmullRom#straight}), so its line is used. */
-        private boolean straightCurve;
         /** Hanging: the span's catenary half-parameter (0: its parabola), and cosh of it. */
         private double u, coshU;
         private boolean sags;
@@ -190,7 +188,6 @@ public final class PathSampler {
                 load(i1, c1);
                 load(i2, c2);
                 load(i3, c3);
-                straightCurve = CatmullRom.straight(c0, c1, c2, c3);
             }
             load(i1, a);
             load(i2, b);
@@ -237,22 +234,16 @@ public final class PathSampler {
         }
 
         /**
-         * The point {@code j / n} of the way along the segment. Straight pieces (a straight line, a hanging line's
-         * chord, a curve's straight segment) are {@link CatmullRom#lerp exact}: a point truly on a block boundary (a
-         * line rising half a block a block crosses one at every other sample) lands on it, so the cells and stairs of a
-         * line come out as its geometry says, wherever it lies.
+         * The point {@code j / n} of the way along the segment. A straight line and a hanging line's chord are
+         * {@link CatmullRom#lerp exact}: a sample whose true position is on a block boundary is exactly there. A curve
+         * keeps the spline's own spacing even where its points are in a line (a straight line's samples, spaced evenly,
+         * can fall on block corners where a curve's do not).
          */
         void at(long j, long n, double[] out) {
             double t = (double) j / n;
             switch (kind) {
                 case STRAIGHT -> CatmullRom.lerp(a, b, j, n, out);
-                case CURVE -> {
-                    if (straightCurve) {
-                        CatmullRom.lerp(a, b, j, n, out);
-                    } else {
-                        CatmullRom.at(c0, c1, c2, c3, t, out);
-                    }
-                }
+                case CURVE -> CatmullRom.at(c0, c1, c2, c3, t, out);
                 case HANGING -> {
                     CatmullRom.lerp(a, b, j, n, out);
                     if (sags) out[1] -= drop(t);
