@@ -797,27 +797,37 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
 
     /**
      * Notes {@code pos} for {@code r}. A cell an earlier recording noted and has no new state for yet is settled first,
-     * so no two recordings claim the same change: if the cell already differs from that recording's first state (its
-     * own change happened inside this one's cause, before its physics event: lava set into air turning to cobble in
-     * its add callback), that recording takes the state it has now; else (its change did not happen: lava falling onto
-     * water forms stone instead) the cell is dropped from it, and the change is this one's.
+     * so no two recordings claim the same change:
+     * <ul>
+     *   <li>if the cell already differs from that recording's first state, this change is nested inside that one: its
+     *       change happened and this event fires from inside it, before its physics event (lava set into air beside
+     *       water turns to cobble in its own add callback). The cell stays with the earlier recording alone, which
+     *       takes the state after this nested change from the physics event that follows (the lava's entry records air
+     *       to cobble, as the tick hook does on Fabric); this recording leaves it out. Split between the two (air to
+     *       lava for one entry, lava to cobble for the other), the cell would come back as a stray lava block when
+     *       the lava's entry is undone first;</li>
+     *   <li>else (its change did not happen: lava falling onto water forms stone instead) the cell is dropped from the
+     *       earlier recording, and the change is this one's.</li>
+     * </ul>
      */
     private void eventNote(Recording r, BlockPos pos) {
         long key = pos.asLong();
         List<Recording> earlier = eventCells.get(key);
+        boolean nested = false;
         if (earlier != null) {
             for (Iterator<Recording> it = earlier.iterator(); it.hasNext(); ) {
                 Recording e = it.next();
                 if (e == r || e.world != r.world || e.firstAfter.containsKey(key)) continue;
                 Before before = e.touched.get(key);
                 if (before != null && Block.getId(r.world.getBlockState(pos)) != before.state()) {
-                    e.changed(key, pos);
+                    nested = true;
                 } else {
                     e.touched.remove(key);
                     it.remove();
                 }
             }
         }
+        if (nested) return;
         if (r.note(pos)) eventCells.computeIfAbsent(key, k -> new ArrayList<>(1)).add(r);
     }
 

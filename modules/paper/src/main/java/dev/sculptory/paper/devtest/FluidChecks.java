@@ -42,7 +42,9 @@ import org.bukkit.event.block.BlockFromToEvent;
  *   <li>only what the fluid explains: a furnace beside the flow that another plugin lights in the flow's own tick is
  *       left lit by the fill's undo; a stone a piston pushes into the flowed cell later that tick is left by the undo;
  *       water into a tall plant beside another entry's lava (whose form event comes inside the water's effect):
- *       the undo puts back both halves;</li>
+ *       the undo puts back both halves; lava falling onto another entry's water, and lava flowing into air beside
+ *       another entry's water (the cobblestone's form event nested in the lava's change): both entries undone in
+ *       either order put the world back exactly;</li>
  *   <li>uncovered (information, not failures): the same water washing away the first dust of a powered redstone line:
  *       the line's far dust loses power in that same tick with no event, so after the undo it stays unpowered; and a
  *       block another plugin sets in a marked cell keeps the cell's mark.</li>
@@ -360,7 +362,52 @@ final class FluidChecks {
         floor(r, area);
         return pistonInto(r, x0, z0).thenCompose(v -> plantBesideLava(r, x0 + 8, z0))
                 .thenCompose(v -> lavaOntoWater(r, x0, z0, false))
-                .thenCompose(v -> lavaOntoWater(r, x0, z0, true));
+                .thenCompose(v -> lavaOntoWater(r, x0, z0, true))
+                .thenCompose(v -> lavaBesideWater(r, x0, z0, false))
+                .thenCompose(v -> lavaBesideWater(r, x0, z0, true));
+    }
+
+    /**
+     * Two entries' fluids meeting, the second change nested in the first: lava one fill wrote flows west into an air
+     * cell beside water another fill wrote (north of it), and turns to cobblestone there in its own add callback, so
+     * the cobblestone's form event (taken for the water's entry, the first fluid beside the cell) fires inside the
+     * lava's change, before its physics event. The cell is the lava entry's alone, air to cobblestone, so undoing both
+     * entries, in either order, puts the world back exactly and leaves no fluid. Walls keep both fluids to that one
+     * cell.
+     */
+    private static CompletableFuture<Void> lavaBesideWater(SelfTestRun r, int x0, int z0, boolean lavaFirst) {
+        BlockPos cell = new BlockPos(x0 + 10, FLOOR + 1, z0 + 9);
+        BlockPos water = cell.north();
+        BlockPos lava = cell.east();
+        for (BlockPos wall : List.of(water.west(), water.east(), water.north(), lava.east(), lava.south(),
+                cell.west(), cell.south())) {
+            set(r, wall, Blocks.STONE.defaultBlockState());
+        }
+        Box around = box(x0 + 8, FLOOR + 1, z0 + 6, x0 + 13, FLOOR + 3, z0 + 11);
+        int[] before = r.snapshot(around);
+        Box waterBox = box(water.getX(), water.getY(), water.getZ(), water.getX(), water.getY(), water.getZ());
+        Box lavaBox = box(lava.getX(), lava.getY(), lava.getZ(), lava.getX(), lava.getY(), lava.getZ());
+        int waterId = Block.getId(Blocks.WATER.defaultBlockState());
+        int lavaId = Block.getId(Blocks.LAVA.defaultBlockState());
+        CompletableFuture<?> filled = lavaFirst
+                ? r.fill(lavaBox, lavaId).thenCompose(v -> r.fill(waterBox, waterId))
+                : r.fill(waterBox, waterId).thenCompose(v -> r.fill(lavaBox, lavaId));
+        String order = lavaFirst ? "the water undone first" : "the lava undone first";
+        return filled.thenCompose(v -> {
+            r.level.scheduleTick(lava, Fluids.LAVA, 1);
+            return r.ticks(60);
+        }).thenCompose(v -> {
+            r.info("fluid trails: lava into air beside water (" + order + ")", "the cell is now "
+                    + describe(r.level.getBlockState(cell)));
+            return r.undo();
+        }).thenCompose(v -> r.undo()).thenCompose(v -> r.ticks(40)).thenAccept(v -> {
+            int fluid = 0;
+            for (BlockPos at : cells(around)) if (!r.level.getFluidState(at).isEmpty()) fluid++;
+            int differ = r.countDiffering(around, before);
+            r.record("fluid trails: lava into air beside another entry's water, both undone (" + order
+                    + "): world exact", differ == 0 && fluid == 0, differ + " cells differ, " + fluid
+                    + " fluid cells left");
+        });
     }
 
     private static void set(SelfTestRun r, BlockPos pos, BlockState state) {
