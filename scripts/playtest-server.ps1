@@ -1,9 +1,10 @@
 # Runs the project-owned Sculptory test server on port 25580, under .local/run/server.
 # Offline mode so dev clients can join; "BuilderDev" is op, other names are not.
-# The dev-only playtest setup runs by default (PlaytestSetup): the time is locked at day, mob spawning is off and
-# hostile mobs are removed; "Sculptory playtest setup:" lines in the console show it.
+# The dev-only playtest setup runs by default (PlaytestSetup): the time is locked at day, mob spawning is off, the
+# difficulty is peaceful and hostile mobs are removed; "Sculptory playtest setup:" lines in the console show it.
 #   scripts/playtest-server.ps1
-#   scripts/playtest-server.ps1 -NoSetup      # without it (the world's own time, game rules and mobs)
+#   scripts/playtest-server.ps1 -NoSetup      # without it (the world's own time, game rules, difficulty and mobs;
+#                                             #   what an earlier run with it saved in the world stays)
 param(
     [switch]$NoSetup
 )

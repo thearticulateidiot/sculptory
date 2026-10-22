@@ -16,6 +16,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
+import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.GameRules;
@@ -24,10 +25,10 @@ import org.slf4j.LoggerFactory;
 /**
  * The dev-only playtest setup ({@link PlaytestSetup}) against the GameTest server: the steps its hooks run, called
  * directly (the hooks are registered only with {@code -Dsculptory.playtest=true}). Daylight locks at day in every world,
- * mob spawning goes off, only living, unnamed hostile mobs are removed, and a joined (mock) player gets permission level
- * 4 even though this server ops at level 0, once. Everything the test changes on the shared server (two game rules, the
- * time of day, the op entry, the mock player and mobs) is put back before it ends, within the same tick, so no other
- * test sees it.
+ * mob spawning goes off, every world turns peaceful, only living, unnamed hostile mobs are removed, and a joined (mock)
+ * player gets permission level 4 even though this server ops at level 0, once. Everything the test changes on the shared
+ * server (two game rules, the difficulty, the time of day, the op entry, the mock player and mobs) is put back before it
+ * ends, within the same tick, so no other test sees it.
  */
 public final class PlaytestSetupGameTest {
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_playtest_setup")
@@ -37,6 +38,7 @@ public final class PlaytestSetupGameTest {
         GameRules rules = server.getGameRules();
         boolean daylight = rules.getBoolean(GameRules.RULE_DAYLIGHT);
         boolean spawning = rules.getBoolean(GameRules.RULE_DOMOBSPAWNING);
+        Difficulty difficulty = server.getWorldData().getDifficulty();
         long dayTime = server.overworld().getDayTime();
         PlayerList players = server.getPlayerList();
         ServerPlayer player = context.makeMockServerPlayerInLevel();
@@ -46,12 +48,19 @@ public final class PlaytestSetupGameTest {
             // Start from the opposite of what the setup sets, so the checks below cannot pass by accident.
             rules.getRule(GameRules.RULE_DAYLIGHT).set(true, server);
             rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(true, server);
+            server.setDifficulty(Difficulty.EASY, true);
             for (ServerLevel level : server.getAllLevels()) level.setDayTime(13000);
 
             PlaytestSetup.lockDaylight(server);
             PlaytestSetup.stopMobSpawning(server);
+            PlaytestSetup.makePeaceful(server);
             check(!rules.getBoolean(GameRules.RULE_DAYLIGHT), "doDaylightCycle still on");
             check(!rules.getBoolean(GameRules.RULE_DOMOBSPAWNING), "doMobSpawning still on");
+            check(server.getWorldData().getDifficulty() == Difficulty.PEACEFUL, "difficulty "
+                    + server.getWorldData().getDifficulty().getKey());
+            for (ServerLevel level : server.getAllLevels()) {
+                check(level.getDifficulty() == Difficulty.PEACEFUL, level.dimension().location() + " is not peaceful");
+            }
             for (ServerLevel level : server.getAllLevels()) {
                 check(level.getDayTime() == PlaytestSetup.DAY_TIME, level.dimension().location() + " is at day time "
                         + level.getDayTime());
@@ -97,6 +106,7 @@ public final class PlaytestSetupGameTest {
             }
             rules.getRule(GameRules.RULE_DAYLIGHT).set(daylight, server);
             rules.getRule(GameRules.RULE_DOMOBSPAWNING).set(spawning, server);
+            server.setDifficulty(difficulty, true);
             for (ServerLevel level : server.getAllLevels()) level.setDayTime(dayTime);
         }
         context.succeed();

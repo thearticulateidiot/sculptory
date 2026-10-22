@@ -129,7 +129,7 @@ scripts/gradle.ps1 :neoforge:runClient -PbsPlaytest -PbsWorld="<world>"  # NeoFo
 `scripts/playtest.ps1` and `scripts/playtest-server.ps1` wrap the dev client and a dev server on port 25580; their
 headers list the options (the screenshot tour, the play check, the scripted demo). By default both apply the playtest
 setup: the player is op at level 4 (even in a singleplayer world without cheats), the time is locked at day, mob spawning
-is off and hostile mobs are removed; `-NoSetup` leaves the world as it is. On the run tasks it is `-PbsPlaytest`
+is off, the difficulty is peaceful and hostile mobs are removed; `-NoSetup` leaves the world as it is. On the run tasks it is `-PbsPlaytest`
 (`:fabric:` or `:neoforge:` `runClient` and `runServer`), and the log shows "Sculptory playtest setup:" lines. These
 dev-only harnesses and the setup run from the source sets and are left out of every jar.
 

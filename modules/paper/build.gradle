@@ -181,7 +181,10 @@ def commonProbe = tasks.register('commonProbe', CommonOverlay) {
     // LightBatch is Paper's stand-in, so the mixin feeding the common one goes too; WidenedMcInternals reads members
     // only the access widener opens (Paper's McInternals is PaperAccess).
     excludes = ['dev/sculptory/mc/world/LightBatch.java', 'dev/sculptory/mc/mixin/LightBatchMixin.java',
-                'dev/sculptory/mc/world/WidenedMcInternals.java']
+                'dev/sculptory/mc/world/WidenedMcInternals.java',
+                // The dev-only playtest setup never runs on Paper (it sets the difficulty server-wide, which Paper
+                // keeps per world).
+                'dev/sculptory/mc/playtest/**']
     patches = commonPatches
     outputDir = layout.buildDirectory.dir('generated/commonProbe')
 }

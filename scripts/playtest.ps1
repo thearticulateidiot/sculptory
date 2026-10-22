@@ -10,11 +10,13 @@
 #   scripts/playtest.ps1 -Size 1600x900       # game window size
 #                                             # Plain playtests and -Server joins run the dev-only playtest setup
 #                                             #   (PlaytestSetup): the player is op (level 4, even in a world without
-#                                             #   cheats), the time is locked at day, mob spawning is off and hostile
-#                                             #   mobs are removed. With -Server the test server applies it
+#                                             #   cheats), the time is locked at day, mob spawning is off, the
+#                                             #   difficulty is peaceful and hostile mobs are removed. With -Server
+#                                             #   the test server applies it
 #                                             #   (scripts/playtest-server.ps1). "Sculptory playtest setup:" lines in
 #                                             #   the log show it.
-#   scripts/playtest.ps1 -NoSetup             # without it (the world's own time, game rules and mobs)
+#   scripts/playtest.ps1 -NoSetup             # without it (the world's own time, game rules, difficulty and mobs;
+#                                             #   what an earlier run with it saved in the world stays)
 #                                             # Plain playtests in every checkout share one set of settings (game
 #                                             #   options and the editor's settings files) in <main checkout>\.local\run\settings:
 #                                             #   the shared copy is used at start and what the game changed is kept

@@ -19,6 +19,7 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.PlayerList;
 import net.minecraft.server.players.ServerOpList;
 import net.minecraft.server.players.ServerOpListEntry;
+import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.boss.enderdragon.EnderDragon;
 import net.minecraft.world.entity.monster.Enemy;
@@ -30,8 +31,10 @@ import net.minecraft.world.level.GameRules;
  * by default; {@code -PbsPlaytest} on the loader modules' run tasks), every server this JVM runs (each singleplayer
  * world's integrated server in turn, or a dev server) gets:
  * <ul>
- *   <li>when it has started: {@code doDaylightCycle} and {@code doMobSpawning} off, the time of day set to
- *       {@link #DAY_TIME} ({@code /time set day}) in every world, and the hostile mobs in the loaded chunks removed;</li>
+ *   <li>when it has started: {@code doDaylightCycle} and {@code doMobSpawning} off, the difficulty peaceful (so no
+ *       hostile mob spawns at all, not from spawners either, and one loaded later far away despawns on its first tick),
+ *       the time of day set to {@link #DAY_TIME} ({@code /time set day}) in every world, and the hostile mobs in the
+ *       loaded chunks removed;</li>
  *   <li>when a player joins: the singleplayer host, and on any server the players named in
  *       {@code -Dsculptory.playtest.ops} (default {@value #DEFAULT_OPS}, the dev clients' name), get an operator entry
  *       at level {@value #OP_LEVEL}, which the client learns at once; other players stay as they are, so a second
@@ -79,7 +82,8 @@ public final class PlaytestSetup {
         installed = true;
         Set<String> opNames = opNames(System.getProperty(OPS_PROPERTY, DEFAULT_OPS));
         Sculptory.LOG.info("Sculptory playtest setup is on (-D{}=true): ops the singleplayer host and {}; locks day; "
-                + "turns mob spawning off", PROPERTY, opNames.isEmpty() ? "nobody else" : String.join(", ", opNames));
+                + "turns mobs off (no spawning, peaceful)", PROPERTY,
+                opNames.isEmpty() ? "nobody else" : String.join(", ", opNames));
         ServerLoader loader = Loaders.server();
         loader.onServerStarted(PlaytestSetup::serverStarted);
         // Join may arrive on a network thread (ServerLoader): hop onto the server thread.
@@ -98,9 +102,10 @@ public final class PlaytestSetup {
     private static void serverStarted(MinecraftServer server) {
         lockDaylight(server);
         stopMobSpawning(server);
+        makePeaceful(server);
         int removed = removeHostileMobs(server);
-        Sculptory.LOG.info("Sculptory playtest setup: daylight locked at day; mob spawning off; removed {} hostile mob(s)",
-                removed);
+        Sculptory.LOG.info("Sculptory playtest setup: daylight locked at day; mob spawning off; difficulty {}; removed {} "
+                + "hostile mob(s)", server.getWorldData().getDifficulty().getKey(), removed);
     }
 
     private static void playerJoined(MinecraftServer server, ServerPlayer player, Set<String> opNames) {
@@ -128,16 +133,22 @@ public final class PlaytestSetup {
 
     /** {@code doDaylightCycle} off and the time of day at {@link #DAY_TIME} in every world. */
     public static void lockDaylight(MinecraftServer server) {
-        // Neither this rule nor doMobSpawning has a change callback, so the setter needs no server (null also compiles
-        // against Paper's per-world setter, in the Paper build's compile probe of the common code).
-        server.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(false, null);
+        server.getGameRules().getRule(GameRules.RULE_DAYLIGHT).set(false, server);
         // The other dimensions read the overworld's time; setting each is what /time set does.
         for (ServerLevel level : server.getAllLevels()) level.setDayTime(DAY_TIME);
     }
 
     /** {@code doMobSpawning} off. */
     public static void stopMobSpawning(MinecraftServer server) {
-        server.getGameRules().getRule(GameRules.RULE_DOMOBSPAWNING).set(false, null);
+        server.getGameRules().getRule(GameRules.RULE_DOMOBSPAWNING).set(false, server);
+    }
+
+    /**
+     * The difficulty peaceful, even where the world locked its difficulty (a hardcore world stays hard: vanilla keeps
+     * it so). The server sends every player the new difficulty.
+     */
+    public static void makePeaceful(MinecraftServer server) {
+        server.setDifficulty(Difficulty.PEACEFUL, true);
     }
 
     /** Removes the hostile mobs ({@link #isHostile}) loaded in every world; returns how many. */
