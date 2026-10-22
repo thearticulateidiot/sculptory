@@ -1,5 +1,6 @@
 package dev.sculptory.neoforge.client;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
@@ -29,19 +30,28 @@ final class EditorMovementContext implements IKeyConflictContext {
         this.editorOpen = Objects.requireNonNull(editorOpen);
     }
 
-    /** Wraps each key's current context, once (a second install leaves already wrapped keys alone). */
-    static void install(List<KeyMapping> keys, BooleanSupplier editorOpen) {
+    /**
+     * Wraps the current context of each key that doesn't have this one yet (never a wrapper in a wrapper), and returns
+     * those keys as "{@code <key name> (<context class>)}". Called again later, it finds the keys whose context another
+     * mod has set since and wraps the new context.
+     */
+    static List<String> install(List<KeyMapping> keys, BooleanSupplier editorOpen) {
+        List<String> wrapped = new ArrayList<>();
         for (KeyMapping key : keys) {
             IKeyConflictContext current = key.getKeyConflictContext();
             if (!(current instanceof EditorMovementContext)) {
                 key.setKeyConflictContext(new EditorMovementContext(current, editorOpen));
+                wrapped.add(key.getName() + " (" + describe(current) + ")");
             }
         }
+        return wrapped;
     }
 
-    /** The context the key had before. */
-    IKeyConflictContext own() {
-        return own;
+    /** A context's name for the log: an enum constant (NeoForge's own contexts) by name, others by class. */
+    private static String describe(IKeyConflictContext context) {
+        return context instanceof Enum<?> constant
+                ? constant.getDeclaringClass().getName() + "." + constant.name()
+                : context.getClass().getName();
     }
 
     @Override
