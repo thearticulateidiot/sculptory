@@ -355,6 +355,37 @@ class RoadKernelTest {
         assertEquals(5, RoadKernel.generate(follow, new GroundMap(), -64, 320, 1000).unloaded().size());
     }
 
+    /**
+     * The same road built anywhere is the same road moved there: its spline carries rounding noise that grows with the
+     * coordinates, and a Straight road rising half a block a column has its deck exactly on half blocks and its corner
+     * columns exactly on the end caps' planes. Built near the origin and up to 29 million blocks out, at many z, the
+     * cells are those of the road at (0, 0) moved by the same offset.
+     */
+    @Test
+    void aRoadBuiltElsewhereIsTheSameRoadMoved() {
+        Set<String> reference = roadCells(0, 0);
+        assertEquals(13 * 3 * 3, reference.size(), "13 columns 3 wide, the deck and 2 cells cleared over it");
+        for (int x0 : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
+            for (int z0 = -1024; z0 <= 1024; z0 += 16) {
+                Set<String> moved = new HashSet<>();
+                for (String cell : roadCells(x0, z0)) {
+                    String[] xyz = cell.split(",");
+                    moved.add((Integer.parseInt(xyz[0]) - x0) + "," + xyz[1] + "," + (Integer.parseInt(xyz[2]) - z0));
+                }
+                assertEquals(reference, moved, "the road at " + x0 + ", " + z0);
+            }
+        }
+    }
+
+    /** A Straight road 3 wide from (x0, 99, z0) to (x0 + 12, 105, z0) with 2 cells cleared over it, as x,y,z keys. */
+    private static Set<String> roadCells(int x0, int z0) {
+        RoadKernel.Spec spec = spec(nodes(x0, 99, z0, x0 + 12, 105, z0), 3, null, RoadKernel.HeightMode.STRAIGHT, true, 0, 2);
+        Set<String> cells = new HashSet<>();
+        RoadKernel.generate(spec, new GroundMap(), -64, 320, 1 << 16).source()
+                .forEach((x, y, z, state) -> cells.add(x + "," + y + "," + z));
+        return cells;
+    }
+
     @Test
     void theCapRefusesTheCellOverIt() {
         RoadKernel.Spec spec = spec(nodes(0, 63, 0, 10, 63, 0), 3, null, RoadKernel.HeightMode.STRAIGHT, true, 0, 0);

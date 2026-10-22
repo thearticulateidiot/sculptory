@@ -27,6 +27,13 @@ public final class RoadKernel {
     /** The spline is sampled into a polyline about this far apart (blocks). */
     static final double SAMPLE_STEP = 0.5;
     private static final double EPSILON = 1e-9;
+    /**
+     * How far a value may sit from an exact tie (a half-block height, a column centre on an end cap's plane) and still
+     * count as on it. The spline is evaluated in world coordinates, so its points carry rounding noise that grows with
+     * the distance from the world's origin (about 1e-8 of a block at 30 million blocks out). Without this the same road
+     * rounded its ties differently from place to place: a deck a block lower or a corner column missing on one side.
+     */
+    private static final double TIE = 1e-6;
 
     private RoadKernel() {}
 
@@ -322,8 +329,9 @@ public final class RoadKernel {
                     double raw = length2 <= 0 ? 0 : ((px - ax) * dx + (pz - az) * dz) / length2;
                     // A column behind the start (or past the end) is not part of a segment that only reaches it
                     // through the cap's vertex: the road ends square at its nodes.
-                    if (nearStart && raw <= 0 && (px - xs[0]) * startDx + (pz - zs[0]) * startDz < 0) continue;
-                    if (nearEnd && raw >= 1 && (px - xs[last]) * endDx + (pz - zs[last]) * endDz > 0) continue;
+                    // A column centre on the cap's plane belongs to the road: TIE keeps the spline's noise from deciding.
+                    if (nearStart && raw <= 0 && (px - xs[0]) * startDx + (pz - zs[0]) * startDz < -TIE) continue;
+                    if (nearEnd && raw >= 1 && (px - xs[last]) * endDx + (pz - zs[last]) * endDz > TIE) continue;
                     double t = Math.max(0, Math.min(1, raw));
                     double qx = ax + t * dx - px, qz = az + t * dz - pz;
                     double d2 = qx * qx + qz * qz;
@@ -353,9 +361,12 @@ public final class RoadKernel {
         return generate(spec, path(spec), ground, bottomY, topYExclusive, maxCells);
     }
 
-    /** A Straight road's deck height in a footprint column: the nodes' heights interpolated at its arc length. */
+    /**
+     * A Straight road's deck height in a footprint column: the nodes' heights interpolated at its arc length, a half
+     * rounded up wherever the road lies ({@link #TIE}).
+     */
     public static int deckHeight(Path path, Column column) {
-        return (int) Math.floor(path.nodeHeightAt(column.along()) + 0.5);
+        return (int) Math.floor(path.nodeHeightAt(column.along()) + 0.5 + TIE);
     }
 
     /**

@@ -33,7 +33,9 @@ import dev.sculptory.protocol.v2.RejectReason;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.platform.WriteOptions;
 import it.unimi.dsi.fastutil.longs.Long2IntMap;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerPlayer;
@@ -194,11 +196,14 @@ public final class PathPointsGameTest {
         GeneratedSource stepped = SlopeSteps.apply(road, SlopeSteps.byColumn(laid.climbAxes()), steps(h),
                 h.state("minecraft:air")).source();
         int stairs = h.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
-        int[] found = {0};
+        // Six steps of a block (99 to 105), each a stair in all three columns across the road. The road is the same
+        // wherever the test lands (RoadKernel rounds its ties the same anywhere), so the count is exact.
+        Map<Long, Integer> across = new HashMap<>();
         stepped.forEach((x, y, z, state) -> {
-            if (state == stairs) found[0]++;
+            if (state == stairs) across.merge(((long) x << 32) | (y & 0xFFFFFFFFL), 1, Integer::sum);
         });
-        check(found[0] >= 15, "a stair across the width at each step: " + found[0]);
+        check(across.size() == 6 && across.values().stream().allMatch(n -> n == 3),
+                "a stair across the width at each of the 6 steps: " + across.size() + " steps, " + across.values());
         ExtrudePathsGameTest.buildAndUndo(context, h, area, stepped, OpLabel.ROAD, undone -> {});
     }
 }
