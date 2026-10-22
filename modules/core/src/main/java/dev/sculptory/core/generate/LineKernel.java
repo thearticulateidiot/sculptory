@@ -1,5 +1,6 @@
 package dev.sculptory.core.generate;
 
+import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.path.CellBits;
 import dev.sculptory.core.path.PathFrame;
@@ -98,23 +99,38 @@ public final class LineKernel {
         if (PathSampler.chordLength(spec.path()) / StrictMath.sqrt(3) > (double) maxCells + 1) {
             throw new GeneratedTooLargeException(maxCells);
         }
-        CellBits cells = new CellBits(maxCells);
+        // Worked out relative to the first point, then moved back by whole blocks: rounding noise in the samples grows
+        // with the size of their coordinates, and a cell centre exactly on the tube's edge (or a sample exactly on a
+        // block boundary) fell in or out depending on where in the world the line was. Relative to its first point the
+        // same line moved by whole blocks does the very same arithmetic, so it has the same cells wherever it lies.
+        BlockPos origin = spec.path().points().get(0);
+        List<BlockPos> moved = new ArrayList<>(spec.path().points().size());
+        for (BlockPos p : spec.path().points()) {
+            moved.add(new BlockPos(p.x() - origin.x(), p.y() - origin.y(), p.z() - origin.z()));
+        }
+        PathSpec path = new PathSpec(moved, spec.path().kind(), spec.path().sag());
+        int bottom = (int) Math.max(Integer.MIN_VALUE, (long) bottomY - origin.y());
+        int top = (int) Math.min(Integer.MAX_VALUE, (long) topYExclusive - origin.y());
+        CellBits local = new CellBits(maxCells);
         try {
             if (spec.thickness() == 1) {
-                PathSampler.visit(spec.path(), CORE_SPACING, (x, y, z, along) -> {
+                PathSampler.visit(path, CORE_SPACING, (x, y, z, along) -> {
                     int cy = floor(y);
-                    if (cy >= bottomY && cy < topYExclusive) cells.add(floor(x), cy, floor(z));
+                    if (cy >= bottom && cy < top) local.add(floor(x), cy, floor(z));
                 });
             } else {
-                double spacing = spec.path().kind() == PathKind.STRAIGHT ? STRAIGHT_SPACING : SEGMENT_SPACING;
-                tube(PathSampler.sample(spec.path(), spacing), PathSampler.closed(spec.path()), spec.thickness(),
-                        spec.profile(), cells, bottomY, topYExclusive);
+                double spacing = path.kind() == PathKind.STRAIGHT ? STRAIGHT_SPACING : SEGMENT_SPACING;
+                tube(PathSampler.sample(path, spacing), PathSampler.closed(path), spec.thickness(), spec.profile(), local,
+                        bottom, top);
             }
         } catch (CellBits.FullException full) {
             throw new GeneratedTooLargeException(maxCells);
         } catch (IllegalArgumentException tooManySamples) {
             throw new GeneratedTooLargeException(maxCells);
         }
+        if (origin.x() == 0 && origin.y() == 0 && origin.z() == 0) return local;
+        CellBits cells = new CellBits(maxCells);
+        local.forEach((x, y, z) -> cells.add(x + origin.x(), y + origin.y(), z + origin.z()));
         return cells;
     }
 

@@ -27,13 +27,6 @@ public final class RoadKernel {
     /** The spline is sampled into a polyline about this far apart (blocks). */
     static final double SAMPLE_STEP = 0.5;
     private static final double EPSILON = 1e-9;
-    /**
-     * How far a value may sit from an exact tie (a half-block height, a column centre on an end cap's plane) and still
-     * count as on it. The spline is evaluated in world coordinates, so its points carry rounding noise that grows with
-     * the distance from the world's origin (about 1e-8 of a block at 30 million blocks out). Without this the same road
-     * rounded its ties differently from place to place: a deck a block lower or a corner column missing on one side.
-     */
-    private static final double TIE = 1e-6;
 
     private RoadKernel() {}
 
@@ -112,9 +105,21 @@ public final class RoadKernel {
         }
     }
 
-    /** The centre line (a polyline sampled from the spline, with arc lengths) and the footprint columns. */
+    /**
+     * The centre line (a polyline sampled from the spline, with arc lengths) and the footprint columns.
+     *
+     * <p>Everything is worked out relative to the first node (its block is the origin), and only whole blocks are added
+     * back: rounding noise in the spline grows with the size of its coordinates, and a road's ties (a deck exactly on a
+     * half block, a column centre exactly on an end cap's plane, an even-width centre line on a block boundary) fell
+     * one way or the other depending on where in the world the road was. Relative to its first node the same road
+     * moved by whole blocks does the very same arithmetic, so it rounds every tie the same way wherever it lies.
+     */
     public static final class Path {
         private final List<BlockPos> nodes;
+        /** The first node's block (0, 0, 0 without nodes): {@link #xs}, {@link #zs} and heights are relative to it. */
+        private final int originX;
+        private final int originY;
+        private final int originZ;
         private final double[] xs;
         private final double[] zs;
         private final double[] along;
@@ -123,9 +128,12 @@ public final class RoadKernel {
         private final boolean closed;
         private final List<Column> columns;
 
-        private Path(List<BlockPos> nodes, double[] xs, double[] zs, double[] along, double[] nodeAlong, int[] nodeVertex,
-                     boolean closed, List<Column> columns) {
+        private Path(List<BlockPos> nodes, int originX, int originY, int originZ, double[] xs, double[] zs, double[] along,
+                     double[] nodeAlong, int[] nodeVertex, boolean closed, List<Column> columns) {
             this.nodes = nodes;
+            this.originX = originX;
+            this.originY = originY;
+            this.originZ = originZ;
             this.xs = xs;
             this.zs = zs;
             this.along = along;
@@ -144,12 +152,14 @@ public final class RoadKernel {
             return xs.length;
         }
 
+        /** A vertex's x in the world (for drawing; the road's own arithmetic stays relative). */
         public double x(int vertex) {
-            return xs[vertex];
+            return originX + xs[vertex];
         }
 
+        /** A vertex's z in the world (for drawing; the road's own arithmetic stays relative). */
         public double z(int vertex) {
-            return zs[vertex];
+            return originZ + zs[vertex];
         }
 
         /** The vertex at node {@code node} (the first of its segment; the last node's is the last vertex). */
@@ -192,25 +202,39 @@ public final class RoadKernel {
             double length = length();
             int samples = (int) Math.ceil(length) + 1;
             long[] keys = new long[samples];
-            for (int k = 0; k < samples; k++) {
-                double[] point = pointAt(Math.min(k, length));
-                keys[k] = GroundMap.column((int) Math.floor(point[0]), (int) Math.floor(point[1]));
-            }
+            for (int k = 0; k < samples; k++) keys[k] = sampleColumn(k, length);
             return keys;
+        }
+
+        /** The column centre-line sample {@code k} lies in (arc length {@code k}, clamped to {@code length}). */
+        private long sampleColumn(int k, double length) {
+            double[] point = relativePointAt(Math.min(k, length));
+            return GroundMap.column(originX + (int) Math.floor(point[0]), originZ + (int) Math.floor(point[1]));
         }
 
         /** The nodes' y interpolated along the arc length (clamped past the ends). */
         public double nodeHeightAt(double s) {
+            return originY + relativeHeightAt(s);
+        }
+
+        /** {@link #nodeHeightAt}, less the first node's y. */
+        private double relativeHeightAt(double s) {
             if (nodes.isEmpty()) return 0;
-            if (nodes.size() == 1 || s <= nodeAlong[0]) return nodes.get(0).y();
+            if (nodes.size() == 1 || s <= nodeAlong[0]) return 0;
             for (int i = 1; i < nodeAlong.length; i++) {
                 if (s <= nodeAlong[i]) {
                     double span = nodeAlong[i] - nodeAlong[i - 1];
                     double t = span <= 0 ? 1 : (s - nodeAlong[i - 1]) / span;
-                    return nodes.get(i - 1).y() + t * (nodes.get(i).y() - nodes.get(i - 1).y());
+                    int from = nodes.get(i - 1).y() - originY;
+                    return from + t * (nodes.get(i).y() - nodes.get(i - 1).y());
                 }
             }
-            return nodes.get(nodes.size() - 1).y();
+            return nodes.get(nodes.size() - 1).y() - originY;
+        }
+
+        /** A height relative to the first node, rounded to a block (a half up), as a y in the world. */
+        private int roundedHeight(double relative) {
+            return originY + (int) Math.floor(relative + 0.5);
         }
 
         /**
@@ -220,15 +244,21 @@ public final class RoadKernel {
         public Long2IntMap climbAxes() {
             Long2IntOpenHashMap axes = new Long2IntOpenHashMap();
             for (Column column : columns) {
-                double[] a = pointAt(column.along() - 0.5), b = pointAt(column.along() + 0.5);
+                double[] a = relativePointAt(column.along() - 0.5), b = relativePointAt(column.along() + 0.5);
                 int axis = SlopeSteps.axisOf(b[0] - a[0], 0, b[1] - a[1]);
                 axes.put(GroundMap.column(column.x(), column.z()), axis);
             }
             return axes;
         }
 
-        /** The centre-line point at arc length {@code s} (clamped), as {x, z}. */
+        /** The centre-line point at arc length {@code s} (clamped), as {x, z} in the world. */
         public double[] pointAt(double s) {
+            double[] point = relativePointAt(s);
+            return new double[] {originX + point[0], originZ + point[1]};
+        }
+
+        /** {@link #pointAt}, relative to the first node's block. */
+        private double[] relativePointAt(double s) {
             if (xs.length == 0) return new double[] {0, 0};
             if (xs.length == 1 || s <= 0) return new double[] {xs[0], zs[0]};
             if (s >= along[xs.length - 1]) return new double[] {xs[xs.length - 1], zs[zs.length - 1]};
@@ -250,10 +280,13 @@ public final class RoadKernel {
         // Odd widths run through the nodes' centres, even ones through their corners, so the road is symmetric.
         double offset = (spec.width() & 1) == 1 ? 0.5 : 1.0;
         int points = closed ? n - 1 : n;
+        // Relative to the first node's block (Path says why).
+        int originX = n == 0 ? 0 : nodes.get(0).x(), originY = n == 0 ? 0 : nodes.get(0).y();
+        int originZ = n == 0 ? 0 : nodes.get(0).z();
         double[] px = new double[points], pz = new double[points];
         for (int i = 0; i < points; i++) {
-            px[i] = nodes.get(i).x() + offset;
-            pz[i] = nodes.get(i).z() + offset;
+            px[i] = (nodes.get(i).x() - originX) + offset;
+            pz[i] = (nodes.get(i).z() - originZ) + offset;
         }
         List<double[]> vertices = new ArrayList<>();
         double[] nodeAlong = new double[n];
@@ -286,8 +319,8 @@ public final class RoadKernel {
             along[i] = i == 0 ? 0 : along[i - 1] + Math.hypot(xs[i] - xs[i - 1], zs[i] - zs[i - 1]);
         }
         for (int i = 0; i < n; i++) nodeAlong[i] = along.length == 0 ? 0 : along[nodeVertex[i]];
-        List<Column> columns = n >= 2 ? footprint(xs, zs, along, spec.width(), closed) : List.of();
-        return new Path(nodes, xs, zs, along, nodeAlong, nodeVertex, closed, columns);
+        List<Column> columns = n >= 2 ? footprint(xs, zs, along, spec.width(), closed, originX, originZ) : List.of();
+        return new Path(nodes, originX, originY, originZ, xs, zs, along, nodeAlong, nodeVertex, closed, columns);
     }
 
     private static int control(int index, int points, boolean closed) {
@@ -300,7 +333,8 @@ public final class RoadKernel {
      * path ends square at its first and last vertex: a column whose centre projects past an end is not part of the
      * end segment (it may still be near an earlier one).
      */
-    private static List<Column> footprint(double[] xs, double[] zs, double[] along, int width, boolean closed) {
+    private static List<Column> footprint(double[] xs, double[] zs, double[] along, int width, boolean closed,
+                                          int originX, int originZ) {
         double radius = width / 2.0;
         double radius2 = radius * radius - EPSILON;
         double borderFrom = radius - 1 - EPSILON;
@@ -329,9 +363,8 @@ public final class RoadKernel {
                     double raw = length2 <= 0 ? 0 : ((px - ax) * dx + (pz - az) * dz) / length2;
                     // A column behind the start (or past the end) is not part of a segment that only reaches it
                     // through the cap's vertex: the road ends square at its nodes.
-                    // A column centre on the cap's plane belongs to the road: TIE keeps the spline's noise from deciding.
-                    if (nearStart && raw <= 0 && (px - xs[0]) * startDx + (pz - zs[0]) * startDz < -TIE) continue;
-                    if (nearEnd && raw >= 1 && (px - xs[last]) * endDx + (pz - zs[last]) * endDz > TIE) continue;
+                    if (nearStart && raw <= 0 && (px - xs[0]) * startDx + (pz - zs[0]) * startDz < 0) continue;
+                    if (nearEnd && raw >= 1 && (px - xs[last]) * endDx + (pz - zs[last]) * endDz > 0) continue;
                     double t = Math.max(0, Math.min(1, raw));
                     double qx = ax + t * dx - px, qz = az + t * dz - pz;
                     double d2 = qx * qx + qz * qz;
@@ -346,13 +379,14 @@ public final class RoadKernel {
                 }
             }
         }
-        long[] sorted = keys.toLongArray();
-        Arrays.sort(sorted);
-        List<Column> columns = new ArrayList<>(sorted.length);
-        for (long key : sorted) {
+        // The columns found were relative to the first node; in the world they are ordered by their world keys.
+        List<Column> columns = new ArrayList<>(keys.size());
+        for (long key : keys) {
             double d = Math.sqrt(distance.get(key));
-            columns.add(new Column(GroundMap.columnX(key), GroundMap.columnZ(key), nearest.get(key), d, d >= borderFrom));
+            columns.add(new Column(originX + GroundMap.columnX(key), originZ + GroundMap.columnZ(key), nearest.get(key), d,
+                    d >= borderFrom));
         }
+        columns.sort((a, b) -> Long.compare(GroundMap.column(a.x(), a.z()), GroundMap.column(b.x(), b.z())));
         return List.copyOf(columns);
     }
 
@@ -362,11 +396,11 @@ public final class RoadKernel {
     }
 
     /**
-     * A Straight road's deck height in a footprint column: the nodes' heights interpolated at its arc length, a half
-     * rounded up wherever the road lies ({@link #TIE}).
+     * A Straight road's deck height in a footprint column: the nodes' heights interpolated at its arc length, rounded
+     * to a block relative to the first node (so the same anywhere, {@link Path}).
      */
     public static int deckHeight(Path path, Column column) {
-        return (int) Math.floor(path.nodeHeightAt(column.along()) + 0.5 + TIE);
+        return path.roundedHeight(path.relativeHeightAt(column.along()));
     }
 
     /**
@@ -442,7 +476,7 @@ public final class RoadKernel {
                     continue;
                 }
                 y = spec.levelAcross() || own == SurfaceReader.NONE
-                        ? (int) Math.floor(sampleAt(centre, column.along()) + 0.5)
+                        ? path.roundedHeight(sampleAt(centre, column.along()))
                         : own;
             }
             Pattern material = spec.materialFor(column);
@@ -459,7 +493,8 @@ public final class RoadKernel {
 
     /**
      * The centre line's ground every block of arc length (sample {@code k} at {@code s = k}, the last at the end),
-     * unknown samples interpolated from their neighbours, then smoothed with a window {@code width} samples wide.
+     * unknown samples interpolated from their neighbours, then smoothed with a window {@code width} samples wide. The
+     * heights are relative to the first node ({@link Path}), so their averages are the same wherever the road lies.
      */
     private static double[] centreHeights(Spec spec, Path path, SurfaceReader ground) {
         double length = path.length();
@@ -467,10 +502,10 @@ public final class RoadKernel {
         double[] raw = new double[samples];
         boolean[] known = new boolean[samples];
         for (int k = 0; k < samples; k++) {
-            double[] point = path.pointAt(Math.min(k, length));
-            int y = ground.ground((int) Math.floor(point[0]), (int) Math.floor(point[1]));
+            long column = path.sampleColumn(k, length);
+            int y = ground.ground(GroundMap.columnX(column), GroundMap.columnZ(column));
             known[k] = SurfaceReader.known(y);
-            raw[k] = known[k] ? y : 0;
+            raw[k] = known[k] ? y - path.originY : 0;
         }
         fillUnknown(raw, known, path, length);
         int half = Math.max(0, spec.width() / 2);
@@ -504,7 +539,7 @@ public final class RoadKernel {
             }
         }
         if (firstKnown < 0) {
-            for (int k = 0; k < n; k++) raw[k] = path.nodeHeightAt(Math.min(k, length));
+            for (int k = 0; k < n; k++) raw[k] = path.relativeHeightAt(Math.min(k, length));
             return;
         }
         int lastKnown = firstKnown;

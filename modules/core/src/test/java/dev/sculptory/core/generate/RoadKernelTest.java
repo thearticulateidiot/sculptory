@@ -356,33 +356,59 @@ class RoadKernelTest {
     }
 
     /**
-     * The same road built anywhere is the same road moved there: its spline carries rounding noise that grows with the
-     * coordinates, and a Straight road rising half a block a column has its deck exactly on half blocks and its corner
-     * columns exactly on the end caps' planes. Built near the origin and up to 29 million blocks out, at many z, the
-     * cells are those of the road at (0, 0) moved by the same offset.
+     * The same road built anywhere is the same road moved there. The spline's rounding noise grows with the size of
+     * its coordinates, and these roads have ties: a deck exactly on half blocks, column centres exactly on the end
+     * caps' planes, an even width's centre line on block boundaries, averaged ground exactly between two heights. Each
+     * road is built at (0, 0, 0) and moved by whole blocks up to 29 million out (and 20 up or down), over ground moved
+     * with it; its cells moved back must be the very same.
      */
     @Test
     void aRoadBuiltElsewhereIsTheSameRoadMoved() {
-        Set<String> reference = roadCells(0, 0);
-        assertEquals(13 * 3 * 3, reference.size(), "13 columns 3 wide, the deck and 2 cells cleared over it");
-        for (int x0 : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
-            for (int z0 = -1024; z0 <= 1024; z0 += 16) {
-                Set<String> moved = new HashSet<>();
-                for (String cell : roadCells(x0, z0)) {
-                    String[] xyz = cell.split(",");
-                    moved.add((Integer.parseInt(xyz[0]) - x0) + "," + xyz[1] + "," + (Integer.parseInt(xyz[2]) - z0));
-                }
-                assertEquals(reference, moved, "the road at " + x0 + ", " + z0);
-            }
-        }
+        // Ground for Follow terrain and fill below: uneven, so its averages fall on and between whole blocks.
+        HeightFunction terrain = (x, z) -> 100 + Math.floorMod(3 * x + 5 * z, 7) / 2;
+        RoadKernel.HeightMode straight = RoadKernel.HeightMode.STRAIGHT, follow = RoadKernel.HeightMode.FOLLOW_TERRAIN;
+        checkMoved("along x, rising half a block a column", nodes(0, 99, 0, 12, 105, 0), 3, straight, true, 0, 2,
+                terrain);
+        checkMoved("along z", nodes(0, 99, 0, 0, 105, 12), 3, straight, true, 0, 2, terrain);
+        checkMoved("diagonal", nodes(0, 99, 0, 9, 104, 7), 3, straight, true, 0, 2, terrain);
+        checkMoved("reversed", nodes(12, 105, 0, 0, 99, 0), 3, straight, true, 0, 2, terrain);
+        checkMoved("even width", nodes(0, 99, 0, 12, 105, 0), 2, straight, true, 0, 2, terrain);
+        checkMoved("even width, diagonal", nodes(0, 99, 0, 9, 104, 7), 4, straight, true, 2, 1, terrain);
+        checkMoved("a curve with fill below", nodes(0, 99, 0, 8, 102, 5, 16, 104, -3), 5, straight, true, 3, 2,
+                terrain);
+        checkMoved("Follow terrain, level across", nodes(0, 100, 0, 8, 100, 5, 16, 100, -3), 5, follow, true, 1, 2,
+                terrain);
+        checkMoved("Follow terrain, even width", nodes(0, 100, 0, 12, 100, 0), 2, follow, true, 0, 1, terrain);
+        checkMoved("Follow terrain, each column its own ground", nodes(0, 100, 0, 9, 100, 7), 3, follow, false, 1, 1,
+                terrain);
     }
 
-    /** A Straight road 3 wide from (x0, 99, z0) to (x0 + 12, 105, z0) with 2 cells cleared over it, as x,y,z keys. */
-    private static Set<String> roadCells(int x0, int z0) {
-        RoadKernel.Spec spec = spec(nodes(x0, 99, z0, x0 + 12, 105, z0), 3, null, RoadKernel.HeightMode.STRAIGHT, true, 0, 2);
+    private static void checkMoved(String what, List<BlockPos> nodes, int width, RoadKernel.HeightMode mode, boolean level,
+                                   int fill, int clear, HeightFunction terrain) {
+        Set<String> reference = roadCells(nodes, width, mode, level, fill, clear, terrain, 0, 0, 0);
+        assertTrue(reference.size() > 20, what + ": the road is there");
+        int moves = 0;
+        for (int dx : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
+            for (int dz = -1024; dz <= 1024; dz += 16) {
+                int dy = (Math.floorMod(dz / 16, 3) - 1) * 20;
+                Set<String> moved = roadCells(nodes, width, mode, level, fill, clear, terrain, dx, dy, dz);
+                assertEquals(reference, moved, what + ": the road moved by " + dx + ", " + dy + ", " + dz);
+                moves++;
+            }
+        }
+        assertEquals(5 * 129, moves);
+    }
+
+    /** The road's cells built moved by (dx, dy, dz) over the terrain moved with it, moved back, as x,y,z keys. */
+    private static Set<String> roadCells(List<BlockPos> nodes, int width, RoadKernel.HeightMode mode, boolean level,
+                                         int fill, int clear, HeightFunction terrain, int dx, int dy, int dz) {
+        List<BlockPos> moved = new ArrayList<>();
+        for (BlockPos node : nodes) moved.add(new BlockPos(node.x() + dx, node.y() + dy, node.z() + dz));
+        RoadKernel.Spec spec = spec(moved, width, null, mode, level, fill, clear);
+        SurfaceReader ground = (x, z) -> terrain.at(x - dx, z - dz) + dy;
         Set<String> cells = new HashSet<>();
-        RoadKernel.generate(spec, new GroundMap(), -64, 320, 1 << 16).source()
-                .forEach((x, y, z, state) -> cells.add(x + "," + y + "," + z));
+        RoadKernel.generate(spec, ground, -64, 320, 1 << 16).source()
+                .forEach((x, y, z, state) -> cells.add((x - dx) + "," + (y - dy) + "," + (z - dz) + "=" + state));
         return cells;
     }
 

@@ -173,7 +173,9 @@ public final class PathPointsGameTest {
         stepped.source().forEach((x, y, z, state) -> {
             if (state == stairs) found[0]++;
         });
-        check(found[0] >= 5 && stepped.plain() == 0, "stairs at the steps: " + found[0] + ", " + stepped.plain() + " plain");
+        // One stair at each of the 6 steps (101 to 107). The line is the same wherever the test lands (LineKernel works
+        // relative to its first point), so the count is exact.
+        check(found[0] == 6 && stepped.plain() == 0, "stairs at the 6 steps: " + found[0] + ", " + stepped.plain() + " plain");
         check(stepped.source().cells() == line.cells(), "no cell added or removed");
         ExtrudePathsGameTest.buildAndUndo(context, h, area, stepped.source(), OpLabel.LINE, undone -> {});
     }
@@ -197,7 +199,7 @@ public final class PathPointsGameTest {
                 h.state("minecraft:air")).source();
         int stairs = h.state("minecraft:stone_brick_stairs[facing=east,half=bottom]");
         // Six steps of a block (99 to 105), each a stair in all three columns across the road. The road is the same
-        // wherever the test lands (RoadKernel rounds its ties the same anywhere), so the count is exact.
+        // wherever the test lands (RoadKernel works relative to its first node), so the count is exact.
         Map<Long, Integer> across = new HashMap<>();
         stepped.forEach((x, y, z, state) -> {
             if (state == stairs) across.merge(((long) x << 32) | (y & 0xFFFFFFFFL), 1, Integer::sum);

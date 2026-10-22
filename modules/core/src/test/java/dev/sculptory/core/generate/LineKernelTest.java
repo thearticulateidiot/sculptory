@@ -204,4 +204,36 @@ class LineKernelTest {
         assertEquals(9 * 10, clipped.cells());
         assertEquals(9 * 21, LineKernel.generate(spec, states, 1000).cells());
     }
+
+    /**
+     * The same line drawn anywhere is the same line moved there: its samples' rounding noise grows with the size of
+     * their coordinates, and these lines have cell centres exactly on their edge and samples exactly on block
+     * boundaries. Each is drawn from (0, 0, 0) and moved by whole blocks up to 29 million out (and 20 up or down); its
+     * cells moved back must be the very same.
+     */
+    @Test
+    void aLineDrawnElsewhereIsTheSameLineMoved() {
+        checkMoved("thin, rising half a block a block", path(PathKind.STRAIGHT, 0, 101, 0, 12, 107, 0), 1,
+                LineKernel.Profile.ROUND);
+        checkMoved("thick, along x", path(PathKind.STRAIGHT, 0, 104, 0, 16, 104, 0), 3, LineKernel.Profile.SQUARE);
+        checkMoved("even, diagonal", path(PathKind.STRAIGHT, 0, 100, 0, 9, 104, 7), 2, LineKernel.Profile.ROUND);
+        checkMoved("a round curve", path(PathKind.CURVE, 0, 100, 0, 8, 103, 5, 16, 101, -3), 3, LineKernel.Profile.ROUND);
+        checkMoved("an even square curve", path(PathKind.CURVE, 0, 100, 0, 8, 103, 5, 16, 101, -3), 4,
+                LineKernel.Profile.SQUARE);
+    }
+
+    private void checkMoved(String what, PathSpec path, int thickness, LineKernel.Profile profile) {
+        Set<String> reference = cells(line(path, thickness, profile));
+        for (int dx : new int[] {-4096, 16, 1_000_000, 2303 * 4096, 29_000_000}) {
+            for (int step = -1024; step <= 1024; step += 16) {
+                int dz = step, dy = (Math.floorMod(dz / 16, 3) - 1) * 20;
+                List<BlockPos> points = new ArrayList<>();
+                for (BlockPos p : path.points()) points.add(new BlockPos(p.x() + dx, p.y() + dy, p.z() + dz));
+                Set<String> moved = new HashSet<>();
+                line(new PathSpec(points, path.kind()), thickness, profile).forEach((x, y, z, state) ->
+                        moved.add((x - dx) + "," + (y - dy) + "," + (z - dz)));
+                assertEquals(reference, moved, what + ": the line moved by " + dx + ", " + dy + ", " + dz);
+            }
+        }
+    }
 }
