@@ -25,6 +25,8 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityPlaceEvent;
 import org.bukkit.event.hanging.HangingBreakByEntityEvent;
 import org.bukkit.event.hanging.HangingPlaceEvent;
+import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
+import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 
 /**
@@ -37,9 +39,9 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
  *       refuse a block (reach, protection, the mask: {@link BuilderService#entityPlacementRefusal}) is cancelled; one
  *       that goes ahead (no plugin cancelled it) is one history step, "Place · item frame", read once the game has
  *       added the entity;</li>
- *   <li>an interaction ({@link PlayerInteractEntityEvent}, which the armor stand's interact-at and manipulate events
- *       extend) or an attack ({@link EntityDamageByEntityEvent}, {@link HangingBreakByEntityEvent}) that no plugin
- *       cancelled has the entity read before the game applies it, and compared afterwards: a change is one step,
+ *   <li>an interaction ({@link PlayerInteractEntityEvent}, {@link PlayerInteractAtEntityEvent},
+ *       {@link PlayerArmorStandManipulateEvent}) or an attack ({@link EntityDamageByEntityEvent},
+ *       {@link HangingBreakByEntityEvent}) that no plugin cancelled has the entity read before the game applies it, and compared afterwards: a change is one step,
  *       "Change · armor stand", a removal "Break · painting"; no change, nothing.</li>
  * </ul>
  * The events come before the game acts, so each read waits for the end of the tick ({@link #tickEnded}), or for the next
@@ -107,6 +109,19 @@ final class BuilderEntityListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void interacted(PlayerInteractEntityEvent event) {
+        touched(handle(event.getPlayer()), ((CraftEntity) event.getRightClicked()).getHandle());
+    }
+
+    // The interact-at and armor stand events extend the interact event but keep handler lists of their own: a listener
+    // of the interact event never hears them.
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void interactedAt(PlayerInteractAtEntityEvent event) {
+        touched(handle(event.getPlayer()), ((CraftEntity) event.getRightClicked()).getHandle());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void manipulated(PlayerArmorStandManipulateEvent event) {
         touched(handle(event.getPlayer()), ((CraftEntity) event.getRightClicked()).getHandle());
     }
 

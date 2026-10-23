@@ -82,6 +82,8 @@ public final class SelfTest {
                 new Group("entities (CraftBukkit keys)", EntityChecks::craftBukkitKeys),
                 new Group("entities (spawning and undo)", EntityChecks::spawning),
                 new Group("builder mode", BuilderChecks::run),
+                new Group("builder mode (entities)", HangingChecks::builderMode),
+                new Group("entities (hanging supports)", HangingChecks::supports),
                 new Group("tinker", TinkerNavigateChecks::tinker),
                 new Group("navigate", TinkerNavigateChecks::navigate),
                 new Group("fluid trails", FluidChecks::run),
