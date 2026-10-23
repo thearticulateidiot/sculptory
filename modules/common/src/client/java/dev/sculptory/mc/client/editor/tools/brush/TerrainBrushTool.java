@@ -90,7 +90,7 @@ import java.util.Optional;
  * <p><b>Mode</b> (Raise, Lower, Smooth, Flatten and Weather). "Surface (any direction)", the default,
  * sends a {@link SculptMode#SURFACE} spec: the brush works on whatever it is aimed at, inside the ball of its radius
  * ({@code SurfaceKernel}). Its cursor is a ring across the way the surface faces there ({@link #facingAt}, the kernel's
- * {@link SurfaceNormal} estimate, the hit face when that is zero), with a tick showing which way Raise pushes or Lower
+ * {@link SurfaceNormal#facingAt}, the hit face when nothing tells), with a tick showing which way Raise pushes or Lower
  * pulls. Flatten's plane ({@link SurfacePlane}) is fixed at the press's first dab, through the hit point and facing
  * that way, and shown while pressing. "Terrain (from above)" is the column brush as before.
  *
@@ -192,9 +192,12 @@ public final class TerrainBrushTool implements Tool {
     private double cursorFalloffStart;
     /** The brush the cursor shows (Alt swaps Raise and Lower). */
     private BrushTool cursorTool;
-    /** {@link #cachedFacing}'s last answer and what it was for: the hit's block, the radius and the world's change stamp. */
+    /**
+     * {@link #cachedFacing}'s last answer and what it was for: the hit point in 1/16 block (whether it lies on a block
+     * face counts, not only its block), the radius and the world's change stamp.
+     */
     private Facing facingCached;
-    private final int[] facingBlock = new int[3];
+    private final int[] facingPoint = new int[3];
     private WorldCursor.Face facingFace;
     /** {@link #copyFacing}'s answers and what each was for, per copy. */
     private final Facing[] copyFacings = new Facing[Symmetry.MAX_COPIES];
@@ -1021,16 +1024,17 @@ public final class TerrainBrushTool implements Tool {
     }
 
     /**
-     * The way the surface faces at a cursor hit, as the kernel estimates it for a dab there ({@link SurfaceNormal}, around
-     * the block holding the hit point, over the brush's estimate radius), snapped to one of six directions; the hit face's
-     * own direction when the estimate is zero (nothing solid around, or perfectly balanced), up without a world.
+     * The way the surface faces at a cursor hit, as the kernel works it out for a dab there
+     * ({@link SurfaceNormal#facingAt}: the face the hit point lies on when the small estimate in front of it agrees,
+     * else the estimate over the brush's estimate radius, centred on the open cell in front of that face); the hit
+     * face's own direction when nothing tells (no face at the point and a zero estimate), up without a world.
      */
     static Facing facingAt(WorldReader world, WorldCursor hit, int radius) {
         return facingAt(world, hit, radius, false);
     }
 
     /**
-     * {@link #facingAt}, where a zero estimate gives up when {@code upWhenUnknown} (Raise and Lower, as the kernel
+     * {@link #facingAt}, where nothing telling gives up when {@code upWhenUnknown} (Raise and Lower, as the kernel
      * does) and the hit face otherwise (Flatten's plane, the ring of Smooth).
      */
     static Facing facingAt(WorldReader world, WorldCursor hit, int radius, boolean upWhenUnknown) {
@@ -1043,23 +1047,19 @@ public final class TerrainBrushTool implements Tool {
         return facingAt(world, point, upWhenUnknown || hit.face() == null ? Facing.UP : facing(hit.face()), radius);
     }
 
-    /** {@link #facingAt} for a dab's point, with {@code fallback} when the estimate is zero. */
+    /** {@link #facingAt} for a dab's point, with {@code fallback} when nothing tells. */
     static Facing facingAt(WorldReader world, Dab point, Facing fallback, int radius) {
-        long[] n = world == null ? new long[3]
-                : SurfaceNormal.estimate(world, point.blockX(), point.blockY(), point.blockZ(),
-                        SurfaceNormal.radiusFor(radius));
-        if (n[0] == 0 && n[1] == 0 && n[2] == 0) {
-            return fallback;
-        }
-        return SurfaceNormal.facing(n);
+        Facing facing = world == null ? null
+                : SurfaceNormal.facingAt(world, point.x16(), point.y16(), point.z16(), radius);
+        return facing == null ? fallback : facing;
     }
 
     /**
-     * {@link #facingAt} for copy {@code i}'s outline (up where the estimate is zero, as the kernel does for Raise and
-     * Lower), worked out again only when its block, the radius or the world changed.
+     * {@link #facingAt} for copy {@code i}'s outline (up where nothing tells, as the kernel does for Raise and
+     * Lower), worked out again only when its point, the radius or the world changed.
      */
     private Facing copyFacing(WorldReader world, int i, Dab copy, int radius) {
-        long[] key = {copy.blockX(), copy.blockY(), copy.blockZ(), radius, services.changeStamp()};
+        long[] key = {copy.x16(), copy.y16(), copy.z16(), radius, services.changeStamp()};
         if (copyFacings[i] == null || !java.util.Arrays.equals(key, copyFacingKeys[i])) {
             copyFacings[i] = facingAt(world, copy, Facing.UP, radius);
             copyFacingKeys[i] = key;
@@ -1067,18 +1067,19 @@ public final class TerrainBrushTool implements Tool {
         return copyFacings[i];
     }
 
-    /** {@link #facingAt} for the cursor, worked out again only when its block, the radius or the world changed. */
+    /** {@link #facingAt} for the cursor, worked out again only when its point, the radius or the world changed. */
     private Facing cachedFacing(WorldReader world, int radius) {
-        int bx = (int) Math.floor(cursor.hitX() * 16) >> 4;
-        int by = (int) Math.floor(cursor.hitY() * 16) >> 4;
-        int bz = (int) Math.floor(cursor.hitZ() * 16) >> 4;
+        // The hit point as a dab there holds it (Dab.of rounds down to 1/16 block).
+        int px = (int) Math.floor(cursor.hitX() * 16);
+        int py = (int) Math.floor(cursor.hitY() * 16);
+        int pz = (int) Math.floor(cursor.hitZ() * 16);
         long stamp = services.changeStamp();
-        if (facingCached == null || bx != facingBlock[0] || by != facingBlock[1] || bz != facingBlock[2]
+        if (facingCached == null || px != facingPoint[0] || py != facingPoint[1] || pz != facingPoint[2]
                 || cursor.face() != facingFace || radius != facingRadius || stamp != facingStamp) {
             facingCached = facingAt(world, cursor, radius, invertible());
-            facingBlock[0] = bx;
-            facingBlock[1] = by;
-            facingBlock[2] = bz;
+            facingPoint[0] = px;
+            facingPoint[1] = py;
+            facingPoint[2] = pz;
             facingFace = cursor.face();
             facingRadius = radius;
             facingStamp = stamp;
