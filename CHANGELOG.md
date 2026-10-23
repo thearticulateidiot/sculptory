@@ -6,57 +6,85 @@ mod's. Client and server need the same network protocol (each section says which
 
 ## Unreleased
 
-The first NeoForge and Paper releases, not out yet. Each becomes a section of its own, headed
-`## NeoForge <version>+1.21.1` or `## Paper <version>+1.21.1`, when it is released; until then both can be built from
+Three releases are being prepared from this code: Fabric 0.5.0 and the first NeoForge and Paper releases, both betas.
+Each becomes a section of its own when it is released, headed `## Fabric 0.5.0+1.21.1`,
+`## NeoForge 0.5.0-beta+1.21.1` or `## Paper 0.1.0-beta+1.21.1`, below this one (the release notes are that section,
+up to the next `## ` heading). The NeoForge mod and the Paper plugin are built on the same code as the Fabric mod, so
+the fixes and changes listed for Fabric are in them too. Until they are released, NeoForge and Paper can be built from
 source (README, "Install").
 
-### NeoForge 0.5.0+1.21.1 (planned)
+### Fabric 0.5.0+1.21.1 (planned)
 
-For Minecraft 1.21.1 with NeoForge 21.1.264 or newer. Network protocol 6.
+For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.4.0-beta. Network protocol 6,
+like 0.4.0-beta: the two work together, with one difference (below).
+
+#### Fixed
+
+- **Surface mode on thin walls**: Raise and Lower work the side you aim at when it belongs to a wall 3 or more blocks
+  tall, however thin the wall and whatever it stands on (a wall one block thick, or one shorter than the brush, was
+  often worked from above). Single blocks and steps 1 or 2 blocks high still count as ground.
+- **Flatten and the cursor ring follow the same rule**: Flatten's plane and the ring under the cursor face the way
+  Raise and Lower work, so Flatten aimed at a wall 3 or more blocks tall flattens sideways, along the wall's face, and
+  the ring shows the side the brush will work.
+- **Surface Smooth keeps thin walls and slabs**: walls 3 or more blocks tall and slabs one block thick keep their ends
+  and corners, and Smooth does not pile blocks against a thin wall's foot or face, or above and below a one-block
+  slab. A single block sitting on a wall, bumps, spikes, pillars and ridges under 3 blocks still smooth away.
+- **Lines and roads are the same wherever they are built**: Generate's Line and Road work out their blocks from their
+  first point, so the same line or road built somewhere else, moved by whole blocks, has exactly the same blocks.
+  Straight lines and a Hanging line's chord, in Line, Sweep, Extrude along a path and the Shape brush's Line, are
+  worked out exactly: a line climbing half a block per block steps at every other block. Curves are as in 0.4.0-beta.
+
+#### Changed
+
+- **Generate roads**: the ends of curved roads now follow the road's true end direction; a road whose last two points
+  stand one above the other in the same column keeps a round end. Straight roads round half-block steps the same
+  wherever they are built, and Use Stairs and Slabs on a 45° road always steps along x.
+
+#### With a 0.4.0-beta client or server
+
+- A 0.4.0-beta client on a server with this version still predicts Surface Raise, Lower and Smooth near walls the old
+  way, so its preview there can differ from the result; the server's result is what is built. Update the clients and
+  the server together.
+
+### NeoForge 0.5.0-beta+1.21.1 (planned)
+
+The first NeoForge release, a beta. For Minecraft 1.21.1 with NeoForge 21.1.264 or newer. Network protocol 6.
 
 - **The whole editor on NeoForge**: every tool, window and key of the Fabric mod, in singleplayer and on NeoForge
   servers. Nothing else to install besides NeoForge.
 - **Fabric and NeoForge work together**: a Fabric client can use the editor on a NeoForge server, and a NeoForge
   client on a Fabric server, as long as both speak the same network protocol.
 - **Permissions** through NeoForge's permission system: the same `sculptory.*` nodes as on Fabric, operators by
-  default, and a permissions mod can decide per player or group.
+  default. Permissions mods on NeoForge are untested: no LuckPerms build for NeoForge 1.21.1 works yet (its 5.4 builds
+  kick every player at login on NeoForge 21.1.264), so operators by default is the supported setup until one does.
 - Tried on a server next to Cobblemon, Create and JEI: no conflicts, and their blocks fill, undo and redo like vanilla
   ones.
 
-### Paper 0.1.0+1.21.1 (planned)
+### Paper 0.1.0-beta+1.21.1 (planned)
 
-For Paper 1.21.1 (build 133). The plugin is the server side only: players who edit need the Sculptory mod for their
-loader (Fabric or NeoForge) on their client; everyone else joins with nothing installed. Network protocol 6.
+The first Paper release, a beta. For Paper 1.21.1 (build 133). The plugin is the server side only: players who edit
+need the Sculptory mod for their loader (Fabric or NeoForge) on their client; everyone else joins with nothing
+installed. Network protocol 6.
 
 - **Sculptory as a Paper plugin**: put the jar in `plugins/`. The settings are in `plugins/Sculptory/server.json`, the
   library in `plugins/Sculptory/library/`; the undo history is saved with each world, as on Fabric.
 - **WorldGuard regions are respected**: an edit changes only blocks where the player may both place and break, the
-  rule WorldGuard applies to building by hand. WorldGuard and WorldEdit are optional.
+  rule WorldGuard applies to building by hand. WorldGuard (which needs WorldEdit) is optional.
 - **Builder mode fires the server's block events**, so protection and logging plugins see every place and break it
-  makes and can cancel one (the step is then put back and refused). Bulk edits (fills, brushes, pastes) fire none,
-  like WorldEdit's.
+  makes and can cancel one (the step is then put back and refused).
+- **Other claim plugins are not respected by bulk edits**: fills, brushes and pastes fire no block events, like
+  WorldEdit's, so GriefPrevention, Lands, Towny, PlotSquared and other claim plugins neither see nor stop them. Only
+  WorldGuard regions, spawn protection and the world border limit bulk edits. Builder mode is covered (above).
 - **Permissions** are Bukkit permission nodes, `sculptory.*`: LuckPerms or another permissions plugin decides, and
   without a grant operators may edit. Changes in LuckPerms apply at once.
 - **Jump and Through** teleport the Paper way, so a plugin that blocks a teleport blocks them too.
+- **Paper 1.21.1 only**: on another Minecraft version the plugin refuses to enable and says why. Spigot and Folia are
+  not supported.
 - Known limits: after a crash, up to about a second of edits (five for brush strokes) saved by Paper's background save
   can't be undone; undo of water and lava takes back flows next to the edit but not chain reactions further away;
   builder mode records the blocks within two of each change, so far-reaching redstone reactions are not undone; the
   `/sculptory` command has `version` and, for admins, `fill`, `undo` and `redo` only (restart the server after
   editing `server.json`).
-
-### Fixed
-
-- **Surface mode on thin walls**: Raise and Lower work the side you aim at when it belongs to a wall 3 or more blocks
-  tall, however thin the wall and whatever it stands on (a wall one block thick, or one shorter than the brush, was
-  often worked from above). Single blocks and steps 1 or 2 blocks high still count as ground.
-- **Surface Smooth keeps thin walls and slabs**: walls 3 or more blocks tall and slabs one block thick keep their ends
-  and corners, and Smooth does not pile blocks against a thin wall's foot or face, or above and below a one-block
-  slab. A single block sitting on a wall, bumps, spikes, pillars and ridges under 3 blocks still smooth away.
-
-### Changed
-
-- **Generate roads**: the ends of curved roads now follow the road's true end direction; straight roads round
-  half-block steps the same wherever they are built, and Use Stairs and Slabs on a 45° road always steps along x.
 
 ## 0.4.0-beta — first beta
 
