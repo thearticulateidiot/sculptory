@@ -72,6 +72,28 @@ public final class HangingSupport {
         }
     }
 
+    /** How far (blocks) a hanging entity's own blocks and the wall behind them reach from its cell (a 4 × 4 painting). */
+    static final int REACH = 3;
+
+    /**
+     * The early sweep a job makes as soon as it has written one section: the hanging entities around the section that
+     * no longer stay are taken along now, before the game's own check (every 100 ticks per entity) can drop them while a
+     * long job is still writing, but only those whose blocks are {@code settled}: every cell within {@link #REACH} of
+     * the entity's cell lies where the job writes nothing more. The others wait for the job's last sweep. Only columns
+     * loaded with their entities are looked at.
+     */
+    static <E> void section(Box section, EntityWork.Context<E> ctx, java.util.function.Predicate<BlockPos> settled) {
+        Box grown = around(section);
+        Region region = new Region.Cuboid(grown);
+        for (long column : EntityColumns.of(grown)) {
+            int cx = ColumnPlan.unpackX(column), cz = ColumnPlan.unpackZ(column);
+            if (!ctx.world.loaded(cx, cz)) continue;
+            for (E entity : ctx.world.inRegion(region, EntityFilter.DECORATIONS, cx, cz)) {
+                if (ctx.world.hangsUnsupported(entity) && settled.test(ctx.world.cell(entity))) take(entity, ctx);
+            }
+        }
+    }
+
     /** Takes one entity along if it no longer stays where it hangs. */
     private static <E> void take(E entity, EntityWork.Context<E> ctx) {
         // Fetched when the column started: it may have gone since.

@@ -387,6 +387,56 @@ public final class HangingEntitiesGameTest {
     }
 
     /**
+     * A job written over several ticks takes a frame as soon as the section with its wall is written, not only at its
+     * end: the game's own check could drop the frame off in between. Here 16 blocks a tick, a wall four sections long,
+     * a frame at each end (whichever end the job writes first).
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_hanging_long_job", timeoutTicks = LIMIT)
+    public void aLongJobTakesTheFrameAsSoonAsItsWallIsWritten(GameTestHelper context) {
+        Sync s = new Sync(context, 2710, 16);
+        Box wall = box(s.x, FLOOR + 1, s.z + 3, s.x + 63, FLOOR + 1, s.z + 3);
+        Box beyond = box(s.x + 32, FLOOR, s.z, s.x + 63, FLOOR + 2, s.z + 15);
+        loadAndForce(s.world, beyond);
+        s.sequence().thenWaitUntil(() -> check(McEntities.firstUnloaded(s.world, beyond) == null,
+                "the entities beyond the area are not loaded yet")).thenExecute(() -> {
+            for (int x = s.x; x <= s.x + 63; x++) {
+                s.world.setBlock(new BlockPos(x, FLOOR + 1, s.z + 3), Blocks.STONE.defaultBlockState(), 2);
+            }
+            ItemFrame first = s.hang(new BlockPos(s.x + 4, FLOOR + 1, s.z + 3), Items.DIAMOND);
+            ItemFrame last = s.hang(new BlockPos(s.x + 59, FLOOR + 1, s.z + 3), Items.EMERALD);
+            RecordingListener fill = new RecordingListener();
+            try {
+                s.h.service.run(s.h.player, new OpSpec.Fill(wall, new Pattern.Single(s.h.state("minecraft:air")),
+                        CellMask.ANY), RunOptions.DEFAULT, fill);
+            } catch (EditRejected e) {
+                throw new GameTestAssertException("the fill was refused: " + e.getMessage());
+            }
+            int ticks = MultiplayerGameTest.ticksUntil(s.executor,
+                    () -> s.find(first.getUUID()) == null || s.find(last.getUUID()) == null, 200);
+            check(fill.result == null, "a frame went while the job was still writing (after " + ticks + " ticks)");
+            int standing = 0;
+            for (int x = s.x; x <= s.x + 63; x++) {
+                if (!s.world.getBlockState(new BlockPos(x, FLOOR + 1, s.z + 3)).isAir()) standing++;
+            }
+            check(standing >= 16, "a section of the wall is still to be written: " + standing + " blocks stand");
+            MultiplayerGameTest.tickUntil(s.executor, () -> fill.result != null, TICKS, "the fill");
+            s.h.service.tick();
+            check(fill.result.outcome() == JobOutcome.COMPLETED, "the fill " + fill.result);
+            List<EntityChange> taken = s.entries().get(0).record().entities();
+            check(taken.size() == 2 && s.find(first.getUUID()) == null && s.find(last.getUUID()) == null,
+                    "the Fill's step holds both frames: " + taken);
+            s.undo();
+            ItemFrame back = (ItemFrame) s.find(first.getUUID());
+            ItemFrame backLast = (ItemFrame) s.find(last.getUUID());
+            check(back != null && back.getItem().is(Items.DIAMOND) && backLast != null
+                    && backLast.getItem().is(Items.EMERALD), "the undo hangs both again");
+            s.noItems("after the undo");
+            forceChunks(s.world, beyond, false);
+            s.finish();
+        }).thenSucceed();
+    }
+
+    /**
      * The amendment survives a restart: the redo after it puts the frames back. (The area is loaded first and its
      * entities waited for, ticks of the server apart; the restart itself runs in one tick, as the other durable tests.)
      */
@@ -678,8 +728,13 @@ public final class HangingEntitiesGameTest {
         final Box area;
 
         Sync(GameTestHelper context, int slot) {
+            this(context, slot, 0);
+        }
+
+        /** With at most {@code cellsPerTick} blocks written a tick (0: no cap). */
+        Sync(GameTestHelper context, int slot, long cellsPerTick) {
             this.context = context;
-            this.executor = MultiplayerGameTest.executor(context, 0);
+            this.executor = MultiplayerGameTest.executor(context, cellsPerTick);
             this.h = new Harness(context, null, System::nanoTime, executor);
             this.world = h.world;
             int[] at = regionCorner(context, slot);

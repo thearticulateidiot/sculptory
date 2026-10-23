@@ -181,6 +181,13 @@ final class BulkJob<W> {
     private int supportCursor;
     /** How the job ends once the sweep is done (a cancelled job sweeps before it ends). */
     private JobOutcome supportsThen = JobOutcome.COMPLETED;
+    /**
+     * The sections still to be written, for the early sweep after each section ({@link HangingSupport#section}); null
+     * when the job records nothing (it sweeps nothing).
+     */
+    private LongOpenHashSet unwritten;
+    /** Cells changed before the section being written began: a section that changed none takes no wall away. */
+    private long changedBeforeSection;
 
     long skippedProtected;
 
@@ -298,6 +305,7 @@ final class BulkJob<W> {
         this.reads = new ReadTickets(tickets, maxTickets);
         applyPlan = ColumnPlan.of(order);
         applyTickets = new TicketWindow(applyPlan, tickets, maxTickets);
+        if (request.records() != RecordSink.NONE) unwritten = new LongOpenHashSet(order);
         if (sources.length > 0 || airSources.length > 0) {
             snapshots = new Long2ObjectOpenHashMap<>(sources.length + airSources.length);
             for (long key : airSources) snapshots.put(key, SectionBuffer.uniform(air));
@@ -426,15 +434,57 @@ final class BulkJob<W> {
             supports = new HangingSupport.Sweep(bounds);
             supportCursor = 0;
             supportsThen = outcome;
-            if (entities == null) {
-                entities = EntityWork.Context.of(host.entities(world), request.writeOptions(), request.permits(),
-                        request.records(),
-                        (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z));
-            }
+            entityContext();
             stage = Stage.SUPPORTS;
             return false;
         }
         executor.finish(this, outcome);
+        return true;
+    }
+
+    /** The job's entity context, made for the hanging entity sweeps when the job has no entity work of its own. */
+    private EntityWork.Context<?> entityContext() {
+        if (entities == null) {
+            entities = EntityWork.Context.of(host.entities(world), request.writeOptions(), request.permits(),
+                    request.records(), (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z));
+        }
+        return entities;
+    }
+
+    /**
+     * After section {@code key} is written: the early sweep around it ({@link HangingSupport#section}), for a job that
+     * records what it does and changed cells in that section, so a long job does not leave a frame whose wall it took
+     * early to the game's own check until its last sweep.
+     *
+     * @return units used (as for entities handled in an entity stage)
+     */
+    private long earlySweep(long key) {
+        if (unwritten == null) return 0;
+        unwritten.remove(key);
+        if (writer.changed() == changedBeforeSection) return 0;
+        EntityWork.Context<?> ctx = entityContext();
+        int x = BlockBuffer.keyX(key) << 4, y = BlockBuffer.keyY(key) << 4, z = BlockBuffer.keyZ(key) << 4;
+        Box section = new Box(new dev.sculptory.core.BlockPos(x, y, z),
+                new dev.sculptory.core.BlockPos(x + 15, y + 15, z + 15));
+        long removedBefore = ctx.writer.removed();
+        ctx.allowance = Integer.MAX_VALUE; // a section's few hanging entities, decided in one go
+        HangingSupport.section(section, ctx, this::settled);
+        ctx.allowance = 0;
+        long handled = ctx.writer.removed() - removedBefore;
+        if (handled > 0) request.records().entitiesFinished();
+        return handled * ENTITY_UNITS;
+    }
+
+    /** Whether no cell within {@link HangingSupport#REACH} of {@code cell} lies in a section the job writes later. */
+    private boolean settled(dev.sculptory.core.BlockPos cell) {
+        int reach = HangingSupport.REACH;
+        for (int sy = (cell.y() - reach) >> 4; sy <= (cell.y() + reach) >> 4; sy++) {
+            for (int sz = (cell.z() - reach) >> 4; sz <= (cell.z() + reach) >> 4; sz++) {
+                for (int sx = (cell.x() - reach) >> 4; sx <= (cell.x() + reach) >> 4; sx++) {
+                    if (unwritten.contains(BlockBuffer.key(sx, sy, sz))) return false;
+                }
+            }
+        }
         return true;
     }
 
@@ -581,6 +631,7 @@ final class BulkJob<W> {
                 long key = order[sectionCursor];
                 int sy = BlockBuffer.keyY(key);
                 if (sy < minSection || sy >= topSection) {
+                    if (unwritten != null) unwritten.remove(key);
                     applyTickets.advance(++sectionCursor);
                     continue;
                 }
@@ -590,6 +641,7 @@ final class BulkJob<W> {
                 if (preparedIn == budget && System.nanoTime() + prepareNanos > budget.deadline) break;
                 report(Phase.APPLY);
                 long start = System.nanoTime();
+                changedBeforeSection = writer.changed();
                 current = prepare(key);
                 long spent = System.nanoTime() - start;
                 prepareNanos = prepareNanos == 0 ? spent : prepareNanos + (spent - prepareNanos) / 8;
@@ -600,6 +652,9 @@ final class BulkJob<W> {
             used += write(current, maxUnits - used, budget);
             if (current.done()) {
                 finishSection();
+                long swept = earlySweep(current.key);
+                used += swept;
+                budget.cellsLeft -= swept;
                 if (program.relightsAfter()) {
                     // A light check costs about what writing a cell does: charged so, they spread over ticks.
                     used += relit;
