@@ -89,6 +89,23 @@ public final class EntityNbt {
             // An interaction entity's last attack and use.
             "attack", "interaction");
 
+    /**
+     * Keys undo and redo also leave out when they compare (never when they store or restore: a restore puts them back as
+     * recorded), because one platform writes them and another does not: CraftBukkit's data version
+     * ({@code Bukkit.updateLevel}) and awareness flag ({@code Bukkit.Aware}), which Paper writes into every saved
+     * entity, and the spawn context ({@link #SPAWN_CONTEXT_KEYS}). So an entity recorded on Fabric or NeoForge (or by an
+     * older Paper build that stripped them) is not taken for a changed one on Paper, nor the other way round: history
+     * carried between platforms undoes without a conflict for every mob.
+     */
+    public static final Set<String> PLATFORM_KEYS = platformKeys();
+
+    private static Set<String> platformKeys() {
+        Set<String> keys = new java.util.HashSet<>(SPAWN_CONTEXT_KEYS);
+        keys.add("Bukkit.updateLevel");
+        keys.add("Bukkit.Aware");
+        return Set.copyOf(keys);
+    }
+
     private EntityNbt() {}
 
     /** Decodes entity NBT under {@link #LIMITS}. */
@@ -333,13 +350,13 @@ public final class EntityNbt {
      */
     public static final Set<String> PLACEMENT_VOLATILE_KEYS = Set.of("Pos", "Rotation");
 
-    /** The compound without {@link #VOLATILE_KEYS}, at the top and in every passenger. */
+    /** The compound without {@link #VOLATILE_KEYS} and {@link #PLATFORM_KEYS}, at the top and in every passenger. */
     public static NbtCompound withoutVolatile(NbtCompound entity) {
         return withoutVolatile(entity, false, 0);
     }
 
     /**
-     * The compound without {@link #VOLATILE_KEYS} but with where the entity stands and looks
+     * The compound without {@link #VOLATILE_KEYS} and {@link #PLATFORM_KEYS} but with where the entity stands and looks
      * ({@link #PLACEMENT_VOLATILE_KEYS}), at the top and in every passenger.
      */
     public static NbtCompound withoutVolatileKeepingPlacement(NbtCompound entity) {
@@ -351,6 +368,7 @@ public final class EntityNbt {
         for (String key : VOLATILE_KEYS) {
             if (!keepPlacement || !PLACEMENT_VOLATILE_KEYS.contains(key)) out.remove(key);
         }
+        for (String key : PLATFORM_KEYS) out.remove(key);
         NbtList passengers = entity.getList("Passengers");
         List<NbtCompound> riders = passengers == null ? null : passengers.compounds();
         if (riders != null && !riders.isEmpty() && depth < MAX_PASSENGER_DEPTH) {

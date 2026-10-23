@@ -230,4 +230,59 @@ class EntityHistoryTest {
     private static HistoryEntry entry(EditRecord record) {
         return new HistoryEntry(UUID.randomUUID(), PLAYER, "minecraft:overworld", "Entities", record, 0L);
     }
+
+    /** A fox as Fabric or NeoForge saves it: vanilla keys only. */
+    private static NbtCompound.Builder vanillaFox(UUID id) {
+        return NbtCompound.builder().putString("id", "minecraft:fox").put("Pos", EntityNbt.doubles(1.5, 64, 2.5))
+                .putIntArray("UUID", ints(id)).putString("Type", "red").putByte("CanPickUpLoot", (byte) 0)
+                .putString("CustomName", "\"Rusty\"");
+    }
+
+    /** The same fox as Paper saves it: CraftBukkit's data version and awareness flag, and its spawn context. */
+    private static NbtCompound.Builder paperFox(UUID id) {
+        return vanillaFox(id).putInt("Bukkit.updateLevel", 2).putByte("Bukkit.Aware", (byte) 1)
+                .putString("Paper.SpawnReason", "BREEDING").put("Paper.Origin", EntityNbt.doubles(1.5, 64, 2.5))
+                .putIntArray("Paper.OriginWorld", new int[] {1, 2, 3, 4});
+    }
+
+    private static EntityState fox(NbtCompound.Builder nbt) {
+        return new EntityState("minecraft:fox", 1.5, 64, 2.5, NbtIo.toBytes(nbt.build()));
+    }
+
+    @Test
+    void historyRecordedOnOnePlatformUndoesOnAnother() {
+        UUID id = UUID.randomUUID();
+        EntityState onFabric = fox(vanillaFox(id));
+        EntityState onPaper = fox(paperFox(id));
+        assertTrue(matcher.matches(onFabric, onPaper), "CraftBukkit's own keys are not a change");
+        assertTrue(EntityMatcher.ignoringVolatile().matches(onPaper, onFabric), "nor their absence");
+        // A paste recorded on Fabric, undone on Paper (the live fox now carries Paper's keys), and the other way round.
+        assertEquals(Action.APPLY, EntityHistory.decide(new Step(id, onFabric, null), onPaper,
+                ConflictPolicy.SKIP_CONFLICTS, matcher));
+        assertEquals(Action.APPLY, EntityHistory.decide(new Step(id, onPaper, null), onFabric,
+                ConflictPolicy.SKIP_CONFLICTS, EntityMatcher.ignoringVolatile()));
+        // What a player changed still counts, on any platform.
+        EntityState renamed = fox(paperFox(id).putString("CustomName", "\"Ember\""));
+        assertEquals(Action.CONFLICT, EntityHistory.decide(new Step(id, onFabric, null), renamed,
+                ConflictPolicy.SKIP_CONFLICTS, EntityMatcher.ignoringVolatile()));
+        EntityState picksUp = fox(paperFox(id).putByte("CanPickUpLoot", (byte) 1));
+        assertFalse(EntityMatcher.ignoringVolatile().matches(onFabric, picksUp), "item pickup stays compared");
+        // Only the compare leaves them out: the recorded data a restore loads keeps them.
+        assertTrue(new String(onPaper.nbt(), java.nio.charset.StandardCharsets.ISO_8859_1).contains("Paper.SpawnReason"));
+    }
+
+    @Test
+    void thePlatformKeysAreLeftOutOfTheCompareOnly() {
+        for (String key : EntityNbt.SPAWN_CONTEXT_KEYS) assertTrue(EntityNbt.PLATFORM_KEYS.contains(key), key);
+        assertTrue(EntityNbt.PLATFORM_KEYS.contains("Bukkit.updateLevel"));
+        assertTrue(EntityNbt.PLATFORM_KEYS.contains("Bukkit.Aware"));
+        assertFalse(EntityNbt.PLATFORM_KEYS.contains("Paper.FromMobSpawner"), "spawner mobs stay compared");
+        NbtCompound rider = NbtCompound.builder().putString("id", "minecraft:chicken").putInt("Bukkit.updateLevel", 2)
+                .build();
+        NbtCompound stripped = EntityNbt.withoutVolatile(paperFox(UUID.randomUUID())
+                .put("Passengers", dev.sculptory.core.nbt.NbtList.of(dev.sculptory.core.nbt.NbtTag.COMPOUND,
+                        List.of(rider))).build());
+        for (String key : EntityNbt.PLATFORM_KEYS) assertFalse(stripped.contains(key), key);
+        assertFalse(stripped.getList("Passengers").compounds().get(0).contains("Bukkit.updateLevel"), "riders too");
+    }
 }
