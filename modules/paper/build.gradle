@@ -149,21 +149,55 @@ dependencies {
 // paperweight 2.x: the plugin is used Mojang-named (Paper 1.20.5+), no reobfJar.
 paperweight.reobfArtifactConfiguration = io.papermc.paperweight.userdev.ReobfArtifactConfiguration.Companion.MOJANG_PRODUCTION
 
+// The dev-only self-test (Paper has no GameTests): the check groups, the network test and the region benchmark
+// (dev.sculptory.paper.devtest), and the two helpers they need inside the plugin's packages (SelfTestSteps,
+// WorldGuardTestRegions). Compiled against the plugin, never part of the release jar: only devJar packs them, with a
+// META-INF/services entry the plugin looks up (DevExtras), so no release class names them.
+sourceSets {
+    devtest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+    }
+}
+
+// The jars are named after the build id, so older builds' jars are removed when a new one is written; the release jar
+// and the dev jar of this build are both kept.
+def libsDir = layout.buildDirectory.dir('libs')
+def currentJars = ["sculptory-paper-${project.version}.jar".toString(), "sculptory-paper-${project.version}-dev.jar".toString()]
+def removeOlderJars = { Task task ->
+    task.doFirst {
+        libsDir.get().asFile.listFiles()?.each { file ->
+            if (file.name.startsWith('sculptory-') && file.name.endsWith('.jar') && !currentJars.contains(file.name)) {
+                file.delete()
+            }
+        }
+    }
+}
+
 tasks.named('jar') {
     // The engine's classes go into the plugin jar itself. They are our own code, not published to Maven Central, so
     // Paper's library loader (which resolves Maven coordinates when the server starts) can't supply them; their
     // packages are all dev.sculptory.*, so nothing needs relocating. fastutil, Gson and SLF4J come with the server.
     [':core', ':protocol', ':server'].each { path -> from(project(path).sourceSets.main.output) }
     manifest.attributes('paperweight-mappings-namespace': 'mojang')
-    // The jar is named after the build id, so older builds' jars are removed when a new one is written.
-    def libs = layout.buildDirectory.dir('libs')
-    def keep = "sculptory-paper-${project.version}.jar".toString()
-    doFirst {
-        libs.get().asFile.listFiles()?.each { file ->
-            if (file.name.startsWith('sculptory-') && file.name.endsWith('.jar') && file.name != keep) file.delete()
-        }
-    }
+    removeOlderJars(it)
 }
+
+// The release jar plus the self-test: sculptory-paper-<version>-dev.jar. For CI's paper-selftest job and test servers;
+// installable like the release jar, never published. It is made from the release jar's contents, so whatever that jar
+// carries (the engine, the licence texts) the dev jar carries too.
+def releaseJarFile = tasks.named('jar').flatMap { it.archiveFile }
+def devJar = tasks.register('devJar', Jar) {
+    description = 'Builds the Paper plugin jar with the dev-only self-test (sculptory-paper-<version>-dev.jar).'
+    group = 'build'
+    archiveBaseName = base.archivesName
+    archiveClassifier = 'dev'
+    dependsOn tasks.named('jar')
+    from(releaseJarFile.map { zipTree(it) }) { exclude 'META-INF/MANIFEST.MF' }
+    from sourceSets.devtest.output
+    manifest.attributes('paperweight-mappings-namespace': 'mojang')
+    removeOlderJars(it)
+}
+tasks.named('assemble') { dependsOn devJar }
 
 processResources {
     def version = project.version.toString()
@@ -200,6 +234,21 @@ dependencies {
     probeCompileOnly "io.github.llamalad7:mixinextras-common:${rootProject.mixinextras_version}"
 }
 tasks.named('check') { dependsOn tasks.named('probeClasses') }
+
+// PaperJarClassesTest: the release jar has none of the self-test and the dev jar has all of it. It opens both jars, so
+// it runs after they are made.
+tasks.named('test') {
+    def releaseJar = tasks.named('jar').flatMap { it.archiveFile }
+    def devJarFile = devJar.flatMap { it.archiveFile }
+    dependsOn tasks.named('jar'), devJar
+    inputs.file releaseJar
+    inputs.file devJarFile
+    doFirst {
+        systemProperty 'sculptory.jar', releaseJar.get().asFile.absolutePath
+        systemProperty 'sculptory.devJar', devJarFile.get().asFile.absolutePath
+    }
+    systemProperty 'sculptory.devClassDirs', sourceSets.devtest.output.classesDirs.asPath
+}
 
 /** Copies Java sources with literal patches; each patch must match at least once in its file. */
 abstract class CommonOverlay extends DefaultTask {

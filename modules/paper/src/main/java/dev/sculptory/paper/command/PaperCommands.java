@@ -4,8 +4,6 @@ import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
 
 import com.mojang.brigadier.CommandDispatcher;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -16,9 +14,7 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.net.ServerNet;
-import dev.sculptory.paper.devtest.NetTest;
-import dev.sculptory.paper.devtest.RegionBench;
-import dev.sculptory.paper.devtest.SelfTest;
+import dev.sculptory.paper.DevExtras;
 import dev.sculptory.paper.engine.PaperEditHost;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.server.engine.EditRejected;
@@ -27,11 +23,11 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.commands.arguments.blocks.BlockStateArgument;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
@@ -41,8 +37,8 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * {@code /sculptory} on Paper (spike): fill, undo, redo and version as the loaders' command has them, plus the dev
- * self-test and network test. Registered on the server's Brigadier dispatcher, so {@code execute as <player> run
+ * {@code /sculptory} on Paper: fill, undo, redo and version as the loaders' command has them, plus, in the dev jar
+ * only, the self-test and network test ({@link DevExtras}). Registered on the server's Brigadier dispatcher, so {@code execute as <player> run
  * sculptory ...} acts as that player. Fill, undo and redo run as a player and through that player's permissions and
  * protection, like an editor request; their outcome is logged.
  */
@@ -50,9 +46,11 @@ public final class PaperCommands {
     private static final SimpleCommandExceptionType NOT_RUNNING =
             new SimpleCommandExceptionType(Component.literal("The Sculptory engine is not running"));
     private final Supplier<PaperEditHost> host;
+    private final Optional<DevExtras> extras;
 
-    public PaperCommands(Supplier<PaperEditHost> host) {
+    public PaperCommands(Supplier<PaperEditHost> host, Optional<DevExtras> extras) {
         this.host = host;
+        this.extras = extras;
     }
 
     public void register(CommandDispatcher<CommandSourceStack> dispatcher, CommandBuildContext context) {
@@ -65,28 +63,8 @@ public final class PaperCommands {
                 .then(literal("undo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, true)))
                 .then(literal("redo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, false)))
                 .then(literal("version").executes(this::version));
-        // Dev only: the adapter checks, the frame-size probe and the region benchmark exist only when the JVM was started
-        // for them (SelfTest.enabled), and then only for the console or a holder of sculptory.selftest (not ops).
-        if (SelfTest.enabled()) {
-            root.then(literal("selftest").requires(SelfTest::allowed)
-                            .executes(c -> SelfTest.run(host.get(), c.getSource(), ""))
-                            .then(argument("player", EntityArgument.player())
-                                    .executes(c -> SelfTest.run(host.get(), c.getSource(),
-                                            EntityArgument.getPlayer(c, "player").getGameProfile().getName()))))
-                    .then(literal("wgbench").requires(SelfTest::allowed)
-                            .executes(c -> RegionBench.run(host.get(), c.getSource(), 48))
-                            .then(argument("height", IntegerArgumentType.integer(1, 384))
-                                    .executes(c -> RegionBench.run(host.get(), c.getSource(),
-                                            IntegerArgumentType.getInteger(c, "height")))))
-                    .then(literal("nettest").requires(SelfTest::allowed)
-                            .then(argument("player", EntityArgument.player())
-                                    .then(argument("bytes", IntegerArgumentType.integer(1, 4 * 1024 * 1024))
-                                            .then(argument("route", StringArgumentType.word())
-                                                    .executes(c -> NetTest.send(c.getSource(),
-                                                            EntityArgument.getPlayer(c, "player"),
-                                                            IntegerArgumentType.getInteger(c, "bytes"),
-                                                            StringArgumentType.getString(c, "route")))))));
-        }
+        // The dev jar's self-test commands (DevExtras); the release jar has none.
+        extras.ifPresent(dev -> dev.commands(root, host));
         dispatcher.register(root);
     }
 

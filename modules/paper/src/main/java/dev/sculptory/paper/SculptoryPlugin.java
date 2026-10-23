@@ -4,11 +4,11 @@ import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.net.ServerNet;
 import dev.sculptory.mc.world.McInternals;
 import dev.sculptory.paper.command.PaperCommands;
-import dev.sculptory.paper.devtest.SelfTest;
 import dev.sculptory.paper.engine.PaperEditHost;
 import dev.sculptory.paper.nms.PaperAccess;
 import dev.sculptory.paper.perm.SculptoryProtection;
 import dev.sculptory.protocol.v2.ProtocolV2;
+import java.util.Optional;
 import net.minecraft.server.MinecraftServer;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -21,6 +21,8 @@ public final class SculptoryPlugin extends JavaPlugin {
     private static volatile SculptoryPlugin instance;
     private PaperServerLoader loader;
     private volatile PaperEditHost host;
+    /** The dev jar's self-test (empty in the release jar). */
+    private final Optional<DevExtras> extras = DevExtras.find();
 
     /** The loader seam this plugin installed (the self-test asks it about the network). */
     public PaperServerLoader loader() {
@@ -51,17 +53,17 @@ public final class SculptoryPlugin extends JavaPlugin {
         loader.enable();
         loader.fireStarting(server);
         host = PaperEditHost.start(this, server, loader, SculptoryProtection.detect());
-        PaperCommands commands = new PaperCommands(() -> host);
+        PaperCommands commands = new PaperCommands(() -> host, extras);
         loader.onCommands(commands::register);
         loader.registerCommandsOnEveryBuild();
         loader.fireStarted(server);
-        SelfTest.runAtStartup(host);
+        extras.ifPresent(dev -> dev.started(host));
     }
 
     @Override
     public void onDisable() {
         // A self-test in progress puts its test areas back while the plugin can still write (dev only).
-        SelfTest.pluginDisabling();
+        extras.ifPresent(DevExtras::disabling);
         MinecraftServer server = MinecraftServer.getServer();
         if (loader != null) {
             // Each step runs even when one before it throws: the stop hooks close the history store, and the loader
