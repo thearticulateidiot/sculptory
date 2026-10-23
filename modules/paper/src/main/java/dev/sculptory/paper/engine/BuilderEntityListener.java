@@ -24,6 +24,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityPlaceEvent;
 import org.bukkit.event.hanging.HangingBreakByEntityEvent;
+import org.bukkit.event.hanging.HangingBreakEvent;
 import org.bukkit.event.hanging.HangingPlaceEvent;
 import org.bukkit.event.player.PlayerArmorStandManipulateEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
@@ -45,9 +46,11 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
  *       "Change · armor stand", a removal "Break · painting"; no change, nothing.</li>
  * </ul>
  * The events come before the game acts, so each read waits for the end of the tick ({@link #tickEnded}), or for the next
- * event about the same entity, whichever comes first; the steps are pushed in the order their events came. A step is
- * pushed after the block steps of the same tick: one tick's mix of block and entity actions may be ordered differently
- * in the history than it happened.
+ * event about the same entity, whichever comes first; the steps are pushed in the order their events came. Since the
+ * entity ticked once by then, the comparison leaves out where it stands, its motion and fall; and a frame or painting
+ * that drops off by itself in between ({@link HangingBreakEvent} not by an entity) is not recorded as the player's.
+ * A step is pushed after the block steps of the same tick: one tick's mix of block and entity actions may be ordered
+ * differently in the history than it happened.
  */
 final class BuilderEntityListener implements Listener {
     private final EngineEditService<ServerPlayer, ServerLevel> service;
@@ -138,6 +141,17 @@ final class BuilderEntityListener implements Listener {
     }
 
     /**
+     * A frame or painting that drops off by itself (its wall gone, its space filled, an explosion) between the player's
+     * action and the end of the tick: what the player did to it is not what removed it, so its read is dropped rather
+     * than recorded as the player's Break. (The by-entity event shares this event's handler list.)
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void droppedOff(HangingBreakEvent event) {
+        if (event instanceof HangingBreakByEntityEvent) return;
+        pending.remove(event.getEntity().getUniqueId());
+    }
+
+    /**
      * The game is about to apply an action of {@code player} on {@code entity}: read it now, unless this tick already
      * read it for the same player's action (the armor stand's interact, interact-at and manipulate events are one
      * click). A read of an earlier action by someone else is settled first.
@@ -180,13 +194,16 @@ final class BuilderEntityListener implements Listener {
                 entity.discard(); // history could not keep it: nothing undo does not know about stays
                 return;
             }
+            builder.chargePlacement(read.player());
             builder.pushEntities(read.player(), (ServerLevel) entity.level(), "Place · " + BuilderService.name(entity),
                     List.of(new EntityChange(entity.getUUID(), null, after)));
             return;
         }
         EntityState after = entity.isRemoved() ? null : EntityWriter.live(entity);
         if (!entity.isRemoved() && after == null) return; // too large to record now
-        if (after != null && EntityMatcher.ignoringVolatile().placementAware().matches(read.before(), after)) return;
+        // Read at the end of the tick, after the entity ticked once: where it stands, its motion and fall are left out
+        // (volatile), only what it holds, wears and shows counts.
+        if (after != null && EntityMatcher.ignoringVolatile().matches(read.before(), after)) return;
         String verb = after == null ? "Break" : "Change";
         builder.pushEntities(read.player(), entity.level() instanceof ServerLevel level ? level : world,
                 verb + " · " + BuilderService.name(entity),

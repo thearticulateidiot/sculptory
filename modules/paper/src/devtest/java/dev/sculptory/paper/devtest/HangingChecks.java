@@ -97,6 +97,7 @@ final class HangingChecks {
         }).thenCompose(v -> painting(s, x0 + 10, z0))
                 .thenCompose(v -> stand(s, x0 + 16, z0))
                 .thenAccept(v -> refused(s, canceller, x0 + 22, z0))
+                .thenAccept(v -> betweenTheEvents(s, x0 + 26, z0))
                 .thenCompose(v -> r.ticks(GAME_CHECK_TICKS))
                 .thenAccept(v -> r.record("builder entities: no item dropped after the game's own check",
                         s.items().isEmpty(), s.items().toString()));
@@ -171,6 +172,64 @@ final class HangingChecks {
                 stand.isRemoved() && s.labels().subList(0, 2).equals(List.of("Break · armor stand",
                         "Change · armor stand")), "history " + s.labels());
         return s.undoRedo("the armor stand", states);
+    }
+
+    /**
+     * What happens between an action's event and the end of the tick, when the reads are compared: an armor stand that
+     * only moved, sped up and fell a little (as one entity tick does) is no step, while one given a helmet with the same
+     * drift is one; a frame the player right-clicked that then drops off by itself (its wall gone: the game's
+     * HangingBreakEvent with a physics cause) is not recorded as the player's Break.
+     */
+    private static void betweenTheEvents(Scene s, int x0, int z0) {
+        SelfTestRun r = s.r;
+        r.stand(x0 + 2.5, FLOOR + 1, z0 + 5.5, 180f, new ItemStack(Items.ARMOR_STAND));
+        s.useOn(new BlockPos(x0 + 2, FLOOR, z0 + 3), Direction.UP);
+        List<ArmorStand> stands = s.all(ArmorStand.class).stream().filter(e -> e.getBlockX() == x0 + 2).toList();
+        if (stands.size() != 1) {
+            r.record("builder entities: an armor stand for the drift checks", false, stands.toString());
+            return;
+        }
+        ArmorStand stand = stands.get(0);
+        int before = s.labels().size();
+        hold(r, Items.AIR);
+        Bukkit.getPluginManager().callEvent(new PlayerInteractAtEntityEvent(r.player.getBukkitEntity(),
+                stand.getBukkitEntity(), new Vector(0, 1, 0), org.bukkit.inventory.EquipmentSlot.HAND));
+        drift(stand);
+        s.handle.settle();
+        r.record("builder entities: a stand that only drifted between its event and the tick's end is no step",
+                s.labels().size() == before, "history " + s.labels());
+        hold(r, Items.IRON_HELMET);
+        Bukkit.getPluginManager().callEvent(new PlayerInteractAtEntityEvent(r.player.getBukkitEntity(),
+                stand.getBukkitEntity(), new Vector(0, 1.8, 0), org.bukkit.inventory.EquipmentSlot.HAND));
+        stand.interactAt(r.player, new Vec3(0, 1.8, 0), InteractionHand.MAIN_HAND);
+        drift(stand);
+        s.handle.settle();
+        r.record("builder entities: a stand given a helmet is one step, whatever it drifted",
+                s.labels().size() == before + 1 && s.labels().get(0).equals("Change · armor stand"),
+                "history " + s.labels());
+
+        BlockPos wall = wall(r, x0 + 4, z0 + 3, 1);
+        ItemFrame frame = hang(r, wall, Items.APPLE);
+        int framed = s.labels().size();
+        hold(r, Items.AIR);
+        Bukkit.getPluginManager().callEvent(new PlayerInteractEntityEvent(r.player.getBukkitEntity(),
+                frame.getBukkitEntity(), org.bukkit.inventory.EquipmentSlot.HAND));
+        // Then its wall goes and the game drops it off, before the reads are compared.
+        set(r, wall, Blocks.AIR.defaultBlockState());
+        Bukkit.getPluginManager().callEvent(new org.bukkit.event.hanging.HangingBreakEvent(
+                (org.bukkit.entity.Hanging) frame.getBukkitEntity(),
+                org.bukkit.event.hanging.HangingBreakEvent.RemoveCause.PHYSICS));
+        frame.discard();
+        s.handle.settle();
+        r.record("builder entities: a frame that dropped off by itself after the player's click is not their Break",
+                s.labels().size() == framed, "history " + s.labels());
+    }
+
+    /** What one entity tick may change by itself: where it stands, its motion, its fall. */
+    private static void drift(Entity entity) {
+        entity.setPos(entity.getX() + 0.01, entity.getY() - 0.02, entity.getZ());
+        entity.setDeltaMovement(0, -0.08, 0);
+        entity.fallDistance = 0.08f;
     }
 
     /** Out of builder reach, or cancelled by another plugin: nothing placed, nothing recorded. */
