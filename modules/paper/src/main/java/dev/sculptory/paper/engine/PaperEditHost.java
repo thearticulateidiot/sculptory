@@ -185,23 +185,44 @@ public final class PaperEditHost {
         }
     }
 
-    /** Before the worlds are saved (plugin disable): jobs end, the history is written, the library closes. */
+    /**
+     * Before the worlds are saved (plugin disable): jobs end, the fluid marks go into their chunks, the history is
+     * written, the library closes.
+     */
     private void stop() {
-        // Whatever the shutdown steps throw (a send to a client, a job listener), the history is still written.
+        // Whatever the shutdown steps throw (a send to a client, a job listener), the marks and the history are still
+        // written.
         try {
             engine.shutdown();
             scatter.shutdown();
             service.shutdown();
         } finally {
             try {
-                if (!service.historyService().closeStore(HISTORY_CLOSE_MILLIS)) {
-                    LOG.warn("Sculptory: saving the undo history did not finish within {} s; the last steps may be "
-                            + "missing after the restart", HISTORY_CLOSE_MILLIS / 1000);
-                }
+                int columns = flushFluidMarks();
+                if (columns > 0) LOG.info("Sculptory: wrote the fluid marks of {} chunk columns for the final save", columns);
+            } catch (RuntimeException | LinkageError e) {
+                LOG.error("Sculptory: writing the fluid marks for the final save failed; fluid written in the last "
+                        + "seconds is not followed after the restart", e);
             } finally {
-                clipboards.shutdown();
+                try {
+                    if (!service.historyService().closeStore(HISTORY_CLOSE_MILLIS)) {
+                        LOG.warn("Sculptory: saving the undo history did not finish within {} s; the last steps may be "
+                                + "missing after the restart", HISTORY_CLOSE_MILLIS / 1000);
+                    }
+                } finally {
+                    clipboards.shutdown();
+                }
             }
         }
+    }
+
+    /**
+     * Writes every world's changed fluid marks into their chunks' data containers now: the plugin's stop path (Paper
+     * disables plugins before its final chunk save, so the save and unload handlers do not run for it), and the dev
+     * self-test. Returns the columns whose container changed. Server thread only.
+     */
+    public int flushFluidMarks() {
+        return fluidTrails == null ? 0 : fluidTrails.flushAll();
     }
 
     /** The world's undo history store ({@code <world>/sculptory/history}), or null for memory only. */

@@ -69,8 +69,10 @@ import org.bukkit.plugin.RegisteredListener;
  *
  * <p><b>Marks with the chunks.</b> A column's marks live in its chunk's persistent data container under
  * {@value FluidTrails#NBT_KEY} (the key Fabric writes into the chunk data): read when the chunk loads, written before it
- * unloads, before a full world save, and every {@value #FLUSH_TICKS} ticks for the loaded columns whose marks changed
- * (Moonrise's incremental autosave has no event, so a chunk it saves may carry marks up to that old). After a crash the
+ * unloads, before a full world save, when the plugin is disabled ({@link #flushAll}: Paper disables plugins before
+ * its final chunk save, so the unload and save handlers here no longer run for that save), and every {@value #FLUSH_TICKS} ticks for the loaded columns whose
+ * marks changed (Moonrise's incremental autosave has no event, so a chunk it saves may carry marks up to that old). A
+ * clean stop or restart keeps every mark; after a crash the
  * marks of up to the last ~5 s are lost: fluid an entry wrote just before is then no longer followed (its later flow is
  * not undone with it), and marks cleared in those seconds come back stale (fluid poured there later may be taken for
  * the entry's until the cell changes). A column whose trail still holds a part the history could not fold yet (its
@@ -305,9 +307,28 @@ final class PaperFluidTrails implements Listener {
 
     /** Every {@value #FLUSH_TICKS} ticks: the marked columns (and those that lost their marks) into their containers. */
     private void flush() {
-        for (ServerLevel level : net.minecraft.server.MinecraftServer.getServer().getAllLevels()) {
-            for (long column : columnsToWrite(level)) save(level, ChunkPos.getX(column), ChunkPos.getZ(column));
+        for (ServerLevel level : net.minecraft.server.MinecraftServer.getServer().getAllLevels()) flushWorld(level);
+    }
+
+    /**
+     * The plugin is being disabled (the server stops, or the plugin is reloaded): every world's marked columns, and
+     * those that lost their marks, go into their chunks' containers now. Paper disables plugins before its final save of
+     * the chunks, which then writes them; neither the unload nor the save handler here runs for it any more.
+     *
+     * @return the columns whose container changed
+     */
+    int flushAll() {
+        int changed = 0;
+        for (ServerLevel level : net.minecraft.server.MinecraftServer.getServer().getAllLevels()) changed += flushWorld(level);
+        return changed;
+    }
+
+    private int flushWorld(ServerLevel level) {
+        int changed = 0;
+        for (long column : columnsToWrite(level)) {
+            if (save(level, ChunkPos.getX(column), ChunkPos.getZ(column))) changed++;
         }
+        return changed;
     }
 
     private LongSet columnsToWrite(ServerLevel level) {
@@ -328,10 +349,13 @@ final class PaperFluidTrails implements Listener {
         FluidTrails.chunkLoaded(level, new ChunkPos(cx, cz), data);
     }
 
-    /** The column's marks into its chunk's container (removed when it has none), the chunk flagged when they changed. */
-    private void save(ServerLevel level, int cx, int cz) {
+    /**
+     * The column's marks into its chunk's container (removed when it has none), the chunk flagged when they changed;
+     * returns whether they did.
+     */
+    private boolean save(ServerLevel level, int cx, int cz) {
         LevelChunk chunk = level.getChunkSource().getChunkNow(cx, cz);
-        if (chunk == null) return;
+        if (chunk == null) return false;
         CompoundTag data = new CompoundTag();
         FluidTrails.chunkSaved(level, new ChunkPos(cx, cz), data, chunk);
         Tag marks = data.get(FluidTrails.NBT_KEY);
@@ -341,14 +365,15 @@ final class PaperFluidTrails implements Listener {
         long column = ChunkPos.asLong(cx, cz);
         if (marks == null) {
             columns.remove(column);
-            if (old == null) return;
+            if (old == null) return false;
             raw.remove(FluidTrails.NBT_KEY);
         } else {
             columns.add(column);
-            if (marks.equals(old)) return;
+            if (marks.equals(old)) return false;
             raw.put(FluidTrails.NBT_KEY, marks);
         }
         chunk.setUnsaved(true);
+        return true;
     }
 
     private static ServerLevel level(org.bukkit.World world) {
