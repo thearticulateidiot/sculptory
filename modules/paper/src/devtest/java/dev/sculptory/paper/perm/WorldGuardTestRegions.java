@@ -124,6 +124,13 @@ public final class WorldGuardTestRegions {
         }
     }
 
+    /** Whether WorldGuard lets {@code player} bypass its regions in {@code level} (an operator does by default). */
+    public static boolean bypasses(net.minecraft.server.level.ServerPlayer player, ServerLevel level) {
+        return WorldGuard.getInstance().getPlatform().getSessionManager().hasBypass(
+                com.sk89q.worldguard.bukkit.WorldGuardPlugin.inst().wrapPlayer(player.getBukkitEntity()),
+                BukkitAdapter.adapt(level.getWorld()));
+    }
+
     /** Whether WorldGuard has a region manager for {@code level} (regions on and loaded). */
     public static boolean hasManager(ServerLevel level) {
         return WorldGuard.getInstance().getPlatform().getRegionContainer().get(BukkitAdapter.adapt(level.getWorld())) != null;

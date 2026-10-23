@@ -96,6 +96,26 @@ final class SelfTestRun {
         return Bukkit.getPluginManager().isPluginEnabled("WorldGuard");
     }
 
+    /**
+     * Whether the WorldGuard region checks named {@code what} cannot say anything in this run, noted as an information
+     * entry then: WorldGuard is not installed, or the run's real player bypasses WorldGuard (an operator does by
+     * default), so every region lets them build and a region check would fail for that reason alone.
+     */
+    boolean regionChecksSkipped(String what) {
+        if (!worldGuard()) {
+            info(what + ": skipped", "WorldGuard is not installed");
+            return true;
+        }
+        if (attachment == null && WorldGuardTestRegions.bypasses(player, level)) {
+            info(what + ": skipped", player.hasPermissions(2)
+                    ? name() + " is an operator, WorldGuard lets operators bypass regions; run as a non-op player "
+                            + "holding the Sculptory nodes"
+                    : name() + " bypasses WorldGuard regions (worldguard.region.bypass); run as a player without it");
+            return true;
+        }
+        return false;
+    }
+
     // ================================================================== results
 
     void record(String name, boolean passed, String detail) {

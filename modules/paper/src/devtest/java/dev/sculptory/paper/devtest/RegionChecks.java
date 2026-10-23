@@ -39,14 +39,7 @@ final class RegionChecks {
      * layers above are written (3D permits).
      */
     static CompletableFuture<Void> cells(SelfTestRun r) {
-        if (!r.worldGuard()) {
-            r.info("worldguard: skipped", "WorldGuard is not installed");
-            return CompletableFuture.completedFuture(null);
-        }
-        if (r.attachment == null && r.player.hasPermissions(2)) {
-            r.info("worldguard: note", r.name() + " is an operator; WorldGuard may let them bypass (run without a "
-                    + "player for the fake one)");
-        }
+        if (r.regionChecksSkipped("worldguard")) return CompletableFuture.completedFuture(null);
         int x = r.baseX + 80 + 4, z = r.baseZ + 4;
         String id = r.region("cells");
         Box inside = box(x, 101, z, x + 3, 102, z + 3);
@@ -108,15 +101,7 @@ final class RegionChecks {
      * loaded back within the call ({@link WorldGuardTestRegions#withoutRegionManager}).
      */
     static CompletableFuture<Void> missingRegionData(SelfTestRun r) {
-        if (!r.worldGuard()) {
-            r.info("worldguard missing region data: skipped", "WorldGuard is not installed");
-            return CompletableFuture.completedFuture(null);
-        }
-        if (r.attachment == null && r.player.hasPermissions(2)) {
-            r.info("worldguard missing region data: skipped", r.name() + " is an operator, whom WorldGuard may let "
-                    + "bypass (run without a player for the fake one)");
-            return CompletableFuture.completedFuture(null);
-        }
+        if (r.regionChecksSkipped("worldguard missing region data")) return CompletableFuture.completedFuture(null);
         int x = r.baseX + 80 + 4, z = r.baseZ + 40;
         Box part = box(x, 101, z, x + 3, 102, z + 3);
         Protection protection = r.host.engine().permissions().protection();
@@ -161,7 +146,7 @@ final class RegionChecks {
      * refused too.
      */
     static CompletableFuture<Void> flags(SelfTestRun r) {
-        if (!r.worldGuard()) return CompletableFuture.completedFuture(null);
+        if (r.regionChecksSkipped("worldguard flags")) return CompletableFuture.completedFuture(null);
         int x = r.baseX + 120 + 4, z = r.baseZ + 4;
         String placeId = r.region("place");
         String breakId = r.region("break");
@@ -198,7 +183,7 @@ final class RegionChecks {
      * either; Sculptory gives the same answer, since every cell is decided by WorldGuard's own query.)
      */
     static CompletableFuture<Void> loopholes(SelfTestRun r) {
-        if (!r.worldGuard()) return CompletableFuture.completedFuture(null);
+        if (r.regionChecksSkipped("worldguard loopholes")) return CompletableFuture.completedFuture(null);
         int x = r.baseX + 240 + 4, z = r.baseZ + 4;
         String mineId = r.region("mine");
         String placeId = r.region("placeonly");
@@ -251,7 +236,7 @@ final class RegionChecks {
      * away and still leaves the region as it was. The area must hold no entity when the check starts.
      */
     static CompletableFuture<Void> entities(SelfTestRun r) {
-        if (!r.worldGuard()) return CompletableFuture.completedFuture(null);
+        if (r.regionChecksSkipped("entities")) return CompletableFuture.completedFuture(null);
         int x = r.baseX + 160, z = r.baseZ + 4;
         SelfTestRun.Area area = r.claim(box(x - 2, 98, z - 2, x + 18, 108, z + 8));
         // Paper loads a chunk's entities a little after the chunk: look again once they are in.
@@ -333,7 +318,7 @@ final class RegionChecks {
      * the quarts above and below it and beside it are painted; the undo puts every quart back.
      */
     static CompletableFuture<Void> biomes(SelfTestRun r) {
-        if (!r.worldGuard()) return CompletableFuture.completedFuture(null);
+        if (r.regionChecksSkipped("biomes")) return CompletableFuture.completedFuture(null);
         int x = r.baseX + 200, z = r.baseZ + 4; // multiples of 4: whole quarts
         String id = r.region("biomes");
         Box box = box(x, 96, z, x + 7, 111, z + 7);
