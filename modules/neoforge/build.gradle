@@ -98,25 +98,22 @@ neoForge {
 
 // The dev server (runServer) runs in .local/run/neoforge-server on the project's test port, in offline mode so dev
 // clients can join, and on 127.0.0.1 only: -PbsPlaytest ops whoever joins as BuilderDev, which must not be open to the
-// network. Before each run the keys below are set in its server.properties, every other key staying as it is, and the
-// EULA is accepted, as scripts/playtest-server.ps1 does for the Fabric dev server.
+// network. Before each run the keys below are set in its server.properties (gradle/dev-server-properties.gradle; every
+// other key stays as it is) and the EULA is accepted; with -PbsPlaytest also creative, peaceful and no monsters, the
+// playtest conditions, as scripts/playtest-server.ps1 sets them for the Fabric dev server.
+apply from: rootProject.file('gradle/dev-server-properties.gradle')
 def devServerDir = rootProject.file('.local/run/neoforge-server')
-def devServerProperties = [
-        'server-port': '25580', 'server-ip': '127.0.0.1', 'online-mode': 'false', 'gamemode': 'creative',
-        'difficulty': 'peaceful', 'spawn-monsters': 'false', 'level-name': 'bs-test',
-]
+def devServerProperties = ['server-port': '25580', 'server-ip': '127.0.0.1', 'online-mode': 'false', 'level-name': 'bs-test']
+if (project.hasProperty('bsPlaytest')) {
+    devServerProperties += ['gamemode': 'creative', 'difficulty': 'peaceful', 'spawn-monsters': 'false']
+}
 def writeDevServerProperties = tasks.register('writeDevServerProperties') {
     description = 'Writes the NeoForge dev server\'s server.properties keys and eula.txt (.local/run/neoforge-server).'
     outputs.upToDateWhen { false }
+    def setProperties = setServerProperties
     doLast {
-        devServerDir.mkdirs()
+        setProperties(devServerDir, devServerProperties)
         new File(devServerDir, 'eula.txt').text = 'eula=true\n'
-        def properties = new File(devServerDir, 'server.properties')
-        // Latin-1 both ways keeps every byte of the lines that are not touched.
-        def lines = properties.exists() ? properties.readLines('ISO-8859-1') : []
-        lines = lines.findAll { line -> !devServerProperties.keySet().any { key -> line.startsWith(key + '=') } }
-        lines += devServerProperties.collect { key, value -> "${key}=${value}".toString() }
-        properties.setText(lines.join('\n') + '\n', 'ISO-8859-1')
     }
 }
 tasks.named { it == 'runServer' }.configureEach {

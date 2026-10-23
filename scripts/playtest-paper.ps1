@@ -1,18 +1,24 @@
-# Runs the project's Paper 1.21.1 test server, a real Paper install under .local/installs, with the Sculptory plugin
-# built in this checkout, on 127.0.0.1:25580 (offline mode, so dev clients can join; this machine only).
+# Runs the project's Paper 1.21.1 test server with the Sculptory plugin built in this checkout, on 127.0.0.1:25580
+# (offline mode, so dev clients can join; this machine only).
 #   scripts/playtest-paper.ps1                  # copy the newest plugin jar in, set up, start; this window is the log
-#   scripts/playtest-paper.ps1 -Install <dir>   # another Paper install (default .local/installs/paper-1.21.1-133)
+#   scripts/playtest-paper.ps1 -Ops A,B         # make these players op (default BuilderDev), e.g. for a second client
+#   scripts/playtest-paper.ps1 -Install <dir>   # run that Paper install itself instead of the run copy
 #   scripts/playtest-paper.ps1 -Jar <file>      # this plugin jar instead of the newest one in modules/paper/build/libs
 #   scripts/playtest-paper.ps1 -NoSetup         # without the playtest conditions below (port, address, offline mode
-#                                               #   and the op are still set)
+#                                               #   and the ops are still set)
 #   scripts/playtest-paper.ps1 -Stop            # stop the server this script started (sends "stop" to its console)
+# The server runs in a project-owned run copy, .local/run/paper-server, made on first use from the Paper install
+# .local/installs/paper-1.21.1-133: its server jar, libraries and cached Minecraft jar, server.properties, and
+# WorldEdit and WorldGuard, but not its worlds (the copy makes a fresh one). The install itself stays as it is for the
+# release-jar smoke test. Delete .local/run/paper-server (with the server stopped) for a fresh copy.
 # The plugin has no dev-only playtest setup (the loaders' dev runs have PlaytestSetup), so the script sets the same
-# conditions from outside: "BuilderDev" is op at level 4 (ops.json, offline-mode UUID), server.properties says creative,
+# conditions from outside: the ops are op at level 4 (ops.json, offline-mode UUIDs), server.properties says creative,
 # peaceful and no monsters, and once the server is up its console gets the game rules: the daylight cycle off, the time
 # set to day, mob spawning off and the difficulty peaceful, in all three worlds. "Playtest setup:" lines show them.
 # The console: every line appended to .local/run/paper-stdin.txt goes to the server (any tool can append to it, e.g.
 # Add-Content .local/run/paper-stdin.txt 'say hi'); lines already in the file when the server starts are skipped.
 param(
+    [string[]]$Ops = @('BuilderDev'),
     [string]$Install,
     [string]$Jar,
     [string]$Memory = '3G',
@@ -67,8 +73,37 @@ if ($Stop) {
     exit 0
 }
 
-if (-not $Install) { $Install = Join-Path $mainRoot '.local\installs\paper-1.21.1-133' }
-$Install = (Resolve-Path $Install).Path
+# "-Ops A,B" from PowerShell is a list, "-Ops A,B" through powershell.exe -File one text: both mean A and B.
+$Ops = @($Ops | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if (-not $Ops) { throw 'No player names in -Ops.' }
+
+if ($Install) {
+    $Install = (Resolve-Path $Install).Path
+} else {
+    $Install = Join-Path $runDir 'paper-server'
+    if (-not (Test-Path $Install)) {
+        # The run copy, made once. It is put together in a folder beside it and renamed at the end, so a copy that
+        # stopped halfway is never taken for a finished one (and an existing folder is never written into).
+        $source = Join-Path $mainRoot '.local\installs\paper-1.21.1-133'
+        if (-not (Test-Path (Join-Path $source 'paper-*.jar'))) { throw "No Paper install to copy at $source" }
+        $building = "$Install.creating"
+        if (Test-Path $building) { throw "$building is left from a copy that did not finish: delete it, then run again." }
+        Write-Host "Making the run copy $Install from $source (no worlds)."
+        New-Item -ItemType Directory $building | Out-Null
+        Copy-Item -Path (Join-Path $source 'paper-*.jar') -Destination $building
+        foreach ($folder in 'libraries', 'versions', 'cache') {
+            $from = Join-Path $source $folder
+            if (Test-Path $from) { Copy-Item -Path $from -Destination $building -Recurse }
+        }
+        $fromProperties = Join-Path $source 'server.properties'
+        if (Test-Path $fromProperties) { Copy-Item -Path $fromProperties -Destination $building }
+        New-Item -ItemType Directory (Join-Path $building 'plugins') | Out-Null
+        Get-ChildItem -Path (Join-Path $source 'plugins') -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'worldedit-*.jar' -or $_.Name -like 'worldguard-*.jar' } |
+            Copy-Item -Destination (Join-Path $building 'plugins')
+        Rename-Item -Path $building -NewName (Split-Path -Leaf $Install)
+    }
+}
 $paperJar = Get-ChildItem -Path $Install -Filter 'paper-*.jar' -File | Select-Object -First 1
 if (-not $paperJar) { throw "No paper-*.jar in $Install" }
 
@@ -110,19 +145,24 @@ foreach ($key in $settings.Keys) {
 }
 [IO.File]::WriteAllLines($props, [string[]]$lines, $latin1)
 
-# ops.json: BuilderDev at level 4, other entries kept. Offline-mode UUID: MD5("OfflinePlayer:" + name) as a
+# ops.json: each of -Ops at level 4, other entries kept. Offline-mode UUID: MD5("OfflinePlayer:" + name) as a
 # version-3 UUID, as scripts/playtest-server.ps1 computes it.
-$md5 = [Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes('OfflinePlayer:BuilderDev'))
-$md5[6] = ($md5[6] -band 0x0f) -bor 0x30; $md5[8] = ($md5[8] -band 0x3f) -bor 0x80
-$hex = ($md5 | ForEach-Object { $_.ToString('x2') }) -join ''
-$uuid = '{0}-{1}-{2}-{3}-{4}' -f $hex.Substring(0,8), $hex.Substring(8,4), $hex.Substring(12,4), $hex.Substring(16,4), $hex.Substring(20,12)
-$opsFile = Join-Path $Install 'ops.json'
-$ops = @()
-if (Test-Path $opsFile) {
-    $ops = @((Get-Content $opsFile -Raw | ConvertFrom-Json) | Where-Object { $_ -and $_.name -ne 'BuilderDev' -and $_.uuid -ne $uuid })
+function Get-OfflineUuid([string] $name) {
+    $md5 = [Security.Cryptography.MD5]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes("OfflinePlayer:$name"))
+    $md5[6] = ($md5[6] -band 0x0f) -bor 0x30; $md5[8] = ($md5[8] -band 0x3f) -bor 0x80
+    $hex = ($md5 | ForEach-Object { $_.ToString('x2') }) -join ''
+    return '{0}-{1}-{2}-{3}-{4}' -f $hex.Substring(0,8), $hex.Substring(8,4), $hex.Substring(12,4), $hex.Substring(16,4), $hex.Substring(20,12)
 }
-$ops += [pscustomobject]@{ uuid = $uuid; name = 'BuilderDev'; level = 4; bypassesPlayerLimit = $false }
-Set-Content -Path $opsFile -Value (ConvertTo-Json -InputObject @($ops) -Depth 3) -Encoding ascii
+$opsFile = Join-Path $Install 'ops.json'
+$opEntries = @()
+if (Test-Path $opsFile) { $opEntries = @((Get-Content $opsFile -Raw | ConvertFrom-Json) | Where-Object { $_ }) }
+foreach ($name in $Ops) {
+    $uuid = Get-OfflineUuid $name
+    $opEntries = @($opEntries | Where-Object { $_.name -ne $name -and $_.uuid -ne $uuid })
+    $opEntries += [pscustomobject]@{ uuid = $uuid; name = $name; level = 4; bypassesPlayerLimit = $false }
+}
+Set-Content -Path $opsFile -Value (ConvertTo-Json -InputObject @($opEntries) -Depth 3) -Encoding ascii
+Write-Host "Ops: $($Ops -join ', ')"
 
 # The console commands of the playtest setup, sent once the server is up. Paper keeps game rules, time and difficulty
 # per world, and its console acts on the overworld; the other two get theirs through execute.
