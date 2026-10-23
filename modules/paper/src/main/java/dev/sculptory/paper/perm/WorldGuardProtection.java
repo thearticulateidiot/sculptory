@@ -10,6 +10,8 @@ import com.sk89q.worldedit.world.World;
 import com.sk89q.worldguard.LocalPlayer;
 import com.sk89q.worldguard.WorldGuard;
 import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
+import com.sk89q.worldguard.config.ConfigurationManager;
+import com.sk89q.worldguard.config.WorldConfiguration;
 import com.sk89q.worldguard.internal.platform.WorldGuardPlatform;
 import com.sk89q.worldguard.protection.ApplicableRegionSet;
 import com.sk89q.worldguard.protection.flags.Flags;
@@ -27,6 +29,8 @@ import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -67,6 +71,8 @@ final class WorldGuardProtection implements Protection {
     private static final int MAX_KEYED_REGIONS = 64;
     /** A mid-edit API failure is logged once (it would otherwise repeat for every chunk part). */
     private static final AtomicBoolean API_FAILURE_LOGGED = new AtomicBoolean();
+    /** The worlds whose failed region load was logged (once each). */
+    private static final Set<String> FAILED_LOAD_LOGGED = ConcurrentHashMap.newKeySet();
 
     /**
      * Checks WorldGuard's API now, so an incompatible one fails here ({@link SculptoryProtection#detect} then refuses
@@ -83,6 +89,9 @@ final class WorldGuardProtection implements Protection {
             lookup.findVirtual(WorldGuard.class, "getPlatform", methodType(WorldGuardPlatform.class));
             lookup.findVirtual(WorldGuardPlatform.class, "getRegionContainer", methodType(RegionContainer.class));
             lookup.findVirtual(WorldGuardPlatform.class, "getSessionManager", methodType(SessionManager.class));
+            lookup.findVirtual(WorldGuardPlatform.class, "getGlobalStateManager", methodType(ConfigurationManager.class));
+            lookup.findVirtual(ConfigurationManager.class, "get", methodType(WorldConfiguration.class, World.class));
+            lookup.findGetter(WorldConfiguration.class, "useRegions", boolean.class);
             lookup.findVirtual(SessionManager.class, "hasBypass", methodType(boolean.class, LocalPlayer.class, World.class));
             lookup.findStatic(WorldGuardPlugin.class, "inst", methodType(WorldGuardPlugin.class));
             lookup.findVirtual(WorldGuardPlugin.class, "wrapPlayer", methodType(LocalPlayer.class, Player.class));
@@ -141,22 +150,21 @@ final class WorldGuardProtection implements Protection {
         World world = BukkitAdapter.adapt(level.getWorld());
         if (worldGuard.getPlatform().getSessionManager().hasBypass(local, world)) return CellTest.ALLOW;
         RegionContainer container = worldGuard.getPlatform().getRegionContainer();
+        // Regions off in this world: WorldGuard's own listeners then check nothing (isRegionSupportEnabled), and nor
+        // does Sculptory. Its query would not do here: with regions off it answers with a permissive region set that
+        // still reports build as DENY.
+        if (!worldGuard.getPlatform().getGlobalStateManager().get(world).useRegions) return CellTest.ALLOW;
         RegionManager manager = container.get(world);
-        RegionQuery query = container.createQuery();
         if (manager == null) {
-            // No region manager: either regions are off in this world, or its region data failed to load (WorldGuard
-            // then protects everything there). WorldGuard's own query tells the two apart (a permissive region set
-            // when regions are off, a failed-load set that denies every build otherwise), so it is asked once for the
-            // whole part. Anything unexpected refuses.
-            try {
-                return allowed(query, world, local, part.min().x(), part.min().y(), part.min().z())
-                        ? CellTest.ALLOW : CellTest.DENY;
-            } catch (RuntimeException e) {
-                Sculptory.LOG.warn("Sculptory: WorldGuard has no region data for {} and its query failed ({}); the "
-                        + "edit is refused there", level.dimension().location(), e.toString());
-                return CellTest.DENY;
+            // Regions on and no region manager: the world's region data failed to load. WorldGuard then protects
+            // everything there (its failed-load region set denies every build), so every edit is refused too.
+            if (FAILED_LOAD_LOGGED.add(world.getName())) {
+                Sculptory.LOG.warn("Sculptory: WorldGuard's region data for {} failed to load, so WorldGuard protects "
+                        + "all of it; Sculptory refuses edits there too until it loads", world.getName());
             }
+            return CellTest.DENY;
         }
+        RegionQuery query = container.createQuery();
         ApplicableRegionSet touching = manager.getApplicableRegions(new Probe(part));
         if (touching.size() == 0) {
             // Only the global region applies: one answer for the whole part.
