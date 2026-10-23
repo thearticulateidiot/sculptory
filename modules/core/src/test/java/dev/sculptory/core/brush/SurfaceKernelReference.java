@@ -669,6 +669,7 @@ final class SurfaceKernelReference {
                 return;
             }
             if (!wantSolid && (supports(ball, x, y, z) || sheet(ball, x, y, z))) return;
+            if (wantSolid && againstSheet(ball, x, y, z)) return;
             int k = ball.weight(t);
             for (int b = a + 1; b < balls.length; b++) {
                 Ball other = balls[b];
@@ -831,6 +832,17 @@ final class SurfaceKernelReference {
                 }
             }
             return false;
+        }
+
+        /** Whether an open cell lies against a sheet's face (beside a wall along its open axis, above or below a slab). */
+        private static boolean againstSheet(Ball ball, int x, int y, int z) {
+            for (int axis : new int[] {0, 2}) {
+                int[] d = AXES[axis];
+                for (int s : new int[] {-1, 1}) {
+                    if (wallAxis(ball, x + s * d[0], y, z + s * d[2]) == axis) return true;
+                }
+            }
+            return slab(ball, x, y + 1, z) || slab(ball, x, y - 1, z);
         }
 
         private static boolean slab(Ball ball, int x, int y, int z) {

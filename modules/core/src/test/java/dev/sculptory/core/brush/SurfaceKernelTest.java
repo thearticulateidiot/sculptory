@@ -579,21 +579,30 @@ class SurfaceKernelTest {
     }
 
     /**
-     * A single block sitting on a wall one block thick, on its top or beyond its end (open on both sides along two
-     * axes), is a bump and goes; the wall stays.
+     * Held for five steps: a single block sitting on a wall one block thick, on its top or beyond its end (open on both
+     * sides along two axes), and a bump standing off its face go in the first step; nothing changes after that, and the
+     * wall stays whole.
      */
     @Test
-    void aSingleBlockOnAThinWallRoundsOff() {
+    void aSingleBlockOnAThinWallRoundsOffAndNothingFollows() {
         for (int radius : new int[] {3, 8}) {
             BrushSpec smooth = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
-            FakeWorld onTop = thinWall(70, false);
-            onTop.set(9, 71, 0, dirt);
-            assertEquals(List.of(new Write(9, 71, 0, air)), apply(smooth, new Dab(0, 152, 71 * 16 + 8, 8, 255), onTop),
-                    "on the top, r" + radius);
-            FakeWorld onEnd = thinWall(70, false);
-            onEnd.set(9, 65, 11, dirt);
-            assertEquals(List.of(new Write(9, 65, 11, air)),
-                    apply(smooth, new Dab(0, 152, 65 * 16 + 8, 11 * 16 + 8, 255), onEnd), "on the end, r" + radius);
+            record Case(String name, int x, int y, int z, Dab dab) {}
+            List<Case> cases = List.of(
+                    new Case("on the top", 9, 71, 0, new Dab(0, 152, 71 * 16 + 8, 8, 255)),
+                    new Case("beyond the end", 9, 65, 11, new Dab(0, 152, 65 * 16 + 8, 11 * 16 + 8, 255)),
+                    new Case("on the face", 8, 65, 0, new Dab(0, 128, 65 * 16 + 8, 8, 255)));
+            for (Case c : cases) {
+                FakeWorld world = thinWall(70, false);
+                world.set(c.x(), c.y(), c.z(), dirt);
+                List<List<Write>> steps = heldByStep(smooth, c.dab(), world, 5);
+                String label = c.name() + ", r" + radius;
+                assertEquals(List.of(new Write(c.x(), c.y(), c.z(), air)), steps.get(0), label + ", step 1");
+                for (int s = 1; s < 5; s++) assertEquals(List.of(), steps.get(s), label + ", step " + (s + 1));
+                for (int y = 60; y <= 70; y++) {
+                    for (int z = -10; z <= 10; z++) assertEquals(dirt, world.get(9, y, z), label + " at " + y + "," + z);
+                }
+            }
         }
     }
 
@@ -617,28 +626,33 @@ class SurfaceKernelTest {
     /**
      * Ridges and fins one block thick on a floor: one or two high they smooth away as before the sheet rule (the write
      * sets the kernel wrote then: a one-high ridge removed, a two-high one loses its top while its foot fills out on
-     * both sides); three high it is a wall and stays, though its foot still fills out.
+     * both sides); three or four high it is a wall: held for five steps, nothing changes, its foot does not fill (a
+     * filled foot cost a three-high wall on a floor its top rows over the next two steps).
      */
     @Test
     void smoothLevelsRidgesUnderThreeBlocksAndKeepsTallerFins() {
         for (int radius : new int[] {3, 8}) {
             BrushSpec smooth = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
             int reach = radius == 3 ? 2 : 7;
-            for (int high = 1; high <= 3; high++) {
+            for (int high = 1; high <= 4; high++) {
                 FakeWorld world = floor(60);
                 for (int z = -20; z <= 20; z++) for (int y = 61; y <= 60 + high; y++) world.set(0, y, z, stone);
+                Dab dab = new Dab(0, 8, (61 + high) * 16, 8, 255);
+                String label = high + " high, r" + radius;
+                if (high >= 3) {
+                    assertEquals(List.of(), held(smooth, dab, world, 5), label);
+                    continue;
+                }
                 Set<Write> expected = new HashSet<>();
                 for (int z = -reach; z <= reach; z++) {
                     if (high == 1) expected.add(new Write(0, 61, z, air));
-                    if (high == 2) expected.add(new Write(0, 62, z, air));
+                    if (high == 2) {
+                        expected.add(new Write(0, 62, z, air));
+                        expected.add(new Write(-1, 61, z, grass));
+                        expected.add(new Write(1, 61, z, grass));
+                    }
                 }
-                int foot = high == 1 ? -1 : high == 2 ? reach : radius == 3 ? 1 : 7;
-                for (int z = -foot; z <= foot; z++) {
-                    expected.add(new Write(-1, 61, z, grass));
-                    expected.add(new Write(1, 61, z, grass));
-                }
-                List<Write> writes = apply(smooth, new Dab(0, 8, (61 + high) * 16, 8, 255), world);
-                assertEquals(expected, new HashSet<>(writes), high + " high, r" + radius);
+                assertEquals(expected, new HashSet<>(apply(smooth, dab, world)), label);
             }
         }
     }
@@ -1312,12 +1326,21 @@ class SurfaceKernelTest {
 
     /** A stroke of {@code steps} dabs at {@code dab}'s point, one stroke state throughout: every write, in order. */
     private static List<Write> held(BrushSpec spec, Dab dab, FakeWorld world, int steps) {
-        StrokeState stroke = new StrokeState();
         List<Write> writes = new ArrayList<>();
-        for (int i = 0; i < steps; i++) {
-            apply(spec, stroke, new Dab(i, dab.x16(), dab.y16(), dab.z16(), dab.pressure()), world, writes);
-        }
+        for (List<Write> step : heldByStep(spec, dab, world, steps)) writes.addAll(step);
         return writes;
+    }
+
+    /** {@link #held}, each step's writes apart. */
+    private static List<List<Write>> heldByStep(BrushSpec spec, Dab dab, FakeWorld world, int steps) {
+        StrokeState stroke = new StrokeState();
+        List<List<Write>> byStep = new ArrayList<>();
+        for (int i = 0; i < steps; i++) {
+            List<Write> writes = new ArrayList<>();
+            apply(spec, stroke, new Dab(i, dab.x16(), dab.y16(), dab.z16(), dab.pressure()), world, writes);
+            byStep.add(writes);
+        }
+        return byStep;
     }
 
     private static Long[] boxed(long[] n) {

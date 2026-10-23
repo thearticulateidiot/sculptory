@@ -58,7 +58,9 @@ import java.util.List;
  * not a single block sitting on it, open on both sides along two axes).
  * The vote alone takes them (9 solid cells of 27), one layer a step under a held stroke. Bumps, spikes, pillars one
  * block across and ridges or fins under 3 blocks high still smooth away. Above and below the build height count as
- * solid there, an unloaded cell or one outside the ball's box as neither. Filling is unchanged.
+ * solid there, an unloaded cell or one outside the ball's box as neither. Nor does Smooth fill an open cell against a
+ * sheet's face ({@code Pass.againstSheet}: beside a wall cell along the wall's open axis, or above or below a slab
+ * cell), which would pile ground at a thin wall's foot and then cost the wall its rows; other fills are unchanged.
  *
  * <p><b>Masks and the clip box</b> behave as in the Terrain mode, per changed cell instead of per column: the mask sees
  * the line's surface block (Raise, Lower, Flatten) or the cell with the block it becomes or loses (Smooth), its y, and
@@ -975,6 +977,7 @@ final class SurfaceKernel {
         private void flip(int a, Ball ball, int x, int y, int z, int i, boolean wantSolid) {
             if (cellDecidedBefore(a, x, y, z)) return;
             if (!wantSolid && (supports(ball, x, y, z) || kept(ball, x, y, z))) return;
+            if (wantSolid && againstSheet(ball, x, y, z)) return;
             int k = ball.weight(ball.distance(x, y, z));
             for (int b = a + 1; b < balls.length; b++) {
                 Ball other = balls[b];
@@ -1179,8 +1182,14 @@ final class SurfaceKernel {
          * thick ({@link #slab}, {@link #wallAxis}) or of a sheet's rim, a solid cell with a sheet cell beside it in the
          * sheet's own plane (a slab's cell beside it along x or z; a wall's beside it along any axis but the one the
          * wall is open along). The rim keeps a sheet's free ends and corners, which would otherwise go one layer a
-         * step under a held stroke; a bump standing off a sheet, along its open axis, is no rim and goes, and neither
-         * is a cell open on both sides along two axes (a single block on a wall's top or end).
+         * step under a held stroke. Anything under 3 blocks tall standing off a sheet, along its open axis, is no rim
+         * and goes (a rib or pillar 3 or more tall against it stays, as any fin does); neither is a cell open on both
+         * sides along two axes (a single block on a wall's top or end).
+         *
+         * <p>Known limit at the box's edge: a wall cell's height reaches two cells above and below it, so for a cell
+         * in the ball's top or bottom layer (all of it for Square, near the pole for Circle) whose only protection is
+         * the wall cell directly above or below it, the farthest cell of that wall cell's count can lie one past the
+         * box and counts as neither solid nor open; such a cell may then go. Nothing else follows from it.
          */
         private static boolean kept(Ball ball, int x, int y, int z) {
             if (slab(ball, x, y, z) || wallAxis(ball, x, y, z) >= 0) return true;
@@ -1198,6 +1207,24 @@ final class SurfaceKernel {
                 }
             }
             return false;
+        }
+
+        /**
+         * Whether Smooth leaves open cell (x, y, z) open although its vote says fill: it lies against a sheet's face,
+         * beside a wall cell along the axis the wall is open along, or above or below a slab cell. Filling there would
+         * pile ground against a wall one block thick (a three-high wall on a floor gets 15 solid cells of 27 at its
+         * foot), and the wall, no longer open on both sides at its bottom row, would lose the rest a row a step.
+         * Reads stay within the ball's box: a wall cell's height reaches two cells above and below it, at most the
+         * box's edge for a cell of the ball.
+         */
+        private static boolean againstSheet(Ball ball, int x, int y, int z) {
+            for (int axis : new int[] {0, 2}) {
+                for (int side = -1; side <= 1; side += 2) {
+                    int nx = x + (axis == 0 ? side : 0), nz = z + (axis == 2 ? side : 0);
+                    if (wallAxis(ball, nx, y, nz) == axis) return true;
+                }
+            }
+            return slab(ball, x, y - 1, z) || slab(ball, x, y + 1, z);
         }
 
         /**
