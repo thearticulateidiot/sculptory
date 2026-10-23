@@ -62,8 +62,8 @@ The first NeoForge release, a beta. For Minecraft 1.21.1 with NeoForge 21.1.264 
 - **Fabric and NeoForge work together**: a Fabric client can use the editor on a NeoForge server, and a NeoForge
   client on a Fabric server, as long as both speak the same network protocol.
 - **Permissions** through NeoForge's permission system: the same `sculptory.*` nodes as on Fabric, operators by
-  default. Permissions mods on NeoForge are untested: no LuckPerms build for NeoForge 1.21.1 works yet (its 5.4 builds
-  kick every player at login on NeoForge 21.1.264), so operators by default is the supported setup until one does.
+  default, LuckPerms when installed (its 5.4.150 build; the build labelled for 1.21.1 kicks every player at login on
+  current NeoForge 21.1 releases).
 - Tried on a server next to Cobblemon, Create and JEI: no conflicts, and their blocks fill, undo and redo like vanilla
   ones.
 

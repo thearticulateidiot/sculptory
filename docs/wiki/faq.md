@@ -54,7 +54,7 @@ Operators of level 2 or higher, and the owner of a singleplayer world: see [Perm
 
 ### Can I use LuckPerms?
 
-On Fabric and Paper, yes: the nodes are `sculptory.*`, see [Permissions](permissions.md). On NeoForge, not yet: no LuckPerms build for NeoForge 1.21.1 works (its 5.4 builds kick every player at login on NeoForge 21.1.264), and other permissions mods are untested there. Until one works, make the players who may edit operators.
+Yes, on all three: the nodes are `sculptory.*`, see [Permissions](permissions.md). On NeoForge install LuckPerms's **5.4.150** build (labelled for 1.21.4; it runs on 1.21.1). The build labelled for 1.21.1, 5.4.140, kicks every player at login on current NeoForge 21.1 releases, and other permissions mods are untested on NeoForge.
 
 ### Will big edits lag the server?
 
@@ -85,7 +85,7 @@ Sculptory is a beta. The limits you are most likely to meet:
 
 - Minecraft 1.21.1 only, on Fabric, NeoForge and Paper (NeoForge and Paper built from source until their first releases): no Forge or other Minecraft versions yet.
 - On Paper, undo after a crash, undo of water and lava, builder mode's chain reactions and the commands differ a little from Fabric and NeoForge: see [Known limits on Paper](server-setup.md#known-limits-on-paper). Claim plugins other than WorldGuard don't limit bulk edits there.
-- On NeoForge, permissions mods are untested (no LuckPerms for NeoForge 1.21.1 works yet): operators by default is the supported setup.
+- On NeoForge, LuckPerms needs its 5.4.150 build (the build labelled for 1.21.1 kicks players at login); other permissions mods are untested there.
 - The server and every editing client need the same network protocol, and the same build to avoid a warning; see [Server setup](server-setup.md#updating).
 - Most of it is covered by automated tests, but two players editing at once, and Sodium and Iris, haven't been tried much in a real game yet. Keep backups of worlds you care about.
 - With an Iris shader pack on, ghost previews are drawn as outlines.

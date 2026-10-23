@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Run a server](home.md#run-a-server)
 
-Every permission node is `sculptory.<name>`. A permissions mod or plugin such as LuckPerms decides who holds which (on Fabric and Paper; for NeoForge see [below](#neoforge-and-paper)); without one, operators of level 2 or higher hold them all (the level is `permissionFallbackOpLevel` in the server settings). The owner of a singleplayer world holds them all.
+Every permission node is `sculptory.<name>`. A permissions mod or plugin such as LuckPerms decides who holds which (on NeoForge a specific LuckPerms build, see [below](#neoforge-and-paper)); without one, operators of level 2 or higher hold them all (the level is `permissionFallbackOpLevel` in the server settings). The owner of a singleplayer world holds them all.
 
 ## Nodes
 
@@ -37,7 +37,7 @@ A useful split for a build server.
 
 ## LuckPerms
 
-LuckPerms isn't bundled: install it on the server if you want it (on Fabric or Paper; NeoForge has no working LuckPerms for 1.21.1 yet, see [below](#neoforge-and-paper)). A builder group:
+LuckPerms isn't bundled: install it on the server if you want it (on NeoForge its 5.4.150 build, see [below](#neoforge-and-paper)). A builder group:
 
 1. `/lp creategroup builder`
 2. `/lp group builder permission set sculptory.use true`, then the same for each of the group's nodes.
@@ -54,7 +54,7 @@ More examples:
 The nodes are the same on every server; only what decides them differs.
 
 - **Fabric:** a permissions mod that works with Fabric's permissions API, such as LuckPerms.
-- **NeoForge:** NeoForge's permission system. Permissions mods on NeoForge are untested: no LuckPerms build for NeoForge 1.21.1 works yet (its 5.4 builds kick every player at login on NeoForge 21.1.264), and no other permissions mod has been tried. Until one works, operators by default is the supported setup on NeoForge: make the players who may edit operators of level 2 or higher.
+- **NeoForge:** NeoForge's permission system, which LuckPerms plugs into. Install LuckPerms's **5.4.150** build (labelled for 1.21.4; it declares no version range and runs on 1.21.1). The build labelled for 1.21.1, 5.4.140, kicks every player at login on current NeoForge 21.1 releases ([LuckPerms issue #4259](https://github.com/LuckPerms/LuckPerms/issues/4259)), and the 5.5 builds need a newer Minecraft. Checked on NeoForge 21.1.264: grants and denials in LuckPerms decide the nodes, a denial beats operator status, and a node LuckPerms doesn't set falls back to operator level. No other permissions mod has been tried on NeoForge.
 - **Paper:** Bukkit permission nodes, set with LuckPerms or another permissions plugin (the `/lp` commands above work as they are). A wildcard such as `sculptory.*` needs a permissions plugin that understands wildcards; LuckPerms does.
 - **`sculptory.selftest`** (Paper) is for the developers' self-test, which only a developer build of the plugin has. It does nothing in a released plugin and is false by default, operators included.
 

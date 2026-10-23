@@ -114,10 +114,9 @@ says what a build needs.
 1. Install NeoForge for 1.21.1 and put the Sculptory for NeoForge jar into your `mods` folder. Nothing else is
    needed.
 2. **Singleplayer** works with that alone.
-3. **On a server**, put the jar on the server and on every client that wants to edit. By default operators may edit,
-   and that is the supported setup on NeoForge for now: permissions mods are untested there, since no LuckPerms build
-   for NeoForge 1.21.1 works yet (its 5.4 builds kick every player at login on NeoForge 21.1.264). The nodes are the
-   same `sculptory.*` as on Fabric.
+3. **On a server**, put the jar on the server and on every client that wants to edit. By default operators may edit.
+   For per-player permissions install LuckPerms (its 5.4.150 build: the build labelled for 1.21.1 kicks players at
+   login); the nodes are the same `sculptory.*` as on Fabric.
 
 ### Paper
 

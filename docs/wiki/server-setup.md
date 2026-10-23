@@ -30,7 +30,7 @@ To check, join and press `B`: the status dot should read **Connected**. `/sculpt
 1. Set up a NeoForge server for Minecraft 1.21.1 (NeoForge 21.1.264 or newer).
 2. Put the Sculptory for NeoForge jar in its `mods` folder and start it. Nothing else is needed.
 3. Players who want to edit install Sculptory on their client.
-4. Only operators of level 2 or higher can edit by default. Permissions mods on NeoForge are untested: no LuckPerms build for NeoForge 1.21.1 works yet (its 5.4 builds kick every player at login on NeoForge 21.1.264). Until one does, make the players who may edit operators: see [Permissions](permissions.md).
+4. Only operators of level 2 or higher can edit by default. For per-player permissions install LuckPerms's 5.4.150 build (the build labelled for 1.21.1 kicks players at login): see [Permissions](permissions.md).
 
 ### Paper
 
