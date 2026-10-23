@@ -206,7 +206,9 @@ final class EntityChecks {
 
     /**
      * A zombie pasted where the server spawns no monsters is placed (the plugin spawn reason the engine uses skips those
-     * rules). For comparison, a zombie added with Paper's default reason is logged: turned away there.
+     * rules), and the paste's undo takes it away. For comparison, a zombie added with Paper's default reason is logged:
+     * turned away there. The paste runs on a world that keeps monsters ({@link #keepingMonsters}), so the check does
+     * not depend on the tick the job ends in.
      */
     private static CompletableFuture<Void> pasteMonster(SelfTestRun r, int x, int z) {
         Zombie probe = new Zombie(EntityType.ZOMBIE, r.level);
@@ -216,6 +218,8 @@ final class EntityChecks {
         if (in) probe.discard();
         r.info("entities: a zombie added with Paper's default spawn reason",
                 "tryAddFreshEntityWithPassengers returned " + added + ", in the world " + in);
+        org.bukkit.Difficulty was = keepingMonsters(r, "pasting a zombie");
+        if (was == null) return CompletableFuture.completedFuture(null);
         byte[] data = NbtIo.toBytes(NbtCompound.builder().putByte("NoAI", (byte) 1)
                 .putByte("PersistenceRequired", (byte) 1).build());
         Clipboard clipboard = Clipboard.builder(r.host.engine().states(), new BlockPos(3, 3, 3)).build()
@@ -223,25 +227,44 @@ final class EntityChecks {
         BlockPos origin = new BlockPos(x + 1, 101, z + 1);
         Box pasted = box(origin.x(), origin.y(), origin.z(), origin.x() + 2, origin.y() + 2, origin.z() + 2);
         return paste(r, clipboard, origin).thenCompose(result -> {
-            // Checked as the job ends, in its tick: on Peaceful the zombie despawns on its next tick, as a summoned
-            // one does.
             List<Zombie> placed = r.level.getEntitiesOfClass(Zombie.class, aabb(pasted), Zombie::isAlive);
             String reason = placed.size() == 1 ? String.valueOf(placed.get(0).getBukkitEntity().getEntitySpawnReason())
                     : "-";
             r.record("entities: a paste places a zombie where the server's rules spawn none",
                     placed.size() == 1 && result.skippedProtected() == 0, placed.size() + " zombies placed, spawn reason "
                             + reason + " (" + result.outcome() + ", " + result.skippedProtected() + " protected)");
-            return r.ticks(2);
-        }).thenCompose(v -> {
-            int left = r.level.getEntitiesOfClass(Zombie.class, aabb(pasted), Zombie::isAlive).size();
-            r.info("entities: the pasted zombie two ticks later", left + " left (Peaceful despawns monsters)");
-            return r.undo();
+            return r.ticks(5).thenCompose(v -> r.undo());
         }).thenAccept(result -> {
             int left = r.level.getEntitiesOfClass(Zombie.class, aabb(pasted), Zombie::isAlive).size();
-            r.record("entities: the zombie paste's undo leaves no zombie", left == 0,
-                    result.outcome() + ", " + result.changed() + " changed, " + result.skippedConflicts()
-                            + " conflicts, " + left + " left");
-        });
+            r.record("entities: the zombie paste's undo takes the zombie away", left == 0 && result.changed() == 1
+                    && result.skippedConflicts() == 0, result.outcome() + ", " + result.changed() + " changed, "
+                    + result.skippedConflicts() + " conflicts, " + left + " left");
+        }).whenComplete((v, e) -> r.level.getWorld().setDifficulty(was));
+    }
+
+    /**
+     * Readies the run's world for a check with a monster, which Peaceful despawns on its next tick: a Peaceful world
+     * with spawn-monsters off (no monster spawns naturally either way) is set to Normal, and set back by the caller and
+     * by the run's clean-up. Returns the difficulty to set back, or null when the check is skipped (Peaceful with
+     * spawn-monsters on, where Normal would let monsters spawn).
+     */
+    private static org.bukkit.Difficulty keepingMonsters(SelfTestRun r, String check) {
+        org.bukkit.World bukkit = r.level.getWorld();
+        org.bukkit.Difficulty was = bukkit.getDifficulty();
+        if (r.level.getDifficulty() == Difficulty.PEACEFUL) {
+            boolean spawnMonsters = !(r.level.getServer() instanceof net.minecraft.server.dedicated.DedicatedServer d)
+                    || d.getProperties().spawnMonsters;
+            if (spawnMonsters) {
+                r.info("entities: " + check, "skipped: Peaceful despawns a monster on its next tick, and "
+                        + "spawn-monsters is on (Normal would let monsters spawn)");
+                return null;
+            }
+            bukkit.setDifficulty(org.bukkit.Difficulty.NORMAL);
+            r.cleanup(() -> bukkit.setDifficulty(was));
+        }
+        r.info("entities: " + check, "difficulty " + r.level.getDifficulty().getKey() + " for the check, monsters "
+                + bukkit.getAllowMonsters());
+        return was;
     }
 
     /**
@@ -338,26 +361,13 @@ final class EntityChecks {
 
     /**
      * A zombie moved where the server spawns no monsters, and the move undone: the copy is placed and the undo puts the
-     * zombie back. On Peaceful a monster despawns on its next tick, before a move could start, so on a Peaceful world
-     * with spawn-monsters off (no monster spawns naturally either way) the world is set to Normal for the check and back
-     * afterwards; with spawn-monsters on, it is skipped there.
+     * zombie back. On a world that keeps monsters ({@link #keepingMonsters}): on Peaceful a monster despawns on its next
+     * tick, before a move could start.
      */
     private static CompletableFuture<Void> moveZombie(SelfTestRun r, int x, int z) {
         org.bukkit.World bukkit = r.level.getWorld();
-        org.bukkit.Difficulty was = bukkit.getDifficulty();
-        if (r.level.getDifficulty() == Difficulty.PEACEFUL) {
-            boolean spawnMonsters = !(r.level.getServer() instanceof net.minecraft.server.dedicated.DedicatedServer d)
-                    || d.getProperties().spawnMonsters;
-            if (spawnMonsters) {
-                r.info("entities: moving a zombie", "skipped: Peaceful despawns a monster on its next tick, and "
-                        + "spawn-monsters is on (Normal would let monsters spawn)");
-                return CompletableFuture.completedFuture(null);
-            }
-            bukkit.setDifficulty(org.bukkit.Difficulty.NORMAL);
-            r.cleanup(() -> bukkit.setDifficulty(was));
-        }
-        r.info("entities: moving a zombie", "difficulty " + r.level.getDifficulty().getKey() + " for the check, monsters "
-                + bukkit.getAllowMonsters());
+        org.bukkit.Difficulty was = keepingMonsters(r, "moving a zombie");
+        if (was == null) return CompletableFuture.completedFuture(null);
         Zombie zombie = new Zombie(EntityType.ZOMBIE, r.level);
         zombie.moveTo(x + 1.5, 101, z + 1.5, 0f, 0f);
         zombie.setNoAi(true);
@@ -384,7 +394,9 @@ final class EntityChecks {
 
     /**
      * A pig moved 5 south, then another plugin cancels the spawn of the pig's own UUID and the move is undone: the
-     * restore counts as refused, the copy is taken away all the same, and no pig is left in either place.
+     * restore counts as refused and the copy stays where the move put it (put back by the undo after it took it away),
+     * so the pig is never only in the history. With the plugin gone, the entry's redo changes nothing (the copy is
+     * where it left it) and a second undo puts the pig back at the source and takes the copy away.
      */
     private static CompletableFuture<Void> refusedRestore(SelfTestRun r, Refuser refuser, int x, int z) {
         Pig pig = new Pig(EntityType.PIG, r.level);
@@ -394,20 +406,40 @@ final class EntityChecks {
         UUID id = pig.getUUID();
         Box source = box(x, 101, z, x + 2, 103, z + 2);
         Box dest = box(x, 101, z + 5, x + 2, 103, z + 7);
+        UUID[] copy = {null};
         return move(r, source, new BlockPos(0, 0, 5)).thenCompose(result -> {
+            List<Pig> moved = r.level.getEntitiesOfClass(Pig.class, aabb(dest), Pig::isAlive);
+            copy[0] = moved.size() == 1 ? moved.get(0).getUUID() : null;
             refuser.refuse.add(id);
             refuser.take();
             return r.ticks(5).thenCompose(v -> r.undo());
-        }).thenAccept(result -> {
+        }).thenCompose(result -> {
             refuser.refuse.clear();
-            int atSource = r.level.getEntitiesOfClass(Pig.class, aabb(source), Pig::isAlive).size();
-            int atDest = r.level.getEntitiesOfClass(Pig.class, aabb(dest), Pig::isAlive).size();
-            Entity found = r.level.getEntity(id);
-            r.record("entities: an undo whose restore another plugin cancels counts it as refused and leaves nothing",
-                    atSource == 0 && atDest == 0 && found == null && result.skippedProtected() >= 1,
-                    atSource + " pigs at the source, " + atDest + " at the destination, " + result.skippedProtected()
-                            + " refused (" + result.outcome() + "); spawn events " + refuser.take());
+            int atSource = pigs(r, source);
+            Entity kept = copy[0] == null ? null : r.level.getEntity(copy[0]);
+            r.record("entities: an undo whose restore another plugin cancels keeps the moved copy",
+                    atSource == 0 && pigs(r, dest) == 1 && kept != null && kept.isAlive()
+                            && result.skippedProtected() >= 1,
+                    atSource + " pigs at the source, " + pigs(r, dest) + " at the destination (the copy itself "
+                            + (kept != null && kept.isAlive()) + "), " + result.skippedProtected() + " refused ("
+                            + result.outcome() + "); spawn events " + refuser.take());
+            return r.ticks(5).thenCompose(v -> r.redo());
+        }).thenCompose(result -> {
+            r.record("entities: the entry's redo then changes nothing", pigs(r, source) == 0 && pigs(r, dest) == 1,
+                    pigs(r, source) + " at the source, " + pigs(r, dest) + " at the destination (" + result.outcome()
+                            + ", " + result.skippedConflicts() + " conflicts)");
+            return r.ticks(5).thenCompose(v -> r.undo());
+        }).thenAccept(result -> {
+            Entity back = r.level.getEntity(id);
+            r.record("entities: a later undo puts the pig back at the source and takes the copy away", back != null
+                    && back.isAlive() && pigs(r, source) == 1 && pigs(r, dest) == 0, pigs(r, source)
+                    + " at the source (the pig itself " + (back != null && back.isAlive()) + "), " + pigs(r, dest)
+                    + " at the destination (" + result.outcome() + ", " + result.skippedConflicts() + " conflicts)");
         });
+    }
+
+    private static int pigs(SelfTestRun r, Box box) {
+        return r.level.getEntitiesOfClass(Pig.class, aabb(box), Pig::isAlive).size();
     }
 
     // ================================================================== helpers

@@ -330,6 +330,10 @@ final class SelfTestRun {
         return job("undo", listener -> service.undo(player, ConflictPolicy.SKIP_CONFLICTS, listener));
     }
 
+    CompletableFuture<JobResult> redo() {
+        return job("redo", listener -> service.redo(player, ConflictPolicy.SKIP_CONFLICTS, listener));
+    }
+
     @FunctionalInterface
     interface Starter {
         JobTicket start(JobListener listener) throws EditRejected;

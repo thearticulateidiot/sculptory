@@ -393,6 +393,21 @@ public final class EntityNbt {
         return canonical(decoded);
     }
 
+    /**
+     * What an entity placed somewhere else as a copy of this one has in common with it: its data without who and where
+     * it is ({@link #snapshotData}) and without what the game or the platform changes by itself
+     * ({@link #withoutVolatile}), as canonical bytes; {@code null} when it does not decode. A move's copy has the form of
+     * the entity it was moved from, so an undo can pair them (a copy turned by the move, whose facing or rotation data
+     * turned with it, does not pair).
+     */
+    public static byte[] copyForm(byte[] nbt) {
+        try {
+            return canonical(withoutVolatile(snapshotData(decode(nbt))));
+        } catch (IOException undecodable) {
+            return null;
+        }
+    }
+
     /** A compound's bytes in canonical form (every compound's keys sorted). */
     public static byte[] canonical(NbtCompound entity) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(256);
