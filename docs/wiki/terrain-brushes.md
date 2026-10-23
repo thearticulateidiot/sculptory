@@ -36,6 +36,8 @@ Each press is one undo step (changing the radius or strength mid-press starts a 
 ## Tips
 
 - Surface Raise, Lower and Flatten reach 8 blocks past the radius along the way the surface faces, so a held Raise on a cliff grows a proper mound instead of a spike.
+- In Surface mode the face you aim at decides which way Raise and Lower work when it belongs to a wall: a side 3 or more blocks tall, however thin, even at its foot next to the floor. The sides of single blocks and of steps 1 or 2 blocks high count as ground, so a stroke over rough land keeps working the land.
+- Smooth keeps walls 3 or more blocks tall and slabs one block thick, with their ends and corners; a single block sitting on a wall still rounds off, as do bumps, spikes, pillars and ridges under 3 blocks. A diagonal wall one block thick is not protected.
 - A dashed ring means the brush is too big to preview on your side: the change shows a moment after the click.
 - To build up a slope, Raise with a low strength and a Smooth or Sphere falloff, then Smooth once over the whole thing.
 - The brushes need the `brush` [permission](permissions.md).

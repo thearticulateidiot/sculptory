@@ -44,6 +44,14 @@ loader (Fabric or NeoForge) on their client; everyone else joins with nothing in
   `/sculptory` command has `version` and, for admins, `fill`, `undo` and `redo` only (restart the server after
   editing `server.json`).
 
+### Fixed
+
+- **Surface mode on thin walls**: Raise and Lower work the side you aim at when it belongs to a wall 3 or more blocks
+  tall, however thin the wall and whatever it stands on (a wall one block thick, or one shorter than the brush, was
+  often worked from above). Single blocks and steps 1 or 2 blocks high still count as ground.
+- **Surface Smooth keeps thin walls and slabs**: walls 3 or more blocks tall and slabs one block thick keep their ends
+  and corners. A single block sitting on a wall, bumps, spikes, pillars and ridges under 3 blocks still smooth away.
+
 ### Changed
 
 - **Generate roads**: the ends of curved roads now follow the road's true end direction; straight roads round
