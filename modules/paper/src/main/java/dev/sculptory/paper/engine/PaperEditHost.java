@@ -78,6 +78,8 @@ public final class PaperEditHost {
     /** The crash-safe history hooks (set once by {@link #start}). */
     private HistorySaveHooks saveHooks;
     private PaperFluidTrails fluidTrails;
+    /** Builder mode's entity actions (set once by {@link #start}). */
+    private BuilderEntityListener builderEntities;
 
     private PaperEditHost(PaperEngine engine, EngineEditService<ServerPlayer, ServerLevel> service,
                           ServerClipboards<ServerPlayer, ServerLevel> clipboards,
@@ -119,6 +121,8 @@ public final class PaperEditHost {
                 engine.fluidTrails()), plugin);
         dev.sculptory.paper.perm.PermissionWatch.register(plugin, service, planning);
         org.bukkit.Bukkit.getPluginManager().registerEvents(new BuilderModeListener(service), plugin);
+        host.builderEntities = new BuilderEntityListener(service);
+        org.bukkit.Bukkit.getPluginManager().registerEvents(host.builderEntities, plugin);
         ServerNet.install(new NetFacade(service), clips, planning, service, engine.permissions(),
                 () -> engine.config().toLimits(), engine::states);
         LOG.info("Sculptory engine started on Paper ({} block states, editing {}, protection: {})", engine.states().size(),
@@ -152,6 +156,8 @@ public final class PaperEditHost {
                 // After the tick's announced fluid changes went into their trails (or failed to): the listener goes.
                 if (fluidTrails != null) fluidTrails.tickEnded();
             }
+            // The entity actions builder mode read this tick become history steps, before the service's tick.
+            if (builderEntities != null) builderEntities.tickEnded();
             service.tick();
             scatter.housekeeping();
             if (server.getTickCount() % INDEX_FLUSH_TICKS == 0) clipboards.flushSoon();

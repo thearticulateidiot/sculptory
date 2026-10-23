@@ -57,6 +57,10 @@ import java.util.function.Function;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.storage.LevelResource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -397,6 +401,40 @@ public final class EditServiceHost {
     public static int builderPowers(UUID player) {
         var service = current;
         return service == null ? 0 : service.builderPowersOf(player);
+    }
+
+    /** The running server's builder mode, or {@code null} before the engine started. */
+    private static BuilderService builder(ServerPlayer player) {
+        var service = current;
+        if (service == null || !runs(service, player.getServer())) return null;
+        return service.builderMode() instanceof BuilderService builder ? builder : null;
+    }
+
+    /**
+     * Builder mode: the use of an item frame, painting or armor stand item on a block, from
+     * {@code ServerPlayerInteractionManagerMixin} ({@link BuilderService#useEntityItem}); vanilla's own use without an
+     * engine.
+     */
+    public static InteractionResult builderEntityItem(ServerPlayer player, ItemStack stack, UseOnContext context) {
+        BuilderService builder = builder(player);
+        if (builder == null) return stack.useOn(context);
+        return builder.useEntityItem(player, context, stack::useOn);
+    }
+
+    /**
+     * Builder mode: a player's interaction packet with {@code target} is about to run ({@code BuilderInteractMixin});
+     * what to hand to {@link #afterEntityInteract}, or {@code null} when builder mode does not record it.
+     */
+    public static Object beforeEntityInteract(ServerPlayer player, Entity target) {
+        BuilderService builder = builder(player);
+        return builder == null ? null : builder.beforeInteract(player, target);
+    }
+
+    /** The interaction packet {@link #beforeEntityInteract} saw ran: what it changed becomes one history step. */
+    public static void afterEntityInteract(Object touch) {
+        if (!(touch instanceof BuilderService.EntityTouch entityTouch)) return;
+        BuilderService builder = builder(entityTouch.player());
+        if (builder != null) builder.afterInteract(entityTouch);
     }
 
     public static Optional<ServerScatter<ServerPlayer, ServerLevel>> findScatter(MinecraftServer server) {
