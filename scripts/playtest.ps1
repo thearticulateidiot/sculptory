@@ -296,7 +296,7 @@ if ($Tour) {
         Copy-WorldReadOnly $template (Join-Path $saves $checkWorld)
         $gradleArgs += "-PbsWorld=$checkWorld"
     } else {
-        $gradleArgs += '-PbsServer=localhost:25580'
+        $gradleArgs += '-PbsServer=127.0.0.1:25580'
     }
     # A new game directory gets the main checkout's game options: no tutorial, no onboarding.
     $options = Join-Path $clientDir 'options.txt'
@@ -355,7 +355,7 @@ if ($Tour) {
     if ($NoCaptions) { $gradleArgs += '-PbsDemoNoCaptions' }
     Write-Host "Demo into $DemoDir. Start recording, then press Enter in the game; close the game when it is over."
 } elseif ($Server) {
-    $gradleArgs += '-PbsServer=localhost:25580'
+    $gradleArgs += '-PbsServer=127.0.0.1:25580'
 } elseif (Test-Path -LiteralPath (Join-Path $clientDir "saves\$World")) {
     $gradleArgs += "-PbsWorld=$World"
 } else {
