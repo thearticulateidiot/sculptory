@@ -43,6 +43,21 @@ if (ciTag.startsWith('v') || (releaseProduct != null && !products.containsKey(re
             "${minecraft_version} (products: ${products.keySet()}), not ${ciTag}")
 }
 def releaseAll = providers.gradleProperty('release').map { it != 'false' }.getOrElse(false)
+// A release never carries a -dev version, neither the product's nor the engine's. The engine id is the engine version
+// alone in a release, so it is bumped for every product release that includes shared-code changes (CONTRIBUTING.md
+// "Versions and releases"); a -dev engine would let two releases from different commits show the same engine id.
+if (releaseAll || releaseProduct != null) {
+    def released = releaseAll ? products.keySet().toList() : [releaseProduct]
+    def versions = [engine: sculptory_engine_version.toString()] +
+            released.collectEntries { [(it): products[it].version.toString()] }
+    def devVersions = versions.findAll { name, version -> version =~ /-dev\b/ }
+    if (devVersions) {
+        throw new GradleException("A release build can't have a -dev version: " +
+                devVersions.collect { name, version -> "sculptory_${name}_version=${version}" }.join(', ') +
+                " in gradle.properties. Set the release version first" +
+                (releaseAll ? " (-Prelease makes a release build of every product)." : " (tag ${ciTag})."))
+    }
+}
 def commit = git(['rev-parse', '--short=8', 'HEAD'])
 def changes = git(['status', '--porcelain'])
 def commitMetadata = commit == null || commit.isEmpty() ? 'nogit' : commit + (changes ? '.dirty' : '')

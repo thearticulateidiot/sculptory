@@ -1,7 +1,11 @@
-# Release workflow, one product per run, for tags <product>/v<build id>: fabric/v0.5.0+1.21.1, neoforge/v0.5.0+1.21.1,
-# paper/v0.1.0+1.21.1 (the build id is the product's version plus the Minecraft version, gradle.properties):
+# Release workflow, one product per run, for tags <product>/v<build id>: fabric/v0.5.0+1.21.1,
+# neoforge/v0.5.0-beta+1.21.1, paper/v0.1.0-beta+1.21.1 (the build id is the product's version plus the Minecraft
+# version, gradle.properties). A -dev product or engine version is refused, and so is a suffix other than -alpha
+# (store type alpha), -beta or -rc (store type beta); a version without a suffix is a release.
 #   1. build:      the full check, then the product's release jar (sculptory-<product>-<build id>.jar, no commit
 #                  suffix);
+#   paper-selftest: the Paper plugin only: its self-test on a real Paper 1.21.1 server with the dev jar of the same
+#                  build (paper-selftest.yml, as CI runs it); every job below waits for it;
 #   2. github:     a GitHub Release titled "Sculptory for <Product> <build id>" (a pre-release for versions with a "-";
 #                  "Latest" only for the Fabric mod) with the jar and the CHANGELOG.md entry headed
 #                  "## <Product> <build id>";
@@ -113,9 +117,27 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME doesn't match gradle.properties (expected $product/v$declared)"
             exit 1
           fi
+          # The store version type: -alpha is alpha, -beta and -rc are beta (the stores have no "rc"), and a version
+          # without a suffix is a release. Anything else (a -dev version, an unknown suffix) is never released; the
+          # Gradle build refuses -dev product and engine versions too (root build.gradle).
+          engine="$(sed -n 's/^sculptory_engine_version=//p' gradle.properties)"
+          case "$engine" in
+            *-dev*)
+              echo "::error::sculptory_engine_version=$engine: a release never has a -dev engine (CONTRIBUTING.md \"Versions and releases\")"
+              exit 1
+              ;;
+          esac
           case "$version" in
+            *-dev*)
+              echo "::error::$version is a -dev version, which is never released"
+              exit 1
+              ;;
             *-alpha*) type=alpha ;;
-            *-beta*) type=beta ;;
+            *-beta* | *-rc*) type=beta ;;
+            *-*)
+              echo "::error::$version has a suffix the release knows no type for (use -alpha, -beta or -rc)"
+              exit 1
+              ;;
             *) type=release ;;
           esac
           echo "product=$product" >> "$GITHUB_OUTPUT"
@@ -173,8 +195,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  github:
+  # The Paper plugin only: its self-test on a real Paper server (paper-selftest.yml, as in CI), with the dev jar of the
+  # tagged build. Every publishing job below waits for it; a mod release skips it.
+  paper-selftest:
     needs: build
+    if: needs.build.outputs.product == 'paper'
+    uses: ./.github/workflows/paper-selftest.yml
+
+  github:
+    needs: [build, paper-selftest]
+    # Only when the build passed and the Paper self-test passed or was skipped (a mod release): without this, a job
+    # that needs a skipped job is skipped too.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.paper-selftest.result == 'success' || needs.paper-selftest.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -206,7 +238,10 @@ jobs:
   # (the mod project; Fabric and NeoForge versions are told apart by their loader) or MODRINTH_PAPER_PROJECT_ID (the
   # plugin project).
   modrinth:
-    needs: build
+    needs: [build, paper-selftest]
+    # Only when the build passed and the Paper self-test passed or was skipped (a mod release): without this, a job
+    # that needs a skipped job is skipped too.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.paper-selftest.result == 'success' || needs.paper-selftest.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -247,7 +282,10 @@ jobs:
   # CURSEFORGE_BUKKIT_PROJECT_ID (the plugin's "Bukkit Plugins" project). mc-publish 3.3.1 uploads to both kinds: for a
   # file whose loader matches no CurseForge mod loader it tries the Bukkit game versions first.
   curseforge:
-    needs: build
+    needs: [build, paper-selftest]
+    # Only when the build passed and the Paper self-test passed or was skipped (a mod release): without this, a job
+    # that needs a skipped job is skipped too.
+    if: ${{ !cancelled() && needs.build.result == 'success' && (needs.paper-selftest.result == 'success' || needs.paper-selftest.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -290,8 +328,8 @@ jobs:
   # JSON part and the jar as "files". Releases go to Hangar's "Release" channel, alpha and beta versions to "Snapshot"
   # (the two channels a new Hangar project starts with).
   hangar:
-    needs: build
-    if: needs.build.outputs.product == 'paper'
+    needs: [build, paper-selftest]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.build.outputs.product == 'paper' && needs.paper-selftest.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
