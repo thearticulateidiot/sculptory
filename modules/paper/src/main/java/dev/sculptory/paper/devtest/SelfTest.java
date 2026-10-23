@@ -79,6 +79,7 @@ public final class SelfTest {
                 new Group("entities", RegionChecks::entities),
                 new Group("biomes", RegionChecks::biomes),
                 new Group("entities (CraftBukkit keys)", EntityChecks::craftBukkitKeys),
+                new Group("entities (spawning and undo)", EntityChecks::spawning),
                 new Group("builder mode", BuilderChecks::run),
                 new Group("tinker", TinkerNavigateChecks::tinker),
                 new Group("navigate", TinkerNavigateChecks::navigate),

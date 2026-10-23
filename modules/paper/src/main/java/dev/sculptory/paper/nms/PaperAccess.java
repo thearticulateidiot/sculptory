@@ -190,6 +190,19 @@ public final class PaperAccess implements McInternals {
         return (Block) WALL_BLOCK.get(item);
     }
 
+    /**
+     * With the spawn reason {@code CUSTOM}, as WorldEdit and other plugins place entities: CraftBukkit then skips the
+     * server's spawn rules (no monsters on Peaceful or with spawn-monsters off, no animals or villagers with
+     * spawn-animals or spawn-npcs off), which Paper's default reason applies, so a paste or an undo places a zombie on a
+     * world where none may spawn, as on Fabric and NeoForge. The spawn events still fire (with that reason), so a
+     * protection or limiter plugin can still turn an entity away; EntityWriter then counts it as refused. A mob a
+     * Peaceful world does not keep still despawns on its next tick, as vanilla does with a summoned one.
+     */
+    @Override
+    public boolean addFreshEntityWithPassengers(ServerLevel world, net.minecraft.world.entity.Entity root) {
+        return world.tryAddFreshEntityWithPassengers(root, org.bukkit.event.entity.CreatureSpawnEvent.SpawnReason.CUSTOM);
+    }
+
     /** What a method handle threw, unchecked as the game threw it (an Error or RuntimeException goes on as it is). */
     private static RuntimeException rethrow(Throwable e) {
         if (e instanceof RuntimeException runtime) return runtime;
