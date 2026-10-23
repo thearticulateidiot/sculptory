@@ -52,13 +52,20 @@ No. Only players who edit need Sculptory on their client, speaking the same netw
 
 Operators of level 2 or higher, and the owner of a singleplayer world: see [Permissions](permissions.md).
 
+### Can I use LuckPerms?
+
+On Fabric and Paper, yes: the nodes are `sculptory.*`, see [Permissions](permissions.md). On NeoForge, not yet: no LuckPerms build for NeoForge 1.21.1 works (its 5.4 builds kick every player at login on NeoForge 21.1.264), and other permissions mods are untested there. Until one works, make the players who may edit operators.
+
 ### Will big edits lag the server?
 
 Edits get a fixed time per tick (10 ms by default) and spread over more ticks, so the tick rate holds.
 
 ### Does it respect claims and spawn protection?
 
-Yes: protected blocks are skipped, and a click there in builder mode is refused.
+Spawn protection and the world border, everywhere: protected blocks are skipped, and a click there in builder mode is refused. Claims depend on the server:
+
+- **Fabric and NeoForge:** claim mods that hook the game's own build check are respected the same way.
+- **Paper:** WorldGuard regions are respected by every edit. Other claim plugins (GriefPrevention, Lands, Towny, PlotSquared and the like) are **not** respected by bulk edits (fills, brushes, pastes, undo), which fire no block events, like WorldEdit's. Builder mode places and breaks by hand through the block events, so those plugins can refuse it. See [On Paper](server-setup.md#on-paper).
 
 ### Which file formats work?
 
@@ -66,14 +73,19 @@ Yes: protected blocks are skipped, and a click there in builder mode is refused.
 
 ### Is there a Paper, Forge or NeoForge version?
 
-NeoForge and Paper, yes, for Minecraft 1.21.1: the NeoForge mod works like the Fabric one, and the Paper plugin is the server side, with players editing through the mod for their loader. Both are coming soon as releases and can be built from source today. Fabric and NeoForge players can edit on each other's servers. Forge isn't there yet. See [Server setup](server-setup.md).
+NeoForge and Paper, yes, for Minecraft 1.21.1: the NeoForge mod works like the Fabric one, and the Paper plugin is the server side, with players editing through the mod for their loader. Both are coming soon as betas and can be built from source today. Fabric and NeoForge players can edit on each other's servers. Forge isn't there yet. See [Server setup](server-setup.md).
+
+### Does the Paper plugin run on Spigot, Purpur or Folia?
+
+It is made for Paper 1.21.1 and tested on build 133. On Spigot it doesn't load, since it needs Paper's own code. Folia refuses it: it isn't made for Folia's threads. On a Paper for another Minecraft version (1.21.2 or newer, say) the plugin refuses to enable and says why in the log. Paper forks such as Purpur are untested.
 
 ## Known limits
 
 Sculptory is a beta. The limits you are most likely to meet:
 
 - Minecraft 1.21.1 only, on Fabric, NeoForge and Paper (NeoForge and Paper built from source until their first releases): no Forge or other Minecraft versions yet.
-- On Paper, undo after a crash, undo of water and lava, builder mode's chain reactions and the commands differ a little from Fabric and NeoForge: see [Known limits on Paper](server-setup.md#known-limits-on-paper).
+- On Paper, undo after a crash, undo of water and lava, builder mode's chain reactions and the commands differ a little from Fabric and NeoForge: see [Known limits on Paper](server-setup.md#known-limits-on-paper). Claim plugins other than WorldGuard don't limit bulk edits there.
+- On NeoForge, permissions mods are untested (no LuckPerms for NeoForge 1.21.1 works yet): operators by default is the supported setup.
 - The server and every editing client need the same network protocol, and the same build to avoid a warning; see [Server setup](server-setup.md#updating).
 - Most of it is covered by automated tests, but two players editing at once, and Sodium and Iris, haven't been tried much in a real game yet. Keep backups of worlds you care about.
 - With an Iris shader pack on, ghost previews are drawn as outlines.

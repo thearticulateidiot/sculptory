@@ -14,7 +14,7 @@ Sculptory comes in three products, all for Minecraft: Java Edition 1.21.1 and Ja
 | Sculptory for NeoForge | Your game, and NeoForge servers | NeoForge 21.1.264 or newer |
 | Sculptory for Paper | Paper servers only (a plugin) | Paper 1.21.1; players edit with the Fabric or NeoForge mod |
 
-To edit in your own game you need the mod for your loader: Fabric or NeoForge. The Fabric mod is released; the NeoForge mod and the Paper plugin are coming soon and can be built from source today (the repository's README says how).
+To edit in your own game you need the mod for your loader: Fabric or NeoForge. The Fabric mod is released; the NeoForge mod and the Paper plugin are coming soon as betas and can be built from source today (the repository's README says how).
 
 ## Install
 
@@ -22,7 +22,7 @@ To edit in your own game you need the mod for your loader: Fabric or NeoForge. T
 2. Put the Sculptory jar for that loader in the profile's `mods` folder; on Fabric, Fabric API too.
 3. Start the game and open a world in Creative mode: you need Creative to fly, and flying is how you get around while editing.
 
-Download the jar from the project's releases on GitHub, Modrinth or CurseForge. To edit on a server, the server needs Sculptory too (the mod on Fabric or NeoForge, the plugin on Paper): see [Server setup](server-setup.md).
+Download the Fabric jar from the project's [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) or [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) (a Modrinth page follows). To edit on a server, the server needs Sculptory too (the mod on Fabric or NeoForge, the plugin on Paper): see [Server setup](server-setup.md).
 
 ## Your first edit
 

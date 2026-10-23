@@ -10,7 +10,7 @@ plugins {
 }
 
 // Versions and build ids (gradle.properties). The engine modules (core, protocol, server, common) carry the engine
-// version; each product module (fabric now; neoforge, paper and forge later) carries its own version plus the
+// version; each product module (fabric, neoforge, paper; forge later) carries its own version plus the
 // Minecraft version it is built for. A dev build adds the commit it was made from: 0.5.0-dev+1.21.1.6a043a85, with
 // ".dirty" when the checkout had uncommitted changes (new files git doesn't ignore included) and "nogit" where git or
 // the repository is missing. A release build is the version and the Minecraft version alone, 0.5.0+1.21.1: every
