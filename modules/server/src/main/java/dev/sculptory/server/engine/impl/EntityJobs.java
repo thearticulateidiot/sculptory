@@ -467,9 +467,10 @@ public final class EntityJobs {
      * move's source is put back whether or not the moved entity was found and removed (one that walked into a chunk
      * that is not loaded is then left as a duplicate: a known limit, never a loss).
      *
-     * <p>A target that cannot be put back (another plugin cancels its spawn, its data fails to load) is counted refused
-     * (or as a conflict), and what the step took away for it comes back instead, so the entity stays in the world and
-     * the entry stays undoable later:
+     * <p>A target that cannot be put back (another plugin cancels its spawn, its data fails to load, or it is an item
+     * frame or painting with nothing to hang on there any more, which the game would drop off with its item) is counted
+     * refused (or as a conflict), and what the step took away for it comes back instead, so the entity stays in the world
+     * and the entry stays undoable later:
      * <ul>
      *   <li>the entity of the same UUID the step replaced (a Tinker edit's, a place-then-change record's), as it
      *       was;</li>
@@ -551,7 +552,10 @@ public final class EntityJobs {
                 }
                 switch (EntityHistory.decide(step, live, policy, matcher)) {
                     case SKIP -> {}
-                    case CONFLICT -> ctx.conflicts++;
+                    case CONFLICT -> {
+                        ctx.conflicts++;
+                        if (entity != null) ctx.kept.add(step.id());
+                    }
                     case APPLY -> {
                         if (entity != null) {
                             if (!ctx.mayChange(ctx.world.cell(entity))) {
@@ -590,7 +594,14 @@ public final class EntityJobs {
                     return;
                 }
                 EntityPlacer.Spawn<E> spawn = ctx.writer.restore(step.target(), ctx::mayPlace);
-                if (spawn.entity() != null) return;
+                E placed = spawn.entity();
+                if (placed != null && ctx.world.supportLoaded(placed) && ctx.world.hangsUnsupported(placed)) {
+                    // Its wall went since the step (a later edit, or one this job did not undo): the game would drop it
+                    // off with its item at its next check, so it is not put back.
+                    ctx.writer.takeBack(placed, "it has nothing to hang on there any more");
+                    placed = null;
+                }
+                if (placed != null) return;
                 if (spawn.refused()) {
                     ctx.protectedEntities++;
                 } else {

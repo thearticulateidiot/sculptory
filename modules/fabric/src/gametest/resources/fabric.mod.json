@@ -58,6 +58,7 @@
       "dev.sculptory.mc.gametest.MixPatternGameTest",
       "dev.sculptory.mc.gametest.TinkerGameTest",
       "dev.sculptory.mc.gametest.BuilderModeGameTest",
+      "dev.sculptory.mc.gametest.HangingEntitiesGameTest",
       "dev.sculptory.mc.gametest.BrushWorldEdgesGameTest",
       "dev.sculptory.mc.gametest.ToolLabelGameTest",
       "dev.sculptory.mc.gametest.MaskGameTest",

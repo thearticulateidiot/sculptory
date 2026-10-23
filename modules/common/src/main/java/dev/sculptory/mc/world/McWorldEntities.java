@@ -74,6 +74,21 @@ public final class McWorldEntities implements WorldEntities<Entity> {
     }
 
     @Override
+    public boolean hangsUnsupported(Entity entity) {
+        return McEntities.hangsUnsupported(entity);
+    }
+
+    @Override
+    public boolean supportLoaded(Entity entity) {
+        return McEntities.supportLoaded(entity);
+    }
+
+    @Override
+    public dev.sculptory.core.Box supportBox(Entity entity) {
+        return McEntities.supportBox(entity);
+    }
+
+    @Override
     public int takenCount(Entity entity, EntityFilter filter) {
         return McEntities.takenCount(entity, filter);
     }

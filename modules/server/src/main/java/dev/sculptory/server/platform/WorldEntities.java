@@ -1,6 +1,7 @@
 package dev.sculptory.server.platform;
 
 import dev.sculptory.core.BlockPos;
+import dev.sculptory.core.Box;
 import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.history.EntityState;
@@ -51,6 +52,29 @@ public interface WorldEntities<E> {
 
     /** The block holding the entity's position. */
     BlockPos blockPos(E entity);
+
+    /**
+     * Whether {@code entity} hangs on a block (an item frame, a painting) and would not stay where it is now: its wall is
+     * gone or its own space is filled. The game drops such an entity off, with its item, at its next check; an edit that
+     * took the support takes the entity along instead. Leash knots are left to the game (removing one drops the lead of
+     * the mob tied to it anyway).
+     */
+    boolean hangsUnsupported(E entity);
+
+    /**
+     * Whether every chunk holding a block {@code entity} stands in or hangs on is fully loaded, so
+     * {@link #hangsUnsupported} can be asked without loading one (the game's own test reads those blocks). An entity
+     * whose support is not all loaded is left to the game.
+     */
+    boolean supportLoaded(E entity);
+
+    /**
+     * The blocks {@code entity}'s box lies in and, for an item frame or painting, the wall blocks right behind them
+     * (the box moved one block away from its face): the blocks whose change takes its support away. Once an edit writes
+     * none of them again, it cannot give the entity its support back. Not every block the game's collision test reads
+     * ({@link #supportLoaded} looks one block further).
+     */
+    Box supportBox(E entity);
 
     /** How many entities taking {@code entity} with {@code filter} takes: itself and the passengers the filter takes. */
     int takenCount(E entity, EntityFilter filter);

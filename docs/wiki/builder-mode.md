@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Build faster](home.md#build-faster)
 
-Builder mode is for building block by block in normal creative play, with a few powers switched on: reach 64 blocks, place into the air, sweep blocks away, mirror what you do. Use it when the editor is too much for the job and vanilla is too little. While a power is on, every click goes into the editor's history, so `Ctrl+Z` takes it back.
+Builder mode is for building block by block in normal creative play, with a few powers switched on: reach 64 blocks, place into the air, sweep blocks away, mirror what you do. Use it when the editor is too much for the job and vanilla is too little. While a power is on, every click goes into the editor's history, so `Ctrl+Z` takes it back: blocks placed and broken, and item frames, paintings and armor stands hung, placed, filled, dressed or broken.
 
 ![The ring of powers over the world, shown while G is held](images/builder-mode-ring.png)
 
@@ -25,7 +25,7 @@ Powers that are on show as small tags above the hotbar. With no power on, the ga
 | Bulldozer | Hold left-click and sweep: every block the crosshair crosses goes, as one undo step. Hold `Shift` as you start to take only the first block's kind |
 | Keep shape | Neighbours stay as they are: fences don't join, stairs don't turn, water doesn't flow |
 | Force place | Place where the game refuses: a torch on glass, a flower on stone |
-| Mirror | Repeats every placement and break under the editor's symmetry: set the centre with `M` in the editor and a Symmetry mode in the Place tool's settings, or the click happens unmirrored with a hint |
+| Mirror | Repeats every block placement and break under the editor's symmetry (not frames, paintings or armor stands): set the centre with `M` in the editor and a Symmetry mode in the Place tool's settings, or the click happens unmirrored with a hint |
 | Tinker | Hold `Alt` to aim: `Alt+Scroll` changes the shown property, `Alt+Shift+Scroll` picks another, `Alt+left-click` opens a small panel. Sign text, poses and the rest need the editor's [Tinker](tinker.md) tool |
 
 ## Undo outside the editor
@@ -38,7 +38,9 @@ Powers that are on show as small tags above the hotbar. With no power on, the ga
 - Spawn protection, claims and areas an edit is working on refuse the click; the reason shows above the hotbar. A block whose other half would land there (a bed's head) is refused whole.
 - The server allows about 100 blocks a second. Beyond that a click is refused with "Slow down", and a sweep leaves those blocks standing.
 - Command, structure and jigsaw blocks stay with operators, Force place or not.
-- A bucket, bone meal, flint and steel or a spawn egg works as in vanilla and can't be undone. Mobs and frames that drop when a block goes aren't put back by undo.
+- A bucket, bone meal, flint and steel, a spawn egg, a boat or a minecart works as in vanilla and can't be undone. Item frames, paintings and armor stands are the only entities builder mode records.
+- Putting an item in a frame, dressing an armor stand or punching one works wherever vanilla lets you (reach and the mask don't apply; claims do as in vanilla), and its undo checks protection again. On Fabric and NeoForge an armor stand knocked down by a sweeping attack aimed at something else is not recorded.
+- An item frame or painting whose wall a click breaks goes into that click's step instead of dropping off, and comes back with its item when you undo it. The same holds for any edit, and for undo: see [History](history.md#frames-and-paintings).
 
 ## Related
 

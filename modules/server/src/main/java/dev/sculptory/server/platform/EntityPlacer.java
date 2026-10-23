@@ -44,6 +44,14 @@ public interface EntityPlacer<E> {
     void takeBack(E root);
 
     /**
+     * {@link #takeBack(Object)} for another reason, which the failure's log line names: an undo or redo put back a
+     * hanging entity where it cannot hang any more.
+     */
+    default void takeBack(E root, String why) {
+        takeBack(root);
+    }
+
+    /**
      * Removes {@code root} and the passengers whose UUIDs {@code recorded} names (what a step took along or placed with
      * it); other riders, players always, are dismounted and stay.
      */

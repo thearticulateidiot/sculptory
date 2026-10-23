@@ -262,9 +262,13 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         return add(root, state.typeId(), count);
     }
 
-    /** Whether {@code entity} would last where it stands: a hanging one on its wall, a living one not inside a wall. */
+    /**
+     * Whether {@code entity} would last where it stands: a hanging one on its wall, a living one not inside a wall. A
+     * hanging one whose wall lies in a chunk not fully loaded is taken to last: asking would load the chunk, and the game
+     * decides once it is loaded.
+     */
     private static boolean lasts(Entity entity) {
-        if (entity instanceof BlockAttachedEntity hanging) return hanging.survives();
+        if (entity instanceof BlockAttachedEntity hanging) return !McEntities.supportLoaded(hanging) || hanging.survives();
         return !(entity instanceof net.minecraft.world.entity.LivingEntity) || !entity.isInWall();
     }
 
@@ -310,12 +314,17 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      */
     @Override
     public void takeBack(Entity root) {
+        takeBack(root, "history could not record it");
+    }
+
+    @Override
+    public void takeBack(Entity root, String why) {
         for (Entity rider : root.getIndirectPassengers()) {
             if (!rider.isAlwaysTicking()) rider.discard();
         }
         root.discard();
         placed--;
-        failed(McEntities.typeId(root), "history could not record it");
+        failed(McEntities.typeId(root), why);
     }
 
     /** Leaves out passengers of a kind that is never placed (with their own riders), each counted as a failure. */

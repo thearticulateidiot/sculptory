@@ -127,6 +127,8 @@ def commonMixinsOnPaper = [
         'AbstractBlockStateMixin.java'            : 'PaperAccess.setBlockWithoutCallbacks (the BlockWriter patch)',
         'BlockItemInvoker.java'                   : 'PaperAccess (McInternals)',
         'BuilderCaptureMixin.java'                : 'PaperBuilderSteps',
+        'BuilderEntityCaptureMixin.java'          : 'BuilderEntityListener (the place events)',
+        'BuilderInteractMixin.java'               : 'BuilderEntityListener (the interact and damage events)',
         'EntityChunkDataAccessMixin.java'         : 'HistorySaveHooks',
         'FluidTrailBlockChangeMixin.java'         : 'PaperFluidTrails',
         'FluidTrailChunkDataMixin.java'           : 'PaperFluidTrails',
@@ -134,7 +136,7 @@ def commonMixinsOnPaper = [
         'LightBatchMixin.java'                    : 'the LightBatch stand-in (src/commonReplacements)',
         'PlayerManagerMixin.java'                 : 'PermissionWatch',
         'ServerChunkLoadingManagerMixin.java'     : 'HistorySaveHooks',
-        'ServerPlayerInteractionManagerMixin.java': 'BuilderModeListener',
+        'ServerPlayerInteractionManagerMixin.java': 'BuilderModeListener and BuilderEntityListener',
         'VerticallyAttachableBlockItemAccessor.java': 'PaperAccess (McInternals)',
 ]
 // Known detail, not patched: ClientSync and ServerNet resend whole chunks with the four-argument

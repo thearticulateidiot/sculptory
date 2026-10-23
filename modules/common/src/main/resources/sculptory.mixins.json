@@ -3,9 +3,9 @@
   "minVersion": "0.8",
   "package": "dev.sculptory.mc.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": ["AbstractBlockStateMixin", "BlockItemInvoker", "BuilderCaptureMixin", "EntityChunkDataAccessMixin",
-    "FluidTrailBlockChangeMixin", "FluidTrailChunkDataMixin", "FluidTrailTickMixin", "LightBatchMixin",
-    "PlayerManagerMixin", "ServerChunkLoadingManagerMixin", "ServerPlayerInteractionManagerMixin",
-    "VerticallyAttachableBlockItemAccessor"],
+  "mixins": ["AbstractBlockStateMixin", "BlockItemInvoker", "BuilderCaptureMixin", "BuilderEntityCaptureMixin",
+    "BuilderInteractMixin", "EntityChunkDataAccessMixin", "FluidTrailBlockChangeMixin", "FluidTrailChunkDataMixin",
+    "FluidTrailTickMixin", "LightBatchMixin", "PlayerManagerMixin", "ServerChunkLoadingManagerMixin",
+    "ServerPlayerInteractionManagerMixin", "VerticallyAttachableBlockItemAccessor"],
   "injectors": { "defaultRequire": 1 }
 }

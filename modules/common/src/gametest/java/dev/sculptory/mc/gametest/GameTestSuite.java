@@ -76,6 +76,7 @@ public final class GameTestSuite {
             MixPatternGameTest.class,
             TinkerGameTest.class,
             BuilderModeGameTest.class,
+            HangingEntitiesGameTest.class,
             BrushWorldEdgesGameTest.class,
             ToolLabelGameTest.class,
             MaskGameTest.class,

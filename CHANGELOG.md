@@ -22,7 +22,21 @@ the notes from that heading down to the next `## ` heading or planned section, a
 For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.4.0-beta. Network protocol 6,
 like 0.4.0-beta: the two work together, with one difference (below).
 
+#### New
+
+- **Item frames, paintings and armor stands in builder mode's history**: with a builder power on, hanging a frame or
+  a painting, placing an armor stand, putting an item in a frame (or turning it), dressing a stand and breaking any
+  of them are each one step ("Place · item frame", "Change · armor stand", "Break · painting"), undone and redone
+  like a block. Where builder mode would refuse a block (out of reach, protected, outside the mask) nothing is placed.
+  Mirror does not copy them.
+
 #### Fixed
+
+- **Frames and paintings no longer drop off when their wall goes**: an edit that takes away the block an item frame
+  or painting hangs on (a fill, a brush, a paste, a builder-mode break) takes the frame into its step, and its undo
+  hangs it back with its item. Undoing the step that built a wall takes along the frames hung on it since, and redo
+  hangs them again, also after a restart. Before, the game dropped them off with their items and nothing brought
+  them back.
 
 - **Surface mode on thin walls**: Raise and Lower work the side you aim at when it belongs to a wall 3 or more blocks
   tall, however thin the wall and whatever it stands on (a wall one block thick, or one shorter than the brush, was

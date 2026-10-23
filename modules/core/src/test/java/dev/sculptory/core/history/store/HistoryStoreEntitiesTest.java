@@ -3,6 +3,7 @@ package dev.sculptory.core.history.store;
 import static dev.sculptory.core.history.store.StoreTestSupport.AIR;
 import static dev.sculptory.core.history.store.StoreTestSupport.DATA_VERSION;
 import static dev.sculptory.core.history.store.StoreTestSupport.STONE;
+import static dev.sculptory.core.history.store.StoreTestSupport.assertSameBuffer;
 import static dev.sculptory.core.history.store.StoreTestSupport.assertSameRecord;
 import static dev.sculptory.core.history.store.StoreTestSupport.await;
 import static dev.sculptory.core.history.store.StoreTestSupport.close;
@@ -126,6 +127,42 @@ class HistoryStoreEntitiesTest {
         HistoryStore.Loaded loaded = load(reopened, ALICE);
         assertEquals(List.of(new EntityChange(kept, null, last)), loaded.entries().get(0).record().entities());
         close(reopened);
+    }
+
+    /**
+     * An entry amended after it was pushed and undone (a frame its undo took along): the later batch and the new seal
+     * go after the entry's undo mark, and after a restart the entry reads back amended, still undone, with its size from
+     * the last seal. A later batch with neither side cancels the entity's change.
+     */
+    @Test
+    void anAmendmentAfterThePushSurvivesARestart() throws IOException {
+        HistoryStore store = open(dir);
+        HistoryEntry wall = entry(ALICE, "Place · 4 blocks", sparse(7), 5);
+        journal(store, wall);
+        store.undone(ALICE, wall.id());
+        UUID frame = UUID.randomUUID(), other = UUID.randomUUID();
+        EntityState hung = state(frame, "minecraft:item_frame", 1.5, "on the wall");
+        EntityState painting = state(other, "minecraft:painting", 2.5, "beside it");
+        store.entities(ALICE, wall.id(), List.of(new EntityChange(frame, null, hung)));
+        store.entities(ALICE, wall.id(), List.of(new EntityChange(other, null, painting)));
+        store.seal(ALICE, wall.id(), wall.label(), wall.createdMillis(), 4242);
+        close(store);
+
+        HistoryStore reopened = open(dir);
+        HistoryStore.Loaded loaded = load(reopened, ALICE);
+        assertEquals(1, loaded.entries().size(), loaded.problems().toString());
+        assertEquals(0, loaded.applied(), "still undone");
+        assertEquals(List.of(new EntityChange(frame, null, hung), new EntityChange(other, null, painting)),
+                loaded.entries().get(0).record().entities());
+        assertSameBuffer(wall.record().before(), loaded.entries().get(0).record().before());
+        assertEquals(4242, loaded.entries().get(0).bytes(), "the size of the last seal");
+        // The painting's amendment cancelled again (its redo found it gone, say): it drops out.
+        reopened.entities(ALICE, wall.id(), List.of(new EntityChange(other, null, null)));
+        close(reopened);
+        HistoryStore again = open(dir);
+        HistoryStore.Loaded cancelled = load(again, ALICE);
+        assertEquals(List.of(new EntityChange(frame, null, hung)), cancelled.entries().get(0).record().entities());
+        close(again);
     }
 
     /** Compaction copies entity records (and the flag); dropping every entity entry drops the flag. */

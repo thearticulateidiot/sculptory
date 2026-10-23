@@ -3,16 +3,23 @@ package dev.sculptory.mc.engine.impl;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.history.EditRecord;
+import dev.sculptory.core.history.EntityChange;
+import dev.sculptory.core.history.EntityMatcher;
+import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.core.mask.BoundMask;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.mc.builder.BuilderChange;
+import dev.sculptory.mc.builder.BuilderEntityCapture;
 import dev.sculptory.mc.builder.BuilderPlacement;
 import dev.sculptory.mc.builder.BuilderPlacementContext;
 import dev.sculptory.mc.builder.BuilderSteps;
+import dev.sculptory.mc.world.EntityWriter;
+import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.mc.world.McTile;
+import dev.sculptory.mc.world.McWorldEntities;
 import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.protocol.v2.BuilderPower;
@@ -28,9 +35,13 @@ import dev.sculptory.server.engine.impl.BuilderMode;
 import dev.sculptory.server.engine.impl.EditExecutor;
 import dev.sculptory.server.engine.impl.EditMasks;
 import dev.sculptory.server.engine.impl.EngineEditService;
+import dev.sculptory.server.engine.impl.HangingSupport;
 import dev.sculptory.server.engine.impl.HistoryService;
+import dev.sculptory.server.engine.impl.PermitSource;
+import dev.sculptory.server.engine.impl.RecordSink;
 import dev.sculptory.server.platform.FluidTrailHook;
 import dev.sculptory.server.platform.PlatformPermissions;
+import dev.sculptory.server.platform.WriteOptions;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,6 +51,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import net.minecraft.core.BlockPos;
@@ -50,11 +62,18 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.Clearable;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.HangingEntity;
+import net.minecraft.world.item.ArmorStandItem;
+import net.minecraft.world.item.HangingEntityItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
+import net.minecraft.world.item.context.UseOnContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.GameMasterBlock;
@@ -101,6 +120,14 @@ import org.slf4j.LoggerFactory;
  * drag is open its record is an edit in progress for the history: saved as it grows and before its chunks are saved, and
  * undo waits for it. Actions go after the player's brush strokes in the history ({@code commitStroke}); one refused
  * because a large stroke is still being written is {@link Refusal#BUSY}.
+ *
+ * <p><b>Entities.</b> Item frames, paintings and armor stands the player hangs, places, changes (an item put in, a stand
+ * dressed) or breaks with a power on are steps of entity changes only ("Place · item frame", "Change · armor stand",
+ * "Break · painting"), through the platform's hooks into the game's own actions ({@link #useEntityItem},
+ * {@link #beforeInteract} and {@link #afterInteract} on the loaders, events on Paper, all ending in
+ * {@link #pushEntities}); a placement is refused where a block would be ({@link #entityPlacementRefusal}). Mirror
+ * copies none of them. Every action also takes along the item frames and paintings its changes left with nothing to
+ * hang on ({@code HangingSupport}), into its own record.
  *
  * <p><b>Long reach</b> adds a transient modifier ({@value #LONG_REACH_PATH}) that raises the player's block interaction
  * range to 64 while the player holds the power and may use builder mode, so vanilla's aiming, outline and interactions
@@ -342,6 +369,7 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         }
         int changed = record(world, record, changes, keepShape).changed();
         if (changed > 0) {
+            sweepSupports(p, world, record, changes);
             String label = replace ? "Replace" : "Place";
             push(history.session(p.getUUID()), runtime.worldId(world), label, record);
         }
@@ -503,6 +531,7 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
             return BuilderOutcome.refused(secondary.refusal(), secondary.pos().toShortString());
         }
         Finished finished = record(world, drag.record, changes, keepShape);
+        if (sweepSupports(p, world, drag.record, changes) > 0) history.saveEntities(drag.open);
         if (finished.fluid() && !drag.frozen) {
             // Water a broken waterlogged block left stays put until the drag's entry is pushed, so it never flows into a
             // cell a later break of the drag takes (the record would take that water as the cell's first state).
@@ -515,6 +544,167 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         // Nothing broken: the refusal of the first cell tells why (a drag sweeping air says nothing).
         if (changed == 0 && first != null) return BuilderOutcome.refused(first, "");
         return BuilderOutcome.done(changed, skipped);
+    }
+
+    // ================================================================== entities
+
+    /**
+     * Whether builder mode records what the player does to entities now: a power on, and builder mode allowed (the
+     * nodes, editing enabled, Creative), as for its block actions.
+     */
+    public boolean recordsEntities(ServerPlayer p) {
+        return powersOf(p.getUUID()) != 0 && gate(p) == null;
+    }
+
+    /** Whether builder mode records actions on {@code entity}: an item frame, a painting or an armor stand. */
+    public static boolean recordedKind(Entity entity) {
+        return entity instanceof HangingEntity || entity instanceof ArmorStand;
+    }
+
+    /**
+     * Why builder mode refuses to put an entity into {@code cell} (the space an item frame or painting hangs in, the
+     * block an armor stand stands in), as it would refuse a block there: out of reach, outside the world, not loaded,
+     * protected, held by a job, rejected by the global mask (or the mask refused), or over the block budget (no token
+     * left; the token is spent only once the entity is placed: {@link #chargePlacement}). {@code null} when it may.
+     */
+    public Refusal entityPlacementRefusal(ServerPlayer p, ServerLevel world, BlockPos cell) {
+        if (!withinReach(p, cell)) return Refusal.OUT_OF_REACH;
+        Refusal blocked = writable(p, world, cell);
+        if (blocked != null) return blocked;
+        BoundMask mask = mask(p);
+        if (mask == null) return Refusal.INVALID;
+        if (!mask.acceptsAll()) {
+            McWorldReader reader = runtime.reader(world);
+            if (!mask.test(cell.getX(), cell.getY(), cell.getZ(), reader.get(cell.getX(), cell.getY(), cell.getZ()),
+                    reader)) {
+                return Refusal.MASKED;
+            }
+        }
+        if (budget(state(p)).available() < 1) return Refusal.RATE_LIMITED;
+        return null;
+    }
+
+    /** An entity the player placed in builder mode spends one token of their block budget, as a block does. */
+    public void chargePlacement(ServerPlayer p) {
+        budget(state(p)).tryAcquire(1);
+    }
+
+    /**
+     * The use of an item frame, painting or armor stand item on a block while builder mode records the player's
+     * actions ({@link #recordsEntities}), from the platform's hook into the game's item use ({@code vanilla} is the
+     * game's own use): where builder mode would refuse a block ({@link #entityPlacementRefusal}) nothing is placed
+     * ({@code CONSUME}) and nothing recorded; otherwise the game's own use runs, and the entity it spawned is one history
+     * entry, "Place · item frame". Another item, or a player builder mode does not record, gets the game's use alone.
+     * With Mirror on only the entity the player placed is recorded: builder mode mirrors no entity actions.
+     */
+    public InteractionResult useEntityItem(ServerPlayer p, UseOnContext context,
+                                           Function<UseOnContext, InteractionResult> vanilla) {
+        ItemStack stack = context.getItemInHand();
+        boolean hanging = stack.getItem() instanceof HangingEntityItem;
+        if ((!hanging && !(stack.getItem() instanceof ArmorStandItem)) || !recordsEntities(p)) {
+            return vanilla.apply(context);
+        }
+        ServerLevel world = p.serverLevel();
+        BlockPos cell = hanging ? context.getClickedPos().relative(context.getClickedFace())
+                : new BlockPlaceContext(context).getClickedPos();
+        Refusal refused = entityPlacementRefusal(p, world, cell);
+        if (refused != null) {
+            LOG.debug("Sculptory: builder mode refused a {} at {}: {}", stack.getItem(), cell.toShortString(), refused);
+            return InteractionResult.CONSUME;
+        }
+        beginEntityAction(p);
+        BuilderEntityCapture capture = BuilderEntityCapture.open(world);
+        if (capture == null) return vanilla.apply(context); // nested in another capture: not recorded
+        InteractionResult result;
+        List<Entity> spawned;
+        try (capture) {
+            result = vanilla.apply(context);
+            spawned = capture.entities();
+        }
+        List<EntityChange> changes = new ArrayList<>();
+        String name = null;
+        for (Entity entity : spawned) {
+            if (entity.isRemoved() || entity.isPassenger() || !recordedKind(entity)) continue;
+            EntityState after = EntityWriter.live(entity);
+            if (after == null) {
+                // History could not keep it: nothing undo does not know about stays.
+                LOG.warn("Sculptory: a {} placed in builder mode cannot be recorded for undo and is taken away",
+                        McEntities.typeId(entity));
+                entity.discard();
+                continue;
+            }
+            changes.add(new EntityChange(entity.getUUID(), null, after));
+            if (name == null) name = name(entity);
+        }
+        if (!changes.isEmpty()) {
+            chargePlacement(p);
+            pushEntities(p, world, "Place · " + name, changes);
+        }
+        return result;
+    }
+
+    /**
+     * What an entity was before a player's interaction with it (a right-click or a punch), while builder mode records it
+     * ({@link #beforeInteract}).
+     */
+    public record EntityTouch(ServerPlayer player, Entity entity, EntityState before) {}
+
+    /**
+     * A player's interaction with {@code target} is about to run: an item frame, painting or armor stand, while builder
+     * mode records the player's actions, is read as it is. {@code null} when there is nothing to record.
+     */
+    public EntityTouch beforeInteract(ServerPlayer p, Entity target) {
+        if (target == null || target.isRemoved() || target.isPassenger() || !recordedKind(target)
+                || !recordsEntities(p)) {
+            return null;
+        }
+        EntityState before = EntityWriter.live(target);
+        if (before == null) return null;
+        return new EntityTouch(p, target, before);
+    }
+
+    /**
+     * The interaction {@link #beforeInteract} saw ran: if it changed the entity (an item put in, taken out or turned, a
+     * stand dressed) that is one history entry, "Change · item frame"; if it removed it (a frame or painting punched, a
+     * stand broken in Creative), "Break · painting". Where and how it looks counts (the comparison is the history's
+     * own, with where the entity stands); its own ticking cannot have changed it in between.
+     */
+    public void afterInteract(EntityTouch touch) {
+        Entity entity = touch.entity();
+        EntityState after = entity.isRemoved() ? null : EntityWriter.live(entity);
+        if (!entity.isRemoved() && after == null) return; // too large to record now: nothing to compare
+        if (after != null && EntityMatcher.ignoringVolatile().placementAware().matches(touch.before(), after)) return;
+        String verb = after == null ? "Break" : "Change";
+        pushEntities(touch.player(), (ServerLevel) entity.level(), verb + " · " + name(entity),
+                List.of(new EntityChange(entity.getUUID(), touch.before(), after)));
+    }
+
+    /**
+     * The history order before an entity action: the player's open drag becomes its entry, their queued brush work runs
+     * first (one still being written leaves the entity's entry after what is written so far).
+     */
+    private void beginEntityAction(ServerPlayer p) {
+        closeDrag(p.getUUID(), true);
+        followStrokes(p);
+    }
+
+    /**
+     * One history entry of entity changes only (no cells), as Tinker's entity edits are, after the player's open drag
+     * and queued brush work ({@link #beginEntityAction}); it is journaled and deferred behind an undo or redo in flight
+     * like any other push. Builder mode on platforms whose hooks are events (Paper) pushes through this too.
+     */
+    public void pushEntities(ServerPlayer p, ServerLevel world, String label, List<EntityChange> changes) {
+        EditRecord record = new EditRecord(new dev.sculptory.core.buffer.BlockBuffer(),
+                new dev.sculptory.core.buffer.BlockBuffer(), changes);
+        if (record.isEmpty()) return;
+        beginEntityAction(p);
+        history.push(history.session(p.getUUID()), new HistoryEntry(UUID.randomUUID(), p.getUUID(),
+                runtime.worldId(world), label, record, edits.createdMillis()));
+    }
+
+    /** "item frame", "glow item frame", "painting", "armor stand": the entity type's name, as a label says it. */
+    public static String name(Entity entity) {
+        return entity.getType().getDescription().getString().toLowerCase(java.util.Locale.ROOT);
     }
 
     @Override
@@ -579,8 +769,8 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         if (drag.frozen) trails.thaw(drag.record.id());
         EditRecord record = drag.record.build();
         HistoryEntry entry = !push || record.before().isEmpty() ? null : new HistoryEntry(drag.record.id(),
-                drag.session.player(), drag.worldId, drag.label + " · " + EngineEditService.blocks(record.before().cellCount()),
-                record, edits.createdMillis());
+                drag.session.player(), drag.worldId, drag.label + EngineEditService.contents(record), record,
+                edits.createdMillis());
         history.editFinished(drag.session, entry, drag.open);
     }
 
@@ -609,7 +799,27 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         EditRecord record = builder.build();
         if (record.before().isEmpty()) return;
         history.push(session, new HistoryEntry(builder.id(), session.player(), worldId,
-                label + " · " + EngineEditService.blocks(record.before().cellCount()), record, edits.createdMillis()));
+                label + EngineEditService.contents(record), record, edits.createdMillis()));
+    }
+
+    /**
+     * After an action: the item frames and paintings its changes left with nothing to hang on (their wall broken, their
+     * space filled) are taken along into {@code record} ({@link HangingSupport}), so the action's undo brings them back
+     * once their walls are back, instead of the game dropping them off with their items. Returns how many it took.
+     */
+    private long sweepSupports(ServerPlayer p, ServerLevel world, RecordBuilder record, List<BuilderChange> changes) {
+        if (changes.isEmpty()) return 0;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet sections = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (BuilderChange change : changes) {
+            BlockPos pos = change.pos();
+            sections.add(HangingSupport.sectionOf(pos.getX(), pos.getY(), pos.getZ()));
+        }
+        HangingSupport.Result swept = HangingSupport.sweep(new McWorldEntities(world), WriteOptions.DEFAULT,
+                PermitSource.forPlayer(permissions, p, world, HangingSupport.permitBounds(sections)),
+                (x, y, z) -> WorldChecks.insideBorder(world.getWorldBorder(), x, z)
+                        && WorldChecks.inBuildLimit(world, x, y, z),
+                RecordSink.into(record), sections);
+        return swept.removed();
     }
 
     /** What an action changed: the cells, and whether any of them now holds fluid marked as the entry's. */

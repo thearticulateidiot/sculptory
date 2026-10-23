@@ -39,8 +39,10 @@ import dev.sculptory.core.history.BiomeChanges;
 import dev.sculptory.core.history.BiomeHistory;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.history.EditRecord;
+import dev.sculptory.core.history.EntityChange;
 import dev.sculptory.core.history.EntityHistory;
 import dev.sculptory.core.history.EntityMatcher;
+import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.HistoryLimits;
 import dev.sculptory.core.history.HistoryPrograms;
@@ -86,6 +88,7 @@ import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.SanitizedTile;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -102,6 +105,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.function.Predicate;
@@ -1594,10 +1598,12 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         JobListener downstream = listener != null ? listener : listeners.apply(p);
         TrackedJob job = new TrackedJob(runtime.id(p), runtime.name(p), program.label(), downstream, program,
                 null, entry.world(), session, op, EnumSet.of(Perm.USE));
-        // Fluid the step puts where there was none (a drain's water an undo puts back) is followed as the entry's.
+        // Fluid the step puts where there was none (a drain's water an undo puts back) is followed as the entry's. An
+        // item frame or painting the step's writes leave with nothing to hang on is taken along into the entry.
         UUID id = entry.id();
+        RecordSink amending = amending(session, (entity, state) -> id, op == HistoryService.Op.UNDO);
         JobRequest<W> request = JobRequest.forPlayer(runtime, p, program, new RunOptions(false, policy), job,
-                trails.stepMarking(RecordSink.NONE, world, (x, y, z) -> id));
+                trails.stepMarking(amending, world, (x, y, z) -> id));
         if (request.world() != world) {
             Box bounds = program.bounds();
             request = new JobRequest<>(request.owner(), world, program, request.writeOptions(),
@@ -1690,7 +1696,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                 null, worldId, session, op, EnumSet.of(Perm.USE));
         job.overwrite = true;
         // A cell belongs to the entry whose target it gets: the last of the run that records it (HistoryPrograms).
-        RecordSink marks = trails.stepMarking(RecordSink.NONE, world, (x, y, z) -> {
+        RecordSink amending = amending(session, (entity, state) -> amendedEntry(run, entity, state), !redo);
+        RecordSink marks = trails.stepMarking(amending, world, (x, y, z) -> {
             for (int i = run.size() - 1; i >= 0; i--) {
                 if (run.get(i).record().before().has(x, y, z)) return run.get(i).id();
             }
@@ -1714,6 +1721,58 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             request = request.withBiomes(BiomeJobs.history(biomeSteps, ConflictPolicy.OVERWRITE));
         }
         return new HistoryJob(job, executor.submit(request));
+    }
+
+    /**
+     * The sink of an undo, redo or overwrite: it records no cells (history steps push nothing), but an item frame or
+     * painting the step's writes leave with nothing to hang on goes into the entry {@code entryOf} names
+     * ({@link HistoryService#amendEntity}, {@code undone} for an undo or Undo anyway). When no entry can take it, the
+     * entity is left to the game.
+     */
+    private RecordSink amending(HistoryService.Session session, BiFunction<UUID, EntityState, UUID> entryOf,
+                                boolean undone) {
+        return new RecordSink() {
+            @Override
+            public void record(int x, int y, int z, int before, BlockEntityData beforeTile, int after,
+                               BlockEntityData afterTile) {}
+
+            @Override
+            public boolean recordsEntities() {
+                return true; // into the entry the step applies
+            }
+
+            @Override
+            public boolean entityUnsupported(UUID id, EntityState state) {
+                UUID entry = entryOf.apply(id, state);
+                if (entry != null && history.amendEntity(session, entry, id, state, undone)) return true;
+                LOG.warn("Sculptory: a {} an undo or redo left with nothing to hang on could not go into the history "
+                        + "step; it is left to the game", state.typeId());
+                return false;
+            }
+        };
+    }
+
+    /**
+     * The entry of an Undo anyway (Redo anyway) run that takes along an entity the overwrite left with nothing to hang
+     * on: the last of the run that records the entity (its target is the one the overwrite applied); else the last that
+     * records the cell it hangs in or one beside it (its wall), whose next step gives those cells back; else the run's
+     * last entry, the next one to be stepped back.
+     */
+    static UUID amendedEntry(List<HistoryEntry> run, UUID entity, EntityState state) {
+        for (int i = run.size() - 1; i >= 0; i--) {
+            for (EntityChange change : run.get(i).record().entities()) {
+                if (change.id().equals(entity)) return run.get(i).id();
+            }
+        }
+        int x = (int) Math.floor(state.x()), y = (int) Math.floor(state.y()), z = (int) Math.floor(state.z());
+        for (int i = run.size() - 1; i >= 0; i--) {
+            dev.sculptory.core.buffer.BlockBuffer cells = run.get(i).record().before();
+            if (cells.has(x, y, z) || cells.has(x - 1, y, z) || cells.has(x + 1, y, z) || cells.has(x, y - 1, z)
+                    || cells.has(x, y + 1, z) || cells.has(x, y, z - 1) || cells.has(x, y, z + 1)) {
+                return run.get(i).id();
+            }
+        }
+        return run.get(run.size() - 1).id();
     }
 
     // ================================================================== Tinker
@@ -2001,6 +2060,14 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     /** The builder powers the player last reported (0 when none or unknown). */
     public int builderPowersOf(UUID player) {
         return builder.powersOf(player);
+    }
+
+    /**
+     * The platform's builder mode ({@link EngineHost#builderMode}), for the platform's own hooks into the game's entity
+     * actions (an item frame hung, an armor stand dressed), which have no message of their own.
+     */
+    public BuilderMode<P> builderMode() {
+        return builder;
     }
 
     /** Whether the player has a builder-mode drag open (tests). */
@@ -3087,6 +3154,40 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     private void endStep(BrushLane lane, StrokeSession stroke, Dab dab, DabWriter writer, SymmetricStep step) {
         if (writer.written == 0 && writer.denied > 0) reject(lane, stroke, dab, RejectReason.PROTECTED);
         if (stroke.rejected == null && !step.noGround().isEmpty()) reportNoGround(lane, stroke, dab, step.noGround().size());
+        sweepSupports(stroke, writer);
+    }
+
+    /**
+     * After a step: the item frames and paintings its writes left with nothing to hang on go into the stroke's record
+     * ({@link HangingSupport}), so undoing the stroke brings them back once their walls are back.
+     */
+    private void sweepSupports(StrokeSession stroke, DabWriter writer) {
+        if (writer.writtenSections.isEmpty()) return;
+        RecordSink into = new RecordSink() {
+            @Override
+            public boolean recordsEntities() {
+                return true;
+            }
+
+            @Override
+            public void record(int x, int y, int z, int before, BlockEntityData beforeTile, int after,
+                               BlockEntityData afterTile) {}
+
+            @Override
+            public void entity(UUID id, EntityState before, EntityState after) {
+                stroke.record.recordEntity(id, before, after);
+                stroke.dirty = true;
+            }
+        };
+        HangingSupport.Result swept = HangingSupport.sweep(runtime.entities(stroke.world), WriteOptions.DEFAULT,
+                PermitSource.forPlayer(permissions, writer.player, stroke.world,
+                        HangingSupport.permitBounds(writer.writtenSections)),
+                (x, y, z) -> runtime.insideBorder(stroke.world, x, z) && runtime.inBuildLimit(stroke.world, x, y, z),
+                into, writer.writtenSections);
+        if (swept.removed() > 0) {
+            history.saveEntities(history.openRecord(stroke.history, stroke.worldId, strokeLabel(stroke.spec.tool()),
+                    this::createdMillis, stroke.record));
+        }
     }
 
     /**
@@ -3106,11 +3207,17 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         int denied;
         /** Parts of a Shape step written so far. */
         int parts;
+        /** The sections the step wrote cells in (not biomes), for the hanging entity sweep after it. */
+        final LongOpenHashSet writtenSections = new LongOpenHashSet();
 
         DabWriter(StrokeSession stroke, P player, List<Box> boxes) {
             this.stroke = stroke;
             this.player = player;
             this.boxes = boxes;
+        }
+
+        private void wroteCell(int x, int y, int z) {
+            writtenSections.add(HangingSupport.sectionOf(x, y, z));
         }
 
         /** Before each part of a Shape step: permits are asked afresh (protection may have changed since the last). */
@@ -3144,6 +3251,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             if (stroke.writer.write(x, y, z, handle, tile, stroke.record::record)) {
                 stroke.dirty = true;
                 written++;
+                wroteCell(x, y, z);
                 // Fluid the stroke wrote is its entry's (the record's id): what it does later is undone with it. It stays
                 // put until the record is committed, so none flows into a cell a later dab of the stroke writes.
                 if (trails.wrote(stroke.world, x, y, z, handle, stroke.record.id())) trails.freeze(stroke.record.id());
@@ -3992,7 +4100,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * What an entry's label says its record holds, after its name: " · 12 blocks", then " · 2 entities" and
      * " · 96 biome cells" when it holds any; a record of biomes alone (a biome fill or stroke) leaves the blocks out.
      */
-    static String contents(EditRecord record) {
+    public static String contents(EditRecord record) {
         StringBuilder out = new StringBuilder();
         boolean biomesAlone = record.before().isEmpty() && record.entities().isEmpty() && !record.biomes().isEmpty();
         if (!biomesAlone) out.append(" · ").append(blocks(record.before().cellCount()));
