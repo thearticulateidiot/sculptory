@@ -1,25 +1,36 @@
 package dev.sculptory.paper.perm;
 
+import static java.lang.invoke.MethodType.methodType;
+
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
+import com.sk89q.worldedit.extent.Extent;
 import com.sk89q.worldedit.math.BlockVector3;
 import com.sk89q.worldedit.util.Location;
 import com.sk89q.worldedit.world.World;
 import com.sk89q.worldguard.LocalPlayer;
 import com.sk89q.worldguard.WorldGuard;
 import com.sk89q.worldguard.bukkit.WorldGuardPlugin;
+import com.sk89q.worldguard.internal.platform.WorldGuardPlatform;
 import com.sk89q.worldguard.protection.ApplicableRegionSet;
 import com.sk89q.worldguard.protection.flags.Flags;
+import com.sk89q.worldguard.protection.flags.StateFlag;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import com.sk89q.worldguard.protection.regions.RegionContainer;
 import com.sk89q.worldguard.protection.regions.RegionQuery;
+import com.sk89q.worldguard.session.SessionManager;
 import dev.sculptory.core.Box;
+import dev.sculptory.mc.Sculptory;
 import it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap;
+import java.lang.invoke.MethodHandles;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import org.bukkit.entity.Player;
 
 /**
  * WorldGuard's rule for a player changing blocks, as its own block listener applies it: {@code build} with
@@ -54,23 +65,98 @@ final class WorldGuardProtection implements Protection {
     private static final String PROBE_ID = "__sculptory_probe__";
     /** Distinct region combinations are keyed by a bit per region; beyond this many regions, cells are asked one by one. */
     private static final int MAX_KEYED_REGIONS = 64;
+    /** A mid-edit API failure is logged once (it would otherwise repeat for every chunk part). */
+    private static final AtomicBoolean API_FAILURE_LOGGED = new AtomicBoolean();
 
-    /** Links against WorldGuard now, so an incompatible API fails here (SculptoryProtection) and not mid-edit. */
+    /**
+     * Checks WorldGuard's API now, so an incompatible one fails here ({@link SculptoryProtection#detect} then refuses
+     * every edit) and not mid-edit: every WorldGuard and WorldEdit member this class and its helpers call is looked up
+     * with the exact signature they call it with. The JVM links each call site only when it first runs, so without this
+     * a changed API would surface as a {@link LinkageError} in the middle of an edit.
+     *
+     * @throws LinkageError naming the first member that is missing or has another signature
+     */
     WorldGuardProtection() {
+        try {
+            MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+            lookup.findStatic(WorldGuard.class, "getInstance", methodType(WorldGuard.class));
+            lookup.findVirtual(WorldGuard.class, "getPlatform", methodType(WorldGuardPlatform.class));
+            lookup.findVirtual(WorldGuardPlatform.class, "getRegionContainer", methodType(RegionContainer.class));
+            lookup.findVirtual(WorldGuardPlatform.class, "getSessionManager", methodType(SessionManager.class));
+            lookup.findVirtual(SessionManager.class, "hasBypass", methodType(boolean.class, LocalPlayer.class, World.class));
+            lookup.findStatic(WorldGuardPlugin.class, "inst", methodType(WorldGuardPlugin.class));
+            lookup.findVirtual(WorldGuardPlugin.class, "wrapPlayer", methodType(LocalPlayer.class, Player.class));
+            lookup.findStatic(BukkitAdapter.class, "adapt", methodType(World.class, org.bukkit.World.class));
+            lookup.findVirtual(RegionContainer.class, "get", methodType(RegionManager.class, World.class));
+            lookup.findVirtual(RegionContainer.class, "createQuery", methodType(RegionQuery.class));
+            lookup.findVirtual(RegionManager.class, "getApplicableRegions",
+                    methodType(ApplicableRegionSet.class, ProtectedRegion.class));
+            lookup.findVirtual(ApplicableRegionSet.class, "size", methodType(int.class));
+            lookup.findVirtual(ApplicableRegionSet.class, "iterator", methodType(Iterator.class));
+            lookup.findVirtual(RegionQuery.class, "testBuild",
+                    methodType(boolean.class, Location.class, LocalPlayer.class, StateFlag[].class));
+            lookup.findStaticGetter(Flags.class, "BLOCK_PLACE", StateFlag.class);
+            lookup.findStaticGetter(Flags.class, "BLOCK_BREAK", StateFlag.class);
+            lookup.findConstructor(Location.class,
+                    methodType(void.class, Extent.class, double.class, double.class, double.class));
+            lookup.findConstructor(ProtectedCuboidRegion.class,
+                    methodType(void.class, String.class, boolean.class, BlockVector3.class, BlockVector3.class));
+            lookup.findVirtual(ProtectedRegion.class, "getMinimumPoint", methodType(BlockVector3.class));
+            lookup.findVirtual(ProtectedRegion.class, "getMaximumPoint", methodType(BlockVector3.class));
+            lookup.findVirtual(ProtectedRegion.class, "contains", methodType(boolean.class, BlockVector3.class));
+            lookup.findStatic(BlockVector3.class, "at", methodType(BlockVector3.class, int.class, int.class, int.class));
+            for (String axis : List.of("x", "y", "z")) lookup.findVirtual(BlockVector3.class, axis, methodType(int.class));
+            // Probe overrides this protected method; if WorldGuard no longer had it, nothing would call the override
+            // and the region lookup would silently drop the edge candidates Probe exists to keep.
+            ProtectedRegion.class.getDeclaredMethod("intersects", ProtectedRegion.class, java.awt.geom.Area.class);
+        } catch (ReflectiveOperationException e) {
+            LinkageError error = new IncompatibleClassChangeError("WorldGuard API: " + e);
+            error.initCause(e);
+            throw error;
+        }
         WorldGuard.getInstance().getPlatform().getRegionContainer();
         WorldGuardPlugin.inst();
+        // Loads and links the probe, a subclass of WorldGuard's cuboid region (its super constructor runs).
+        new Probe(new Box(new dev.sculptory.core.BlockPos(0, 0, 0), new dev.sculptory.core.BlockPos(0, 0, 0)));
     }
 
+    /**
+     * Fails closed on an API problem: a {@link LinkageError} (another WorldGuard than the constructor checked, or a call
+     * it could not check) is logged once and the part is refused; it must never escape into the executor's tick.
+     */
     @Override
     public CellTest cells(ServerPlayer player, ServerLevel level, Box part) {
+        try {
+            CellTest cells = lookUp(player, level, part);
+            return cells == CellTest.ALLOW || cells == CellTest.DENY ? cells : guarded(cells);
+        } catch (LinkageError e) {
+            apiFailed(e);
+            return CellTest.DENY;
+        }
+    }
+
+    private CellTest lookUp(ServerPlayer player, ServerLevel level, Box part) {
         WorldGuard worldGuard = WorldGuard.getInstance();
         LocalPlayer local = WorldGuardPlugin.inst().wrapPlayer(player.getBukkitEntity());
         World world = BukkitAdapter.adapt(level.getWorld());
         if (worldGuard.getPlatform().getSessionManager().hasBypass(local, world)) return CellTest.ALLOW;
         RegionContainer container = worldGuard.getPlatform().getRegionContainer();
         RegionManager manager = container.get(world);
-        if (manager == null) return CellTest.ALLOW; // regions are off in this world
         RegionQuery query = container.createQuery();
+        if (manager == null) {
+            // No region manager: either regions are off in this world, or its region data failed to load (WorldGuard
+            // then protects everything there). WorldGuard's own query tells the two apart (a permissive region set
+            // when regions are off, a failed-load set that denies every build otherwise), so it is asked once for the
+            // whole part. Anything unexpected refuses.
+            try {
+                return allowed(query, world, local, part.min().x(), part.min().y(), part.min().z())
+                        ? CellTest.ALLOW : CellTest.DENY;
+            } catch (RuntimeException e) {
+                Sculptory.LOG.warn("Sculptory: WorldGuard has no region data for {} and its query failed ({}); the "
+                        + "edit is refused there", level.dimension().location(), e.toString());
+                return CellTest.DENY;
+            }
+        }
         ApplicableRegionSet touching = manager.getApplicableRegions(new Probe(part));
         if (touching.size() == 0) {
             // Only the global region applies: one answer for the whole part.
@@ -83,6 +169,26 @@ final class WorldGuardProtection implements Protection {
             return (x, y, z) -> allowed(query, world, local, x, y, z);
         }
         return new RegionCells(regions, query, world, local);
+    }
+
+    /** A per-cell answer that asks WorldGuard as it goes, refusing the cell on a {@link LinkageError}. */
+    static CellTest guarded(CellTest cells) {
+        return (x, y, z) -> {
+            try {
+                return cells.allowed(x, y, z);
+            } catch (LinkageError e) {
+                apiFailed(e);
+                return false;
+            }
+        };
+    }
+
+    private static void apiFailed(LinkageError e) {
+        if (API_FAILURE_LOGGED.compareAndSet(false, true)) {
+            Sculptory.LOG.error("Sculptory: WorldGuard's API could not be used mid-edit ({}); edits are refused where "
+                    + "WorldGuard is asked until this is fixed (install the WorldGuard 7.0.x Sculptory was built against)",
+                    e.toString(), e);
+        }
     }
 
     /**

@@ -74,6 +74,7 @@ public final class SelfTest {
                 new Group("fill-undo", EditChecks::fillUndo),
                 new Group("physics-off", EditChecks::physicsOff),
                 new Group("worldguard", RegionChecks::cells),
+                new Group("worldguard missing region data", RegionChecks::missingRegionData),
                 new Group("worldguard flags", RegionChecks::flags),
                 new Group("worldguard loopholes", RegionChecks::loopholes),
                 new Group("entities", RegionChecks::entities),

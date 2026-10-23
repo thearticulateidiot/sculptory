@@ -9,6 +9,7 @@ import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.region.Region;
 import dev.sculptory.core.transform.Transform;
+import dev.sculptory.paper.perm.Protection;
 import dev.sculptory.paper.perm.WorldGuardTestRegions;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobTicket;
@@ -97,6 +98,60 @@ final class RegionChecks {
                             result.changed() + " changed, " + result.skippedProtected() + " skipped as protected, "
                                     + notWritten + " cells above the region not written");
                 });
+    }
+
+    /**
+     * A world without a region manager: WorldGuard has none both when regions are off in the world and when the world's
+     * region data failed to load, and protects everything in the second case. Sculptory must follow: a chunk part with no
+     * region in it is allowed with the regions loaded, refused with regions on and no manager (a failed load), and
+     * allowed with regions off. Asks the protection directly (nothing is written); the world's regions are unloaded and
+     * loaded back within the call ({@link WorldGuardTestRegions#withoutRegionManager}).
+     */
+    static CompletableFuture<Void> missingRegionData(SelfTestRun r) {
+        if (!r.worldGuard()) {
+            r.info("worldguard missing region data: skipped", "WorldGuard is not installed");
+            return CompletableFuture.completedFuture(null);
+        }
+        if (r.attachment == null && r.player.hasPermissions(2)) {
+            r.info("worldguard missing region data: skipped", r.name() + " is an operator, whom WorldGuard may let "
+                    + "bypass (run without a player for the fake one)");
+            return CompletableFuture.completedFuture(null);
+        }
+        int x = r.baseX + 80 + 4, z = r.baseZ + 40;
+        Box part = box(x, 101, z, x + 3, 102, z + 3);
+        Protection protection = r.host.engine().permissions().protection();
+        String loaded = answer(protection.cells(r.player, r.level, part), part);
+        String failedLoad = WorldGuardTestRegions.withoutRegionManager(r.level, true,
+                () -> answer(protection.cells(r.player, r.level, part), part));
+        String regionsOff = WorldGuardTestRegions.withoutRegionManager(r.level, false,
+                () -> answer(protection.cells(r.player, r.level, part), part));
+        String after = answer(protection.cells(r.player, r.level, part), part);
+        r.record("worldguard missing region data: a part with no region is allowed", loaded.equals("allowed"),
+                "regions loaded: " + loaded);
+        r.record("worldguard missing region data: regions on and no region data (a failed load) refuses",
+                failedLoad.equals("refused"), "no manager, regions on: " + failedLoad);
+        r.record("worldguard missing region data: regions off allows", regionsOff.equals("allowed"),
+                "no manager, regions off: " + regionsOff);
+        r.record("worldguard missing region data: the regions are back afterwards", after.equals("allowed")
+                && WorldGuardTestRegions.hasManager(r.level), "after: " + after);
+        // Logs one "WorldGuard's API could not be used mid-edit" error on purpose (the simulated failure).
+        r.record("worldguard API failure: a call that fails to link refuses the cell, nothing escapes",
+                WorldGuardTestRegions.linkageErrorRefuses(), "a simulated NoSuchMethodError in a cell query");
+        return CompletableFuture.completedFuture(null);
+    }
+
+    /** "allowed", "refused", or "mixed" over the cells of {@code part}. */
+    private static String answer(Protection.CellTest cells, Box part) {
+        int allowed = 0, total = 0;
+        for (int x = part.min().x(); x <= part.max().x(); x++) {
+            for (int y = part.min().y(); y <= part.max().y(); y++) {
+                for (int z = part.min().z(); z <= part.max().z(); z++) {
+                    total++;
+                    if (cells.allowed(x, y, z)) allowed++;
+                }
+            }
+        }
+        return allowed == total ? "allowed" : allowed == 0 ? "refused" : "mixed (" + allowed + " of " + total + ")";
     }
 
     /**
