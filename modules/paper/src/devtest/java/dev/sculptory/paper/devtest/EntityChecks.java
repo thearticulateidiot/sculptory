@@ -177,6 +177,16 @@ final class EntityChecks {
             seen.add(entity.getType().getKey().getKey() + " " + event.getSpawnReason() + (cancel ? " cancelled" : ""));
         }
 
+        /** A hanging entity (an item frame) is announced with EntitySpawnEvent (living ones with the subclass above). */
+        @EventHandler(priority = EventPriority.HIGHEST)
+        public void spawningOther(org.bukkit.event.entity.EntitySpawnEvent event) {
+            if (event instanceof CreatureSpawnEvent) return;
+            org.bukkit.entity.Entity entity = event.getEntity();
+            boolean cancel = refused(entity);
+            if (cancel) event.setCancelled(true);
+            seen.add(entity.getType().getKey().getKey() + " spawn" + (cancel ? " cancelled" : ""));
+        }
+
         /** A boat or minecart is a vehicle: Bukkit announces its spawn with VehicleCreateEvent. */
         @EventHandler(priority = EventPriority.HIGHEST)
         public void creating(org.bukkit.event.vehicle.VehicleCreateEvent event) {
@@ -200,10 +210,10 @@ final class EntityChecks {
 
     static CompletableFuture<Void> spawning(SelfTestRun r) {
         int x = r.baseX + 320, z = r.baseZ + 48;
-        Box area = box(x, 99, z, x + 23, 108, z + 15);
+        Box area = box(x, 99, z, x + 23, 108, z + 31);
         SelfTestRun.Area claimed = r.claim(area);
         for (int cx = x; cx <= x + 23; cx++) {
-            for (int cz = z; cz <= z + 15; cz++) {
+            for (int cz = z; cz <= z + 31; cz++) {
                 set(r, new net.minecraft.core.BlockPos(cx, 100, cz), Blocks.STONE.defaultBlockState());
                 for (int y = 101; y <= 108; y++) {
                     set(r, new net.minecraft.core.BlockPos(cx, y, cz), Blocks.AIR.defaultBlockState());
@@ -228,6 +238,8 @@ final class EntityChecks {
                 .thenCompose(v -> refusedRestore(r, refuser, x + 16, z + 6))
                 .thenCompose(v -> refusedRestoreLeavesRider(r, refuser, x + 20, z + 1))
                 .thenCompose(v -> refusedTinkerUndo(r, refuser, x + 21, z + 11))
+                .thenCompose(v -> frameIntoAir(r, refuser, x, z + 16))
+                .thenCompose(v -> pigIntoStone(r, refuser, x, z + 24))
                 .thenAccept(v -> platformKeys(r, x + 12, z + 10));
     }
 
@@ -601,6 +613,111 @@ final class EntityChecks {
     private static dev.sculptory.core.history.EntityState state(Entity entity, CompoundTag nbt) {
         return new dev.sculptory.core.history.EntityState(McEntities.typeId(entity), entity.getX(), entity.getY(),
                 entity.getZ(), McEntities.bytes(nbt));
+    }
+
+    /**
+     * An item frame holding a diamond, moved with its wall 8 east into air; another plugin turns the source frame's
+     * restore away once and the move is undone: the undo puts the air back at the destination, so the moved frame has
+     * no wall there any more. It is not put back (it would pop within 100 ticks and drop its item, and the entry's redo
+     * would then restore it with the item: a duplicate): the step counts a conflict and keeps the frame's data. 120
+     * ticks later no frame and no dropped item are there; the redo then puts the wall and the frame back, one diamond in
+     * all.
+     */
+    private static CompletableFuture<Void> frameIntoAir(SelfTestRun r, Refuser refuser, int x, int z) {
+        net.minecraft.core.BlockPos wall = new net.minecraft.core.BlockPos(x + 2, 101, z + 2);
+        set(r, wall, Blocks.STONE.defaultBlockState());
+        ItemFrame frame = new ItemFrame(r.level, wall.south(), net.minecraft.core.Direction.SOUTH);
+        frame.setItem(new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.DIAMOND), false);
+        r.level.tryAddFreshEntityWithPassengers(frame, CreatureSpawnEvent.SpawnReason.CUSTOM);
+        UUID source = frame.getUUID();
+        Box from = box(x + 2, 101, z + 2, x + 2, 101, z + 3);
+        Box area = box(x, 100, z, x + 14, 104, z + 6);
+        return move(r, from, new BlockPos(8, 0, 0)).thenCompose(result -> {
+            int moved = frames(r, area);
+            if (moved != 1) throw new IllegalStateException(moved + " frames after the move");
+            refuser.refuseOnce.add(source);
+            refuser.take();
+            return r.ticks(5).thenCompose(v -> r.undo());
+        }).thenCompose(result -> {
+            refuser.refuseOnce.clear();
+            boolean wallGone = r.level.getBlockState(new net.minecraft.core.BlockPos(x + 10, 101, z + 2)).isAir();
+            r.info("entities: a frame moved into air, its restore refused, undone", frames(r, area) + " frames, "
+                    + "the destination wall gone " + wallGone + ", " + result.skippedProtected() + " refused, "
+                    + result.skippedConflicts() + " conflicts; spawn events " + refuser.take());
+            return r.ticks(120).thenApply(v -> result);
+        }).thenCompose(result -> {
+            int framesLeft = frames(r, area);
+            int drops = drops(r, area);
+            r.record("entities: a moved frame whose wall the undo removed is not put back to pop and drop its item",
+                    framesLeft == 0 && drops == 0 && result.skippedConflicts() >= 1,
+                    framesLeft + " frames and " + drops + " dropped items 120 ticks after the undo, "
+                            + result.skippedConflicts() + " conflicts");
+            return r.redo();
+        }).thenCompose(result -> r.ticks(5).thenApply(v -> result)).thenAccept(result -> {
+            List<ItemFrame> back = r.level.getEntitiesOfClass(ItemFrame.class, aabb(area), ItemFrame::isAlive);
+            int diamonds = 0;
+            for (net.minecraft.world.entity.item.ItemEntity item : r.level.getEntitiesOfClass(
+                    net.minecraft.world.entity.item.ItemEntity.class, aabb(area))) {
+                if (item.getItem().is(net.minecraft.world.item.Items.DIAMOND)) diamonds += item.getItem().getCount();
+            }
+            for (ItemFrame f : back) diamonds += f.getItem().is(net.minecraft.world.item.Items.DIAMOND) ? 1 : 0;
+            r.record("entities: the entry's redo puts the wall and the frame back, one diamond in all",
+                    back.size() == 1 && diamonds == 1, back.size() + " frames, " + diamonds + " diamonds in all ("
+                            + result.outcome() + ", " + result.skippedConflicts() + " conflicts)");
+        });
+    }
+
+    /**
+     * A pig moved 8 east into a column of stone (the move writes air there); another plugin turns the source pig's
+     * restore away once and the move is undone: the undo puts the stone back, so the moved pig is not put back into
+     * it (it would suffocate): a conflict, the data kept. 60 ticks later no pig is there; the redo then puts the air
+     * and the pig back, unhurt.
+     */
+    private static CompletableFuture<Void> pigIntoStone(SelfTestRun r, Refuser refuser, int x, int z) {
+        for (int y = 101; y <= 102; y++) {
+            set(r, new net.minecraft.core.BlockPos(x + 10, y, z + 2), Blocks.STONE.defaultBlockState());
+        }
+        Pig pig = new Pig(EntityType.PIG, r.level);
+        pig.moveTo(x + 2.5, 101, z + 2.5, 0f, 0f);
+        pig.setNoAi(true);
+        r.level.tryAddFreshEntityWithPassengers(pig, CreatureSpawnEvent.SpawnReason.CUSTOM);
+        UUID source = pig.getUUID();
+        Box from = box(x + 2, 101, z + 2, x + 2, 102, z + 2);
+        Box area = box(x, 100, z, x + 14, 104, z + 6);
+        return move(r, from, new BlockPos(8, 0, 0)).thenCompose(result -> {
+            refuser.refuseOnce.add(source);
+            refuser.take();
+            return r.ticks(5).thenCompose(v -> r.undo());
+        }).thenCompose(result -> {
+            refuser.refuseOnce.clear();
+            List<Pig> there = r.level.getEntitiesOfClass(Pig.class, aabb(area), Pig::isAlive);
+            boolean stone = r.level.getBlockState(new net.minecraft.core.BlockPos(x + 10, 101, z + 2)).is(Blocks.STONE);
+            r.info("entities: a pig moved into stone, its restore refused, undone", there.size() + " pigs, "
+                    + "the stone back " + stone + ", " + result.skippedProtected() + " refused, "
+                    + result.skippedConflicts() + " conflicts");
+            return r.ticks(60).thenApply(v -> result);
+        }).thenCompose(result -> {
+            List<Pig> there = r.level.getEntitiesOfClass(Pig.class, aabb(area), Pig::isAlive);
+            boolean hurt = there.stream().anyMatch(p -> p.getHealth() < p.getMaxHealth());
+            r.record("entities: a moved pig whose cell the undo filled with stone is not put back into it",
+                    there.isEmpty() && result.skippedConflicts() >= 1, there.size() + " pigs (hurt " + hurt
+                            + ") 60 ticks after the undo, " + result.skippedConflicts() + " conflicts");
+            return r.redo();
+        }).thenCompose(result -> r.ticks(5).thenApply(v -> result)).thenAccept(result -> {
+            List<Pig> there = r.level.getEntitiesOfClass(Pig.class, aabb(area), Pig::isAlive);
+            boolean unhurt = there.size() == 1 && there.get(0).getHealth() >= there.get(0).getMaxHealth();
+            r.record("entities: the entry's redo puts the air and the pig back, unhurt", unhurt, there.size()
+                    + " pigs (" + result.outcome() + ", " + result.skippedConflicts() + " conflicts)");
+        });
+    }
+
+    private static int frames(SelfTestRun r, Box box) {
+        return r.level.getEntitiesOfClass(ItemFrame.class, aabb(box), ItemFrame::isAlive).size();
+    }
+
+    private static int drops(SelfTestRun r, Box box) {
+        return r.level.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class, aabb(box),
+                net.minecraft.world.entity.item.ItemEntity::isAlive).size();
     }
 
     // ================================================================== helpers
