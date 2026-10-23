@@ -34,6 +34,20 @@ public interface RecordSink {
      */
     default void entity(UUID id, EntityState before, EntityState after) {}
 
+    /**
+     * An item frame or painting the edit's writes left with nothing to hang on, which the edit removes right after this
+     * call ({@link HangingSupport}); {@code state} is it as it is. A forward edit records it as removed (the default), so
+     * its undo puts it back once the wall is back. An undo or redo, which records nothing of its own, amends the entry it
+     * applies instead.
+     *
+     * @return false when the sink cannot keep it in any history: then it is not removed (the game drops it off, as
+     *     before)
+     */
+    default boolean entityUnsupported(UUID id, EntityState state) {
+        entity(id, state, null);
+        return true;
+    }
+
     /** A bulk job finished a chunk column of entity work: a hint to save the entities recorded so far. */
     default void entitiesFinished() {}
 

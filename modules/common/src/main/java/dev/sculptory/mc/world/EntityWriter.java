@@ -310,12 +310,17 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      */
     @Override
     public void takeBack(Entity root) {
+        takeBack(root, "history could not record it");
+    }
+
+    @Override
+    public void takeBack(Entity root, String why) {
         for (Entity rider : root.getIndirectPassengers()) {
             if (!rider.isAlwaysTicking()) rider.discard();
         }
         root.discard();
         placed--;
-        failed(McEntities.typeId(root), "history could not record it");
+        failed(McEntities.typeId(root), why);
     }
 
     /** Leaves out passengers of a kind that is never placed (with their own riders), each counted as a failure. */

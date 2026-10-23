@@ -381,8 +381,10 @@ public final class EntitiesGameTest {
 
     /**
      * A paste undone removes exactly the entities it placed (the fixture stays); redone, they come back with their UUIDs.
-     * A pasted frame given another item since is kept by the next undo and counted with the kept blocks; Undo anyway
-     * takes it.
+     * A pasted frame given another item since is kept by the next undo and counted with the kept blocks; since the same
+     * undo takes away the wall it hangs on, the undo then takes the frame along into the paste's step, as the player left
+     * it (HangingSupport), instead of leaving it to drop off with its item; Undo anyway has nothing left to take, and a
+     * redo would bring the frame back with the emerald.
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_entities_undo_paste", timeoutTicks = LIMIT)
     public void pasteUndoRemovesExactlyItsEntitiesAndKeepsChangedOnes(GameTestHelper context) {
@@ -448,7 +450,16 @@ public final class EntitiesGameTest {
                     check(undoAgain.result.skippedConflicts() == 1, "the changed frame is kept and counted: "
                             + undoAgain.result);
                     List<Entity> left = entitiesIn(world, target);
-                    check(left.size() == 1 && left.get(0) instanceof ItemFrame, "only the frame stays: " + left);
+                    check(left.isEmpty(), "the kept frame went with its wall, into the step: " + left);
+                    List<EntityChange> taken = h.service.historyService().redoEntries(h.player.getUUID()).get(0)
+                            .record().entities().stream().filter(c -> c.after() != null
+                                    && c.after().typeId().equals("minecraft:item_frame")).toList();
+                    check(taken.size() == 1 && taken.get(0).before() == null
+                            && new String(taken.get(0).after().nbt(), java.nio.charset.StandardCharsets.ISO_8859_1)
+                                    .contains("minecraft:emerald"), "the step holds the frame with its emerald: " + taken);
+                    check(world.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class,
+                            new net.minecraft.world.phys.AABB(x0 + 16, y0 - 2, z0 - 4, x0 + 28, y0 + 6, z0 + 8)).isEmpty(),
+                            "nothing dropped");
                     try {
                         h.service.historyOverwrite(h.player, false, 1, anyway);
                     } catch (EditRejected e) {

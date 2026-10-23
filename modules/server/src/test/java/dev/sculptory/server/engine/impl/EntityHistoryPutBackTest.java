@@ -55,6 +55,8 @@ class EntityHistoryPutBackTest {
 
     static final class World implements WorldEntities<Thing> {
         final Map<UUID, Thing> things = new LinkedHashMap<>();
+        /** Things that hang on nothing any more (frames whose wall is gone). */
+        final Set<UUID> unsupported = new HashSet<>();
         Placer placer;
 
         void add(Thing thing) {
@@ -64,12 +66,24 @@ class EntityHistoryPutBackTest {
         @Override public boolean loaded(int cx, int cz) { return true; }
         @Override public String firstUnloaded(long[] columns) { return null; }
         @Override public List<Thing> inRegion(Region region, EntityFilter filter, long[] columns) { return List.of(); }
-        @Override public List<Thing> inRegion(Region region, EntityFilter filter, int cx, int cz) { return List.of(); }
+        @Override
+        public List<Thing> inRegion(Region region, EntityFilter filter, int cx, int cz) {
+            List<Thing> found = new ArrayList<>();
+            for (Thing thing : things.values()) {
+                BlockPos cell = cell(thing);
+                if (region.contains(cell.x(), cell.y(), cell.z()) && EntityJobs.columnOf(thing.state.x(), thing.state.z())
+                        == ColumnPlan.pack(cx, cz)) {
+                    found.add(thing);
+                }
+            }
+            return found;
+        }
         @Override public Thing find(UUID id) { return things.get(id); }
         @Override public UUID id(Thing entity) { return entity.id; }
         @Override public boolean removed(Thing entity) { return things.get(entity.id) != entity; }
         @Override public boolean riding(Thing entity) { return false; }
         @Override public BlockPos cell(Thing entity) { return blockPos(entity); }
+        @Override public boolean hangsUnsupported(Thing entity) { return unsupported.contains(entity.id); }
 
         @Override
         public BlockPos blockPos(Thing entity) {
@@ -99,6 +113,7 @@ class EntityHistoryPutBackTest {
         boolean defaultPutBack;
         long placed;
         long removed;
+        long takenBack;
 
         Placer(World world) {
             this.world = world;
@@ -130,7 +145,12 @@ class EntityHistoryPutBackTest {
             return new Spawn<>(thing, false);
         }
 
-        @Override public void takeBack(Thing root) { throw new UnsupportedOperationException(); }
+        @Override
+        public void takeBack(Thing root) {
+            world.things.remove(root.id);
+            placed--;
+            takenBack++;
+        }
 
         @Override
         public void remove(Thing root, EntityState recorded) {
@@ -312,5 +332,93 @@ class EntityHistoryPutBackTest {
         assertNotNull(back, "the edited entity is put back where it was");
         assertEquals(1.5, back.state.x());
         assertTrue(warnings.isEmpty(), warnings.toString());
+    }
+
+    /** What a sweep handed to its sink, and whether the sink keeps it. */
+    private static final class Swept implements RecordSink {
+        final List<UUID> unsupported = new ArrayList<>();
+        boolean keeps = true;
+
+        @Override
+        public void record(int x, int y, int z, int before, dev.sculptory.core.buffer.BlockEntityData beforeTile,
+                           int after, dev.sculptory.core.buffer.BlockEntityData afterTile) {}
+
+        @Override
+        public boolean entityUnsupported(UUID id, EntityState state) {
+            unsupported.add(id);
+            return keeps;
+        }
+    }
+
+    /** Runs a sweep over the cells of {@code written}, as a job's last stage would, column by column. */
+    private EntityWork.Context<Thing> sweep(dev.sculptory.core.Box written, RecordSink sink) {
+        EntityWork.Context<Thing> ctx = new EntityWork.Context<>(world, placer, permits, sink, (x, y, z) -> true);
+        HangingSupport.Sweep sweep = new HangingSupport.Sweep(written);
+        for (long column : sweep.columns()) {
+            do {
+                ctx.allowance = 2;
+            } while (!sweep.column(column, ctx));
+        }
+        return ctx;
+    }
+
+    /**
+     * The sweep after an edit's blocks: an entity that hangs on nothing any more within the bounds grown by one goes,
+     * handed to the sink first; one still hanging, one farther out and one the player may not change stay (the last
+     * counted as a conflict, left to the game); one the sink cannot keep stays too.
+     */
+    @Test
+    void aSweepTakesAlongWhatLostItsWallAndLeavesTheRest() {
+        Thing lost = put(pig(UUID.randomUUID(), 4.5, "lost", 300));
+        Thing edge = put(pig(UUID.randomUUID(), 9.5, "on the edge", 300)); // x 9: the bounds (to x 8) grown by one
+        Thing hanging = put(pig(UUID.randomUUID(), 5.5, "still hanging", 300));
+        Thing far = put(pig(UUID.randomUUID(), 10.5, "outside", 300));
+        Thing guarded = put(pig(UUID.randomUUID(), 100.5, "protected", 300));
+        world.unsupported.addAll(List.of(lost.id, edge.id, far.id, guarded.id));
+        Swept sink = new Swept();
+        dev.sculptory.core.Box written = new dev.sculptory.core.Box(new BlockPos(0, 60, 0), new BlockPos(8, 70, 1));
+        EntityWork.Context<Thing> ctx = sweep(written, sink);
+        assertEquals(Set.of(lost.id, edge.id), Set.copyOf(sink.unsupported));
+        assertNull(world.find(lost.id), "taken along");
+        assertNull(world.find(edge.id), "its wall was inside the bounds");
+        assertNotNull(world.find(hanging.id), "still hanging");
+        assertNotNull(world.find(far.id), "never looked at");
+        assertEquals(2, placer.removed);
+        assertEquals(0, ctx.conflicts);
+
+        dev.sculptory.core.Box protectedCells = new dev.sculptory.core.Box(new BlockPos(99, 60, 0),
+                new BlockPos(101, 70, 1));
+        EntityWork.Context<Thing> refused = sweep(protectedCells, sink);
+        assertNotNull(world.find(guarded.id), "protected: left to the game");
+        assertEquals(1, refused.conflicts);
+
+        Swept full = new Swept();
+        full.keeps = false;
+        EntityWork.Context<Thing> unkept = sweep(new dev.sculptory.core.Box(new BlockPos(9, 60, 0),
+                new BlockPos(11, 70, 1)), full);
+        assertEquals(List.of(far.id), full.unsupported);
+        assertNotNull(world.find(far.id), "no history could keep it: left to the game");
+        assertEquals(1, unkept.conflicts);
+        assertEquals(2, placer.removed, "nothing more removed");
+    }
+
+    /**
+     * An undo whose target would hang on nothing (its wall went since the step) does not put it back: it is taken back
+     * at once, counted as a conflict, and what the step replaced (the same UUID) comes back, so nothing drops off.
+     */
+    @Test
+    void aTargetThatWouldHangOnNothingIsNotPutBack() {
+        UUID id = UUID.randomUUID();
+        EntityState changed = pig(id, 1.5, "Changed", 300);
+        put(changed);
+        EntityState before = pig(id, 1.5, "As it was", 300);
+        world.unsupported.add(id);
+        EntityWork.Context<Thing> ctx = run(List.of(new Step(id, changed, before)), ConflictPolicy.SKIP_CONFLICTS);
+        assertEquals(1, placer.takenBack, "spawned, then taken back");
+        assertEquals(1, ctx.conflicts);
+        assertEquals(0, ctx.protectedEntities);
+        Thing back = world.find(id);
+        assertNotNull(back, "the entity the undo replaced is back");
+        assertEquals(changed, back.state);
     }
 }

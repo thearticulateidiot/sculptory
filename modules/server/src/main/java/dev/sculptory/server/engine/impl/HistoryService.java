@@ -4,6 +4,8 @@ import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.BlockEntityData;
 import dev.sculptory.core.buffer.SectionBuffer;
 import dev.sculptory.core.history.EditRecord;
+import dev.sculptory.core.history.EntityChange;
+import dev.sculptory.core.history.EntityMatcher;
 import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.HistoryLimits;
@@ -944,6 +946,75 @@ public final class HistoryService {
             store.seal(session.player, entry.id(), entry.label(), entry.createdMillis(),
                     session.history.bytesOf(entry.id()));
         }
+    }
+
+    /**
+     * Amends entry {@code entryId} with what an undo ({@code undone}) or redo of it did to an entity besides what it
+     * records: an item frame or painting the step's writes left with nothing to hang on, which the step took away
+     * ({@code HangingSupport}); {@code state} is the entity as it was. After an undo the entry says the entity was there
+     * after it and not before it ({@code (id, null, state)}), so its redo puts the entity back once the wall is back, and
+     * undoing it again takes the entity away. After a redo it is the other way round ({@code (id, state, null)}). Where
+     * the entry already records the entity: if the step had put back the recorded side (and that lost its wall), that
+     * side becomes "not there" and the other recorded side stays; if the step kept the entity because it changed since
+     * (a conflict), the entity as the player left it ({@code state}) takes the other side.
+     *
+     * <p>The entry is replaced in the stack and in the current run. When saving, the change is journaled at once as an
+     * entities batch of the entry (a later change of an entity replaces an earlier one when it is read back) and the
+     * entry is sealed again with its new size, so the amendment survives a restart; a chunk save of the entity's column
+     * waits for it. The label stays as it was.
+     *
+     * @return false, changing nothing, when the session does not hold the entry or the amended entry would record
+     *     nothing
+     */
+    public boolean amendEntity(Session session, UUID entryId, UUID entityId, EntityState state, boolean undone) {
+        Objects.requireNonNull(entryId);
+        Objects.requireNonNull(entityId);
+        Objects.requireNonNull(state);
+        if (!isCurrent(session)) return false;
+        HistoryEntry old = entryIn(session.history, entryId);
+        if (old == null) return false;
+        List<EntityChange> changes = new ArrayList<>(old.record().entities());
+        int at = -1;
+        for (int i = 0; i < changes.size(); i++) {
+            if (changes.get(i).id().equals(entityId)) {
+                at = i;
+                break;
+            }
+        }
+        EntityChange recorded = at < 0 ? null : changes.get(at);
+        // Where the step put the recorded side back and that is what lost its wall, the other recorded side is what the
+        // entry's next step restores; where the step kept the entity (changed since: a conflict), it is the entity as the
+        // player left it.
+        EntityState restored = recorded == null ? null : recorded.target(!undone);
+        boolean stepRestoredIt = restored != null && EntityMatcher.ignoringVolatile().matches(restored, state);
+        EntityChange amended = undone
+                ? new EntityChange(entityId, null, stepRestoredIt ? recorded.after() : state)
+                : new EntityChange(entityId, stepRestoredIt ? recorded.before() : state, null);
+        if (amended.unchanged()) {
+            if (at >= 0) changes.remove(at);
+        } else if (at >= 0) {
+            changes.set(at, amended);
+        } else {
+            changes.add(amended);
+        }
+        EditRecord record = new EditRecord(old.record().before(), old.record().after(), changes, old.record().biomes());
+        if (record.isEmpty()) return false;
+        HistoryEntry entry = new HistoryEntry(old.id(), old.owner(), old.world(), old.label(), record,
+                old.createdMillis());
+        if (!session.history.replace(entry)) return false;
+        Run run = session.run;
+        if (run != null) {
+            List<HistoryEntry> entries = new ArrayList<>(run.entries());
+            entries.replaceAll(e -> e.id().equals(entry.id()) ? entry : e);
+            session.run = new Run(run.op(), entries, run.conflicts());
+        }
+        if (persistent()) {
+            // A change with neither side cancels the entity's earlier ones when the entry is read back.
+            store.entities(session.player, entry.id(), List.of(amended));
+            store.seal(session.player, entry.id(), entry.label(), entry.createdMillis(),
+                    session.history.bytesOf(entry.id()));
+        }
+        return true;
     }
 
     /**

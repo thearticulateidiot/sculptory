@@ -227,6 +227,44 @@ class EntityHistoryTest {
         }
     }
 
+    /**
+     * An entry amended after its undo with a frame the undo took along ({@code (id, null, state)}: there after the
+     * entry, not before it): its redo puts the frame back, a second undo takes it away again; a frame changed since is
+     * kept. Amended after a redo ({@code (id, state, null)}) it is the other way round.
+     */
+    @Test
+    void amendedChangesUndoAndRedoBothWays() {
+        UUID id = UUID.randomUUID();
+        EntityState frame = frame(id, 3.5, "apple", 300);
+        HistoryEntry afterUndo = entry(new EditRecord(new BlockBuffer(), new BlockBuffer(),
+                List.of(new EntityChange(id, null, frame))));
+        Step redo = EntityHistory.steps(afterUndo, true).get(0);
+        assertEquals(new Step(id, null, frame), redo);
+        assertEquals(Action.APPLY, EntityHistory.decide(redo, null, ConflictPolicy.SKIP_CONFLICTS, matcher),
+                "the redo puts the frame back");
+        assertEquals(Action.SKIP, EntityHistory.decide(redo, frame(id, 3.5, "apple", 7), ConflictPolicy.SKIP_CONFLICTS,
+                matcher), "already back");
+        Step undoAgain = EntityHistory.steps(afterUndo, false).get(0);
+        assertEquals(new Step(id, frame, null), undoAgain);
+        assertEquals(Action.APPLY, EntityHistory.decide(undoAgain, frame, ConflictPolicy.SKIP_CONFLICTS, matcher),
+                "undoing again takes it away");
+        assertEquals(Action.CONFLICT, EntityHistory.decide(undoAgain, frame(id, 3.5, "diamond", 300),
+                ConflictPolicy.SKIP_CONFLICTS, matcher), "a frame filled since is kept");
+        assertEquals(Action.SKIP, EntityHistory.decide(undoAgain, null, ConflictPolicy.SKIP_CONFLICTS, matcher),
+                "already gone");
+
+        HistoryEntry afterRedo = entry(new EditRecord(new BlockBuffer(), new BlockBuffer(),
+                List.of(new EntityChange(id, frame, null))));
+        Step undo = EntityHistory.steps(afterRedo, false).get(0);
+        assertEquals(new Step(id, null, frame), undo);
+        assertEquals(Action.APPLY, EntityHistory.decide(undo, null, ConflictPolicy.SKIP_CONFLICTS, matcher),
+                "the undo puts the frame back");
+        Step redoAgain = EntityHistory.steps(afterRedo, true).get(0);
+        assertEquals(Action.APPLY, EntityHistory.decide(redoAgain, frame, ConflictPolicy.SKIP_CONFLICTS, matcher),
+                "redoing again takes it away");
+        assertEquals(Action.SKIP, EntityHistory.decide(redoAgain, null, ConflictPolicy.SKIP_CONFLICTS, matcher));
+    }
+
     private static HistoryEntry entry(EditRecord record) {
         return new HistoryEntry(UUID.randomUUID(), PLAYER, "minecraft:overworld", "Entities", record, 0L);
     }

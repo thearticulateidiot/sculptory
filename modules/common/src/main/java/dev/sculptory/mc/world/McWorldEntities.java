@@ -74,6 +74,11 @@ public final class McWorldEntities implements WorldEntities<Entity> {
     }
 
     @Override
+    public boolean hangsUnsupported(Entity entity) {
+        return McEntities.hangsUnsupported(entity);
+    }
+
+    @Override
     public int takenCount(Entity entity, EntityFilter filter) {
         return McEntities.takenCount(entity, filter);
     }

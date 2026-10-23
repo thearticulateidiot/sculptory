@@ -51,10 +51,16 @@ import org.slf4j.LoggerFactory;
  * the entity columns; a column is one step, its quarts charged to the tick's budget. The executor sends the changed
  * chunks' biomes to players at the end of the tick ({@link EditExecutor#biomesChanged}).
  *
+ * <p><b>Hanging entities</b>. A job that wrote cells and records them ends with {@link Stage#SUPPORTS}: the item frames
+ * and paintings around its bounds that its writes left with nothing to hang on are taken along ({@link HangingSupport}),
+ * a chunk column at a time (only columns loaded with their entities; none is ticketed or waited for), in steps charged
+ * like the entity stages. A cancelled job that wrote cells runs it too, before it ends; a job that fails or is cut short
+ * by the server stopping does not.
+ *
  * @param <W> the platform's world type
  */
 final class BulkJob<W> {
-    enum Stage { WAITING, ENTITIES_BEFORE, SOURCES, APPLY, BIOMES, ENTITIES_AFTER, DONE }
+    enum Stage { WAITING, ENTITIES_BEFORE, SOURCES, APPLY, BIOMES, ENTITIES_AFTER, SUPPORTS, DONE }
 
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");
 
@@ -170,6 +176,11 @@ final class BulkJob<W> {
     private TicketWindow entityTickets;
     private int entityCursor;
     private int maxTickets;
+    /** The sweep for hanging entities left without support ({@link Stage#SUPPORTS}), once it began. */
+    private HangingSupport.Sweep supports;
+    private int supportCursor;
+    /** How the job ends once the sweep is done (a cancelled job sweeps before it ends). */
+    private JobOutcome supportsThen = JobOutcome.COMPLETED;
 
     long skippedProtected;
 
@@ -401,8 +412,51 @@ final class BulkJob<W> {
             stage = Stage.ENTITIES_AFTER;
             return false;
         }
-        executor.finish(this, JobOutcome.COMPLETED);
+        return end(JobOutcome.COMPLETED);
+    }
+
+    /**
+     * Ends the job with {@code outcome}, after the sweep for hanging entities left without support when the job wrote
+     * cells it records ({@link Stage#SUPPORTS}, which then ends it).
+     *
+     * @return whether the job finished now
+     */
+    private boolean end(JobOutcome outcome) {
+        if (stage != Stage.SUPPORTS && request.records() != RecordSink.NONE && writer.changed() > 0) {
+            supports = new HangingSupport.Sweep(bounds);
+            supportCursor = 0;
+            supportsThen = outcome;
+            if (entities == null) {
+                entities = EntityWork.Context.of(host.entities(world), request.writeOptions(), request.permits(),
+                        request.records(),
+                        (x, y, z) -> host.insideBorder(world, x, z) && host.inBuildLimit(world, x, y, z));
+            }
+            stage = Stage.SUPPORTS;
+            return false;
+        }
+        executor.finish(this, outcome);
         return true;
+    }
+
+    /**
+     * One step of the sweep: at most {@link EntityWork#ENTITIES_PER_STEP} entities of the current column. A column whose
+     * entities are not loaded is skipped (an entity there cannot have been dropped off yet, and the sweep loads nothing).
+     *
+     * @return units used
+     */
+    private long supportStep(EditExecutor.Budget budget) {
+        long column = supports.columns()[supportCursor];
+        if (!entities.world.loaded(ColumnPlan.unpackX(column), ColumnPlan.unpackZ(column))) {
+            supportCursor++;
+            return 1;
+        }
+        entities.allowance = EntityWork.ENTITIES_PER_STEP;
+        boolean done = supports.column(column, entities);
+        long handled = EntityWork.ENTITIES_PER_STEP - entities.allowance;
+        budget.cellsLeft -= handled * ENTITY_UNITS;
+        request.records().entitiesFinished();
+        if (done) supportCursor++;
+        return EditExecutor.SECTION_OVERHEAD_UNITS + handled * ENTITY_UNITS;
     }
 
     /**
@@ -444,9 +498,19 @@ final class BulkJob<W> {
         reader.invalidate();
         decisionPermits.clear();
         while (used < maxUnits && !budget.exhausted()) {
+            if (stage == Stage.SUPPORTS) {
+                // Not cancelled any more: a cancelled job that wrote cells sweeps before it ends.
+                if (supportCursor >= supports.columns().length) {
+                    executor.finish(this, supportsThen);
+                    return used;
+                }
+                used += supportStep(budget);
+                budget.checkTime();
+                continue;
+            }
             if (current == null && cancelRequested) {
-                executor.finish(this, JobOutcome.CANCELLED);
-                return used;
+                if (end(JobOutcome.CANCELLED)) return used;
+                continue;
             }
             if (stage == Stage.ENTITIES_BEFORE || stage == Stage.ENTITIES_AFTER) {
                 boolean before = stage == Stage.ENTITIES_BEFORE;
@@ -454,8 +518,7 @@ final class BulkJob<W> {
                     entityTickets.releaseAll();
                     if (before) {
                         beginSources();
-                    } else {
-                        executor.finish(this, JobOutcome.COMPLETED);
+                    } else if (end(JobOutcome.COMPLETED)) {
                         return used;
                     }
                     continue;
@@ -562,7 +625,9 @@ final class BulkJob<W> {
 
     /** Progress in units of {@link #totalCells}, by sections written. */
     long done() {
-        if (outcome == JobOutcome.COMPLETED || stage == Stage.ENTITIES_AFTER) return totalCells;
+        if (outcome == JobOutcome.COMPLETED || stage == Stage.ENTITIES_AFTER || stage == Stage.SUPPORTS) {
+            return totalCells;
+        }
         if (stage == Stage.BIOMES) {
             if (order.length > 0) return totalCells;
             if (biomeReading) return 0;

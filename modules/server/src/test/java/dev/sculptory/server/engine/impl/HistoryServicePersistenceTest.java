@@ -8,12 +8,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.core.buffer.BlockBuffer;
 import dev.sculptory.core.buffer.SectionBuffer;
+import dev.sculptory.core.entity.EntityNbt;
+import dev.sculptory.core.history.EntityChange;
+import dev.sculptory.core.history.EntityState;
 import dev.sculptory.core.history.HistoryEntry;
 import dev.sculptory.core.history.HistoryLimits;
 import dev.sculptory.core.history.RecordBuilder;
 import dev.sculptory.core.history.store.HistoryCodec;
 import dev.sculptory.core.history.store.HistoryStore;
 import dev.sculptory.core.history.store.StorageIo;
+import dev.sculptory.core.nbt.NbtCompound;
+import dev.sculptory.core.nbt.NbtIo;
 import dev.sculptory.core.testing.FakeStateSpace;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -304,6 +309,88 @@ class HistoryServicePersistenceTest {
         assertSameBuffer(grownUndone.record().before(), second.redoEntries(P1).get(0).record().before());
         assertSameBuffer(grownUndone.record().after(), second.redoEntries(P1).get(0).record().after());
         assertTrue(second.totalBytes() >= first.totalBytes(), "sealed again with its grown size");
+    }
+
+    /** An item frame as the world saves it. */
+    private static EntityState frame(UUID id, double x, String item) {
+        long m = id.getMostSignificantBits(), l = id.getLeastSignificantBits();
+        NbtCompound nbt = NbtCompound.builder().putString("id", "minecraft:item_frame")
+                .put("Pos", EntityNbt.doubles(x, 64.5, 0.03))
+                .putIntArray("UUID", new int[] {(int) (m >> 32), (int) m, (int) (l >> 32), (int) l})
+                .putString("Item", item).build();
+        return new EntityState("minecraft:item_frame", x, 64.5, 0.03, NbtIo.toBytes(nbt));
+    }
+
+    /**
+     * An entry amended by its own undo and redo (the frames they took along, HangingSupport): after an undo the entry
+     * says the frame was there after it and not before it, after a redo the other way round; a frame the entry already
+     * records keeps the side the step did not restore (and drops out when nothing is left of it). The amendment is
+     * journaled at once, so after a crash the entry reads back amended, on the side its step left it. An amendment that
+     * would leave the entry empty, or of an entry no longer held, changes nothing.
+     */
+    @Test
+    void anAmendmentByAStepIsJournaledAtOnceAndReadBackAfterACrash() throws IOException {
+        HistoryService first = service(HistoryLimits.DEFAULTS);
+        HistoryService.Session s = loaded(first, P1);
+        HistoryEntry kept = entry(P1, "kept", 1, 3);
+        HistoryEntry wall = entry(P1, "Place · 4 blocks", 2, 4);
+        first.push(s, kept);
+        first.push(s, wall);
+        UUID onWall = UUID.randomUUID(), beside = UUID.randomUUID();
+        EntityState hung = frame(onWall, 1.5, "apple");
+        EntityState next = frame(beside, 2.5, "stick");
+
+        first.begin(s, HistoryService.Op.UNDO, wall);
+        assertTrue(first.amendEntity(s, wall.id(), onWall, hung, true), "while the undo runs");
+        first.finish(s, true);
+        HistoryEntry undone = first.redoEntries(P1).get(0);
+        assertEquals(List.of(new EntityChange(onWall, null, hung)), undone.record().entities());
+        assertEquals(wall.label(), undone.label(), "the label stays");
+        assertTrue(s.run().isPresent() && s.run().get().entries().get(0).record().entities().size() == 1,
+                "the run holds the amended entry");
+
+        first.begin(s, HistoryService.Op.REDO, undone);
+        assertTrue(first.amendEntity(s, wall.id(), beside, next, false), "a redo took another one along");
+        // The frame the undo took along, taken along again by the redo: nothing of it is left to record.
+        assertTrue(first.amendEntity(s, wall.id(), onWall, hung, false));
+        first.finish(s, true);
+        HistoryEntry redone = first.undoEntries(P1).get(0);
+        assertEquals(List.of(new EntityChange(beside, next, null)), redone.record().entities());
+
+        HistoryEntry broken = new HistoryEntry(UUID.randomUUID(), P1, "minecraft:overworld", "Break · item frame",
+                new dev.sculptory.core.history.EditRecord(new BlockBuffer(), new BlockBuffer(),
+                        List.of(new EntityChange(onWall, hung, null))), 3);
+        first.push(s, broken);
+        assertFalse(first.amendEntity(s, broken.id(), onWall, hung, true), "it would record nothing");
+        assertEquals(List.of(new EntityChange(onWall, hung, null)), first.undoEntries(P1).get(0).record().entities());
+        assertFalse(first.amendEntity(s, UUID.randomUUID(), onWall, hung, true), "no such entry");
+
+        // A pasted frame filled since: the undo kept it (a conflict), then took it along when its wall went. The entry
+        // keeps the frame as the player left it, so the redo brings that back, not the frame as pasted.
+        UUID pastedId = UUID.randomUUID();
+        EntityState pasted = frame(pastedId, 5.5, "apple");
+        EntityState filled = frame(pastedId, 5.5, "emerald");
+        RecordBuilder pasteBuilder = new RecordBuilder();
+        pasteBuilder.record(5, 64, 0, AIR, null, STONE, null);
+        pasteBuilder.recordEntity(pastedId, null, pasted);
+        HistoryEntry paste = new HistoryEntry(pasteBuilder.id(), P1, "minecraft:overworld", "Paste", pasteBuilder.build(), 4);
+        first.push(s, paste);
+        first.begin(s, HistoryService.Op.UNDO, paste);
+        assertTrue(first.amendEntity(s, paste.id(), pastedId, filled, true));
+        first.finish(s, true);
+        assertEquals(List.of(new EntityChange(pastedId, null, filled)),
+                first.redoEntries(P1).get(0).record().entities());
+        crash(first);
+
+        HistoryService second = service(HistoryLimits.DEFAULTS);
+        loaded(second, P1);
+        assertEquals(List.of(broken.id(), wall.id(), kept.id()), ids(second.undoEntries(P1)));
+        assertEquals(List.of(new EntityChange(pastedId, null, filled)),
+                second.redoEntries(P1).get(0).record().entities(), "the kept frame as the player left it");
+        HistoryEntry read = second.undoEntries(P1).get(1);
+        assertEquals(List.of(new EntityChange(beside, next, null)), read.record().entities());
+        assertSameBuffer(wall.record().before(), read.record().before());
+        assertSameBuffer(wall.record().after(), read.record().after());
     }
 
     /**

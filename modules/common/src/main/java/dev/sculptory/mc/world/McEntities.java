@@ -118,6 +118,17 @@ public final class McEntities {
         return entity.blockPosition();
     }
 
+    /**
+     * Whether {@code entity} is an item frame or a painting that would not stay where it hangs now (vanilla's own test,
+     * {@code survives()}: its wall gone, its space filled, another hanging entity in its way). The game drops such an
+     * entity off with its item at its next check. Leash knots are not counted: taking one away drops the lead of the
+     * mob tied to it all the same.
+     */
+    public static boolean hangsUnsupported(Entity entity) {
+        return entity instanceof net.minecraft.world.entity.decoration.HangingEntity hanging && !hanging.isRemoved()
+                && !hanging.survives();
+    }
+
     /** Whether {@code entity} belongs to {@code region}. */
     public static boolean in(Region region, Entity entity) {
         BlockPos cell = cell(entity);

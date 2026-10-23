@@ -434,11 +434,27 @@ class HeightPermitJobTest {
                     case "chunkTickets" -> noTickets;
                     case "clientUpdates" -> noUpdates;
                     case "relightSection" -> 0;
+                    // No entities: every chunk's are "not loaded", so a job's last sweep for hanging entities finds none.
+                    case "entities" -> nothingThere(dev.sculptory.server.platform.WorldEntities.class);
                     case "hashCode" -> System.identityHashCode(proxy);
                     case "equals" -> proxy == args[0];
                     case "toString" -> "test host";
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
+    }
+
+    /** An empty {@code type}: false, zero or another such object from every method (a world without entities). */
+    @SuppressWarnings("unchecked")
+    private static <T> T nothingThere(Class<T> type) {
+        return (T) Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[] {type}, (proxy, method, args) -> {
+            Class<?> returns = method.getReturnType();
+            if (returns == boolean.class) return false;
+            if (returns == long.class) return 0L;
+            if (returns == int.class) return 0;
+            if (returns == List.class) return List.of();
+            if (returns.isInterface()) return nothingThere(returns);
+            return null;
+        });
     }
 
     /** Writes into {@link #world}: reads the live cell, asks the guard, records and writes, as the platform writer does. */

@@ -52,6 +52,14 @@ public interface WorldEntities<E> {
     /** The block holding the entity's position. */
     BlockPos blockPos(E entity);
 
+    /**
+     * Whether {@code entity} hangs on a block (an item frame, a painting) and would not stay where it is now: its wall is
+     * gone or its own space is filled. The game drops such an entity off, with its item, at its next check; an edit that
+     * took the support takes the entity along instead. Leash knots are left to the game (removing one drops the lead of
+     * the mob tied to it anyway).
+     */
+    boolean hangsUnsupported(E entity);
+
     /** How many entities taking {@code entity} with {@code filter} takes: itself and the passengers the filter takes. */
     int takenCount(E entity, EntityFilter filter);
 
