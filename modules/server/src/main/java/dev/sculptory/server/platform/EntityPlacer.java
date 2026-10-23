@@ -30,6 +30,14 @@ public interface EntityPlacer<E> {
     Spawn<E> restore(EntityState state, Predicate<E> allowed);
 
     /**
+     * Puts back, with its UUIDs, an entity a history step of this job took away, because what was to stand in its place
+     * could not be put there, if {@code allowed} accepts it: a no-op for the entity, so it does not count as placed.
+     */
+    default Spawn<E> putBack(EntityState state, Predicate<E> allowed) {
+        return restore(state, allowed);
+    }
+
+    /**
      * Takes back an entity this placer just spawned (with everything riding it) because it cannot be recorded, so no
      * edit leaves an entity undo does not know about; it counts as a failure.
      */

@@ -19,11 +19,13 @@ import dev.sculptory.core.nbt.NbtIo;
 import dev.sculptory.core.nbt.NbtList;
 import dev.sculptory.core.nbt.NbtTag;
 import dev.sculptory.core.region.Region;
+import dev.sculptory.core.tinker.EntityEdit;
 import dev.sculptory.core.transform.Transform;
 import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.nms.CraftBukkitKeys;
 import dev.sculptory.paper.nms.PaperAccess;
+import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.RunOptions;
 import java.util.ArrayList;
@@ -41,8 +43,11 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.animal.Chicken;
 import net.minecraft.world.entity.animal.Fox;
 import net.minecraft.world.entity.animal.Pig;
+import net.minecraft.world.entity.animal.horse.Horse;
 import net.minecraft.world.entity.decoration.ArmorStand;
+import net.minecraft.world.entity.decoration.ItemFrame;
 import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.vehicle.Boat;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -69,8 +74,11 @@ import org.bukkit.event.entity.CreatureSpawnEvent;
  * refuses its vehicle with it; a fox moved is a new spawn (none of its spawn context carries over: Paper gives
  * an entity loaded from data without a spawn reason {@code DEFAULT}, its origin is where it landed) that still picks
  * up no items, and the move's undo puts the same fox back (UUID, spawn reason, origin, no item pickup, its saved
- * data); a zombie the same off Peaceful; and an undo whose restore another plugin cancels counts it as refused and
- * leaves nothing behind.
+ * data); a zombie the same off Peaceful. A move's undo whose restore another plugin cancels counts it as refused and
+ * keeps the moved copy (a redo then changes nothing, a later undo puts the source back); with a boat whose copy a pig
+ * boarded since, the boat comes back without the pig, which stays; a Tinker edit's undo whose restore is cancelled
+ * keeps the stand as edited. Last, the keys Paper saves that vanilla does not are listed, each is one history compares
+ * without, and a Fabric-style capture matches the Paper one.
  */
 final class EntityChecks {
     /** Entities with this scoreboard tag are turned away by {@link Refuser}. */
@@ -156,15 +164,31 @@ final class EntityChecks {
     /** Another plugin turning entities away: it cancels the spawn of a tagged entity, or of one whose UUID it lists. */
     static final class Refuser implements Listener {
         final Set<UUID> refuse = new HashSet<>();
+        /** UUIDs whose next spawn alone is cancelled (a plugin turning one spawn away, not every later one). */
+        final Set<UUID> refuseOnce = new HashSet<>();
         /** The spawn reasons of the entities seen, as "type reason[ cancelled]". */
         final List<String> seen = new ArrayList<>();
 
         @EventHandler(priority = EventPriority.HIGHEST)
         public void spawning(CreatureSpawnEvent event) {
             org.bukkit.entity.Entity entity = event.getEntity();
-            boolean cancel = entity.getScoreboardTags().contains(REFUSE_TAG) || refuse.contains(entity.getUniqueId());
+            boolean cancel = refused(entity);
             if (cancel) event.setCancelled(true);
             seen.add(entity.getType().getKey().getKey() + " " + event.getSpawnReason() + (cancel ? " cancelled" : ""));
+        }
+
+        /** A boat or minecart is a vehicle: Bukkit announces its spawn with VehicleCreateEvent. */
+        @EventHandler(priority = EventPriority.HIGHEST)
+        public void creating(org.bukkit.event.vehicle.VehicleCreateEvent event) {
+            org.bukkit.entity.Entity entity = event.getVehicle();
+            boolean cancel = refused(entity);
+            if (cancel) event.setCancelled(true);
+            seen.add(entity.getType().getKey().getKey() + " vehicle" + (cancel ? " cancelled" : ""));
+        }
+
+        private boolean refused(org.bukkit.entity.Entity entity) {
+            return entity.getScoreboardTags().contains(REFUSE_TAG) || refuse.contains(entity.getUniqueId())
+                    || refuseOnce.remove(entity.getUniqueId());
         }
 
         List<String> take() {
@@ -201,7 +225,10 @@ final class EntityChecks {
         }).thenCompose(v -> refusedPaste(r, refuser, x + 6, z + 1))
                 .thenCompose(v -> moveFox(r, x + 1, z + 6))
                 .thenCompose(v -> moveZombie(r, x + 1, z + 11))
-                .thenCompose(v -> refusedRestore(r, refuser, x + 16, z + 6));
+                .thenCompose(v -> refusedRestore(r, refuser, x + 16, z + 6))
+                .thenCompose(v -> refusedRestoreLeavesRider(r, refuser, x + 20, z + 1))
+                .thenCompose(v -> refusedTinkerUndo(r, refuser, x + 21, z + 11))
+                .thenAccept(v -> platformKeys(r, x + 12, z + 10));
     }
 
     /**
@@ -388,8 +415,7 @@ final class EntityChecks {
             r.record("entities: the zombie move's undo puts it back", back != null && back.isAlive() && atDest == 0
                     && result.skippedConflicts() == 0, "restored " + (back != null && back.isAlive()) + ", " + atDest
                     + " at the destination (" + result.outcome() + ", " + result.skippedConflicts() + " conflicts)");
-            bukkit.setDifficulty(was);
-        });
+        }).whenComplete((v, e) -> bukkit.setDifficulty(was));
     }
 
     /**
@@ -440,6 +466,141 @@ final class EntityChecks {
 
     private static int pigs(SelfTestRun r, Box box) {
         return r.level.getEntitiesOfClass(Pig.class, aabb(box), Pig::isAlive).size();
+    }
+
+    /**
+     * A boat moved 5 south, a pig then boards the moved boat (a change since the move: a plain undo keeps it as a
+     * conflict), another plugin turns the source boat's restore away (once) and the move is undone anyway: the moved
+     * boat comes back as it was but without the pig (its removal took only what the move recorded and dismounted the
+     * pig, which stays in the world), and the step counts as refused, not failed.
+     */
+    private static CompletableFuture<Void> refusedRestoreLeavesRider(SelfTestRun r, Refuser refuser, int x, int z) {
+        Boat boat = new Boat(EntityType.BOAT, r.level);
+        boat.moveTo(x + 1.5, 101, z + 1.5, 0f, 0f);
+        r.level.tryAddFreshEntityWithPassengers(boat, CreatureSpawnEvent.SpawnReason.CUSTOM);
+        UUID source = boat.getUUID();
+        Box from = box(x, 101, z, x + 2, 103, z + 2);
+        Box to = box(x, 101, z + 5, x + 2, 103, z + 7);
+        UUID[] ids = {null, null};
+        return move(r, from, new BlockPos(0, 0, 5)).thenCompose(result -> {
+            List<Boat> moved = r.level.getEntitiesOfClass(Boat.class, aabb(to), Boat::isAlive);
+            if (moved.size() != 1) throw new IllegalStateException(moved.size() + " boats at the destination");
+            Boat copy = moved.get(0);
+            Pig pig = new Pig(EntityType.PIG, r.level);
+            pig.moveTo(copy.getX(), copy.getY(), copy.getZ(), 0f, 0f);
+            pig.setNoAi(true);
+            r.level.tryAddFreshEntityWithPassengers(pig, CreatureSpawnEvent.SpawnReason.CUSTOM);
+            pig.startRiding(copy, true);
+            ids[0] = copy.getUUID();
+            ids[1] = pig.getUUID();
+            refuser.refuseOnce.add(source);
+            refuser.take();
+            return r.ticks(5).thenCompose(v -> r.undoAnyway());
+        }).thenAccept(result -> {
+            refuser.refuseOnce.clear();
+            Entity copy = r.level.getEntity(ids[0]);
+            Entity pig = r.level.getEntity(ids[1]);
+            boolean boatBack = copy != null && copy.isAlive() && copy.getPassengers().isEmpty();
+            boolean pigStays = pig != null && pig.isAlive() && !pig.isPassenger();
+            int atSource = r.level.getEntitiesOfClass(Boat.class, aabb(from), Boat::isAlive).size();
+            r.record("entities: a refused restore gives the moved boat back without the rider that boarded it since",
+                    boatBack && pigStays && atSource == 0 && result.skippedProtected() >= 1
+                            && result.skippedConflicts() == 0,
+                    "the moved boat back " + boatBack + ", the pig still there and on foot " + pigStays + ", "
+                            + atSource + " boats at the source, " + result.skippedProtected() + " refused, "
+                            + result.skippedConflicts() + " conflicts (" + result.outcome() + "); spawn events "
+                            + refuser.take());
+        });
+    }
+
+    /**
+     * An armor stand turned by Tinker (one step whose before and after are the same UUID), then another plugin turns
+     * the stand's restore away (once) and the step is undone: the stand stays as Tinker left it (taken away and put
+     * back), and the step counts as refused, not failed.
+     */
+    private static CompletableFuture<Void> refusedTinkerUndo(SelfTestRun r, Refuser refuser, int x, int z) {
+        ArmorStand stand = RegionChecks.stand(r, x + 0.5, 101, z + 0.5);
+        UUID id = stand.getUUID();
+        try {
+            r.service.entity(r.player, id, List.of(new EntityEdit.Yaw(90)));
+        } catch (EditRejected e) {
+            throw new IllegalStateException("the Tinker edit was refused: " + e.getMessage(), e);
+        }
+        Entity edited = r.level.getEntity(id);
+        float yaw = edited == null ? Float.NaN : edited.getYRot();
+        refuser.refuseOnce.add(id);
+        refuser.take();
+        return r.ticks(5).thenCompose(v -> r.undo()).thenAccept(result -> {
+            refuser.refuseOnce.clear();
+            Entity now = r.level.getEntity(id);
+            boolean kept = now != null && now.isAlive() && Math.abs(now.getYRot() - yaw) < 0.5f;
+            r.record("entities: a Tinker undo whose restore another plugin cancels keeps the stand as edited",
+                    kept && Math.abs(yaw - 90f) < 0.5f && result.skippedProtected() >= 1
+                            && result.skippedConflicts() == 0,
+                    "edited to yaw " + yaw + ", after the undo " + (now == null ? "gone" : "yaw " + now.getYRot())
+                            + ", " + result.skippedProtected() + " refused, " + result.skippedConflicts()
+                            + " conflicts (" + result.outcome() + "); spawn events " + refuser.take());
+        });
+    }
+
+    /**
+     * The keys Paper writes into a saved pig, zombie, horse, item frame and armor stand that vanilla does not:
+     * CraftBukkit and Paper keys (their {@code Bukkit.}, {@code Paper.} and {@code Spigot.} names) and {@code AgeLocked}
+     * (found by diffing Paper 1.21.1's entity save code with vanilla's). Each must be one history compares without
+     * ({@code EntityNbt.PLATFORM_KEYS}), and the same entity captured as Fabric or NeoForge would capture it (without
+     * them) must match its Paper capture both ways.
+     */
+    private static void platformKeys(SelfTestRun r, int x, int z) {
+        List<Entity> made = new ArrayList<>();
+        Pig pig = new Pig(EntityType.PIG, r.level);
+        Zombie zombie = new Zombie(EntityType.ZOMBIE, r.level);
+        Horse horse = new Horse(EntityType.HORSE, r.level);
+        ArmorStand stand = new ArmorStand(EntityType.ARMOR_STAND, r.level);
+        made.add(pig);
+        made.add(zombie);
+        made.add(horse);
+        made.add(stand);
+        for (int i = 0; i < made.size(); i++) made.get(i).moveTo(x + 0.5 + i, 101, z + 0.5, 0f, 0f);
+        made.add(new ItemFrame(r.level, new net.minecraft.core.BlockPos(x + 4, 101, z),
+                net.minecraft.core.Direction.NORTH));
+        Set<String> found = new java.util.TreeSet<>();
+        List<String> perType = new ArrayList<>();
+        List<String> unmatched = new ArrayList<>();
+        dev.sculptory.core.history.EntityMatcher matcher = dev.sculptory.core.history.EntityMatcher.ignoringVolatile();
+        for (Entity entity : made) {
+            r.level.tryAddFreshEntityWithPassengers(entity, CreatureSpawnEvent.SpawnReason.CUSTOM);
+            CompoundTag paper = McEntities.save(entity, EntityFilter.ALL);
+            entity.discard();
+            if (paper == null) continue;
+            List<String> extra = paper.getAllKeys().stream().filter(EntityChecks::paperOnly).sorted().toList();
+            found.addAll(extra);
+            perType.add(McEntities.typeId(entity) + " " + extra);
+            CompoundTag vanilla = paper.copy();
+            for (String key : extra) vanilla.remove(key);
+            dev.sculptory.core.history.EntityState onPaper = state(entity, paper);
+            dev.sculptory.core.history.EntityState onFabric = state(entity, vanilla);
+            if (!matcher.matches(onFabric, onPaper) || !dev.sculptory.core.history.EntityMatcher.ignoringVolatile()
+                    .matches(onPaper, onFabric)) {
+                unmatched.add(McEntities.typeId(entity));
+            }
+        }
+        r.info("entities: keys Paper saves that vanilla does not", String.join("; ", perType));
+        List<String> compared = found.stream().filter(key -> !EntityNbt.PLATFORM_KEYS.contains(key)).toList();
+        r.record("entities: history compares without every Paper-only key a fresh entity carries",
+                compared.isEmpty() && !found.isEmpty(), "found " + found + ", compared all the same " + compared);
+        r.record("entities: each entity captured as Fabric would match its Paper capture both ways", unmatched.isEmpty(),
+                unmatched.isEmpty() ? "all " + made.size() + " match" : "not matching: " + unmatched);
+    }
+
+    /** A key only Paper (CraftBukkit) writes into a saved entity. */
+    private static boolean paperOnly(String key) {
+        return key.startsWith("Bukkit.") || key.startsWith("Paper.") || key.startsWith("Spigot.")
+                || key.startsWith("WorldUUID") || key.equals("AgeLocked");
+    }
+
+    private static dev.sculptory.core.history.EntityState state(Entity entity, CompoundTag nbt) {
+        return new dev.sculptory.core.history.EntityState(McEntities.typeId(entity), entity.getX(), entity.getY(),
+                entity.getZ(), McEntities.bytes(nbt));
     }
 
     // ================================================================== helpers

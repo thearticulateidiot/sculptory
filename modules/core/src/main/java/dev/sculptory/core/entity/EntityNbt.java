@@ -91,18 +91,33 @@ public final class EntityNbt {
 
     /**
      * Keys undo and redo also leave out when they compare (never when they store or restore: a restore puts them back as
-     * recorded), because one platform writes them and another does not: CraftBukkit's data version
-     * ({@code Bukkit.updateLevel}) and awareness flag ({@code Bukkit.Aware}), which Paper writes into every saved
-     * entity, and the spawn context ({@link #SPAWN_CONTEXT_KEYS}). So an entity recorded on Fabric or NeoForge (or by an
-     * older Paper build that stripped them) is not taken for a changed one on Paper, nor the other way round: history
-     * carried between platforms undoes without a conflict for every mob.
+     * recorded), because one platform writes them and another does not. Paper (CraftBukkit) writes these into saved
+     * entities whatever a plugin did (checked against Paper 1.21.1 build 133 by diffing its entity save code with
+     * vanilla's), on top of the spawn context ({@link #SPAWN_CONTEXT_KEYS}). So an entity recorded on Fabric or NeoForge
+     * (or by an older Paper build that stripped some) is not taken for a changed one on Paper, nor the other way round:
+     * history carried between platforms undoes without a conflict for every mob. Keys Paper writes only once a plugin
+     * set them ({@code Bukkit.invisible}, {@code Bukkit.persist}, {@code Bukkit.visibleByDefault}, ...) stay compared:
+     * they are a change someone made.
      */
     public static final Set<String> PLATFORM_KEYS = platformKeys();
 
     private static Set<String> platformKeys() {
         Set<String> keys = new java.util.HashSet<>(SPAWN_CONTEXT_KEYS);
+        // CraftBukkit's data version, on every entity.
         keys.add("Bukkit.updateLevel");
+        // Whether a mob's AI runs (Mob.aware), on every mob.
         keys.add("Bukkit.Aware");
+        // Whether an ageable mob's age is locked (AgeableMob, Tadpole), on every one.
+        keys.add("AgeLocked");
+        // A horse's taming threshold (AbstractHorse.maxDomestication), on every horse, donkey, mule, llama, camel.
+        keys.add("Bukkit.MaxDomestication");
+        // Whether a zombie, skeleton or phantom burns in daylight (Paper's API), on every one.
+        keys.add("Paper.ShouldBurnInDay");
+        // Whether a slime or magma cube wanders (Paper's API), on every one.
+        keys.add("Paper.canWander");
+        // A piglin's extra barter and interest items (CraftBukkit's API), on every piglin, empty by default.
+        keys.add("Bukkit.BarterList");
+        keys.add("Bukkit.InterestList");
         return Set.copyOf(keys);
     }
 
@@ -406,6 +421,65 @@ public final class EntityNbt {
         } catch (IOException undecodable) {
             return null;
         }
+    }
+
+    /**
+     * {@link #copyForm} keeping what the game changes by itself: a copy nobody touched since it was placed has the form
+     * of its source exactly. Among identical entities (a herd of the same cows), an undo pairs by this one first.
+     */
+    public static byte[] exactCopyForm(byte[] nbt) {
+        try {
+            return canonical(snapshotData(decode(nbt)));
+        } catch (IOException undecodable) {
+            return null;
+        }
+    }
+
+    /**
+     * {@code entity} (whole NBT bytes) with only the passengers, at any depth, whose UUIDs {@code taken} names among its
+     * own passengers: what a removal that took {@code taken} along really took, the other riders having been dismounted
+     * and left in the world (players are never saved). The bytes as they are when either does not decode.
+     */
+    public static byte[] withRidersOf(byte[] entity, byte[] taken) {
+        NbtCompound whole;
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        try {
+            whole = decode(entity);
+            collectRiderIds(decode(taken), ids, 0);
+        } catch (IOException undecodable) {
+            return entity.clone();
+        }
+        return NbtIo.toBytes(keepRiders(whole, ids, 0));
+    }
+
+    private static void collectRiderIds(NbtCompound entity, java.util.Set<String> ids, int depth) {
+        if (depth > MAX_PASSENGER_DEPTH) return;
+        for (NbtCompound rider : riders(entity)) {
+            NbtTag id = rider.get("UUID");
+            if (id instanceof NbtTag.NbtIntArray uuid) ids.add(java.util.Arrays.toString(uuid.value()));
+            collectRiderIds(rider, ids, depth + 1);
+        }
+    }
+
+    private static NbtCompound keepRiders(NbtCompound entity, java.util.Set<String> ids, int depth) {
+        List<NbtCompound> riders = riders(entity);
+        if (riders.isEmpty()) return entity;
+        List<NbtCompound> kept = new ArrayList<>();
+        if (depth < MAX_PASSENGER_DEPTH) {
+            for (NbtCompound rider : riders) {
+                NbtTag id = rider.get("UUID");
+                if (id instanceof NbtTag.NbtIntArray uuid && ids.contains(java.util.Arrays.toString(uuid.value()))) {
+                    kept.add(keepRiders(rider, ids, depth + 1));
+                }
+            }
+        }
+        NbtCompound.Builder out = entity.toBuilder();
+        if (kept.isEmpty()) {
+            out.remove("Passengers");
+        } else {
+            out.put("Passengers", NbtList.of(NbtTag.COMPOUND, kept));
+        }
+        return out.build();
     }
 
     /** A compound's bytes in canonical form (every compound's keys sorted). */

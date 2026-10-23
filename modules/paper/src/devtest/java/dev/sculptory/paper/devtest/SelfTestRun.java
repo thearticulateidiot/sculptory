@@ -354,6 +354,11 @@ final class SelfTestRun {
         return job("redo", listener -> service.redo(player, ConflictPolicy.SKIP_CONFLICTS, listener));
     }
 
+    /** Undo anyway: changes made since are overwritten. */
+    CompletableFuture<JobResult> undoAnyway() {
+        return job("undo anyway", listener -> service.undo(player, ConflictPolicy.OVERWRITE, listener));
+    }
+
     @FunctionalInterface
     interface Starter {
         JobTicket start(JobListener listener) throws EditRejected;
