@@ -11,7 +11,8 @@ import java.util.WeakHashMap;
  * them, and their client never says {@code Hello} again (it does so once, when it joins a world), so everything it
  * sends would count as "before the handshake" and get the player disconnected within a few frames. Instead, until such
  * a connection sends a {@code Hello}, its frames are dropped before they reach the networking, and the player is told
- * once to rejoin, which runs the handshake again. No protocol message asks a client to repeat its {@code Hello}.
+ * once to rejoin, which runs the handshake again. No protocol message asks a client to repeat its {@code Hello}; one
+ * that does (so the editor reconnects without a rejoin) is planned for the next protocol version, and replaces this.
  *
  * <p>Keys are play connections, held weakly (a connection is forgotten once it is gone). Server thread only, but
  * synchronized since the self-test reads the counts.
