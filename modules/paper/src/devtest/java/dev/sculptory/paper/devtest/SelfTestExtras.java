@@ -43,7 +43,13 @@ public final class SelfTestExtras implements DevExtras {
                                                 .executes(c -> NetTest.send(c.getSource(),
                                                         EntityArgument.getPlayer(c, "player"),
                                                         IntegerArgumentType.getInteger(c, "bytes"),
-                                                        StringArgumentType.getString(c, "route")))))));
+                                                        StringArgumentType.getString(c, "route")))))))
+                .then(literal("netprobe").requires(SelfTest::allowed)
+                        .then(argument("player", EntityArgument.player())
+                                .then(argument("count", IntegerArgumentType.integer(1, 64))
+                                        .executes(c -> NetTest.probe(c.getSource(),
+                                                EntityArgument.getPlayer(c, "player"),
+                                                IntegerArgumentType.getInteger(c, "count"))))));
     }
 
     @Override

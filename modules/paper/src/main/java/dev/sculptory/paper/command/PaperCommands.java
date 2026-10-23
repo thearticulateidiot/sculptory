@@ -14,6 +14,7 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.net.ServerNet;
+import dev.sculptory.mc.net.VersionReport;
 import dev.sculptory.paper.DevExtras;
 import dev.sculptory.paper.engine.PaperEditHost;
 import dev.sculptory.protocol.v2.Phase;
@@ -54,7 +55,8 @@ public final class PaperCommands {
     }
 
     public void register(CommandDispatcher<CommandSourceStack> dispatcher, CommandBuildContext context) {
-        LiteralArgumentBuilder<CommandSourceStack> root = literal("sculptory")
+        // Like the loaders' command: only a holder of use (or admin) sees /sculptory at all; the console always.
+        LiteralArgumentBuilder<CommandSourceStack> root = literal("sculptory").requires(source -> allowed(source, Perm.USE))
                 .then(literal("fill").requires(source -> allowed(source, Perm.ADMIN))
                         .then(argument("from", BlockPosArgument.blockPos())
                                 .then(argument("to", BlockPosArgument.blockPos())
@@ -75,11 +77,18 @@ public final class PaperCommands {
         return running;
     }
 
+    /**
+     * Who may address a command node, as the loaders' command decides it: a player holding {@code node}, or holding
+     * {@code admin} (a permissions plugin may grant admin alone, so it counts for every node), or the console and RCON
+     * (level 4, not command blocks). Without a running engine, no player.
+     */
     private boolean allowed(CommandSourceStack source, Perm node) {
         ServerPlayer player = source.getPlayer();
         if (player == null) return source.hasPermission(4);
         PaperEditHost running = host.get();
-        return running != null && running.engine().permissions().has(player, node);
+        if (running == null) return false;
+        return running.engine().permissions().has(player, Perm.ADMIN)
+                || node != Perm.ADMIN && running.engine().permissions().has(player, node);
     }
 
     private int fill(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
@@ -126,15 +135,15 @@ public final class PaperCommands {
         }
     }
 
+    /**
+     * {@code /sculptory version} ({@code use}): the server's builds and protocol and the caller's client build; for admins
+     * and the console every other online player's too. The same report as the loaders' command ({@link VersionReport}).
+     */
     private int version(CommandContext<CommandSourceStack> context) {
         CommandSourceStack source = context.getSource();
-        StringBuilder text = new StringBuilder("Sculptory for Paper ").append(Sculptory.productBuildId())
-                .append(" (engine ").append(Sculptory.buildId()).append(")");
-        ServerPlayer player = source.getPlayer();
-        if (player != null) {
-            text.append("; your client: ").append(ServerNet.clientBuild(player).orElse("no Sculptory handshake"));
-        }
-        source.sendSuccess(() -> Component.literal(text.toString()), false);
+        String text = VersionReport.text(source.getPlayer(), source.getServer().getPlayerList().getPlayers(),
+                allowed(source, Perm.ADMIN));
+        source.sendSuccess(() -> Component.literal(text), false);
         return 1;
     }
 

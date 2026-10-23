@@ -87,7 +87,8 @@ public final class SelfTest {
                 new Group("scatter", ScatterChecks::run),
                 new Group("permissions", PermissionChecks::run),
                 new Group("history saving", HistoryChecks::saveHooks),
-                new Group("network", NetChecks::joinRace));
+                new Group("network", NetChecks::joinRace),
+                new Group("network: reload", NetChecks::reload));
     }
 
     /** Whether the dev commands and the start-up run exist at all (JVM properties; never on by default). */

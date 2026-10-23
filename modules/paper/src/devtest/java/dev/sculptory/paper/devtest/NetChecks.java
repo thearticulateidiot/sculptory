@@ -62,4 +62,49 @@ final class NetChecks {
                 "connected=" + !r.player.hasDisconnected() + ", registration back="
                         + bukkit.getListeningPluginChannels().contains(PaperServerLoader.S2C_CHANNEL)));
     }
+
+    /** How many frames the reload check makes the client send: more than the violations that disconnect a player. */
+    private static final int RELOAD_PROBE_FRAMES = 12;
+
+    /**
+     * An editor connected before the plugin instance was enabled (a {@code /reload}) is not disconnected: its frames
+     * are dropped before the networking, and the player is told once to rejoin. A reload cannot happen inside the run,
+     * so the player's connection is marked as one that predates the instance (what enabling after a reload does), the
+     * client is made to send {@value #RELOAD_PROBE_FRAMES} frames (each answering an unwanted stream offer,
+     * {@link NetTest#probe}), and the mark is taken off again. The player sees the "rejoin" chat line once.
+     */
+    static CompletableFuture<Void> reload(SelfTestRun r) {
+        PaperServerLoader loader = SculptoryPlugin.instance().loader();
+        if (r.attachment != null || r.player.connection == null) {
+            r.info("network: reload", "skipped: needs a connected Sculptory client (/sculptory selftest <player>)");
+            return CompletableFuture.completedFuture(null);
+        }
+        if (!ServerNet.isReady(r.player)) {
+            r.record("network: reload: the handshake completed", false, r.name() + " has no ready Sculptory session");
+            return CompletableFuture.completedFuture(null);
+        }
+        loader.treatAsConnectedBeforeEnable(r.player, true);
+        r.cleanup(() -> loader.treatAsConnectedBeforeEnable(r.player, false));
+        int sent = 0;
+        try {
+            for (int i = 0; i < RELOAD_PROBE_FRAMES; i++) {
+                loader.sendS2C(r.player, NetTest.unwantedOffer(i));
+                sent++;
+            }
+        } catch (ProtocolException e) {
+            return CompletableFuture.failedFuture(e);
+        }
+        int offered = sent;
+        return r.ticks(40).thenAccept(v -> {
+            int dropped = loader.droppedSinceReload(r.player);
+            loader.treatAsConnectedBeforeEnable(r.player, false);
+            r.record("network: reload: an editor connected before the plugin was enabled stays connected",
+                    r.player.connection != null && !r.player.hasDisconnected(),
+                    "connected=" + !r.player.hasDisconnected());
+            r.record("network: reload: its frames are dropped before the networking", dropped >= offered,
+                    offered + " unwanted stream offers sent, " + dropped + " frames dropped");
+            r.record("network: reload: the session is still ready afterwards", ServerNet.isReady(r.player),
+                    "ready=" + ServerNet.isReady(r.player));
+        });
+    }
 }

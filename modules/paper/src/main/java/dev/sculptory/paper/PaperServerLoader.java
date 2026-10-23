@@ -8,6 +8,7 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.loader.ServerLoader;
+import dev.sculptory.protocol.v2.Codec;
 import io.netty.buffer.Unpooled;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import java.nio.file.Path;
@@ -23,7 +24,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import net.minecraft.commands.CommandBuildContext;
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.common.ClientboundCustomPayloadPacket;
 import net.minecraft.network.protocol.common.custom.DiscardedPayload;
 import net.minecraft.resources.ResourceLocation;
@@ -64,7 +67,9 @@ import org.bukkit.plugin.messaging.Messenger;
  *       message on a channel the client has not registered, and the Fabric client's hello arrives before its
  *       registration of {@code sculptory:s2c} (the join race, {@link S2CRoute}). So out goes through the Messenger
  *       once the client registered the channel, and before that (or with {@code -Dsculptory.paper.s2c=nms}) as a
- *       vanilla {@link ClientboundCustomPayloadPacket} to a client that has spoken {@code sculptory:c2s}.</li>
+ *       vanilla {@link ClientboundCustomPayloadPacket} to a client that has spoken {@code sculptory:c2s}. An editor
+ *       that connected before this instance was enabled (a reload) has no session here and never says hello again:
+ *       its frames are dropped and the player told to rejoin ({@link ReloadedConnections}).</li>
  *   <li>Permissions: Bukkit's, with the operator level as the fallback for a node nothing has set.</li>
  * </ul>
  */
@@ -99,6 +104,8 @@ public final class PaperServerLoader implements ServerLoader, Listener {
             Collections.synchronizedMap(new WeakHashMap<>());
     /** Players whose client registered sculptory:s2c (Bukkit's channel events; removed when they quit). */
     private final Set<UUID> registeredS2C = ConcurrentHashMap.newKeySet();
+    /** Editors connected before this instance was enabled (a reload), until they say Hello. */
+    private final ReloadedConnections<ServerGamePacketListenerImpl> reloaded = new ReloadedConnections<>();
     /** An after-save run is queued for the next tick ({@link #onWorldSaveStarting}). */
     private boolean afterSaveScheduled;
 
@@ -117,13 +124,61 @@ public final class PaperServerLoader implements ServerLoader, Listener {
         Messenger messenger = Bukkit.getMessenger();
         messenger.registerIncomingPluginChannel(plugin, C2S_CHANNEL, (channel, player, message) -> {
             ServerPlayer handle = ((CraftPlayer) player).getHandle();
+            if (handle.connection != null && !admitted(handle, message)) return;
             if (handle.connection != null) spokeC2S.add(handle.connection);
             for (BiConsumer<ServerPlayer, byte[]> receiver : receivers) receiver.accept(handle, message);
         });
         messenger.registerOutgoingPluginChannel(plugin, S2C_CHANNEL);
-        // Players already online (a /reload made this instance): their registrations happened before the listener.
+        // Players already online (a /reload made this instance): their registrations happened before the listener, and
+        // their editors' handshakes were with the instance before this one (ReloadedConnections).
         for (Player online : Bukkit.getOnlinePlayers()) {
             if (online.getListeningPluginChannels().contains(S2C_CHANNEL)) registeredS2C.add(online.getUniqueId());
+            ServerPlayer handle = ((CraftPlayer) online).getHandle();
+            if (handle.connection != null) reloaded.joinedBefore(handle.connection);
+        }
+    }
+
+    /**
+     * Whether a frame goes on to the networking: not one from an editor that connected before this instance was
+     * enabled and has not said {@code Hello} to it ({@link ReloadedConnections}). The first such frame tells the player
+     * to rejoin.
+     */
+    private boolean admitted(ServerPlayer player, byte[] frame) {
+        switch (reloaded.receive(player.connection, Codec.peekType(frame))) {
+            case FORWARD -> {
+                return true;
+            }
+            case DROP_AND_TELL -> {
+                Sculptory.LOG.info("Sculptory: {}'s editor connected before Sculptory was enabled again (a reload); "
+                        + "what it sends is ignored until they rejoin", player.getGameProfile().getName());
+                player.sendSystemMessage(Component.literal("Sculptory was reloaded on this server, so your editor lost "
+                        + "its connection to it. Rejoin the server to edit again.").withStyle(ChatFormatting.YELLOW));
+                return false;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+    /**
+     * Frames dropped from this player's editor because it connected before this instance was enabled, or -1 when it
+     * did not ({@link ReloadedConnections}). The self-test reads it.
+     */
+    public int droppedSinceReload(ServerPlayer player) {
+        return player.connection == null ? -1 : reloaded.dropped(player.connection);
+    }
+
+    /**
+     * Treats this player's connection as one that predates this instance ({@code true}), as after a reload, or as an
+     * ordinary one again ({@code false}). For the self-test only: a reload cannot happen inside its run.
+     */
+    public void treatAsConnectedBeforeEnable(ServerPlayer player, boolean before) {
+        if (player.connection == null) return;
+        if (before) {
+            reloaded.joinedBefore(player.connection);
+        } else {
+            reloaded.forget(player.connection);
         }
     }
 
@@ -144,6 +199,7 @@ public final class PaperServerLoader implements ServerLoader, Listener {
         spokeC2S.clear();
         unregisteredSends.clear();
         registeredS2C.clear();
+        reloaded.clear();
         // Its task was cancelled with the plugin's others.
         afterSaveScheduled = false;
     }

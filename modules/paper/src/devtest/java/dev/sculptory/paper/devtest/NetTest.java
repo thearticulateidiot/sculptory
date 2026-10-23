@@ -7,7 +7,12 @@ import dev.sculptory.protocol.v2.Codec;
 import dev.sculptory.protocol.v2.ProtocolException;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import dev.sculptory.protocol.v2.StreamChunk;
+import dev.sculptory.protocol.v2.StreamKind;
+import dev.sculptory.protocol.v2.StreamOpen;
 import java.util.Arrays;
+import java.util.Map;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
@@ -56,6 +61,39 @@ public final class NetTest {
                 player.getBukkitEntity().getListeningPluginChannels());
         source.sendSuccess(() -> Component.literal("Sent " + frame.length + " bytes through " + route), false);
         return 1;
+    }
+
+    /**
+     * Dev only ({@code /sculptory netprobe <player> <count>}): sends {@code count} offers of a stream the client never
+     * asked for ({@link #unwantedOffer}), through the loader as the networking sends. A Sculptory client in a ready
+     * session answers each with a {@code StreamAbort}, so this makes a connected editor send {@code count} frames
+     * without anyone at its keyboard (the reload check: a connection that predates the plugin instance).
+     */
+    public static int probe(CommandSourceStack source, ServerPlayer player, int count) {
+        PaperServerLoader loader = SculptoryPlugin.instance().loader();
+        int sent = 0;
+        try {
+            for (int i = 0; i < count; i++) {
+                if (!loader.canSendS2C(player)) break;
+                loader.sendS2C(player, unwantedOffer(i));
+                sent++;
+            }
+        } catch (ProtocolException e) {
+            source.sendFailure(Component.literal("Could not build the frame: " + e.getMessage()));
+            return 0;
+        }
+        int offers = sent;
+        Sculptory.LOG.info("Sculptory netprobe: offered {} unwanted streams to {} (route {}, frames dropped since a "
+                + "reload so far: {})", offers, player.getGameProfile().getName(), loader.route(player),
+                loader.droppedSinceReload(player));
+        source.sendSuccess(() -> Component.literal("Offered " + offers + " unwanted streams"), false);
+        return offers;
+    }
+
+    /** An offer of a schematic file for a request id no client uses: the client aborts it ("unwanted"). */
+    static byte[] unwantedOffer(int i) throws ProtocolException {
+        SortedMap<String, String> meta = new TreeMap<>(Map.of("reqId", "-1"));
+        return Codec.encodeS2C(new StreamOpen(STREAM_ID - 1 - i, StreamKind.SCHEM_FILE, 1, meta), null);
     }
 
     /** A frame of exactly {@code bytes} bytes (see the class comment). */
