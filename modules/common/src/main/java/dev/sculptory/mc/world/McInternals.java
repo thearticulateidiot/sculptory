@@ -57,6 +57,19 @@ public interface McInternals {
     /** {@code StandingAndWallBlockItem.wallBlock} (protected): the block a wall-and-floor item puts on a wall. */
     Block wallBlock(StandingAndWallBlockItem item);
 
+    /**
+     * Adds {@code root} and its passengers to {@code world} as new entities ({@code ServerLevel.tryAddFreshEntityWithPassengers});
+     * false when one of their UUIDs is in use. True does not mean every one of them is in the world: a platform may
+     * still turn some away (Paper's spawn events; NeoForge's join event), so {@link EntityWriter} checks each. A
+     * platform whose server applies its spawn rules to entities added this way (Paper: no monsters on Peaceful or with
+     * spawn-monsters off, no animals or villagers with theirs off) adds them as a plugin's own placement, as vanilla's
+     * commands and structures place entities whatever those rules say.
+     */
+    default boolean addFreshEntityWithPassengers(net.minecraft.server.level.ServerLevel world,
+                                                 net.minecraft.world.entity.Entity root) {
+        return world.tryAddFreshEntityWithPassengers(root);
+    }
+
     /** {@code PalettedContainer.Data}'s storage and palette ({@code Data} itself is package-private in the game). */
     record PaletteData<T>(BitStorage storage, Palette<T> palette) {
     }

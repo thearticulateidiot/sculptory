@@ -36,11 +36,12 @@ public interface EntityMatcher {
             recorded.typeId().equals(live.typeId()) && Arrays.equals(recorded.nbt(), live.nbt());
 
     /**
-     * The rule undo and redo use: the same type and the same NBT once {@link EntityNbt#VOLATILE_KEYS} are left out (at
-     * the top and in every passenger), compared as maps (key order and the order the game wrote them in do not matter),
-     * float values within {@link EntityNbt#FLOAT_TOLERANCE} (a display recomputes its rotation each time it loads).
-     * Data that does not decode counts as changed. Each recorded side is decoded once per matcher; make one per undo or
-     * redo. Its {@link #placementAware()} form leaves where the entity stands and looks in.
+     * The rule undo and redo use: the same type and the same NBT once {@link EntityNbt#VOLATILE_KEYS} and
+     * {@link EntityNbt#PLATFORM_KEYS} are left out (at the top and in every passenger; the second set so history
+     * recorded on Fabric or NeoForge undoes on Paper, and the other way round, without every mob counted as changed),
+     * compared as maps (key order and the order the game wrote them in do not matter), float values within {@link EntityNbt#FLOAT_TOLERANCE} (a display recomputes its rotation
+     * each time it loads). Data that does not decode counts as changed. Each recorded side is decoded once per matcher;
+     * make one per undo or redo. Its {@link #placementAware()} form leaves where the entity stands and looks in.
      */
     static EntityMatcher ignoringVolatile() {
         return new Comparing(EntityNbt::withoutVolatile, true);

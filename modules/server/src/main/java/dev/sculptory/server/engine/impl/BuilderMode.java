@@ -49,6 +49,9 @@ public interface BuilderMode<P> {
     /** The player left: their drag becomes an entry when {@code keep} (history is saved), and their powers go. */
     void playerLeft(UUID player, boolean keep);
 
+    /** The world named {@code worldId} is unloading while the server goes on: open drags in it become entries now. */
+    void worldUnloading(String worldId);
+
     /** Server stop: open drags become entries when {@code keep} (history is saved). */
     void shutdown(boolean keep);
 }

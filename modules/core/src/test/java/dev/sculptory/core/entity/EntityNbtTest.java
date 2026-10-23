@@ -52,6 +52,45 @@ class EntityNbtTest {
     }
 
     @Test
+    void aClipboardLeavesOutHowAPaperServerSpawnedIt() {
+        NbtCompound rider = NbtCompound.builder().putString("id", "minecraft:zombie")
+                .putString("Paper.SpawnReason", "NATURAL").putByte("Paper.FromNetherPortal", (byte) 1)
+                .putInt("Bukkit.updateLevel", 2).build();
+        NbtCompound horse = NbtCompound.builder().putString("id", "minecraft:skeleton_horse")
+                .putString("Paper.SpawnReason", "TRAP")
+                .put("Paper.Origin", EntityNbt.doubles(1, 2, 3))
+                .putIntArray("Paper.OriginWorld", new int[] {1, 2, 3, 4})
+                .putIntArray("Paper.SpawningEntity", new int[] {5, 6, 7, 8})
+                .putInt("Bukkit.updateLevel", 2)
+                .put("Passengers", NbtList.of(NbtTag.COMPOUND, List.of(rider)))
+                .build();
+        NbtCompound data = EntityNbt.snapshotData(horse);
+        for (String key : EntityNbt.SPAWN_CONTEXT_KEYS) assertFalse(data.contains(key), key);
+        NbtCompound kept = data.getList("Passengers").compounds().get(0);
+        for (String key : EntityNbt.SPAWN_CONTEXT_KEYS) assertFalse(kept.contains(key), "rider " + key);
+        // CraftBukkit's data version stays: without it a mob's saved CanPickUpLoot false is ignored when it loads.
+        assertEquals(Integer.valueOf(2), data.getInt("Bukkit.updateLevel"));
+        assertEquals(Integer.valueOf(2), kept.getInt("Bukkit.updateLevel"));
+    }
+
+    @Test
+    void aMovedCopyHasTheFormOfItsSource() {
+        NbtCompound source = NbtCompound.builder().putString("id", "minecraft:pig")
+                .putIntArray("UUID", new int[] {1, 2, 3, 4})
+                .put("Pos", EntityNbt.doubles(1.5, 64, 1.5)).putShort("Air", (short) 300)
+                .putString("Paper.SpawnReason", "BREEDING").putString("CustomName", "\"Wilbur\"").build();
+        NbtCompound copy = NbtCompound.builder().putString("id", "minecraft:pig")
+                .putIntArray("UUID", new int[] {9, 8, 7, 6})
+                .put("Pos", EntityNbt.doubles(11.5, 64, 1.5)).putShort("Air", (short) 120)
+                .putString("Paper.SpawnReason", "DEFAULT").putString("CustomName", "\"Wilbur\"").build();
+        NbtCompound other = copy.toBuilder().putString("CustomName", "\"Babe\"").build();
+        assertArrayEquals(EntityNbt.copyForm(NbtIo.toBytes(source)), EntityNbt.copyForm(NbtIo.toBytes(copy)));
+        assertFalse(java.util.Arrays.equals(EntityNbt.copyForm(NbtIo.toBytes(source)),
+                EntityNbt.copyForm(NbtIo.toBytes(other))), "a different pig is not its copy");
+        assertNull(EntityNbt.copyForm(new byte[] {1, 2, 3}), "data that does not decode pairs with nothing");
+    }
+
+    @Test
     void aPlacementSetsIdentityAndPlace() {
         NbtCompound data = EntityNbt.snapshotData(boat());
         NbtCompound spawn = EntityNbt.spawnCompound("minecraft:oak_boat", data, 1.5, 70, 2.5, -90f, 10f, null);

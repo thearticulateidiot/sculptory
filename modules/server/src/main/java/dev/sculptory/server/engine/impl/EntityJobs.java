@@ -3,6 +3,7 @@ package dev.sculptory.server.engine.impl;
 import dev.sculptory.core.BlockPos;
 import dev.sculptory.core.Box;
 import dev.sculptory.core.entity.EntityFilter;
+import dev.sculptory.core.entity.EntityNbt;
 import dev.sculptory.core.entity.EntityPlacement;
 import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.history.ConflictPolicy;
@@ -18,6 +19,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -460,12 +462,16 @@ public final class EntityJobs {
      * against what the world holds under its UUID and removed where the rule allows; after them, the targets are put
      * back with their UUIDs. Kept entities are counted as conflicts. Nothing is recorded (history jobs push nothing). A
      * move's source is put back whether or not the moved entity was found and removed (one that walked into a chunk
-     * that is not loaded is then left as a duplicate: a known limit, never a loss).
+     * that is not loaded is then left as a duplicate: a known limit, never a loss). A source that cannot be put back
+     * (another plugin cancels its spawn, its data fails to load) gets its copy back instead, the one this step took
+     * away whose data matches ({@link EntityNbt#copyForm}), so an entity never exists only in the history: the step is
+     * counted refused (or as a conflict), and the entry stays undoable later.
      */
     public static EntityWork history(List<EntityHistory.Step> steps, ConflictPolicy policy, EntityMatcher matcher) {
         Long2ObjectLinkedOpenHashMap<List<EntityHistory.Step>> columns = byColumn(steps,
                 s -> columnOf(s.where().x(), s.where().z()));
         List<EntityHistory.Step> restore = new ArrayList<>();
+        List<Removed> removed = new ArrayList<>();
         return new EntityWork() {
             private final Cursor deciding = new Cursor();
             private final Cursor restoring = new Cursor();
@@ -508,6 +514,9 @@ public final class EntityJobs {
                                 return;
                             }
                             ctx.writer.remove(entity, step.expected() != null ? step.expected() : live);
+                            // An entity only taken away (a move's copy) may have to come back if the entity it
+                            // stands in for cannot be put back.
+                            if (step.target() == null && live != null) removed.add(new Removed(live));
                         }
                         if (step.target() != null) restore.add(step);
                     }
@@ -532,12 +541,58 @@ public final class EntityJobs {
                     return;
                 }
                 EntityPlacer.Spawn<E> spawn = ctx.writer.restore(step.target(), ctx::mayPlace);
+                if (spawn.entity() != null) return;
                 if (spawn.refused()) {
                     ctx.protectedEntities++;
-                } else if (spawn.entity() == null) {
+                } else {
                     ctx.conflicts++; // could not be put back (counted by the writer too)
                 }
+                if (step.expected() == null) putBackCounterpart(step.target(), ctx);
+            }
+
+            /**
+             * An entity this step should have put back (a move's source) could not be: the entity that stood in for it
+             * and that this step already took away (the move's copy, paired by {@link EntityNbt#copyForm}) is put back
+             * as it was, so the entity is never left in the history alone. The entry's redo then finds the copy where
+             * it left it and its source missing, and a later undo tries again.
+             */
+            private <E> void putBackCounterpart(EntityState target, Context<E> ctx) {
+                byte[] form = EntityNbt.copyForm(target.nbt());
+                if (form == null) return;
+                for (Removed copy : removed) {
+                    if (copy.used || !copy.state.typeId().equals(target.typeId()) || !Arrays.equals(copy.form(), form)) {
+                        continue;
+                    }
+                    copy.used = true;
+                    if (ctx.writer.restore(copy.state, e -> true).entity() == null) {
+                        LOG.warn("Sculptory: a {} whose source could not be put back by an undo could not be put "
+                                + "back either; its data stays in the redo step", target.typeId());
+                    }
+                    return;
+                }
+                LOG.warn("Sculptory: a {} could not be put back by an undo and no copy of it was found to keep "
+                        + "instead; its data stays in the redo step", target.typeId());
             }
         };
+    }
+
+    /** An entity a history step took away, with its copy form worked out when first needed. */
+    private static final class Removed {
+        final EntityState state;
+        boolean used;
+        private byte[] form;
+        private boolean formed;
+
+        Removed(EntityState state) {
+            this.state = state;
+        }
+
+        byte[] form() {
+            if (!formed) {
+                form = EntityNbt.copyForm(state.nbt());
+                formed = true;
+            }
+            return form;
+        }
     }
 }

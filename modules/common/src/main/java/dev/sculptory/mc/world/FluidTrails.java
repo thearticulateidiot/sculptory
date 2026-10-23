@@ -708,6 +708,29 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
         ticks = 0;
     }
 
+    /**
+     * {@code world} is unloading while the server goes on (a world-management plugin unloads it): everything held for
+     * it goes, after the platform wrote its marks into its chunks and the engine folded its trails into the history
+     * (the chunk-save hook for every loaded column). The changes announced in it this tick are dropped (its blocks are
+     * not read again). When it loads again, its chunks' saved marks are read as for a world seen the first time.
+     *
+     * @return the trail cells that were still not folded into their entries (lost: their undo leaves that fluid)
+     */
+    public long worldUnloaded(ServerLevel world) {
+        eventRecordings.removeIf(r -> r.world == world);
+        for (List<Recording> noted : eventCells.values()) noted.removeIf(r -> r.world == world);
+        eventCells.values().removeIf(List::isEmpty);
+        WorldTrails w = worlds.remove(world);
+        if (w == null) return 0;
+        markedSections -= w.sections.size();
+        long lost = 0;
+        for (Trail trail : w.trails.values()) {
+            EditRecord left = trail.buildAll();
+            if (left != null) lost += left.before().cellCount();
+        }
+        return lost;
+    }
+
     /** Whether (x, y, z) is marked with {@code owner} (tests). */
     public boolean markedBy(ServerLevel world, BlockPos pos, UUID owner) {
         return owner.equals(ownerAt(world, pos));

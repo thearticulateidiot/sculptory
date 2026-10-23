@@ -1053,6 +1053,21 @@ public final class ServerScatter<P, W> implements ScatterService<P> {
         drop(encoding.remove(player));
     }
 
+    /**
+     * {@code world} is about to unload while the server goes on: the previews being worked out in it end (their player
+     * is told: {@code UNLOADED}) and release their areas, so none reads the world afterwards. Returns how many ended.
+     */
+    public int worldUnloading(W world) {
+        checkThread();
+        int ended = 0;
+        for (Task task : new ArrayList<>(tasks.values())) {
+            if (task.world != world) continue;
+            fail(task, RejectReason.UNLOADED, "its world was unloaded");
+            ended++;
+        }
+        return ended;
+    }
+
     /** Server stop: ends every preview without a reply and releases their areas. */
     public void shutdown() {
         for (Task task : new ArrayList<>(tasks.values())) close(task);

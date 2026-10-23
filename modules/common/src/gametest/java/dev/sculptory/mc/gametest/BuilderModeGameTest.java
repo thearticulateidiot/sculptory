@@ -248,6 +248,32 @@ public final class BuilderModeGameTest {
                 .thenSucceed();
     }
 
+    /**
+     * A Replace whose placement does not happen (a chest replaced by the same chest: the game sets nothing, so the step
+     * is not done) leaves the container as it was: its diamonds stay, nothing is recorded, every cell is the same. A
+     * mirrored copy another plugin refuses is the Paper self-test's case: no mod cancels a builder step here.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_replace", timeoutTicks = LIMIT)
+    public void replaceThatDoesNotHappenKeepsTheContainerFull(GameTestHelper context) {
+        Harness h = new Harness(context);
+        Region r = region(h, context, 1079);
+        BlockPos chest = pos(r.x + 6, FLOOR + 1, r.z + 7);
+        h.world.setBlockAndUpdate(chest, Blocks.CHEST.defaultBlockState());
+        ((ChestBlockEntity) h.world.getBlockEntity(chest)).setItem(3, new ItemStack(Items.DIAMOND, 5));
+        stand(h.player, r.x + 2, r.z + 7, -90f);
+        WorldSnapshot before = capture(h.world, r.area);
+        hold(h.player, Items.CHEST);
+        BuilderOutcome same = place(h, h.player, chest.getX(), chest.getY(), chest.getZ(), Facing.WEST, 0f, 0.5f, 0.5f,
+                BuilderPower.REPLACE.bit(), Symmetry.NONE);
+        ItemStack kept = ((ChestBlockEntity) h.world.getBlockEntity(chest)).getItem(3);
+        check(same.changed() == 0, "nothing placed: " + same);
+        check(kept.is(Items.DIAMOND) && kept.getCount() == 5, "the chest keeps its diamonds: " + kept);
+        check(entries(h).isEmpty(), "no step: " + labels(entries(h)));
+        checkSame(before, capture(h.world, r.area), "after the Replace that did not happen");
+        cleanup(h, List.of(), r);
+        context.succeed();
+    }
+
     /** Mirror places the block and its image (turned as the editor turns copies) as one step. */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_mirror", timeoutTicks = LIMIT)
     public void mirrorPlacesAndBreaksImagesInOneStep(GameTestHelper context) {

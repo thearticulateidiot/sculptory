@@ -164,6 +164,7 @@ final class BuilderChecks {
                 .thenCompose(v -> neighbours(r, events, x0, z0, work))
                 .thenCompose(v -> keepShape(r, x0, z0, work))
                 .thenCompose(v -> cancelled(r, events, x0, z0, work))
+                .thenCompose(v -> replaceMirrorRefusedCopy(r, events, x0, z0 + 32))
                 .thenCompose(v -> regionAndComparator(r, events, x0, z0, work))
                 .thenCompose(v -> lamp(r, x0, z0 + 24, work, false))
                 .thenCompose(v -> lamp(r, x0, z0 + 27, work, true))
@@ -1312,15 +1313,61 @@ final class BuilderChecks {
     }
 
     /**
+     * Replace with Mirror over two chests holding diamonds, another plugin cancelling the mirrored copy's placement (its
+     * place event): the original chest is replaced by stone and only it is recorded (its diamonds with it), the copy is
+     * skipped and its chest keeps its diamonds, untouched and unrecorded; the undo puts the original chest back full.
+     * On a floor of its own north of the main area ({@code z0} is its corner).
+     */
+    private static CompletableFuture<Void> replaceMirrorRefusedCopy(SelfTestRun r, Events events, int x0, int z0) {
+        Box area = box(x0, FLOOR, z0, x0 + 11, FLOOR + 3, z0 + 7);
+        r.claim(area);
+        for (BlockPos cell : SelfTestRun.cells(area)) {
+            set(r, cell, cell.getY() == FLOOR ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState());
+        }
+        BlockPos original = new BlockPos(x0 + 2, FLOOR + 1, z0 + 4);
+        // Mirrored across the plane x = x0 + 6 (a block edge): x0 + 2 lands on x0 + 9.
+        Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 2 * (x0 + 6), 2 * (z0 + 4));
+        BlockPos image = new BlockPos(x0 + 9, FLOOR + 1, z0 + 4);
+        for (BlockPos chest : List.of(original, image)) {
+            set(r, chest, Blocks.CHEST.defaultBlockState());
+            fillChest(r, chest, new ItemStack(Items.DIAMOND, 5));
+        }
+        r.stand(x0 + 5.5, FLOOR + 1, z0 + 1.5, 0f, new ItemStack(Items.STONE, 64));
+        int[] before = r.snapshot(area);
+        events.take();
+        events.cancelPlaceAt = image;
+        int powers = BuilderPower.REPLACE.bit() | BuilderPower.MIRROR.bit();
+        BuilderOutcome placed = r.service.builderPlace(r.player, new C2S.BuilderPlace(seq++, false,
+                new dev.sculptory.core.BlockPos(original.getX(), original.getY(), original.getZ()), Facing.WEST, 0f,
+                0.5f, 0.5f, powers, mirror));
+        events.cancelPlaceAt = null;
+        List<String> seen = events.take();
+        boolean replaced = r.level.getBlockState(original).is(Blocks.STONE);
+        ItemStack kept = chestItem(r, image);
+        boolean copyFull = r.level.getBlockState(image).is(Blocks.CHEST) && kept.is(Items.DIAMOND) && kept.getCount() == 5;
+        r.record("builder: a Replace copy another plugin refuses leaves its chest untouched and unrecorded",
+                placed.accepted() && placed.changed() == 1 && placed.skipped() == 1 && replaced && copyFull
+                        && labels(r).equals(List.of("Replace · 1 block")) && r.countDiffering(area, before) == 1,
+                placed + ", original replaced " + replaced + ", the copy's chest holds " + kept + ", history "
+                        + labels(r) + ", " + r.countDiffering(area, before) + " cells differ, events " + seen);
+        return r.undo().thenAccept(result -> {
+            ItemStack back = chestItem(r, original);
+            ItemStack still = chestItem(r, image);
+            r.record("builder: its undo puts the original chest back full and leaves the copy's alone",
+                    r.countDiffering(area, before) == 0 && back.is(Items.DIAMOND) && back.getCount() == 5
+                            && still.is(Items.DIAMOND) && still.getCount() == 5 && labels(r).isEmpty(),
+                    result.outcome() + ", " + r.countDiffering(area, before) + " cells differ, the original holds "
+                            + back + ", the copy's " + still + ", history " + labels(r));
+        });
+    }
+
+    /**
      * A Keep shape bed whose head lands in a WorldGuard region (the head's cell only) is refused whole: both halves
      * stay air, no step is added, and the comparator beside the head (reading a lectern with a book, set without
      * updates, so off) gets no update from the revert: no tick is scheduled and it is still off 10 ticks later.
      */
     private static CompletableFuture<Void> regionAndComparator(SelfTestRun r, Events events, int x0, int z0, Box work) {
-        if (!r.worldGuard()) {
-            r.info("builder: WorldGuard region", "skipped: WorldGuard is not installed");
-            return CompletableFuture.completedFuture(null);
-        }
+        if (r.regionChecksSkipped("builder: WorldGuard region")) return CompletableFuture.completedFuture(null);
         BlockPos foot = new BlockPos(x0 + 15, FLOOR + 1, z0 + 20);
         BlockPos head = foot.east();
         BlockPos comparator = head.north();

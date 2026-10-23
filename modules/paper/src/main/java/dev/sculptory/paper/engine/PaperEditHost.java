@@ -113,6 +113,10 @@ public final class PaperEditHost {
         host.saveHooks = HistorySaveHooks.register(plugin, service);
         // After the history hooks: on a chunk unload the trails are folded before the marks are written.
         host.fluidTrails = PaperFluidTrails.register(plugin, engine.fluidTrails());
+        // A world unloaded while the server runs: the engine lets go of it before it saves (jobs, strokes, drags,
+        // history, fluid marks).
+        org.bukkit.Bukkit.getPluginManager().registerEvents(new WorldUnloads(service, planning, host.fluidTrails,
+                engine.fluidTrails()), plugin);
         dev.sculptory.paper.perm.PermissionWatch.register(plugin, service, planning);
         org.bukkit.Bukkit.getPluginManager().registerEvents(new BuilderModeListener(service), plugin);
         ServerNet.install(new NetFacade(service), clips, planning, service, engine.permissions(),
@@ -185,23 +189,46 @@ public final class PaperEditHost {
         }
     }
 
-    /** Before the worlds are saved (plugin disable): jobs end, the history is written, the library closes. */
+    /**
+     * Before the worlds are saved (plugin disable): jobs end, the fluid marks go into their chunks, the history is
+     * written, the library closes.
+     */
     private void stop() {
-        // Whatever the shutdown steps throw (a send to a client, a job listener), the history is still written.
+        // Whatever the shutdown steps throw (a send to a client, a job listener), the marks and the history are still
+        // written.
         try {
             engine.shutdown();
             scatter.shutdown();
             service.shutdown();
         } finally {
             try {
-                if (!service.historyService().closeStore(HISTORY_CLOSE_MILLIS)) {
-                    LOG.warn("Sculptory: saving the undo history did not finish within {} s; the last steps may be "
-                            + "missing after the restart", HISTORY_CLOSE_MILLIS / 1000);
-                }
+                // After the engine stopped, so the marks are those of the world as the final save writes it: what the
+                // chunk-save hook writes at Fabric's and NeoForge's final save.
+                int columns = flushFluidMarks();
+                if (columns > 0) LOG.info("Sculptory: wrote the fluid marks of {} chunk columns for the final save", columns);
+            } catch (RuntimeException | LinkageError e) {
+                LOG.error("Sculptory: writing the fluid marks for the final save failed; fluid written in the last "
+                        + "seconds is not followed after the restart", e);
             } finally {
-                clipboards.shutdown();
+                try {
+                    if (!service.historyService().closeStore(HISTORY_CLOSE_MILLIS)) {
+                        LOG.warn("Sculptory: saving the undo history did not finish within {} s; the last steps may be "
+                                + "missing after the restart", HISTORY_CLOSE_MILLIS / 1000);
+                    }
+                } finally {
+                    clipboards.shutdown();
+                }
             }
         }
+    }
+
+    /**
+     * Writes every world's changed fluid marks into their chunks' data containers now: the plugin's stop path (Paper
+     * disables plugins before its final chunk save, so the save and unload handlers do not run for it), and the dev
+     * self-test. Returns the columns whose container changed. Server thread only.
+     */
+    public int flushFluidMarks() {
+        return fluidTrails == null ? 0 : fluidTrails.flushAll();
     }
 
     /** The world's undo history store ({@code <world>/sculptory/history}), or null for memory only. */

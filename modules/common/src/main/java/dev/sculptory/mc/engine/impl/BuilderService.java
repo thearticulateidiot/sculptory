@@ -12,6 +12,7 @@ import dev.sculptory.mc.builder.BuilderChange;
 import dev.sculptory.mc.builder.BuilderPlacement;
 import dev.sculptory.mc.builder.BuilderPlacementContext;
 import dev.sculptory.mc.builder.BuilderSteps;
+import dev.sculptory.mc.world.McTile;
 import dev.sculptory.mc.world.McWorldReader;
 import dev.sculptory.mc.world.WorldChecks;
 import dev.sculptory.protocol.v2.BuilderPower;
@@ -47,6 +48,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.Clearable;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
@@ -57,6 +59,7 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.GameMasterBlock;
 import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.BlockHitResult;
@@ -284,11 +287,14 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         RuntimeException failure = null;
         BuilderSteps.Action action = steps.open(world, p, keepShape);
         try {
-            if (replace) action.emptyContainer(cell);
+            BuilderChange full = replace ? emptyContainer(world, action, cell) : null;
             BuilderSteps.Step placed = action.place(decision.item(), decision.context(), decision.state(), false);
             // Another plugin refused the block itself (its place event): the action is refused whole, as protection.
             refused = placed == BuilderSteps.Step.REFUSED;
-            if (placed == BuilderSteps.Step.NOT_DONE) skipped++;
+            if (placed == BuilderSteps.Step.NOT_DONE) {
+                skipped++;
+                refill(world, full);
+            }
             ItemStack stack = decision.context().getItemInHand();
             List<BuilderPlacement.Copy> others = refused ? List.of() : copies.subList(1, copies.size());
             for (BuilderPlacement.Copy copy : others) {
@@ -303,10 +309,14 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
                     skipped++;
                     continue;
                 }
-                if (replace) action.emptyContainer(at);
+                BuilderChange copyFull = replace ? emptyContainer(world, action, at) : null;
                 BlockState copyState = BuilderPlacement.imageState(states, copy.image(), decision.state());
-                // A copy another plugin refused is skipped, as a protected copy is.
-                if (action.place(decision.item(), context, copyState, true) != BuilderSteps.Step.DONE) skipped++;
+                // A copy another plugin refused is skipped, as a protected copy is; its container is filled again, so
+                // the copy changes nothing and records nothing.
+                if (action.place(decision.item(), context, copyState, true) != BuilderSteps.Step.DONE) {
+                    skipped++;
+                    refill(world, copyFull);
+                }
             }
         } catch (RuntimeException e) {
             failure = e;
@@ -526,6 +536,33 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         if (!p.getMainHandItem().getItem().canAttackBlock(state, world, pos, p)) return Refusal.CANNOT_BREAK;
         if (sameKind && drag.firstKind != null && !state.is(drag.firstKind)) return Refusal.NOTHING;
         return null;
+    }
+
+    /**
+     * Replace empties a container before its cell is replaced (its contents go into the record, not onto the ground).
+     * Returns the cell as it was before, to fill it again when the placement then does not happen, or null when the
+     * cell holds no container.
+     */
+    private BuilderChange emptyContainer(ServerLevel world, BuilderSteps.Action action, BlockPos pos) {
+        BlockEntity entity = world.getBlockEntity(pos);
+        BuilderChange full = null;
+        if (entity instanceof Clearable) {
+            int state = Block.getId(world.getBlockState(pos));
+            full = new BuilderChange(pos.immutable(), state, McTile.capture(entity, world.registryAccess()), state, null);
+        }
+        action.emptyContainer(pos);
+        return full;
+    }
+
+    /**
+     * A placement that did not happen (the item's own steps refused it, or another plugin cancelled it and its changes
+     * were put back) leaves its cell's container as it was: emptied for Replace, it is filled again physics-free while
+     * the action is still open, so the action's changes do not include it and nothing goes into the history. Only when
+     * the cell still holds the container's block (a step that did change the cell keeps its own result).
+     */
+    private void refill(ServerLevel world, BuilderChange full) {
+        if (full == null || !world.getBlockState(full.pos()).is(Block.stateById(full.before()).getBlock())) return;
+        steps.revert(world, List.of(full));
     }
 
     // ================================================================== drags and history
@@ -794,6 +831,15 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         if (player != null) {
             AttributeInstance range = player.getAttribute(Attributes.BLOCK_INTERACTION_RANGE);
             if (range != null) range.removeModifier(LONG_REACH);
+        }
+    }
+
+    /** A world is unloading while the server goes on: the drags open in it become entries now. */
+    @Override
+    public void worldUnloading(String worldId) {
+        for (Map.Entry<UUID, PlayerState> entry : List.copyOf(players.entrySet())) {
+            Drag drag = entry.getValue().drag;
+            if (drag != null && drag.worldId.equals(worldId)) closeDrag(entry.getKey(), true);
         }
     }
 

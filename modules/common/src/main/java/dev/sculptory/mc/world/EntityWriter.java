@@ -57,7 +57,11 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Before it spawns anything, {@link #place} and {@link #restore} ask the caller's guard about the entity as it would
  * be spawned (its final position and, for a hanging entity, the block it ended up on): a refused entity is not spawned
- * ({@link Spawn#refused}).
+ * ({@link Spawn#refused}). The entity is added through the platform ({@link McInternals#addFreshEntityWithPassengers});
+ * a server may still turn it or one of its passengers away after that (on Paper another plugin cancelling its spawn
+ * event, on NeoForge a mod cancelling its join event), so each one is checked to be in the world afterwards. If one is
+ * not, the rest are taken out again and the entity counts as refused: an edit never records an entity that is not
+ * there, nor leaves part of one behind it does not record.
  *
  * <p><b>Restoring</b> ({@link #restore}) loads a recorded entity with its own UUIDs (undo and redo); it fails when one of
  * them is taken. <b>Removing</b> ({@link #remove}) discards an entity and the passengers named in its recorded data; other
@@ -78,6 +82,8 @@ public final class EntityWriter implements EntityPlacer<Entity> {
     private long stripped;
     private long failures;
     private long notFlipped;
+    /** Entities the server turned away after they were added ({@link #add}); they count as refused. */
+    private long turnedAway;
 
     /**
      * @param options whether operator-only entity data may be kept ({@code allowOperatorNbt}; trusted data is kept for
@@ -212,9 +218,7 @@ public final class EntityWriter implements EntityPlacer<Entity> {
             if (vehicle != null) vehicle.positionRider(rider);
         }
         if (!allowed.test(root)) return REFUSED;
-        if (!world.tryAddFreshEntityWithPassengers(root)) return failed(entity.typeId(), "one of its UUIDs is in use");
-        placed++;
-        return new Spawn<>(root, false);
+        return add(root, entity.typeId());
     }
 
     /**
@@ -235,9 +239,43 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         Entity root = load(nbt, state.typeId());
         if (root == null) return FAILED;
         if (!allowed.test(root)) return REFUSED;
-        if (!world.tryAddFreshEntityWithPassengers(root)) return failed(state.typeId(), "one of its UUIDs is in use");
-        placed++;
-        return new Spawn<>(root, false);
+        return add(root, state.typeId());
+    }
+
+    /**
+     * Adds {@code root} with its passengers and checks each is in the world now. The list is taken first: a passenger
+     * the server turns away is discarded, which dismounts it. When one is missing, the others are taken out again and
+     * the whole entity is refused.
+     */
+    private Spawn<Entity> add(Entity root, String typeId) {
+        List<Entity> tree = root.getSelfAndPassengers().toList();
+        if (!McInternals.get().addFreshEntityWithPassengers(world, root)) {
+            return failed(typeId, "one of its UUIDs is in use");
+        }
+        Entity missing = null;
+        for (Entity entity : tree) {
+            if (!inWorld(entity)) {
+                missing = entity;
+                break;
+            }
+        }
+        if (missing == null) {
+            placed++;
+            return new Spawn<>(root, false);
+        }
+        for (Entity entity : tree) {
+            if (!entity.isRemoved()) entity.discard();
+        }
+        if (turnedAway++ < MAX_LOGGED_FAILURES) {
+            LOG.warn("Sculptory: the server turned away a {} it was placing ({}{}); it is left out", typeId,
+                    McEntities.typeId(missing), missing == root ? "" : ", a passenger");
+        }
+        return REFUSED;
+    }
+
+    /** Whether {@code entity} is in this writer's world: added, not removed, and the entity its UUID finds. */
+    private boolean inWorld(Entity entity) {
+        return !entity.isRemoved() && world.getEntity(entity.getUUID()) == entity;
     }
 
     /**

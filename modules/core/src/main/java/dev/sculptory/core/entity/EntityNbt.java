@@ -40,6 +40,14 @@ public final class EntityNbt {
             Set.of("id", "UUID", "Pos", "Motion", "Rotation", "TileX", "TileY", "TileZ");
     /** Keys a clipboard does not keep of a passenger: its own identity and place (it rides its vehicle). */
     public static final Set<String> PASSENGER_KEYS = Set.of("UUID", "Pos", "Motion");
+    /**
+     * Keys a clipboard does not keep at any level: how and where a Paper (CraftBukkit) server first spawned the entity
+     * (its spawn reason, the place and world of its first spawn, the player whose sleeplessness spawned a phantom,
+     * whether a nether portal spawned it). A placed copy is a new spawn, so the server gives it its own. History keeps
+     * them, so an undo puts the same entity back. Vanilla, Fabric and NeoForge never write them.
+     */
+    public static final Set<String> SPAWN_CONTEXT_KEYS = Set.of("Paper.SpawnReason", "Paper.Origin",
+            "Paper.OriginWorld", "Paper.SpawningEntity", "Paper.FromNetherPortal");
 
     /**
      * Keys undo and redo leave out when they compare an entity with what the step left there: the game rewrites them
@@ -81,6 +89,23 @@ public final class EntityNbt {
             // An interaction entity's last attack and use.
             "attack", "interaction");
 
+    /**
+     * Keys undo and redo also leave out when they compare (never when they store or restore: a restore puts them back as
+     * recorded), because one platform writes them and another does not: CraftBukkit's data version
+     * ({@code Bukkit.updateLevel}) and awareness flag ({@code Bukkit.Aware}), which Paper writes into every saved
+     * entity, and the spawn context ({@link #SPAWN_CONTEXT_KEYS}). So an entity recorded on Fabric or NeoForge (or by an
+     * older Paper build that stripped them) is not taken for a changed one on Paper, nor the other way round: history
+     * carried between platforms undoes without a conflict for every mob.
+     */
+    public static final Set<String> PLATFORM_KEYS = platformKeys();
+
+    private static Set<String> platformKeys() {
+        Set<String> keys = new java.util.HashSet<>(SPAWN_CONTEXT_KEYS);
+        keys.add("Bukkit.updateLevel");
+        keys.add("Bukkit.Aware");
+        return Set.copyOf(keys);
+    }
+
     private EntityNbt() {}
 
     /** Decodes entity NBT under {@link #LIMITS}. */
@@ -90,7 +115,8 @@ public final class EntityNbt {
 
     /**
      * What a clipboard keeps of a whole entity compound (as {@code Entity.saveSelfNbt} writes it): the compound without
-     * {@link #PLACEMENT_KEYS}, its passengers (recursively) without {@link #PASSENGER_KEYS}, at most
+     * {@link #PLACEMENT_KEYS}, its passengers (recursively) without {@link #PASSENGER_KEYS}, none of them with
+     * {@link #SPAWN_CONTEXT_KEYS}, at most
      * {@link #MAX_RIDERS} of them (the first, depth first) and at most {@link #MAX_PASSENGER_DEPTH} deep.
      */
     public static NbtCompound snapshotData(NbtCompound entity) {
@@ -109,6 +135,7 @@ public final class EntityNbt {
     private static NbtCompound strip(NbtCompound compound, Set<String> keys, int depth, int[] room, int[] dropped) {
         NbtCompound.Builder out = compound.toBuilder();
         for (String key : keys) out.remove(key);
+        for (String key : SPAWN_CONTEXT_KEYS) out.remove(key);
         List<NbtCompound> riders = riders(compound);
         List<NbtCompound> kept = new ArrayList<>(Math.min(riders.size(), MAX_RIDERS));
         for (NbtCompound rider : riders) {
@@ -323,13 +350,13 @@ public final class EntityNbt {
      */
     public static final Set<String> PLACEMENT_VOLATILE_KEYS = Set.of("Pos", "Rotation");
 
-    /** The compound without {@link #VOLATILE_KEYS}, at the top and in every passenger. */
+    /** The compound without {@link #VOLATILE_KEYS} and {@link #PLATFORM_KEYS}, at the top and in every passenger. */
     public static NbtCompound withoutVolatile(NbtCompound entity) {
         return withoutVolatile(entity, false, 0);
     }
 
     /**
-     * The compound without {@link #VOLATILE_KEYS} but with where the entity stands and looks
+     * The compound without {@link #VOLATILE_KEYS} and {@link #PLATFORM_KEYS} but with where the entity stands and looks
      * ({@link #PLACEMENT_VOLATILE_KEYS}), at the top and in every passenger.
      */
     public static NbtCompound withoutVolatileKeepingPlacement(NbtCompound entity) {
@@ -341,6 +368,7 @@ public final class EntityNbt {
         for (String key : VOLATILE_KEYS) {
             if (!keepPlacement || !PLACEMENT_VOLATILE_KEYS.contains(key)) out.remove(key);
         }
+        for (String key : PLATFORM_KEYS) out.remove(key);
         NbtList passengers = entity.getList("Passengers");
         List<NbtCompound> riders = passengers == null ? null : passengers.compounds();
         if (riders != null && !riders.isEmpty() && depth < MAX_PASSENGER_DEPTH) {
@@ -363,6 +391,21 @@ public final class EntityNbt {
             return nbt.clone();
         }
         return canonical(decoded);
+    }
+
+    /**
+     * What an entity placed somewhere else as a copy of this one has in common with it: its data without who and where
+     * it is ({@link #snapshotData}) and without what the game or the platform changes by itself
+     * ({@link #withoutVolatile}), as canonical bytes; {@code null} when it does not decode. A move's copy has the form of
+     * the entity it was moved from, so an undo can pair them (a copy turned by the move, whose facing or rotation data
+     * turned with it, does not pair).
+     */
+    public static byte[] copyForm(byte[] nbt) {
+        try {
+            return canonical(withoutVolatile(snapshotData(decode(nbt))));
+        } catch (IOException undecodable) {
+            return null;
+        }
     }
 
     /** A compound's bytes in canonical form (every compound's keys sorted). */

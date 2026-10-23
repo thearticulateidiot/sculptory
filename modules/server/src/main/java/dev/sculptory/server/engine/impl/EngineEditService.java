@@ -2289,6 +2289,47 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
     }
 
     /**
+     * {@code world} is about to unload while the server goes on (a world-management plugin unloads it); the platform
+     * calls this before the world is saved, and nothing the engine runs writes to it afterwards:
+     * <ul>
+     *   <li>its jobs end as at shutdown ({@link EditExecutor#endWorld}): a running one after its current section,
+     *       {@code CANCELLED}, with what it applied recorded as its entry;</li>
+     *   <li>dabs still queued for a stroke in it are dropped (acknowledged as for a player who left), the stroke open in
+     *       it closes, and the records of its strokes become entries now;</li>
+     *   <li>builder-mode drags in it end, their records entries ({@link BuilderMode#worldUnloading}).</li>
+     * </ul>
+     * The platform then journals the world's history as before a save ({@link #beforeChunkSave} for each loaded
+     * column), which also folds its fluid trails. Returns how many jobs ended.
+     */
+    public int worldUnloading(W world) {
+        checkThread();
+        int ended = executor.endWorld(world);
+        for (BrushLane lane : new ArrayList<>(lanes.values())) endStrokesIn(lane, world);
+        builder.worldUnloading(runtime.worldId(world));
+        return ended;
+    }
+
+    /**
+     * The lane's work in {@code world}, which is unloading: its dabs are dropped, its open stroke closes, and the records
+     * of its strokes are pushed now (building a record reads no world). Work of the lane in other worlds stays queued.
+     */
+    private void endStrokesIn(BrushLane lane, W world) {
+        for (LaneWork work : new ArrayList<>(lane.pending)) {
+            if (work instanceof DabWork dab && dab.batch.stroke.world == world) dropDab(dab);
+        }
+        StrokeSession open = lane.stroke;
+        if (open != null && open.world == world) {
+            lane.stroke = null;
+            open.closed = true;
+            if (open.dirty && !open.committing) commit(open);
+        }
+        for (LaneWork work : new ArrayList<>(lane.pending)) {
+            if (work instanceof CommitWork queued && queued.stroke.world == world) runCommit(queued, Long.MAX_VALUE);
+        }
+        if (lane.left && lane.pending.isEmpty() && lane.closing.isEmpty()) lanes.remove(lane.owner);
+    }
+
+    /**
      * Server stop, after {@link EditExecutor#shutdown()} (which drops queued dabs and ends jobs): forgets every
      * stroke, history and job. With saved history the open strokes become entries first (their applied dabs are in
      * the world the game saves next); the caller closes the store afterwards ({@link HistoryService#closeStore}).

@@ -37,8 +37,8 @@ import org.bukkit.event.block.BlockFromToEvent;
  * Fluid trails on Paper (PaperFluidTrails), one covered case and the recorded result of uncovered ones:
  * <ul>
  *   <li>covered: water written by a fill (still, physics off) is set flowing; it spreads over a stone floor, Bukkit's
- *       flow and level events record it into the fill's trail, its marks reach the chunk's data container at a full
- *       save, and the fill's undo takes every cell of it back;</li>
+ *       flow and level events record it into the fill's trail, its marks reach the chunk's data container through the
+ *       plugin's stop path (no world save) and at a full save, and the fill's undo takes every cell of it back;</li>
  *   <li>only what the fluid explains: a furnace beside the flow that another plugin lights in the flow's own tick is
  *       left lit by the fill's undo; a stone a piston pushes into the flowed cell later that tick is left by the undo;
  *       water into a tall plant beside another entry's lava (whose form event comes inside the water's effect):
@@ -92,9 +92,18 @@ final class FluidChecks {
             boolean marked = r.host.engine().fluidTrails().markedBy(r.level, edge, entry[0]);
             r.record("fluid trails: water a fill wrote flows out into its entry's trail", wet > 20 && trail >= wet - 1
                     && marked, wet + " wet cells, " + trail + " cells in the trail, the cell 3 east marked " + marked);
-            // A full save writes the column's marks into the chunk's data container.
-            r.level.save(null, false, false);
+            // The plugin's stop path writes the marks without a world save (Paper disables plugins before its final
+            // save, so no save or unload handler runs for it): taken out of the container first, they are back after.
             LevelChunk chunk = r.level.getChunkSource().getChunkNow(source.getX() >> 4, source.getZ() >> 4);
+            if (chunk != null) chunk.persistentDataContainer.getRaw().remove(FluidTrails.NBT_KEY);
+            int flushed = r.host.flushFluidMarks();
+            boolean stopped = chunk != null && chunk.persistentDataContainer.getRaw().containsKey(FluidTrails.NBT_KEY);
+            r.record("fluid trails: the plugin's stop path writes the marks into the chunk's data container",
+                    stopped && flushed >= 1 && chunk.isUnsaved(), "key present " + stopped + ", " + flushed
+                            + " columns written, chunk to be saved " + (chunk != null && chunk.isUnsaved()));
+            // A full save writes the column's marks into the chunk's data container.
+            if (chunk != null) chunk.persistentDataContainer.getRaw().remove(FluidTrails.NBT_KEY);
+            r.level.save(null, false, false);
             boolean saved = chunk != null && chunk.persistentDataContainer.getRaw().containsKey(FluidTrails.NBT_KEY);
             r.record("fluid trails: the marks go into the chunk's data container", saved,
                     "key " + FluidTrails.NBT_KEY + " present " + saved);
