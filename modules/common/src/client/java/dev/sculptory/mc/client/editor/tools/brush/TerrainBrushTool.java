@@ -192,18 +192,12 @@ public final class TerrainBrushTool implements Tool {
     private double cursorFalloffStart;
     /** The brush the cursor shows (Alt swaps Raise and Lower). */
     private BrushTool cursorTool;
-    /**
-     * {@link #cachedFacing}'s last answer and what it was for: the hit point in 1/16 block (whether it lies on a block
-     * face counts, not only its block), the radius and the world's change stamp.
-     */
+    /** {@link #cachedFacing}'s last answer and what it was for ({@link #facingKey}). */
     private Facing facingCached;
-    private final int[] facingPoint = new int[3];
-    private WorldCursor.Face facingFace;
+    private long[] facingCachedKey;
     /** {@link #copyFacing}'s answers and what each was for, per copy. */
     private final Facing[] copyFacings = new Facing[Symmetry.MAX_COPIES];
     private final long[][] copyFacingKeys = new long[Symmetry.MAX_COPIES][];
-    private int facingRadius;
-    private long facingStamp;
 
     // The Heightmap brush's stamp, kept while its picture, size and angle stay the same.
     private HeightmapLibrary.Entry stampEntry;
@@ -1056,10 +1050,10 @@ public final class TerrainBrushTool implements Tool {
 
     /**
      * {@link #facingAt} for copy {@code i}'s outline (up where nothing tells, as the kernel does for Raise and
-     * Lower), worked out again only when its point, the radius or the world changed.
+     * Lower), worked out again only when what it depends on changed ({@link #facingKey}).
      */
     private Facing copyFacing(WorldReader world, int i, Dab copy, int radius) {
-        long[] key = {copy.x16(), copy.y16(), copy.z16(), radius, services.changeStamp()};
+        long[] key = facingKey(world, copy, radius, -1, -1);
         if (copyFacings[i] == null || !java.util.Arrays.equals(key, copyFacingKeys[i])) {
             copyFacings[i] = facingAt(world, copy, Facing.UP, radius);
             copyFacingKeys[i] = key;
@@ -1067,24 +1061,33 @@ public final class TerrainBrushTool implements Tool {
         return copyFacings[i];
     }
 
-    /** {@link #facingAt} for the cursor, worked out again only when its point, the radius or the world changed. */
+    /** {@link #facingAt} for the cursor, worked out again only when what it depends on changed ({@link #facingKey}). */
     private Facing cachedFacing(WorldReader world, int radius) {
-        // The hit point as a dab there holds it (Dab.of rounds down to 1/16 block).
-        int px = (int) Math.floor(cursor.hitX() * 16);
-        int py = (int) Math.floor(cursor.hitY() * 16);
-        int pz = (int) Math.floor(cursor.hitZ() * 16);
-        long stamp = services.changeStamp();
-        if (facingCached == null || px != facingPoint[0] || py != facingPoint[1] || pz != facingPoint[2]
-                || cursor.face() != facingFace || radius != facingRadius || stamp != facingStamp) {
+        Dab point;
+        try {
+            point = Dab.of(0, cursor.hitX(), cursor.hitY(), cursor.hitZ(), Dab.FULL_PRESSURE);
+        } catch (IllegalArgumentException outOfRange) {
+            return Facing.UP;
+        }
+        // The fallback when nothing tells: up for Raise and Lower, the hit face for Flatten and Smooth.
+        long[] key = facingKey(world, point, radius, cursor.face() == null ? -1 : cursor.face().ordinal(),
+                invertible() ? 1 : 0);
+        if (facingCached == null || !java.util.Arrays.equals(key, facingCachedKey)) {
             facingCached = facingAt(world, cursor, radius, invertible());
-            facingPoint[0] = px;
-            facingPoint[1] = py;
-            facingPoint[2] = pz;
-            facingFace = cursor.face();
-            facingRadius = radius;
-            facingStamp = stamp;
+            facingCachedKey = key;
         }
         return facingCached;
+    }
+
+    /**
+     * What {@link SurfaceNormal#facingAt} at {@code point} depends on, plus the fallback's inputs: the point's block,
+     * the face it lies on ({@link SurfaceNormal#faceAt}, a few cell reads), the radius and the world's change stamp.
+     * Moving within a block face keeps the key, so the estimate is not worked out again for every 1/16 block.
+     */
+    private long[] facingKey(WorldReader world, Dab point, int radius, int hitFace, int tool) {
+        Facing face = world == null ? null : SurfaceNormal.faceAt(world, point.x16(), point.y16(), point.z16());
+        return new long[] {point.blockX(), point.blockY(), point.blockZ(), face == null ? -1 : face.ordinal(), radius,
+                hitFace, tool, services.changeStamp()};
     }
 
     /**
