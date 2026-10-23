@@ -218,7 +218,7 @@ public final class EntityWriter implements EntityPlacer<Entity> {
             if (vehicle != null) vehicle.positionRider(rider);
         }
         if (!allowed.test(root)) return REFUSED;
-        return add(root, entity.typeId());
+        return add(root, entity.typeId(), true);
     }
 
     /**
@@ -227,6 +227,20 @@ public final class EntityWriter implements EntityPlacer<Entity> {
      */
     @Override
     public Spawn<Entity> restore(EntityState state, Predicate<Entity> allowed) {
+        return restore(state, allowed, true);
+    }
+
+    /**
+     * Puts back, with its UUIDs, an entity a history step of this job took away, because what was to stand in its place
+     * could not be put there: the step is then a no-op for it, so it does not count as placed (its removal was counted,
+     * and the refusal is the step's).
+     */
+    @Override
+    public Spawn<Entity> putBack(EntityState state, Predicate<Entity> allowed) {
+        return restore(state, allowed, false);
+    }
+
+    private Spawn<Entity> restore(EntityState state, Predicate<Entity> allowed, boolean count) {
         CompoundTag nbt;
         try {
             nbt = McEntities.compound(state.nbt());
@@ -239,15 +253,15 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         Entity root = load(nbt, state.typeId());
         if (root == null) return FAILED;
         if (!allowed.test(root)) return REFUSED;
-        return add(root, state.typeId());
+        return add(root, state.typeId(), count);
     }
 
     /**
      * Adds {@code root} with its passengers and checks each is in the world now. The list is taken first: a passenger
      * the server turns away is discarded, which dismounts it. When one is missing, the others are taken out again and
-     * the whole entity is refused.
+     * the whole entity is refused. {@code count}: a placement or restore (counted as placed), not a put-back.
      */
-    private Spawn<Entity> add(Entity root, String typeId) {
+    private Spawn<Entity> add(Entity root, String typeId, boolean count) {
         List<Entity> tree = root.getSelfAndPassengers().toList();
         if (!McInternals.get().addFreshEntityWithPassengers(world, root)) {
             return failed(typeId, "one of its UUIDs is in use");
@@ -260,7 +274,7 @@ public final class EntityWriter implements EntityPlacer<Entity> {
             }
         }
         if (missing == null) {
-            placed++;
+            if (count) placed++;
             return new Spawn<>(root, false);
         }
         for (Entity entity : tree) {

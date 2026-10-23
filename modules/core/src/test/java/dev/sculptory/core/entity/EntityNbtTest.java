@@ -91,6 +91,61 @@ class EntityNbtTest {
     }
 
     @Test
+    void aPutBackKeepsOnlyTheRidersTheRemovalTook() {
+        NbtCompound chicken = NbtCompound.builder().putString("id", "minecraft:chicken")
+                .putIntArray("UUID", new int[] {1, 1, 1, 1}).build();
+        NbtCompound zombie = NbtCompound.builder().putString("id", "minecraft:zombie")
+                .putIntArray("UUID", new int[] {2, 2, 2, 2}).build();
+        NbtCompound recorded = NbtCompound.builder().putString("id", "minecraft:oak_boat")
+                .putIntArray("UUID", new int[] {9, 9, 9, 9})
+                .put("Passengers", NbtList.of(NbtTag.COMPOUND, List.of(chicken))).build();
+        // Since the step: a zombie boarded too.
+        NbtCompound live = recorded.toBuilder().put("Passengers", NbtList.of(NbtTag.COMPOUND, List.of(chicken, zombie)))
+                .putString("CustomName", "\"Ark\"").build();
+        NbtCompound back = decodeOrFail(EntityNbt.withRidersOf(NbtIo.toBytes(live), NbtIo.toBytes(recorded)));
+        List<NbtCompound> riders = back.getList("Passengers").compounds();
+        assertEquals(1, riders.size(), "only the chicken the removal took");
+        assertEquals("minecraft:chicken", riders.get(0).getString("id"));
+        assertEquals("\"Ark\"", back.getString("CustomName"), "the rest is as it is now");
+        NbtCompound alone = decodeOrFail(EntityNbt.withRidersOf(NbtIo.toBytes(live),
+                NbtIo.toBytes(recorded.toBuilder().remove("Passengers").build())));
+        assertFalse(alone.contains("Passengers"), "a removal that took no rider gives none back");
+    }
+
+    @Test
+    void anUntouchedCopyHasTheExactFormOfItsSource() {
+        NbtCompound source = NbtCompound.builder().putString("id", "minecraft:cow")
+                .putIntArray("UUID", new int[] {1, 2, 3, 4}).put("Pos", EntityNbt.doubles(1.5, 64, 1.5))
+                .putShort("Air", (short) 300).build();
+        NbtCompound copy = source.toBuilder().putIntArray("UUID", new int[] {5, 6, 7, 8})
+                .put("Pos", EntityNbt.doubles(9.5, 64, 1.5)).build();
+        NbtCompound breathless = copy.toBuilder().putShort("Air", (short) 12).build();
+        assertArrayEquals(EntityNbt.exactCopyForm(NbtIo.toBytes(source)), EntityNbt.exactCopyForm(NbtIo.toBytes(copy)));
+        assertFalse(java.util.Arrays.equals(EntityNbt.exactCopyForm(NbtIo.toBytes(source)),
+                EntityNbt.exactCopyForm(NbtIo.toBytes(breathless))), "the exact form keeps what the game changes");
+        assertArrayEquals(EntityNbt.copyForm(NbtIo.toBytes(source)), EntityNbt.copyForm(NbtIo.toBytes(breathless)));
+    }
+
+    @Test
+    void paperKeysEveryEntityCarriesAreComparedWithout() {
+        for (String key : List.of("Bukkit.updateLevel", "Bukkit.Aware", "AgeLocked", "Bukkit.MaxDomestication",
+                "Paper.ShouldBurnInDay", "Paper.canWander", "Bukkit.BarterList", "Bukkit.InterestList")) {
+            assertTrue(EntityNbt.PLATFORM_KEYS.contains(key), key);
+        }
+        for (String key : List.of("Bukkit.invisible", "Bukkit.persist", "Bukkit.visibleByDefault", "BukkitValues")) {
+            assertFalse(EntityNbt.PLATFORM_KEYS.contains(key), key + " is a setting someone made: compared");
+        }
+    }
+
+    private static NbtCompound decodeOrFail(byte[] nbt) {
+        try {
+            return EntityNbt.decode(nbt);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
     void aPlacementSetsIdentityAndPlace() {
         NbtCompound data = EntityNbt.snapshotData(boat());
         NbtCompound spawn = EntityNbt.spawnCompound("minecraft:oak_boat", data, 1.5, 70, 2.5, -90f, 10f, null);
