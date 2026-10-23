@@ -51,11 +51,12 @@ import org.slf4j.LoggerFactory;
  * the entity columns; a column is one step, its quarts charged to the tick's budget. The executor sends the changed
  * chunks' biomes to players at the end of the tick ({@link EditExecutor#biomesChanged}).
  *
- * <p><b>Hanging entities</b>. A job that wrote cells and records them ends with {@link Stage#SUPPORTS}: the item frames
- * and paintings around its bounds that its writes left with nothing to hang on are taken along ({@link HangingSupport}),
- * a chunk column at a time (only columns loaded with their entities; none is ticketed or waited for), in steps charged
- * like the entity stages. A cancelled job that wrote cells runs it too, before it ends; a job that fails or is cut short
- * by the server stopping does not.
+ * <p><b>Hanging entities</b>. A job whose sink keeps entities ({@link RecordSink#recordsEntities}) takes along the item
+ * frames and paintings its writes left with nothing to hang on ({@link HangingSupport}): after each section that changed
+ * cells, those around it whose blocks the job will not write again; at the end, in {@link Stage#SUPPORTS}, the rest
+ * around every section it changed, a chunk column at a time (only columns loaded with their entities; none is ticketed
+ * or waited for), in steps charged like the entity stages. A cancelled job that wrote cells runs it too, before it
+ * ends; a job that fails or is cut short by the server stopping does not.
  *
  * @param <W> the platform's world type
  */
@@ -188,6 +189,8 @@ final class BulkJob<W> {
     private LongOpenHashSet unwritten;
     /** Cells changed before the section being written began: a section that changed none takes no wall away. */
     private long changedBeforeSection;
+    /** The sections the job changed cells in, for its last sweep (only while it sweeps: {@link #unwritten}). */
+    private final LongOpenHashSet writtenSections = new LongOpenHashSet();
 
     long skippedProtected;
 
@@ -305,7 +308,7 @@ final class BulkJob<W> {
         this.reads = new ReadTickets(tickets, maxTickets);
         applyPlan = ColumnPlan.of(order);
         applyTickets = new TicketWindow(applyPlan, tickets, maxTickets);
-        if (request.records() != RecordSink.NONE) unwritten = new LongOpenHashSet(order);
+        if (request.records().recordsEntities()) unwritten = new LongOpenHashSet(order);
         if (sources.length > 0 || airSources.length > 0) {
             snapshots = new Long2ObjectOpenHashMap<>(sources.length + airSources.length);
             for (long key : airSources) snapshots.put(key, SectionBuffer.uniform(air));
@@ -430,8 +433,8 @@ final class BulkJob<W> {
      * @return whether the job finished now
      */
     private boolean end(JobOutcome outcome) {
-        if (stage != Stage.SUPPORTS && request.records() != RecordSink.NONE && writer.changed() > 0) {
-            supports = new HangingSupport.Sweep(bounds);
+        if (stage != Stage.SUPPORTS && !writtenSections.isEmpty()) {
+            supports = new HangingSupport.Sweep(writtenSections);
             supportCursor = 0;
             supportsThen = outcome;
             entityContext();
@@ -454,33 +457,32 @@ final class BulkJob<W> {
     /**
      * After section {@code key} is written: the early sweep around it ({@link HangingSupport#section}), for a job that
      * records what it does and changed cells in that section, so a long job does not leave a frame whose wall it took
-     * early to the game's own check until its last sweep.
+     * early to the game's own check until its last sweep. It is charged like the other per-section work: a section's overhead for the entity query, and each entity taken
+     * as in an entity stage (also against the tick's block cap).
      *
-     * @return units used (as for entities handled in an entity stage)
+     * @return units used
      */
-    private long earlySweep(long key) {
+    private long earlySweep(long key, EditExecutor.Budget budget) {
         if (unwritten == null) return 0;
         unwritten.remove(key);
         if (writer.changed() == changedBeforeSection) return 0;
+        writtenSections.add(key);
         EntityWork.Context<?> ctx = entityContext();
-        int x = BlockBuffer.keyX(key) << 4, y = BlockBuffer.keyY(key) << 4, z = BlockBuffer.keyZ(key) << 4;
-        Box section = new Box(new dev.sculptory.core.BlockPos(x, y, z),
-                new dev.sculptory.core.BlockPos(x + 15, y + 15, z + 15));
         long removedBefore = ctx.writer.removed();
         ctx.allowance = Integer.MAX_VALUE; // a section's few hanging entities, decided in one go
-        HangingSupport.section(section, ctx, this::settled);
+        HangingSupport.section(key, ctx, this::settled);
         ctx.allowance = 0;
         long handled = ctx.writer.removed() - removedBefore;
         if (handled > 0) request.records().entitiesFinished();
-        return handled * ENTITY_UNITS;
+        budget.cellsLeft -= handled * ENTITY_UNITS;
+        return EditExecutor.SECTION_OVERHEAD_UNITS + handled * ENTITY_UNITS;
     }
 
-    /** Whether no cell within {@link HangingSupport#REACH} of {@code cell} lies in a section the job writes later. */
-    private boolean settled(dev.sculptory.core.BlockPos cell) {
-        int reach = HangingSupport.REACH;
-        for (int sy = (cell.y() - reach) >> 4; sy <= (cell.y() + reach) >> 4; sy++) {
-            for (int sz = (cell.z() - reach) >> 4; sz <= (cell.z() + reach) >> 4; sz++) {
-                for (int sx = (cell.x() - reach) >> 4; sx <= (cell.x() + reach) >> 4; sx++) {
+    /** Whether no cell of {@code box} lies in a section the job writes later. */
+    private boolean settled(Box box) {
+        for (int sy = box.min().y() >> 4; sy <= box.max().y() >> 4; sy++) {
+            for (int sz = box.min().z() >> 4; sz <= box.max().z() >> 4; sz++) {
+                for (int sx = box.min().x() >> 4; sx <= box.max().x() >> 4; sx++) {
                     if (unwritten.contains(BlockBuffer.key(sx, sy, sz))) return false;
                 }
             }
@@ -652,9 +654,7 @@ final class BulkJob<W> {
             used += write(current, maxUnits - used, budget);
             if (current.done()) {
                 finishSection();
-                long swept = earlySweep(current.key);
-                used += swept;
-                budget.cellsLeft -= swept;
+                used += earlySweep(current.key, budget);
                 if (program.relightsAfter()) {
                     // A light check costs about what writing a cell does: charged so, they spread over ticks.
                     used += relit;

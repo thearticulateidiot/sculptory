@@ -528,6 +528,11 @@ public final class HistoryService {
         if (record == null) return plain;
         return new RecordSink() {
             @Override
+            public boolean recordsEntities() {
+                return true;
+            }
+
+            @Override
             public void record(int x, int y, int z, int before, BlockEntityData beforeTile, int after,
                                BlockEntityData afterTile) {
                 builder.record(x, y, z, before, beforeTile, after, afterTile);
@@ -1014,6 +1019,8 @@ public final class HistoryService {
             store.seal(session.player, entry.id(), entry.label(), entry.createdMillis(),
                     session.history.bytesOf(entry.id()));
         }
+        // The entry grew: the cap across players applies as after a push (never to this player's entries in flight).
+        enforceTotal();
         return true;
     }
 

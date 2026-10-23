@@ -126,7 +126,48 @@ public final class McEntities {
      */
     public static boolean hangsUnsupported(Entity entity) {
         return entity instanceof net.minecraft.world.entity.decoration.HangingEntity hanging && !hanging.isRemoved()
-                && !hanging.survives();
+                && supportLoaded(hanging) && !hanging.survives();
+    }
+
+    /**
+     * The blocks {@code entity} stands in and, for an item frame or painting, the wall blocks behind them: the blocks
+     * whose change can take its support away (its space filled, its wall gone). Once an edit will write none of them
+     * again, whether it stays is decided.
+     */
+    public static Box supportBox(Entity entity) {
+        net.minecraft.world.phys.AABB box = entity.getBoundingBox();
+        if (entity instanceof net.minecraft.world.entity.decoration.HangingEntity hanging) {
+            net.minecraft.core.Direction back = hanging.getDirection().getOpposite();
+            box = box.minmax(box.move(back.getStepX(), back.getStepY(), back.getStepZ()));
+        }
+        // Blocks the box lies in, not those its faces only touch.
+        double in = 1e-7;
+        int x0 = net.minecraft.util.Mth.floor(box.minX + in), y0 = net.minecraft.util.Mth.floor(box.minY + in);
+        int z0 = net.minecraft.util.Mth.floor(box.minZ + in);
+        // A box without size (a marker) still lies in one block.
+        int x1 = Math.max(x0, net.minecraft.util.Mth.floor(box.maxX - in));
+        int y1 = Math.max(y0, net.minecraft.util.Mth.floor(box.maxY - in));
+        int z1 = Math.max(z0, net.minecraft.util.Mth.floor(box.maxZ - in));
+        return new Box(new dev.sculptory.core.BlockPos(x0, y0, z0), new dev.sculptory.core.BlockPos(x1, y1, z1));
+    }
+
+    /**
+     * Whether every chunk holding a block {@code entity} stands in or touches, grown by a block (its wall; the game's
+     * collision test also reads the blocks around), is fully loaded on the server. {@code survives()} reads those blocks,
+     * and reading a block of a chunk that is not fully loaded loads it on the server thread; an entity whose support is
+     * not all loaded is left alone.
+     */
+    public static boolean supportLoaded(Entity entity) {
+        if (!(entity.level() instanceof ServerLevel world)) return false;
+        net.minecraft.world.phys.AABB box = entity.getBoundingBox().inflate(1.0);
+        int cx0 = net.minecraft.util.Mth.floor(box.minX) >> 4, cx1 = net.minecraft.util.Mth.floor(box.maxX) >> 4;
+        int cz0 = net.minecraft.util.Mth.floor(box.minZ) >> 4, cz1 = net.minecraft.util.Mth.floor(box.maxZ) >> 4;
+        for (int cx = cx0; cx <= cx1; cx++) {
+            for (int cz = cz0; cz <= cz1; cz++) {
+                if (world.getChunkSource().getChunkNow(cx, cz) == null) return false;
+            }
+        }
+        return true;
     }
 
     /** Whether {@code entity} belongs to {@code region}. */

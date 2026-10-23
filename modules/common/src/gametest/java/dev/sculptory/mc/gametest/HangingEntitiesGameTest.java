@@ -387,6 +387,144 @@ public final class HangingEntitiesGameTest {
     }
 
     /**
+     * A 4 × 4 painting whose only lost support is the wall block behind its far corner (two blocks from the painting's
+     * own block): the Fill of air over that one block takes the painting into its step, nothing drops, and the undo
+     * hangs it again.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_hanging_big_painting", timeoutTicks = LIMIT)
+    public void aBigPaintingGoesWithTheWallBehindItsFarCorner(GameTestHelper context) {
+        Sync s = new Sync(context, 2711);
+        s.sequence().thenExecute(() -> {
+            for (int x = s.x + 4; x <= s.x + 12; x++) {
+                for (int y = FLOOR + 1; y <= FLOOR + 8; y++) {
+                    s.world.setBlock(new BlockPos(x, y, s.z + 3), Blocks.STONE.defaultBlockState(), 2);
+                }
+            }
+            Painting painting = new Painting(s.world, new BlockPos(s.x + 8, FLOOR + 4, s.z + 4), Direction.SOUTH,
+                    s.world.registryAccess().registryOrThrow(net.minecraft.core.registries.Registries.PAINTING_VARIANT)
+                            .getHolderOrThrow(net.minecraft.world.entity.decoration.PaintingVariants.PIGSCENE));
+            check(painting.survives() && s.world.addFreshEntity(painting), "a 4 x 4 painting hung");
+            String hung = s.state(painting);
+            // The wall block behind the corner of the painting farthest from its own block.
+            AABB box = painting.getBoundingBox();
+            BlockPos own = painting.getPos();
+            BlockPos far = null;
+            for (int x : new int[] {(int) Math.floor(box.minX + 0.5), (int) Math.floor(box.maxX - 0.5)}) {
+                for (int y : new int[] {(int) Math.floor(box.minY + 0.5), (int) Math.floor(box.maxY - 0.5)}) {
+                    BlockPos corner = new BlockPos(x, y, s.z + 3);
+                    int distance = Math.abs(x - own.getX()) + Math.abs(y - own.getY());
+                    if (far == null || distance > Math.abs(far.getX() - own.getX()) + Math.abs(far.getY() - own.getY())
+                            || (distance == Math.abs(far.getX() - own.getX()) + Math.abs(far.getY() - own.getY())
+                            && y > far.getY())) {
+                        far = corner;
+                    }
+                }
+            }
+            check(Math.max(Math.abs(far.getX() - own.getX()), Math.abs(far.getY() - own.getY())) == 2,
+                    "the corner block lies two blocks from the painting's own block: " + far + " from " + own);
+            s.fill(cellBox(far), "minecraft:air");
+            List<EntityChange> taken = s.entries().get(0).record().entities();
+            check(taken.size() == 1 && taken.get(0).id().equals(painting.getUUID()) && taken.get(0).after() == null,
+                    "the Fill's step took the painting: " + taken);
+            check(s.find(painting.getUUID()) == null, "the painting went with its corner block");
+            s.undo();
+            check(hung.equals(s.state(s.find(painting.getUUID()))), "the undo hangs it again");
+            s.noItems("after the undo");
+        }).thenExecuteAfter(GAME_CHECK_TICKS, () -> {
+            s.noItems("after the game's own check");
+            s.finish();
+        }).thenSucceed();
+    }
+
+    /**
+     * Frames near and on section borders, on a job that writes one block a tick (well past the game's 100-tick check):
+     * each is taken as soon as every section its blocks touch is written (for one whose wall block sits at a border, by
+     * the early sweep after the second section, which looks three blocks around the section it just wrote), not left to
+     * the job's end, where the game would have dropped it off already; no item drops. Frames sit at two borders,
+     * whichever the job writes first. The job is ticked once per game tick, so the game's own checks run meanwhile.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_hanging_border", timeoutTicks = LIMIT)
+    public void framesNearASectionBorderAreTakenWhenBothSectionsAreWritten(GameTestHelper context) {
+        Sync s = new Sync(context, 2712, 1);
+        Box wall = box(s.x, FLOOR + 1, s.z + 3, s.x + 63, FLOOR + 2, s.z + 3);
+        Box beyond = box(s.x + 32, FLOOR, s.z, s.x + 63, FLOOR + 3, s.z + 15);
+        loadAndForce(s.world, beyond);
+        int[] at = {13, 15, 47, 48};
+        UUID[] ids = new UUID[at.length];
+        ItemFrame[] frames = new ItemFrame[at.length];
+        RecordingListener fill = new RecordingListener();
+        List<String> violations = new ArrayList<>();
+        String[] gone = new String[at.length];
+        int[] ticks = {0};
+        s.sequence().thenWaitUntil(() -> check(McEntities.firstUnloaded(s.world, beyond) == null,
+                "the entities beyond the area are not loaded yet")).thenExecute(() -> {
+            for (int x = s.x; x <= s.x + 63; x++) {
+                for (int y = FLOOR + 1; y <= FLOOR + 2; y++) {
+                    s.world.setBlock(new BlockPos(x, y, s.z + 3), Blocks.STONE.defaultBlockState(), 2);
+                }
+                // A floor beyond the area too, so an item dropped there would stay where the check looks.
+                for (int z = s.z; z <= s.z + 15; z++) {
+                    s.world.setBlock(new BlockPos(x, FLOOR, z), Blocks.STONE.defaultBlockState(), 2);
+                }
+            }
+            for (int i = 0; i < at.length; i++) {
+                frames[i] = s.hang(new BlockPos(s.x + at[i], FLOOR + 1 + (i % 2), s.z + 3), Items.DIAMOND);
+                ids[i] = frames[i].getUUID();
+            }
+            try {
+                s.h.service.run(s.h.player, new OpSpec.Fill(wall, new Pattern.Single(s.h.state("minecraft:air")),
+                        CellMask.ANY), RunOptions.DEFAULT, fill);
+            } catch (EditRejected e) {
+                throw new GameTestAssertException("the fill was refused: " + e.getMessage());
+            }
+        }).thenWaitUntil(() -> {
+            s.executor.tick();
+            ticks[0]++;
+            for (int i = 0; i < at.length; i++) {
+                int cell = s.x + at[i];
+                if (s.find(ids[i]) == null) {
+                    if (gone[i] == null) {
+                        int air = 0;
+                        for (int x = s.x; x <= s.x + 63; x++) {
+                            if (s.world.getBlockState(new BlockPos(x, FLOOR + 1, s.z + 3)).isAir()) air++;
+                        }
+                        gone[i] = "x+" + at[i] + " gone at tick " + ticks[0] + " (" + air + " of 64 lower wall cells air, "
+                                + s.entries().size() + " entries, job done " + (fill.result != null) + ", removed "
+                                + frames[i].getRemovalReason() + ", items " + s.world.getEntitiesOfClass(ItemEntity.class,
+                                around(wall), e -> true).size() + ")";
+                    }
+                    continue;
+                }
+                if (fill.result != null) continue;
+                // Every section the frame's support box touches (a block around it) is written whole: the early sweep had
+                // to take it.
+                boolean settled = true;
+                for (int sx = (cell - 1) >> 4; sx <= (cell + 1) >> 4 && settled; sx++) {
+                    for (int x = sx << 4; x <= (sx << 4) + 15 && settled; x++) {
+                        for (int y = FLOOR + 1; y <= FLOOR + 2; y++) {
+                            if (!s.world.getBlockState(new BlockPos(x, y, s.z + 3)).isAir()) settled = false;
+                        }
+                    }
+                }
+                if (settled) violations.add("the frame at x+" + at[i] + " stayed after its sections were written");
+            }
+            check(fill.result != null, "the fill is still running");
+        }).thenExecute(() -> {
+            s.h.service.tick();
+            check(violations.isEmpty(), violations.toString());
+            check(fill.result.outcome() == JobOutcome.COMPLETED, "the fill " + fill.result);
+            List<ItemEntity> items = s.world.getEntitiesOfClass(ItemEntity.class, around(wall), e -> !e.isRemoved());
+            check(items.isEmpty(), "no item dropped: " + items + " (s.x " + s.x + "; " + java.util.Arrays.toString(gone) + ")");
+            List<String> left = new ArrayList<>();
+            for (UUID id : ids) left.add(String.valueOf(s.find(id)));
+            check(s.entries().get(0).record().entities().size() == at.length, "the Fill's step holds the four frames: "
+                    + s.entries().get(0).record().entities().size() + ", left in the world: " + left + ", " + java.util.Arrays.toString(gone));
+            forceChunks(s.world, beyond, false);
+            s.finish();
+        }).thenSucceed();
+    }
+
+    /**
      * A job written over several ticks takes a frame as soon as the section with its wall is written, not only at its
      * end: the game's own check could drop the frame off in between. Here 16 blocks a tick, a wall four sections long,
      * a frame at each end (whichever end the job writes first).

@@ -35,6 +35,16 @@ public interface RecordSink {
     default void entity(UUID id, EntityState before, EntityState after) {}
 
     /**
+     * Whether this sink keeps the entity changes it is given ({@link #entity}, {@link #entityUnsupported}) in a history:
+     * only then does a job take hanging entities along whose support its writes took ({@link HangingSupport}), since an
+     * entity taken away and recorded nowhere would be lost. False by default; the history's sinks say true, and a
+     * wrapper says what the sink it wraps says.
+     */
+    default boolean recordsEntities() {
+        return false;
+    }
+
+    /**
      * An item frame or painting the edit's writes left with nothing to hang on, which the edit removes right after this
      * call ({@link HangingSupport}); {@code state} is it as it is. A forward edit records it as removed (the default), so
      * its undo puts it back once the wall is back. An undo or redo, which records nothing of its own, amends the entry it
@@ -66,6 +76,11 @@ public interface RecordSink {
      */
     static RecordSink into(RecordBuilder builder) {
         return new RecordSink() {
+            @Override
+            public boolean recordsEntities() {
+                return true;
+            }
+
             @Override
             public void record(int x, int y, int z, int before, BlockEntityData beforeTile, int after,
                                BlockEntityData afterTile) {

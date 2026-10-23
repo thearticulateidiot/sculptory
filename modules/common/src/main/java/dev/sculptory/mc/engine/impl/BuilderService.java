@@ -564,8 +564,8 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
     /**
      * Why builder mode refuses to put an entity into {@code cell} (the space an item frame or painting hangs in, the
      * block an armor stand stands in), as it would refuse a block there: out of reach, outside the world, not loaded,
-     * protected, held by a job, rejected by the global mask (or the mask refused), or over the block budget (an entity
-     * spends one token). {@code null} when it may.
+     * protected, held by a job, rejected by the global mask (or the mask refused), or over the block budget (no token
+     * left; the token is spent only once the entity is placed: {@link #chargePlacement}). {@code null} when it may.
      */
     public Refusal entityPlacementRefusal(ServerPlayer p, ServerLevel world, BlockPos cell) {
         if (!withinReach(p, cell)) return Refusal.OUT_OF_REACH;
@@ -580,8 +580,13 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
                 return Refusal.MASKED;
             }
         }
-        if (!budget(state(p)).tryAcquire(1)) return Refusal.RATE_LIMITED;
+        if (budget(state(p)).available() < 1) return Refusal.RATE_LIMITED;
         return null;
+    }
+
+    /** An entity the player placed in builder mode spends one token of their block budget, as a block does. */
+    public void chargePlacement(ServerPlayer p) {
+        budget(state(p)).tryAcquire(1);
     }
 
     /**
@@ -631,7 +636,10 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
             changes.add(new EntityChange(entity.getUUID(), null, after));
             if (name == null) name = name(entity);
         }
-        if (!changes.isEmpty()) pushEntities(p, world, "Place · " + name, changes);
+        if (!changes.isEmpty()) {
+            chargePlacement(p);
+            pushEntities(p, world, "Place · " + name, changes);
+        }
         return result;
     }
 
@@ -801,23 +809,16 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
      */
     private long sweepSupports(ServerPlayer p, ServerLevel world, RecordBuilder record, List<BuilderChange> changes) {
         if (changes.isEmpty()) return 0;
-        int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, minZ = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE, maxZ = Integer.MIN_VALUE;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet sections = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
         for (BuilderChange change : changes) {
             BlockPos pos = change.pos();
-            minX = Math.min(minX, pos.getX());
-            minY = Math.min(minY, pos.getY());
-            minZ = Math.min(minZ, pos.getZ());
-            maxX = Math.max(maxX, pos.getX());
-            maxY = Math.max(maxY, pos.getY());
-            maxZ = Math.max(maxZ, pos.getZ());
+            sections.add(HangingSupport.sectionOf(pos.getX(), pos.getY(), pos.getZ()));
         }
-        Box written = new Box(new dev.sculptory.core.BlockPos(minX, minY, minZ),
-                new dev.sculptory.core.BlockPos(maxX, maxY, maxZ));
         HangingSupport.Result swept = HangingSupport.sweep(new McWorldEntities(world), WriteOptions.DEFAULT,
-                PermitSource.forPlayer(permissions, p, world, HangingSupport.around(written)),
-                (x, y, z) -> WorldChecks.insideBorder(world.getWorldBorder(), x, z) && WorldChecks.inBuildLimit(world, x, y, z),
-                RecordSink.into(record), written);
+                PermitSource.forPlayer(permissions, p, world, HangingSupport.permitBounds(sections)),
+                (x, y, z) -> WorldChecks.insideBorder(world.getWorldBorder(), x, z)
+                        && WorldChecks.inBuildLimit(world, x, y, z),
+                RecordSink.into(record), sections);
         return swept.removed();
     }
 

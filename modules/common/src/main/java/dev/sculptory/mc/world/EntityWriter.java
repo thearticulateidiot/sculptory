@@ -262,9 +262,13 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         return add(root, state.typeId(), count);
     }
 
-    /** Whether {@code entity} would last where it stands: a hanging one on its wall, a living one not inside a wall. */
+    /**
+     * Whether {@code entity} would last where it stands: a hanging one on its wall, a living one not inside a wall. A
+     * hanging one whose wall lies in a chunk not fully loaded is taken to last: asking would load the chunk, and the game
+     * decides once it is loaded.
+     */
     private static boolean lasts(Entity entity) {
-        if (entity instanceof BlockAttachedEntity hanging) return hanging.survives();
+        if (entity instanceof BlockAttachedEntity hanging) return !McEntities.supportLoaded(hanging) || hanging.survives();
         return !(entity instanceof net.minecraft.world.entity.LivingEntity) || !entity.isInWall();
     }
 

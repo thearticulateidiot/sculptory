@@ -423,6 +423,11 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
             }
 
             @Override
+            public boolean recordsEntities() {
+                return sink.recordsEntities();
+            }
+
+            @Override
             public void entitiesFinished() {
                 sink.entitiesFinished();
             }
@@ -489,6 +494,11 @@ public final class FluidTrails implements FluidTrailHook<ServerLevel> {
             @Override
             public boolean entityUnsupported(UUID id, EntityState state) {
                 return sink.entityUnsupported(id, state);
+            }
+
+            @Override
+            public boolean recordsEntities() {
+                return sink.recordsEntities();
             }
 
             @Override

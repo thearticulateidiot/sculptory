@@ -552,7 +552,10 @@ public final class EntityJobs {
                 }
                 switch (EntityHistory.decide(step, live, policy, matcher)) {
                     case SKIP -> {}
-                    case CONFLICT -> ctx.conflicts++;
+                    case CONFLICT -> {
+                        ctx.conflicts++;
+                        if (entity != null) ctx.kept.add(step.id());
+                    }
                     case APPLY -> {
                         if (entity != null) {
                             if (!ctx.mayChange(ctx.world.cell(entity))) {
@@ -592,7 +595,7 @@ public final class EntityJobs {
                 }
                 EntityPlacer.Spawn<E> spawn = ctx.writer.restore(step.target(), ctx::mayPlace);
                 E placed = spawn.entity();
-                if (placed != null && ctx.world.hangsUnsupported(placed)) {
+                if (placed != null && ctx.world.supportLoaded(placed) && ctx.world.hangsUnsupported(placed)) {
                     // Its wall went since the step (a later edit, or one this job did not undo): the game would drop it
                     // off with its item at its next check, so it is not put back.
                     ctx.writer.takeBack(placed, "it has nothing to hang on there any more");

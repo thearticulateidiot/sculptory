@@ -96,6 +96,11 @@ public interface EntityWork {
         long protectedEntities;
         /** Entities kept because they changed since the step (undo and redo). */
         long conflicts;
+        /**
+         * The entities an undo or redo kept because they changed since the step (counted in {@link #conflicts}), by UUID:
+         * one the hanging entity sweep then takes into the step is no longer counted as kept.
+         */
+        final java.util.Set<java.util.UUID> kept = new java.util.HashSet<>();
         /** Entities the current step may still handle. */
         int allowance;
 

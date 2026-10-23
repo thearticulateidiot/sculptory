@@ -1,6 +1,7 @@
 package dev.sculptory.server.platform;
 
 import dev.sculptory.core.BlockPos;
+import dev.sculptory.core.Box;
 import dev.sculptory.core.entity.EntityFilter;
 import dev.sculptory.core.entity.EntitySnapshot;
 import dev.sculptory.core.history.EntityState;
@@ -59,6 +60,19 @@ public interface WorldEntities<E> {
      * the mob tied to it anyway).
      */
     boolean hangsUnsupported(E entity);
+
+    /**
+     * Whether every chunk holding a block {@code entity} stands in or hangs on is fully loaded, so
+     * {@link #hangsUnsupported} can be asked without loading one (the game's own test reads those blocks). An entity
+     * whose support is not all loaded is left to the game.
+     */
+    boolean supportLoaded(E entity);
+
+    /**
+     * The blocks {@code entity} stands in and touches, grown by one block (a hanging entity's wall): every block the
+     * game's test of whether it stays reads, so once none of them changes any more, neither does the answer.
+     */
+    Box supportBox(E entity);
 
     /** How many entities taking {@code entity} with {@code filter} takes: itself and the passengers the filter takes. */
     int takenCount(E entity, EntityFilter filter);

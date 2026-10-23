@@ -381,10 +381,10 @@ public final class EntitiesGameTest {
 
     /**
      * A paste undone removes exactly the entities it placed (the fixture stays); redone, they come back with their UUIDs.
-     * A pasted frame given another item since is kept by the next undo and counted with the kept blocks; since the same
-     * undo takes away the wall it hangs on, the undo then takes the frame along into the paste's step, as the player left
-     * it (HangingSupport), instead of leaving it to drop off with its item; Undo anyway has nothing left to take, and a
-     * redo would bring the frame back with the emerald.
+     * A pasted frame given another item since is kept by the next undo; since the same undo takes away the wall it hangs
+     * on, the undo then takes the frame along into the paste's step, as the player left it (HangingSupport), instead of
+     * leaving it to drop off with its item. Then nothing is counted as kept, so Undo anyway is not offered, and a redo
+     * would bring the frame back with the emerald.
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_entities_undo_paste", timeoutTicks = LIMIT)
     public void pasteUndoRemovesExactlyItsEntitiesAndKeepsChangedOnes(GameTestHelper context) {
@@ -447,8 +447,8 @@ public final class EntitiesGameTest {
                 })
                 .thenWaitUntil(() -> check(undoAgain.result != null, "second undo running"))
                 .thenWaitUntil(() -> {
-                    check(undoAgain.result.skippedConflicts() == 1, "the changed frame is kept and counted: "
-                            + undoAgain.result);
+                    check(undoAgain.result.skippedConflicts() == 0, "the frame the undo kept went into the step, so "
+                            + "nothing is counted as kept: " + undoAgain.result);
                     List<Entity> left = entitiesIn(world, target);
                     check(left.isEmpty(), "the kept frame went with its wall, into the step: " + left);
                     List<EntityChange> taken = h.service.historyService().redoEntries(h.player.getUUID()).get(0)
@@ -460,16 +460,9 @@ public final class EntitiesGameTest {
                     check(world.getEntitiesOfClass(net.minecraft.world.entity.item.ItemEntity.class,
                             new net.minecraft.world.phys.AABB(x0 + 16, y0 - 2, z0 - 4, x0 + 28, y0 + 6, z0 + 8)).isEmpty(),
                             "nothing dropped");
-                    try {
-                        h.service.historyOverwrite(h.player, false, 1, anyway);
-                    } catch (EditRejected e) {
-                        throw new GameTestAssertException("undo anyway refused: " + e.getMessage());
-                    }
-                })
-                .thenWaitUntil(() -> check(anyway.result != null, "undo anyway running"))
-                .thenWaitUntil(() -> {
-                    check(anyway.result.outcome() == JobOutcome.COMPLETED, "undo anyway " + anyway.result);
-                    check(entitiesIn(world, target).isEmpty(), "Undo anyway takes the frame: " + entitiesIn(world, target));
+                    // Nothing was kept, so there is nothing for Undo anyway to do: it is not offered.
+                    RejectReason anywayRefused = refusal(() -> h.service.historyOverwrite(h.player, false, 1, anyway));
+                    check(anywayRefused == RejectReason.INVALID, "Undo anyway after nothing kept: " + anywayRefused);
                     check(comparable(entitiesIn(world, source)).equals(sourceBefore), "the source is untouched");
                     forceChunks(world, all, false);
                     h.close();

@@ -88,6 +88,7 @@ import dev.sculptory.server.platform.WriteOptions;
 import dev.sculptory.server.schem.SanitizedTile;
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1736,6 +1737,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
                                BlockEntityData afterTile) {}
 
             @Override
+            public boolean recordsEntities() {
+                return true; // into the entry the step applies
+            }
+
+            @Override
             public boolean entityUnsupported(UUID id, EntityState state) {
                 UUID entry = entryOf.apply(id, state);
                 if (entry != null && history.amendEntity(session, entry, id, state, undone)) return true;
@@ -3156,9 +3162,13 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
      * ({@link HangingSupport}), so undoing the stroke brings them back once their walls are back.
      */
     private void sweepSupports(StrokeSession stroke, DabWriter writer) {
-        Box written = writer.writtenBounds();
-        if (written == null) return;
+        if (writer.writtenSections.isEmpty()) return;
         RecordSink into = new RecordSink() {
+            @Override
+            public boolean recordsEntities() {
+                return true;
+            }
+
             @Override
             public void record(int x, int y, int z, int before, BlockEntityData beforeTile, int after,
                                BlockEntityData afterTile) {}
@@ -3170,9 +3180,10 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
             }
         };
         HangingSupport.Result swept = HangingSupport.sweep(runtime.entities(stroke.world), WriteOptions.DEFAULT,
-                PermitSource.forPlayer(permissions, writer.player, stroke.world, HangingSupport.around(written)),
+                PermitSource.forPlayer(permissions, writer.player, stroke.world,
+                        HangingSupport.permitBounds(writer.writtenSections)),
                 (x, y, z) -> runtime.insideBorder(stroke.world, x, z) && runtime.inBuildLimit(stroke.world, x, y, z),
-                into, written);
+                into, writer.writtenSections);
         if (swept.removed() > 0) {
             history.saveEntities(history.openRecord(stroke.history, stroke.worldId, strokeLabel(stroke.spec.tool()),
                     this::createdMillis, stroke.record));
@@ -3196,9 +3207,8 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         int denied;
         /** Parts of a Shape step written so far. */
         int parts;
-        /** The bounds of the cells written so far (not biomes); meaningful once {@link #cells} is above 0. */
-        int minX, minY, minZ, maxX, maxY, maxZ;
-        long cells;
+        /** The sections the step wrote cells in (not biomes), for the hanging entity sweep after it. */
+        final LongOpenHashSet writtenSections = new LongOpenHashSet();
 
         DabWriter(StrokeSession stroke, P player, List<Box> boxes) {
             this.stroke = stroke;
@@ -3207,23 +3217,7 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         }
 
         private void wroteCell(int x, int y, int z) {
-            if (cells++ == 0) {
-                minX = maxX = x;
-                minY = maxY = y;
-                minZ = maxZ = z;
-                return;
-            }
-            minX = Math.min(minX, x);
-            minY = Math.min(minY, y);
-            minZ = Math.min(minZ, z);
-            maxX = Math.max(maxX, x);
-            maxY = Math.max(maxY, y);
-            maxZ = Math.max(maxZ, z);
-        }
-
-        /** The bounds of the cells the step wrote, or {@code null} when it wrote none. */
-        Box writtenBounds() {
-            return cells == 0 ? null : new Box(new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ));
+            writtenSections.add(HangingSupport.sectionOf(x, y, z));
         }
 
         /** Before each part of a Shape step: permits are asked afresh (protection may have changed since the last). */
