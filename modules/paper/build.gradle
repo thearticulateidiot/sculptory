@@ -121,6 +121,8 @@ def commonDriftGuards = [
 
 // Every mixin of modules/common, with what does its work on Paper, which has no mixins: a mixin added to common would
 // otherwise be silently absent from the plugin. The build fails when the mixin folder holds other files than these.
+// The pin is by file name only: a new injector added inside an existing mixin still drifts silently, so a change to
+// any of these files needs a Paper review of its replacement.
 def commonMixinsOnPaper = [
         'AbstractBlockStateMixin.java'            : 'PaperAccess.setBlockWithoutCallbacks (the BlockWriter patch)',
         'BlockItemInvoker.java'                   : 'PaperAccess (McInternals)',

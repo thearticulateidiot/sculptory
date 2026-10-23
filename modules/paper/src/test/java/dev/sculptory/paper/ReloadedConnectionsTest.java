@@ -1,6 +1,8 @@
 package dev.sculptory.paper;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import dev.sculptory.paper.ReloadedConnections.Verdict;
 import dev.sculptory.protocol.v2.MessageType;
@@ -12,6 +14,7 @@ class ReloadedConnectionsTest {
     @Test
     void aConnectionThatJoinedAfterEnableIsForwarded() {
         Object connection = new Object();
+        assertFalse(connections.tracks(connection));
         assertEquals(Verdict.FORWARD, connections.receive(connection, MessageType.STROKE_BEGIN));
         assertEquals(-1, connections.dropped(connection));
     }
@@ -27,6 +30,7 @@ class ReloadedConnectionsTest {
         }
         assertEquals(Verdict.DROP, connections.receive(connection, null));
         assertEquals(22, connections.dropped(connection));
+        assertTrue(connections.tracks(connection));
     }
 
     @Test
@@ -35,6 +39,7 @@ class ReloadedConnectionsTest {
         connections.joinedBefore(connection);
         connections.receive(connection, MessageType.STROKE_BEGIN);
         assertEquals(Verdict.FORWARD, connections.receive(connection, MessageType.HELLO));
+        assertFalse(connections.tracks(connection));
         assertEquals(Verdict.FORWARD, connections.receive(connection, MessageType.STROKE_BEGIN));
         assertEquals(-1, connections.dropped(connection));
     }

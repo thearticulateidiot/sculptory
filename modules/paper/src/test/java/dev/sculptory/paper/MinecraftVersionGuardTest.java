@@ -25,4 +25,19 @@ class MinecraftVersionGuardTest {
             assertTrue(why.contains("Minecraft 1.21.1 only") && why.contains("Minecraft " + found + ","), why);
         }
     }
+
+    /** A version that cannot be read (no resource in the jar, not a Paper server) refuses with one line, never throws. */
+    @Test
+    void aVersionThatCannotBeReadRefuses() {
+        String missing = MinecraftVersionGuard.refusalFor(() -> {
+            throw new IllegalStateException("sculptory-paper.properties is missing from the plugin jar");
+        }, () -> "1.21.1").orElseThrow();
+        assertTrue(missing.startsWith("Sculptory for Paper could not check the Minecraft version")
+                && missing.contains("sculptory-paper.properties is missing"), missing);
+        String notPaper = MinecraftVersionGuard.refusalFor(() -> "1.21.1", () -> {
+            throw new NoSuchMethodError("org.bukkit.Bukkit.getMinecraftVersion()");
+        }).orElseThrow();
+        assertTrue(notPaper.contains("NoSuchMethodError"), notPaper);
+        assertEquals(Optional.empty(), MinecraftVersionGuard.refusalFor(() -> "1.21.1", () -> "1.21.1"));
+    }
 }

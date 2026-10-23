@@ -43,6 +43,11 @@ final class ReloadedConnections<K> {
         dropped.remove(connection);
     }
 
+    /** Whether {@code connection} predates this instance and has not said {@code Hello} yet. */
+    boolean tracks(K connection) {
+        return dropped.containsKey(connection);
+    }
+
     /** What to do with a frame of {@code type} ({@code null}: unreadable) from {@code connection}. */
     Verdict receive(K connection, MessageType type) {
         synchronized (dropped) {

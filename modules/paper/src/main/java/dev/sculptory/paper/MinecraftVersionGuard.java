@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.function.Supplier;
 
 /**
  * The plugin runs only on the Minecraft version it was built for. It is compiled against that version's server
@@ -29,6 +30,19 @@ final class MinecraftVersionGuard {
             return version;
         } catch (IOException e) {
             throw new UncheckedIOException("could not read " + RESOURCE, e);
+        }
+    }
+
+    /**
+     * Why the plugin must not run here, reading both versions through the suppliers; empty when it may. A failure to
+     * read either (no {@value #RESOURCE} in the jar, a server without Paper's {@code getMinecraftVersion}) refuses too,
+     * with one line saying why, rather than leaving it to fail later with a stack trace.
+     */
+    static Optional<String> refusalFor(Supplier<String> builtFor, Supplier<String> found) {
+        try {
+            return refusal(builtFor.get(), found.get());
+        } catch (RuntimeException | LinkageError e) {
+            return Optional.of("Sculptory for Paper could not check the Minecraft version, so it stays disabled: " + e);
         }
     }
 

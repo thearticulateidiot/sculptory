@@ -144,6 +144,8 @@ public final class PaperServerLoader implements ServerLoader, Listener {
      * to rejoin.
      */
     private boolean admitted(ServerPlayer player, byte[] frame) {
+        // The common case first: a connection that did not predate this instance; its frame is not looked at here.
+        if (!reloaded.tracks(player.connection)) return true;
         switch (reloaded.receive(player.connection, Codec.peekType(frame))) {
             case FORWARD -> {
                 return true;

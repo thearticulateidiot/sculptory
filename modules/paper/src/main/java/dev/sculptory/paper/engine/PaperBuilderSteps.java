@@ -173,7 +173,7 @@ public final class PaperBuilderSteps implements BuilderSteps {
 
     /**
      * With {@code beforeUpdate} called before each changed cell's deferred updates run (null: none). Only the self-test
-     * uses it, through {@link SelfTestSteps}, to make the deferred physics fail halfway.
+     * uses it, through SelfTestSteps (in the dev jar only), to make the deferred physics fail halfway.
      */
     PaperBuilderSteps(Plugin plugin, int maxWatchedCells, Consumer<BlockPos> beforeUpdate) {
         if (maxWatchedCells < 0) throw new IllegalArgumentException("a negative cap: " + maxWatchedCells);

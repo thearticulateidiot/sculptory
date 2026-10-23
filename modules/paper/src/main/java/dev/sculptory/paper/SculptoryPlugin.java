@@ -43,7 +43,7 @@ public final class SculptoryPlugin extends JavaPlugin {
         instance = this;
         // Before anything touches the server's internals: on another Minecraft version they may not be what this jar
         // was compiled against (MinecraftVersionGuard), so nothing more is set up there.
-        refusal = MinecraftVersionGuard.refusal(MinecraftVersionGuard.builtFor(), Bukkit.getMinecraftVersion());
+        refusal = MinecraftVersionGuard.refusalFor(MinecraftVersionGuard::builtFor, Bukkit::getMinecraftVersion);
         if (refusal.isPresent()) {
             Sculptory.LOG.error(refusal.get());
             return;
@@ -56,8 +56,11 @@ public final class SculptoryPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
-        if (refusal.isPresent()) {
-            Sculptory.LOG.error(refusal.get());
+        if (refusal.isPresent() || loader == null) {
+            // The refusal was logged when the server loaded the plugin; only an unexpected state is logged here.
+            if (refusal.isEmpty()) {
+                Sculptory.LOG.error("Sculptory for Paper was not set up when the server loaded it, so it stays disabled");
+            }
             getServer().getPluginManager().disablePlugin(this);
             return;
         }
@@ -77,7 +80,7 @@ public final class SculptoryPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        if (refusal.isPresent()) return; // nothing was set up (another Minecraft version)
+        if (refusal.isPresent()) return; // nothing was set up (another Minecraft version, or it could not be checked)
         // A self-test in progress puts its test areas back while the plugin can still write (dev only).
         extras.ifPresent(DevExtras::disabling);
         MinecraftServer server = MinecraftServer.getServer();

@@ -117,7 +117,15 @@ final class WorldGuardProtection implements Protection {
             for (String axis : List.of("x", "y", "z")) lookup.findVirtual(BlockVector3.class, axis, methodType(int.class));
             // Probe overrides this protected method; if WorldGuard no longer had it, nothing would call the override
             // and the region lookup would silently drop the edge candidates Probe exists to keep.
-            ProtectedRegion.class.getDeclaredMethod("intersects", ProtectedRegion.class, java.awt.geom.Area.class);
+            java.lang.reflect.Method intersects = ProtectedRegion.class.getDeclaredMethod("intersects",
+                    ProtectedRegion.class, java.awt.geom.Area.class);
+            int modifiers = intersects.getModifiers();
+            // Overridable from Probe (another package): protected or public, and not final, static or private.
+            if (!(java.lang.reflect.Modifier.isProtected(modifiers) || java.lang.reflect.Modifier.isPublic(modifiers))
+                    || java.lang.reflect.Modifier.isFinal(modifiers) || java.lang.reflect.Modifier.isStatic(modifiers)) {
+                throw new NoSuchMethodException("ProtectedRegion.intersects(ProtectedRegion, Area) can no longer be "
+                        + "overridden (" + java.lang.reflect.Modifier.toString(modifiers) + ")");
+            }
         } catch (ReflectiveOperationException e) {
             LinkageError error = new IncompatibleClassChangeError("WorldGuard API: " + e);
             error.initCause(e);
