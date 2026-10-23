@@ -22,8 +22,10 @@ import java.util.List;
  * structures (stairs, fences, torches, block entities) never change, and a ground block a structure touches (standing on
  * it, fixed to its side, hanging under it) is not removed.
  *
- * <p><b>Raise and Lower</b> work along the direction the surface faces around the dab, {@link SurfaceNormal}'s estimate
- * snapped to one of the six directions (up on a floor, sideways on a wall, down under a ceiling). The cylinder is cut
+ * <p><b>Raise and Lower</b> work along the direction the surface faces at the dab's point,
+ * {@link SurfaceNormal#facingAt}: the face the point lies on when the small estimate in front of it agrees, else the
+ * brush-sized estimate snapped to one of the six directions (up on a floor, sideways on a wall, down under a ceiling;
+ * up when nothing tells). The cylinder is cut
  * into lines along that direction, one per cell of the footprint (as the Terrain mode's columns: weight by the distance
  * across, Circle or Square). On each line the surface is the ground cell with an open cell in front of it (toward the
  * direction) nearest the dab, searched outward from the dab's point; a line without one inside the cylinder is left
@@ -628,9 +630,11 @@ final class SurfaceKernel {
                     ball.plane = planeFor(ball);
                     ball.axis = ball.plane.facing();
                 } else {
-                    long[] n = SurfaceNormal.moment(ball::normalKind, ball.bx, ball.by, ball.bz,
-                            SurfaceNormal.radiusFor(spec.radius()));
-                    ball.axis = SurfaceNormal.facing(n);
+                    // The estimate may centre on the cell in front of the face the point lies on, one block from the
+                    // dab's: within the box, which reaches radius + 10 around the dab's block.
+                    Facing facing = SurfaceNormal.facingAt(ball::normalKind, ball.dab.x16(), ball.dab.y16(),
+                            ball.dab.z16(), spec.radius());
+                    ball.axis = facing == null ? Facing.UP : facing;
                 }
                 findCrossings(ball);
             }

@@ -20,6 +20,17 @@ import java.util.Objects;
  * <p>{@link #facing} snaps it to the nearest of the six directions (ties: up or down first, then east or west, then
  * north or south); a zero vector (no surface near, or a perfectly balanced one) counts as up, the Terrain mode's
  * direction.
+ *
+ * <p><b>At a dab's point</b> ({@link #facingAt}) the face the point lies on comes first. A point aimed at a block face
+ * lies on it, or within a sixteenth of it on either side (rounding to 1/16 block, and a mirrored copy of a point a
+ * sixteenth inside a block is a sixteenth inside the mirrored one): when the cells on the two sides of that face are
+ * one solid and one open, the point is on a surface facing from the solid cell to the open one. The estimate is then
+ * centred on that open cell, the one in front of the face, not on the block holding the point: centred in a wall one
+ * block thick, with open cells on both sides, the estimate cancels to zero. Next, a face beats the wider
+ * estimate when the estimate within {@value #FACE_RADIUS} blocks of the open cell agrees with it: the side of a short
+ * wall on a floor, or of a cliff smaller than the brush, is then the surface worked, while the side of a one-block bump
+ * or step (where that small estimate already points up) is left to the brush-sized estimate, which keeps a stroke over
+ * rough ground working the ground. Without a face at the point, the estimate is centred on the point's block as before.
  */
 public final class SurfaceNormal {
     /** The smallest and largest radius of the estimate: the brush's radius, kept within these. */
@@ -27,6 +38,8 @@ public final class SurfaceNormal {
     public static final int MAX_RADIUS = 8;
     /** The radius of the estimate behind the Surface mode's Slope mask ({@link #slope}). */
     public static final int SLOPE_RADIUS = 2;
+    /** The radius of the small estimate that lets the face under a dab's point decide ({@link #facingAt}). */
+    public static final int FACE_RADIUS = 2;
     /** Surfaces steeper than this many blocks up per block across (walls, overhangs) count as this for the Slope mask. */
     public static final int MAX_SLOPE = 16;
 
@@ -41,6 +54,9 @@ public final class SurfaceNormal {
         int kind(int x, int y, int z);
     }
 
+    /** The face a point lies on ({@link #faceAt}): its direction (from the solid cell to the open one), the open cell. */
+    record Face(Facing facing, int x, int y, int z) {}
+
     private SurfaceNormal() {}
 
     /** The estimate's radius for a brush of {@code brushRadius}: the radius, at least 3 and at most 8. */
@@ -53,12 +69,109 @@ public final class SurfaceNormal {
      * toward the open side, not normalized; zero when nothing around is solid or everything is.
      */
     public static long[] estimate(WorldReader world, int bx, int by, int bz, int radius) {
+        return moment(cells(world), bx, by, bz, radius);
+    }
+
+    /**
+     * The way the surface faces at a dab's point (x16, y16, z16, in 1/16 block) for a brush of {@code brushRadius}, as
+     * the kernel works it out for Raise and Lower and the client for the cursor's ring and Flatten's plane (see the
+     * class comment); {@code null} when nothing tells: no face at the point and a zero estimate.
+     */
+    public static Facing facingAt(WorldReader world, int x16, int y16, int z16, int brushRadius) {
+        return facingAt(cells(world), x16, y16, z16, brushRadius);
+    }
+
+    /** {@link #facingAt(WorldReader, int, int, int, int)} over {@code cells}. */
+    static Facing facingAt(Cells cells, int x16, int y16, int z16, int brushRadius) {
+        Face face = faceAt(cells, x16, y16, z16);
+        int cx = x16 >> 4, cy = y16 >> 4, cz = z16 >> 4;
+        if (face != null) {
+            cx = face.x();
+            cy = face.y();
+            cz = face.z();
+            long[] near = moment(cells, cx, cy, cz, FACE_RADIUS);
+            if (!zero(near) && facing(near) == face.facing()) return face.facing();
+        }
+        long[] n = moment(cells, cx, cy, cz, radiusFor(brushRadius));
+        if (!zero(n)) return facing(n);
+        return face == null ? null : face.facing();
+    }
+
+    /**
+     * The block face point (x16, y16, z16) lies on, or within a sixteenth of, with a solid cell on one side and an open
+     * cell on the other; {@code null} when there is none. A point on two or three such faces (an edge or corner) takes
+     * the nearest: exactly on it before a sixteenth away, then y, then x, then z, the order {@link #facing} breaks ties
+     * in. Integer arithmetic on the point's 1/16 coordinates only, so the client and the server find the same face.
+     */
+    static Face faceAt(Cells cells, int x16, int y16, int z16) {
+        Face best = null;
+        int bestDistance = Integer.MAX_VALUE;
+        for (int axis : new int[] {1, 0, 2}) {
+            int p = axis == 0 ? x16 : axis == 1 ? y16 : z16;
+            int offset = p & 15;
+            // On the block's low face (offset 0) or a sixteenth past it (1), or a sixteenth short of its high face
+            // (15). A hit rounded down to 1/16 lands on 0 or 15; a mirrored copy turns 15 into 1.
+            int distance;
+            int low;
+            if (offset == 0 || offset == 1) {
+                distance = offset;
+                low = (p >> 4) - 1;
+            } else if (offset == 15) {
+                distance = 1;
+                low = p >> 4;
+            } else {
+                continue;
+            }
+            if (distance >= bestDistance) continue;
+            int lowKind = kindAlong(cells, axis, low, x16 >> 4, y16 >> 4, z16 >> 4);
+            int highKind = kindAlong(cells, axis, low + 1, x16 >> 4, y16 >> 4, z16 >> 4);
+            Face face;
+            if (lowKind == SOLID && highKind == OPEN) {
+                face = face(positive(axis), axis, low + 1, x16 >> 4, y16 >> 4, z16 >> 4);
+            } else if (lowKind == OPEN && highKind == SOLID) {
+                face = face(positive(axis).opposite(), axis, low, x16 >> 4, y16 >> 4, z16 >> 4);
+            } else {
+                continue;
+            }
+            best = face;
+            bestDistance = distance;
+        }
+        return best;
+    }
+
+    /** The kind of the cell at coordinate {@code c} on {@code axis}, the block (bx, by, bz)'s on the other two. */
+    private static int kindAlong(Cells cells, int axis, int c, int bx, int by, int bz) {
+        return switch (axis) {
+            case 0 -> cells.kind(c, by, bz);
+            case 1 -> cells.kind(bx, c, bz);
+            default -> cells.kind(bx, by, c);
+        };
+    }
+
+    private static Face face(Facing facing, int axis, int c, int bx, int by, int bz) {
+        return switch (axis) {
+            case 0 -> new Face(facing, c, by, bz);
+            case 1 -> new Face(facing, bx, c, bz);
+            default -> new Face(facing, bx, by, c);
+        };
+    }
+
+    private static Facing positive(int axis) {
+        return axis == 0 ? Facing.EAST : axis == 1 ? Facing.UP : Facing.SOUTH;
+    }
+
+    private static boolean zero(long[] n) {
+        return n[0] == 0 && n[1] == 0 && n[2] == 0;
+    }
+
+    /** What the estimate sees in {@code world}: cells outside the build height or in unloaded chunks are skipped. */
+    private static Cells cells(WorldReader world) {
         Objects.requireNonNull(world);
         int bottom = world.bottomY(), top = world.topYExclusive();
         var states = world.states();
         long[] chunk = {Long.MIN_VALUE};
         boolean[] loaded = {false};
-        return moment((x, y, z) -> {
+        return (x, y, z) -> {
             if (y < bottom || y >= top) return SKIP;
             long key = ((long) (x >> 4) << 32) | ((z >> 4) & 0xFFFFFFFFL);
             if (key != chunk[0]) {
@@ -67,7 +180,7 @@ public final class SurfaceNormal {
             }
             if (!loaded[0]) return SKIP;
             return SurfaceScan.open(states.flags(world.get(x, y, z))) ? OPEN : SOLID;
-        }, bx, by, bz, radius);
+        };
     }
 
     /** The weighted moment of the cells within {@code radius} of block (bx, by, bz)'s centre (see the class comment). */

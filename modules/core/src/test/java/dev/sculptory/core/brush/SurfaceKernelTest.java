@@ -277,6 +277,179 @@ class SurfaceKernelTest {
         assertEquals(5, writes.size(), writes.toString());
     }
 
+    // ------------------------------------------------------------------ thin and short walls
+
+    /** Points on the west face of a one-thick wall at x = 9 (on it, a sixteenth inside, a sixteenth outside). */
+    private static final int[] WEST_FACE_X16 = {144, 145, 143};
+    /** Points on its east face (on it, a sixteenth inside, a sixteenth outside). */
+    private static final int[] EAST_FACE_X16 = {160, 159, 161};
+
+    @Test
+    void aPointOnAOneThickWallFacesTheSideItWasAimedFrom() {
+        FakeWorld wall = thinWall(70, false);
+        // Centred in the wall block, open on both sides, the estimate cancels: why the face the point lies on counts.
+        assertEquals(List.of(0L, 0L, 0L), List.of(boxed(SurfaceNormal.estimate(wall, 9, 65, 0, 3))));
+        int y16 = 65 * 16 + 8;
+        for (int radius : new int[] {1, 3, 8, 32}) {
+            for (int x16 : WEST_FACE_X16) {
+                assertEquals(Facing.WEST, SurfaceNormal.facingAt(wall, x16, y16, 8, radius), x16 + " r" + radius);
+            }
+            for (int x16 : EAST_FACE_X16) {
+                assertEquals(Facing.EAST, SurfaceNormal.facingAt(wall, x16, y16, 8, radius), x16 + " r" + radius);
+            }
+            // Its top, hit on it or a sixteenth short of it.
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(wall, 9 * 16 + 8, 71 * 16, 8, radius));
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(wall, 9 * 16 + 8, 71 * 16 - 1, 8, radius));
+        }
+        // Inside the block, away from its faces, nothing tells (the kernel then works up, as before).
+        assertEquals(null, SurfaceNormal.facingAt(wall, 9 * 16 + 8, 65 * 16 + 8, 8, 3));
+    }
+
+    /**
+     * A one-thick wall aimed at from either side: Raise thickens it on that side and Lower cuts into it from there,
+     * whatever the radius; neither works the wall's top (the estimate centred in the wall block cancelled to up, and
+     * the lines then found the top).
+     */
+    @Test
+    void raiseAndLowerOnAOneThickWallWorkTheFaceTheDabTouches() {
+        for (int radius : new int[] {3, 8}) {
+            for (int side = 0; side < 2; side++) {
+                int[] points = side == 0 ? WEST_FACE_X16 : EAST_FACE_X16;
+                int front = side == 0 ? 8 : 10;
+                for (int x16 : points) {
+                    Dab dab = new Dab(0, x16, 65 * 16 + 8, 8, 255);
+                    String label = "x16 " + x16 + " r" + radius;
+                    int expected = 0;
+                    for (int y = 60; y <= 70; y++) {
+                        for (int z = -10; z <= 10; z++) if (acrossX(dab, radius, y, z)) expected++;
+                    }
+                    List<Write> raised = apply(spec(BrushTool.RAISE, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
+                            .withSurface(null), dab, thinWall(70, false));
+                    for (Write write : raised) {
+                        assertEquals(front, write.x, "raised in front of the face aimed at, " + label + ": " + write);
+                        assertEquals(dirt, write.state);
+                    }
+                    assertEquals(expected, raised.size(), label);
+                    List<Write> lowered = apply(spec(BrushTool.LOWER, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
+                            .withSurface(null), dab, thinWall(70, false));
+                    for (Write write : lowered) {
+                        assertEquals(9, write.x, "the wall cut through from that side, " + label + ": " + write);
+                        assertEquals(air, write.state);
+                    }
+                    assertEquals(expected, lowered.size(), label);
+                }
+            }
+        }
+    }
+
+    /**
+     * A one-thick wall shorter than the brush, on a floor: aimed at its side, Raise thickens the wall instead of
+     * raising the floor around it (the brush-sized estimate sees mostly floor and points up; the small one in front of
+     * the face agrees with the face).
+     */
+    @Test
+    void raiseOnTheSideOfAWallShorterThanTheBrushWorksTheSide() {
+        for (int top : new int[] {62, 64, 66}) {
+            for (int radius : new int[] {3, 5, 8}) {
+                for (int side = 0; side < 2; side++) {
+                    int x16 = side == 0 ? 144 : 160, front = side == 0 ? 8 : 10;
+                    Dab dab = new Dab(0, x16, 61 * 16 + 8, 8, 255);
+                    String label = "wall to " + top + ", x16 " + x16 + " r" + radius;
+                    FakeWorld world = thinWall(top, true);
+                    assertEquals(side == 0 ? Facing.WEST : Facing.EAST,
+                            SurfaceNormal.facingAt(world, dab.x16(), dab.y16(), dab.z16(), radius), label);
+                    List<Write> raised = apply(spec(BrushTool.RAISE, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
+                            .withSurface(null), dab, world);
+                    int expected = 0;
+                    for (int y = 60; y <= top; y++) {
+                        for (int z = -10; z <= 10; z++) if (acrossX(dab, radius, y, z)) expected++;
+                    }
+                    assertEquals(expected, raised.size(), label);
+                    for (Write write : raised) {
+                        assertEquals(front, write.x, label + ": " + write);
+                        assertTrue(write.y >= 60 && write.y <= top, label + ": " + write);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    void aMirroredCopyOfAPointASixteenthInsideAThinWallWorksTheMirroredFace() {
+        // One-thick walls at x = 9 and, mirrored about x = 0, x = -10. A hit a sixteenth inside the east face of the
+        // first (x16 159) mirrors to a sixteenth inside the west face of the second (x16 -159).
+        FakeWorld world = new FakeWorld(states);
+        for (int y = 60; y <= 70; y++) {
+            for (int z = -10; z <= 10; z++) {
+                world.set(9, y, z, dirt);
+                world.set(-10, y, z, dirt);
+            }
+        }
+        Symmetry mirror = new Symmetry(Symmetry.Mode.MIRROR_X, 0, 0);
+        BrushSpec raise = spec(BrushTool.RAISE, 3, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSymmetry(mirror)
+                .withSurface(null);
+        Dab dab = new Dab(0, 159, 65 * 16 + 8, 8, 255);
+        assertEquals(-159, SymmetricStep.of(raise, dab, world).dabs().get(1).x16());
+        Set<Integer> xs = new HashSet<>();
+        for (Write write : apply(raise, dab, world)) xs.add(write.x);
+        assertEquals(Set.of(10, -11), xs, "both walls thickened on their outer sides");
+    }
+
+    /**
+     * Where the face under the point is a bump's or a step's side, a staircase, or a thick floor, wall or ceiling, the
+     * direction is what the brush-sized estimate around the point's block gave before thin walls were handled.
+     */
+    @Test
+    void theFaceUnderThePointDoesNotTurnTheBrushOnRoughGroundOrThickSurfaces() {
+        FakeWorld bump = floor(60);
+        bump.set(0, 61, 0, stone);
+        FakeWorld stairsWorld = terrain((x, z) -> 60 + x);
+        FakeWorld lowStep = terrain((x, z) -> x >= 0 ? 61 : 60);
+        FakeWorld highStep = terrain((x, z) -> x >= 0 ? 62 : 60);
+        FakeWorld bumpy = terrain((x, z) -> 60 + Math.floorMod(x, 2));
+        FakeWorld shortWall = thinWall(62, true);
+        record Case(String name, FakeWorld world, int x16, int y16, int z16, Facing facing) {}
+        List<Case> cases = List.of(
+                new Case("bump, west side", bump, 0, 61 * 16 + 8, 8, Facing.UP),
+                new Case("bump, east side", bump, 16, 61 * 16 + 8, 8, Facing.UP),
+                new Case("bump, top", bump, 8, 62 * 16, 8, Facing.UP),
+                new Case("bump, a sixteenth below its top", bump, 8, 62 * 16 - 1, 8, Facing.UP),
+                new Case("45° staircase, a tread", stairsWorld, 8, 61 * 16, 8, Facing.UP),
+                new Case("45° staircase, a sixteenth below a tread", stairsWorld, 8, 61 * 16 - 1, 8, Facing.UP),
+                new Case("45° staircase, a riser", stairsWorld, 16, 61 * 16 + 8, 8, Facing.UP),
+                new Case("one-high step, its side", lowStep, 0, 61 * 16 + 8, 8, Facing.UP),
+                new Case("two-high step, its side", highStep, 0, 61 * 16 + 8, 8, Facing.UP),
+                new Case("alternating columns, a side", bumpy, 16, 61 * 16 + 8, 8, Facing.UP),
+                // At a short wall's foot the floor is as near as the wall: the floor wins, as before.
+                new Case("short wall on a floor, its bottom row", shortWall, 144, 60 * 16 + 8, 8, Facing.UP),
+                new Case("floor", floor(60), 3 * 16, 61 * 16, -2 * 16, Facing.UP),
+                new Case("ceiling", ceiling(70), 8, 70 * 16, 8, Facing.DOWN),
+                new Case("ceiling, a sixteenth below", ceiling(70), 8, 70 * 16 - 1, 8, Facing.DOWN),
+                new Case("thick wall facing east", eastWall(9), 160, 65 * 16 + 8, 8, Facing.EAST),
+                new Case("thick wall facing east, a sixteenth inside", eastWall(9), 159, 65 * 16 + 8, 8, Facing.EAST),
+                new Case("thick wall facing west", westWall(9), 144, 65 * 16 + 8, 8, Facing.WEST),
+                new Case("thick wall facing west, a sixteenth outside", westWall(9), 143, 65 * 16 + 8, 8, Facing.WEST));
+        for (Case c : cases) {
+            for (int radius : new int[] {3, 5, 8}) {
+                String label = c.name() + " r" + radius;
+                Facing before = SurfaceNormal.facing(SurfaceNormal.estimate(c.world(), c.x16() >> 4, c.y16() >> 4,
+                        c.z16() >> 4, SurfaceNormal.radiusFor(radius)));
+                assertEquals(c.facing(), before, label + " (before)");
+                assertEquals(c.facing(), SurfaceNormal.facingAt(c.world(), c.x16(), c.y16(), c.z16(), radius), label);
+            }
+        }
+        // Raise aimed at the bump's side raises the floor around it, not the bump sideways.
+        Set<Integer> ys = new HashSet<>();
+        Set<Integer> xs = new HashSet<>();
+        for (Write write : apply(spec(BrushTool.RAISE, 5, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null),
+                new Dab(0, 0, 61 * 16 + 8, 8, 255), bump)) {
+            ys.add(write.y);
+            xs.add(write.x);
+        }
+        assertEquals(Set.of(61, 62), ys);
+        assertTrue(xs.size() > 5, xs.toString());
+    }
+
     // ------------------------------------------------------------------ ceilings
 
     /**
@@ -899,6 +1072,10 @@ class SurfaceKernelTest {
         return List.of(n[0], n[2]);
     }
 
+    private static Long[] boxed(long[] n) {
+        return new Long[] {n[0], n[1], n[2]};
+    }
+
     private static boolean inBall(Dab dab, int radius, int x, int y, int z) {
         return inBall(dab, radius, Shape.CIRCLE, x, y, z);
     }
@@ -979,6 +1156,22 @@ class SurfaceKernelTest {
         for (int x = face; x <= face + 5; x++) {
             for (int y = 50; y <= 80; y++) for (int z = -20; z <= 20; z++) world.set(x, y, z, dirt);
         }
+        return world;
+    }
+
+    /**
+     * A dirt wall one block thick at x = 9, from y 60 to {@code top} over z -10..10, air on both sides; with
+     * {@code floor}, standing on stone up to y 59 over x -30..40, z -30..30 (the floor's edges out of reach of a
+     * radius-8 dab on the wall).
+     */
+    private FakeWorld thinWall(int top, boolean floor) {
+        FakeWorld world = new FakeWorld(states);
+        if (floor) {
+            for (int x = -30; x <= 40; x++) {
+                for (int z = -30; z <= 30; z++) for (int y = 40; y <= 59; y++) world.set(x, y, z, stone);
+            }
+        }
+        for (int y = 60; y <= top; y++) for (int z = -10; z <= 10; z++) world.set(9, y, z, dirt);
         return world;
     }
 
