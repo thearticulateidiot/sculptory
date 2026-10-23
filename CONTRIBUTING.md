@@ -166,16 +166,33 @@ Useful tasks (the examples use `scripts/gradle.ps1`; `./gradlew` takes the same 
 scripts/gradle.ps1 build          # compile, test and build every product's jar (modules/<product>/build/libs)
 scripts/gradle.ps1 assemble       # the jars only, without tests; :paper:assemble and so on for one product
 scripts/gradle.ps1 runClient      # dev client (singleplayer); add -PbsWorld="<world>" to open a world directly
-scripts/gradle.ps1 runServer      # dev server in .local/run/server
+scripts/gradle.ps1 :fabric:runServer  # Fabric dev server in .local/run/server (NeoForge: :neoforge:runServer)
 scripts/gradle.ps1 :neoforge:runClient -PbsPlaytest -PbsWorld="<world>"  # NeoForge dev client, with the playtest setup
 ```
 
-`scripts/playtest.ps1` and `scripts/playtest-server.ps1` wrap the dev client and a dev server on port 25580; their
-headers list the options (the screenshot tour, the play check, the scripted demo). By default both apply the playtest
-setup: the player is op at level 4 (even in a singleplayer world without cheats), the time is locked at day, mob spawning
-is off, the difficulty is peaceful and hostile mobs are removed; `-NoSetup` leaves the world as it is. On the run tasks it is `-PbsPlaytest`
-(`:fabric:` or `:neoforge:` `runClient` and `runServer`), and the log shows "Sculptory playtest setup:" lines. These
-dev-only harnesses and the setup run from the source sets and are left out of every jar.
+### Dev clients, test servers and playtests
+
+Every test server runs on `127.0.0.1:25580` in offline mode (one at a time), so dev clients can join and nothing on the
+network can: the playtest setup ops whoever joins as `BuilderDev`. Every playtest has the same conditions on every
+loader and server: `BuilderDev` is op at level 4 (even in a singleplayer world without cheats), the time is locked at
+day, mob spawning is off and the difficulty is peaceful (hostile mobs are removed). Each script's header lists its
+options.
+
+- `scripts/playtest.ps1`: the Fabric dev client, also the screenshot tour, the play check and the scripted demo.
+- `scripts/playtest-server.ps1`: the Fabric dev server in `.local/run/server`; it writes the port, address and offline
+  mode into `server.properties` and `BuilderDev` into `ops.json`.
+- `:neoforge:runServer`: the NeoForge dev server in `.local/run/neoforge-server`; the build writes the same
+  `server.properties` keys (and creative, peaceful, no monsters) before each run, and its console reads the build's
+  input, so `stop` works.
+- `scripts/playtest-paper.ps1`: a real Paper 1.21.1 install (`.local/installs/paper-1.21.1-133` by default) with the
+  newest plugin jar from `modules/paper/build/libs` copied into its `plugins` folder (refused while a server runs). It
+  writes `server.properties` and `ops.json` and, once the server is up, sends the day, mob and difficulty commands to
+  its console. Lines appended to `.local/run/paper-stdin.txt` go to the console; `-Stop` sends `stop`.
+
+On the Fabric and NeoForge scripts and run tasks the setup is the dev-only `PlaytestSetup` (`-PbsPlaytest` on
+`:fabric:` or `:neoforge:` `runClient` and `runServer`; the scripts pass it), and the log shows "Sculptory playtest
+setup:" lines; on Paper, which has no such code, the script's "Playtest setup:" lines. `-NoSetup` leaves the world as it
+is. These dev-only harnesses and the setup run from the source sets and are left out of every jar.
 
 Each loader module has two GameTest runs: `runGameTest` (vanilla tests) and `runFidelityGameTest` (Chipped/Farmer's
 Delight tests), as `:fabric:runGameTest`, `:neoforge:runGameTest` and so on; a task name without the module runs both
