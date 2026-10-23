@@ -117,21 +117,21 @@ jobs:
             echo "::error::Tag $GITHUB_REF_NAME doesn't match gradle.properties (expected $product/v$declared)"
             exit 1
           fi
+          # A -dev version (never released) has "-dev" as a dash-separated part: followed by the end, "+" or "."
+          # (0.5.0-dev, 0.5.0-dev.2), not 0.5.0-devel; the same test as the Gradle build's (root build.gradle).
           # The store version type: -alpha is alpha, -beta and -rc are beta (the stores have no "rc"), and a version
-          # without a suffix is a release. Anything else (a -dev version, an unknown suffix) is never released; the
-          # Gradle build refuses -dev product and engine versions too (root build.gradle).
+          # without a suffix is a release; any other suffix is refused.
+          dev_version='-dev($|[+.])'
           engine="$(sed -n 's/^sculptory_engine_version=//p' gradle.properties)"
-          case "$engine" in
-            *-dev*)
-              echo "::error::sculptory_engine_version=$engine: a release never has a -dev engine (CONTRIBUTING.md \"Versions and releases\")"
-              exit 1
-              ;;
-          esac
+          if [[ "$engine" =~ $dev_version ]]; then
+            echo "::error::sculptory_engine_version=$engine: a release never has a -dev engine (CONTRIBUTING.md \"Versions and releases\")"
+            exit 1
+          fi
+          if [[ "$version" =~ $dev_version ]]; then
+            echo "::error::$version is a -dev version, which is never released"
+            exit 1
+          fi
           case "$version" in
-            *-dev*)
-              echo "::error::$version is a -dev version, which is never released"
-              exit 1
-              ;;
             *-alpha*) type=alpha ;;
             *-beta* | *-rc*) type=beta ;;
             *-*)
@@ -166,9 +166,25 @@ jobs:
             exit 1
           fi
           cp "$jar" dist/
-          # The CHANGELOG.md section whose heading starts with "## <Product> <version>", up to the next "## " heading.
-          awk -v v="## $PRODUCT_NAME $VERSION" 'index($0, v) == 1 { found = 1; next } found && /^## / { exit } found' \
-            CHANGELOG.md > dist/release-notes.md
+          # The CHANGELOG.md section headed "## <Product> <version>" (the heading may go on after a space), up to the
+          # next "## " heading or a planned section ("### ... (planned)", still under Unreleased). A heading that still
+          # says "(planned)" is refused: the section has not been promoted yet (CHANGELOG.md, "Unreleased").
+          status=0
+          awk -v v="## $PRODUCT_NAME $VERSION" '
+            !found && index($0, v) == 1 && (length($0) == length(v) || substr($0, length(v) + 1, 1) == " ") {
+              if ($0 ~ /\(planned\)/) { planned = 1; exit }
+              found = 1; next
+            }
+            found && (/^## / || /^### .*\(planned\)/) { exit }
+            found
+            END { if (planned) exit 3 }' CHANGELOG.md > dist/release-notes.md || status=$?
+          if [ "$status" = 3 ]; then
+            echo "::error::CHANGELOG.md's '## $PRODUCT_NAME $VERSION' section still says (planned)"
+            exit 1
+          elif [ "$status" != 0 ]; then
+            echo "::error::Reading the release notes from CHANGELOG.md failed (awk exit $status)"
+            exit 1
+          fi
           if [ ! -s dist/release-notes.md ]; then
             echo "::error::CHANGELOG.md has no section headed '## $PRODUCT_NAME $VERSION'"
             exit 1

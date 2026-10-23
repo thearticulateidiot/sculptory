@@ -1,19 +1,23 @@
 # Changelog
 
 All notable changes to Sculptory. From 0.5.0 on, each product has its own version and section, headed
-`## <Product> <version>+<Minecraft version>` (`## Fabric 0.5.0+1.21.1`); the releases up to 0.4.0-beta are the Fabric
+`## <Product> <version>+<Minecraft version>` (`## Fabric 0.5.0-beta+1.21.1`); the releases up to 0.4.0-beta are the Fabric
 mod's. Client and server need the same network protocol (each section says which).
 
 ## Unreleased
 
-Three releases are being prepared from this code: Fabric 0.5.0 and the first NeoForge and Paper releases, both betas.
-Each becomes a section of its own when it is released, headed `## Fabric 0.5.0+1.21.1`,
-`## NeoForge 0.5.0-beta+1.21.1` or `## Paper 0.1.0-beta+1.21.1`, below this one (the release notes are that section,
-up to the next `## ` heading). The NeoForge mod and the Paper plugin are built on the same code as the Fabric mod, so
-the fixes and changes listed for Fabric are in them too. Until they are released, NeoForge and Paper can be built from
-source (README, "Install").
+Three releases are being prepared from this code, all betas: Fabric 0.5.0-beta and the first NeoForge and Paper
+releases. The NeoForge mod and the Paper plugin are built on the same code as the Fabric mod, so the fixes and changes
+listed for Fabric are in them too. Until they are released, NeoForge and Paper can be built from source (README,
+"Install").
 
-### Fabric 0.5.0+1.21.1 (planned)
+To release one, promote its planned section: move it below this Unreleased section, head it
+`## <Product> <build id>` (`## Fabric 0.5.0-beta+1.21.1`, `## NeoForge 0.5.0-beta+1.21.1`,
+`## Paper 0.1.0-beta+1.21.1`) without "(planned)", and lift its `####` headings to `###`. The release workflow takes
+the notes from that heading down to the next `## ` heading or planned section, and refuses a heading that still says
+"(planned)".
+
+### Fabric 0.5.0-beta+1.21.1 (planned)
 
 For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.4.0-beta. Network protocol 6,
 like 0.4.0-beta: the two work together, with one difference (below).
@@ -36,6 +40,9 @@ like 0.4.0-beta: the two work together, with one difference (below).
 
 #### Changed
 
+- **The jar and the version have a new form**: the jar is `sculptory-fabric-0.5.0-beta+1.21.1.jar` (was
+  `sculptory-0.4.0-beta.jar`), and the build id, the version plus the Minecraft version, is what the mod list shows
+  and what client and server show each other when a player joins. Take the old jar out of `mods` when updating.
 - **Generate roads**: the ends of curved roads now follow the road's true end direction; a road whose last two points
   stand one above the other in the same column keeps a round end. Straight roads round half-block steps the same
   wherever they are built, and Use Stairs and Slabs on a 45° road always steps along x.

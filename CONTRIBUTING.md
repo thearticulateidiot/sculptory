@@ -139,7 +139,9 @@ jar plus the self-test; the release jar has none. In the dev jar it is active on
 The `paper-selftest` workflow (`.github/workflows/paper-selftest.yml`) runs the dev jar's self-test at start-up on
 Paper 1.21.1 with WorldEdit and WorldGuard, once per redstone implementation, and fails on any failed check or on fewer
 checks than it expects. CI runs it on every push, and the release workflow before a Paper release is published. Every
-box a check touches is restored at the end.
+box a check touches is restored at the end. Since it became a called workflow, its checks are named
+`paper-selftest / paper-selftest (<redstone mode>)` (`paper-selftest / paper-selftest (VANILLA)` and so on): a branch
+protection rule that required the old `paper-selftest (<mode>)` names needs the new ones.
 
 The wiki lives in `docs/wiki/` and is bundled into the mod for the in-game reader. Its page ids are frozen
 (`WikiPages`); `scripts/check-wiki.ps1` checks its links, pictures and Markdown subset, and `check` runs the same
@@ -179,15 +181,19 @@ day, mob spawning is off and the difficulty is peaceful (hostile mobs are remove
 options.
 
 - `scripts/playtest.ps1`: the Fabric dev client, also the screenshot tour, the play check and the scripted demo.
-- `scripts/playtest-server.ps1`: the Fabric dev server in `.local/run/server`; it writes the port, address and offline
-  mode into `server.properties` and `BuilderDev` into `ops.json`.
-- `:neoforge:runServer`: the NeoForge dev server in `.local/run/neoforge-server`; the build writes the same
-  `server.properties` keys (and creative, peaceful, no monsters) before each run, and its console reads the build's
-  input, so `stop` works.
-- `scripts/playtest-paper.ps1`: a real Paper 1.21.1 install (`.local/installs/paper-1.21.1-133` by default) with the
-  newest plugin jar from `modules/paper/build/libs` copied into its `plugins` folder (refused while a server runs). It
-  writes `server.properties` and `ops.json` and, once the server is up, sends the day, mob and difficulty commands to
-  its console. Lines appended to `.local/run/paper-stdin.txt` go to the console; `-Stop` sends `stop`.
+- `scripts/playtest-server.ps1`: the Fabric dev server in `.local/run/server`; it writes the port, address, offline
+  mode, creative and the world name into `server.properties` and `BuilderDev` into `ops.json`. `:fabric:runServer`
+  alone still sets the port, the address and offline mode.
+- `:neoforge:runServer`: the NeoForge dev server in `.local/run/neoforge-server`; the build writes the port, the
+  address, offline mode and the world name into `server.properties` before each run (with `-PbsPlaytest` also
+  creative, peaceful, no monsters), and its console reads the build's input, so `stop` works.
+- `scripts/playtest-paper.ps1`: Paper 1.21.1 in a run copy, `.local/run/paper-server`, made on first use from the
+  install `.local/installs/paper-1.21.1-133` (server jar, libraries, WorldEdit and WorldGuard; a fresh world), so the
+  install stays clean for the release-jar smoke test; `-Install <dir>` runs an install itself. The newest plugin jar
+  from `modules/paper/build/libs` (not the `-dev.jar`) goes into `plugins` (refused while a server runs). It writes
+  `server.properties` and `ops.json` (`-Ops A,B` for other players than `BuilderDev`) and, once the server is up,
+  sends the day, mob and difficulty commands to its console. Lines appended to `.local/run/paper-stdin.txt` go to the
+  console; `-Stop` sends `stop`.
 
 On the Fabric and NeoForge scripts and run tasks the setup is the dev-only `PlaytestSetup` (`-PbsPlaytest` on
 `:fabric:` or `:neoforge:` `runClient` and `runServer`; the scripts pass it), and the log shows "Sculptory playtest
@@ -227,36 +233,39 @@ shown by client and server when a player joins (`/sculptory version`):
   changes and `nogit` without git. Its jar is `sculptory-fabric-0.5.0-dev+1.21.1.6a043a85.jar` (and
   `sculptory-neoforge-…`, `sculptory-paper-…` for the others). The commit is what tells a dev build from a release,
   also while a product's version is already its next release's (`0.5.0-beta+1.21.1.6a043a85`).
-- A **release build** is the version and the Minecraft version alone: `0.5.0+1.21.1`, in
-  `sculptory-fabric-0.5.0+1.21.1.jar`. Gradle makes one of every product with `-Prelease`
-  (`scripts/gradle.ps1 :fabric:remapJar :neoforge:jar :paper:jar -Prelease`), and one of a single product when it
-  runs in GitHub Actions for that product's tag. The tag must match `gradle.properties`, or the build stops; a bare
-  `v…` tag stops it too. A local release build from a checkout with uncommitted changes warns, since its id no longer
-  says so.
+- A **release build** is the version and the Minecraft version alone: `0.5.0-beta+1.21.1`, in
+  `sculptory-fabric-0.5.0-beta+1.21.1.jar`. Gradle makes one of a product with `-Prelease=<product>`
+  (`scripts/gradle.ps1 :neoforge:jar -Prelease=neoforge`; the other products stay dev builds), and when it runs in
+  GitHub Actions for that product's tag. The tag must match `gradle.properties`, or the build stops; a bare `v…` tag
+  stops it too. A local release build from a checkout with uncommitted changes warns, since its id no longer says so.
 
 The version rules:
 
-- **A release never has a `-dev` version**, neither the product's nor the engine's: a release build stops on one
-  (with `-Prelease`, on any product's), and so does the release workflow.
+- **A release never has a `-dev` version**, neither the released product's nor the engine's: a release build stops on
+  one, and so does the release workflow. A version is a `-dev` version when `-dev` is a dash-separated part of it,
+  followed by the end, `+` or `.`: `0.5.0-dev`, `0.5.0-dev.2`, `0.5.0-dev+1.21.1`, but not `0.5.0-devel` or
+  `0.5.0-beta.dev`. The Gradle build and the workflow apply the same test (and the workflow refuses `-devel` anyway, as
+  a suffix it has no type for).
 - **A pre-release has a suffix**: `-alpha` (an alpha on the stores), `-beta` or `-rc` (a beta on the stores; `-rc` is a
-  release candidate). The first NeoForge and Paper releases are betas: `0.5.0-beta` and `0.1.0-beta`. A version
+  release candidate). The next releases are betas: Fabric and NeoForge `0.5.0-beta`, Paper `0.1.0-beta`. A version
   without a suffix is a full release; the release workflow refuses any other suffix.
 - **The engine version moves with shared code.** A release shows the engine version alone as the engine's build id,
   so bump `sculptory_engine_version` for every product release that includes changes to `core`, `protocol`, `server`
   or `common` since the last product release (of any product). Two releases built from different shared code then
-  never show the same engine id. Between releases the engine version carries `-dev` (`0.6.0-dev`), which keeps every
-  release on a deliberate engine version.
+  never show the same engine id. After a release the engine version goes to the next `-dev` (`0.6.0-dev`), which keeps
+  every release on a deliberate engine version. A later product release with no shared-code changes since the last one
+  sets it back to the last released engine version (`0.5.0`), so the same engine code keeps the same id.
 
 Each product has its own tag pattern, `<product>/v<build id>`:
 
 | Product | Tag | Release jar | GitHub Release title |
 |---|---|---|---|
-| Fabric mod | `fabric/v<build id>` (`fabric/v0.5.0+1.21.1`) | `sculptory-fabric-<build id>.jar` | Sculptory for Fabric `<build id>` |
+| Fabric mod | `fabric/v<build id>` (`fabric/v0.5.0-beta+1.21.1`) | `sculptory-fabric-<build id>.jar` | Sculptory for Fabric `<build id>` |
 | NeoForge mod | `neoforge/v<build id>` (`neoforge/v0.5.0-beta+1.21.1`) | `sculptory-neoforge-<build id>.jar` | Sculptory for NeoForge `<build id>` |
 | Paper plugin | `paper/v<build id>` (`paper/v0.1.0-beta+1.21.1`) | `sculptory-paper-<build id>.jar` | Sculptory for Paper `<build id>` |
 
-To release a product: set its version (and, if shared code changed, the engine's) in `gradle.properties`, add a
-`CHANGELOG.md` section headed `## <Product> <build id>` (`## Fabric 0.5.0+1.21.1`, `## NeoForge 0.5.0-beta+1.21.1`,
+To release a product: set its version and the engine's (above) in `gradle.properties`, add a
+`CHANGELOG.md` section headed `## <Product> <build id>` (`## Fabric 0.5.0-beta+1.21.1`, `## NeoForge 0.5.0-beta+1.21.1`,
 `## Paper 0.1.0-beta+1.21.1`), commit, and push the tag. The release workflow (`.github/workflows/release.yml`) runs
 `check`, builds that product's release jar, runs the Paper self-test for the Paper plugin, attaches the jar to a GitHub
 Release with the changelog entry (a pre-release for versions with a `-`; only the Fabric mod's releases become

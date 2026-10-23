@@ -13,8 +13,8 @@ plugins {
 // version; each product module (fabric, neoforge, paper; forge later) carries its own version plus the
 // Minecraft version it is built for. A dev build adds the commit it was made from: 0.5.0-dev+1.21.1.6a043a85, with
 // ".dirty" when the checkout had uncommitted changes (new files git doesn't ignore included) and "nogit" where git or
-// the repository is missing. A release build is the version and the Minecraft version alone, 0.5.0+1.21.1: every
-// product at once with -Prelease, or one product in GitHub Actions from its tag <product>/v<build id>
+// the repository is missing. A release build is the version and the Minecraft version alone, 0.5.0+1.21.1: one product
+// with -Prelease=<product> (-Prelease=neoforge), or in GitHub Actions from its tag <product>/v<build id>
 // (fabric/v0.5.0+1.21.1; CONTRIBUTING.md "Versions and releases"). A product's build id names its jar
 // (sculptory-fabric-<id>.jar), is the version in the mod list, and client and server show it at the handshake.
 def git = { List<String> args ->
@@ -42,35 +42,50 @@ if (ciTag.startsWith('v') || (releaseProduct != null && !products.containsKey(re
     throw new GradleException("A release tag names its product and build id, e.g. fabric/v${sculptory_fabric_version}+" +
             "${minecraft_version} (products: ${products.keySet()}), not ${ciTag}")
 }
-def releaseAll = providers.gradleProperty('release').map { it != 'false' }.getOrElse(false)
+// -Prelease=<product>: a local release build of that product (the others stay dev builds), as its tag makes one.
+def releaseProperty = providers.gradleProperty('release').getOrElse('false')
+def localRelease = null
+if (releaseProperty != 'false') {
+    if (!products.containsKey(releaseProperty)) {
+        throw new GradleException("-Prelease names the product to release, -Prelease=<${products.keySet().join('|')}>, " +
+                "not '${releaseProperty}'")
+    }
+    localRelease = releaseProperty
+}
+if (localRelease != null && releaseProduct != null && localRelease != releaseProduct) {
+    throw new GradleException("-Prelease=${localRelease} on a build for the tag ${ciTag}")
+}
+// The one product this build releases, or null for a dev build.
+def released = releaseProduct ?: localRelease
+// A -dev version is one with "-dev" as a dash-separated part: followed by the end, "+" or "." (0.5.0-dev,
+// 0.5.0-dev.2), not 0.5.0-devel. release.yml applies the same test.
+def isDevVersion = { String version -> version =~ /-dev(?=$|[+.])/ }
 // A release never carries a -dev version, neither the product's nor the engine's. The engine id is the engine version
 // alone in a release, so it is bumped for every product release that includes shared-code changes (CONTRIBUTING.md
 // "Versions and releases"); a -dev engine would let two releases from different commits show the same engine id.
-if (releaseAll || releaseProduct != null) {
-    def released = releaseAll ? products.keySet().toList() : [releaseProduct]
-    def versions = [engine: sculptory_engine_version.toString()] +
-            released.collectEntries { [(it): products[it].version.toString()] }
-    def devVersions = versions.findAll { name, version -> version =~ /-dev\b/ }
+if (released != null) {
+    def versions = [engine: sculptory_engine_version.toString(), (released): products[released].version.toString()]
+    def devVersions = versions.findAll { name, version -> isDevVersion(version) }
     if (devVersions) {
         throw new GradleException("A release build can't have a -dev version: " +
                 devVersions.collect { name, version -> "sculptory_${name}_version=${version}" }.join(', ') +
                 " in gradle.properties. Set the release version first" +
-                (releaseAll ? " (-Prelease makes a release build of every product)." : " (tag ${ciTag})."))
+                (releaseProduct != null ? " (tag ${ciTag})." : " (-Prelease=${released})."))
     }
 }
 def commit = git(['rev-parse', '--short=8', 'HEAD'])
 def changes = git(['status', '--porcelain'])
 def commitMetadata = commit == null || commit.isEmpty() ? 'nogit' : commit + (changes ? '.dirty' : '')
-if ((releaseAll || releaseProduct != null) && changes) {
+if (released != null && changes) {
     logger.warn("Release build from a checkout with ${changes.readLines().size()} uncommitted changes (git status); " +
             "the jar's version doesn't show them")
 }
-ext.engineBuildId = releaseAll || releaseProduct != null ? sculptory_engine_version.toString()
+ext.engineBuildId = released != null ? sculptory_engine_version.toString()
         : "${sculptory_engine_version}+${commitMetadata}".toString()
 ext.buildIdFor = { String product ->
     def p = products[product]
     if (p == null) throw new GradleException("No product ${product} (gradle.properties, root build.gradle products)")
-    boolean release = releaseAll || product == releaseProduct
+    boolean release = product == released
     String id = release ? "${p.version}+${p.minecraft}" : "${p.version}+${p.minecraft}.${commitMetadata}"
     if (product == releaseProduct && id != releaseTagId) {
         throw new GradleException("The tag ${ciTag} doesn't match sculptory_${product}_version=${p.version} and " +
