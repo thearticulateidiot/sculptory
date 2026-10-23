@@ -526,6 +526,61 @@ class SurfaceKernelTest {
         assertTrue(xs.size() > 5, xs.toString());
     }
 
+    /**
+     * Smooth keeps a wall one block thick, aimed at from either side: its inner cells, its top row and its end column
+     * stay (the vote alone, 9 solid cells of 27, took every one), and nothing fills beside it. Its top corner, open on
+     * three sides, still rounds off.
+     */
+    @Test
+    void smoothKeepsAWallOneBlockThick() {
+        for (int radius : new int[] {3, 8}) {
+            BrushSpec smooth = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
+            for (int x16 : new int[] {144, 160}) {
+                FakeWorld world = thinWall(70, false);
+                List<Write> writes = apply(smooth, new Dab(0, x16, 65 * 16 + 8, 8, 255), world);
+                assertEquals(List.of(), writes, "x16 " + x16 + " r" + radius);
+                // At the top end: the top row and the end column stay, the corner goes.
+                List<Write> end = apply(smooth, new Dab(1, x16, 70 * 16 + 8, 10 * 16 + 8, 255), world);
+                assertEquals(List.of(new Write(9, 70, 10, air)), end, "x16 " + x16 + " r" + radius);
+            }
+        }
+    }
+
+    /**
+     * A bump on a wall one block thick goes and the wall behind it stays, aimed at from the bump's side or the other;
+     * a floor or roof one block thick stays; a pillar one block across goes.
+     */
+    @Test
+    void smoothRoundsOffBumpsButKeepsSheetsOneBlockThick() {
+        BrushSpec smooth = spec(BrushTool.SMOOTH, 3, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
+        for (int x16 : new int[] {128, 160}) {
+            FakeWorld bumped = thinWall(70, false);
+            bumped.set(8, 65, 0, dirt);
+            List<Write> writes = apply(smooth, new Dab(0, x16, 65 * 16 + 8, 8, 255), bumped);
+            for (int y = 60; y <= 70; y++) {
+                for (int z = -10; z <= 10; z++) assertEquals(dirt, bumped.get(9, y, z), "the wall at " + y + "," + z);
+            }
+            if (x16 == 128) {
+                assertEquals(List.of(new Write(8, 65, 0, air)), writes, "from the bump's side");
+            } else {
+                assertEquals(List.of(), writes, "from the other side the bump is behind the wall");
+            }
+        }
+        for (int radius : new int[] {3, 8}) {
+            FakeWorld slab = new FakeWorld(states);
+            for (int x = -10; x <= 10; x++) for (int z = -10; z <= 10; z++) slab.set(x, 70, z, stone);
+            BrushSpec smoothR = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
+            assertEquals(List.of(), apply(smoothR, new Dab(0, 8, 71 * 16, 8, 255), slab), "from above, r" + radius);
+            assertEquals(List.of(), apply(smoothR, new Dab(1, 8, 70 * 16, 8, 255), slab), "from below, r" + radius);
+        }
+        // A pillar one block across, open on both sides along x and z, is no sheet: it goes in one dab, as before.
+        FakeWorld pillar = floor(60);
+        for (int y = 61; y <= 64; y++) pillar.set(0, y, 0, stone);
+        apply(smooth, new Dab(0, 8, 63 * 16 + 8, 8, 255), pillar);
+        for (int y = 61; y <= 64; y++) assertEquals(air, pillar.get(0, y, 0), "the pillar at " + y);
+        assertEquals(60, top(pillar, 0, 0));
+    }
+
     // ------------------------------------------------------------------ ceilings
 
     /**

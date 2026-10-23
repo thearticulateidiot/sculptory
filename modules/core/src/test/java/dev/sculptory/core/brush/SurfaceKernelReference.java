@@ -668,7 +668,7 @@ final class SurfaceKernelReference {
                 stroke.setCellAccumulator(x, y, z, 0);
                 return;
             }
-            if (!wantSolid && supports(ball, x, y, z)) return;
+            if (!wantSolid && (supports(ball, x, y, z) || sheet(ball, x, y, z))) return;
             int k = ball.weight(t);
             for (int b = a + 1; b < balls.length; b++) {
                 Ball other = balls[b];
@@ -806,6 +806,31 @@ final class SurfaceKernelReference {
 
         private static boolean structure(Ball ball, int x, int y, int z) {
             return ball.inBox(x, y, z) && ball.kind(x, y, z) == STRUCTURE;
+        }
+
+        /**
+         * Whether a ground cell is part of a sheet one block thick (solid on both sides along one axis and open on both
+         * sides along exactly one other, or solid on both sides along two): Smooth does not remove it. Added with the
+         * kernel's own (2026-10-22), so the two still compare the same rule.
+         */
+        private static boolean sheet(Ball ball, int x, int y, int z) {
+            int open = 0, solid = 0;
+            int[][] axes = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+            for (int[] d : axes) {
+                byte low = neighbour(ball, x - d[0], y - d[1], z - d[2]);
+                byte high = neighbour(ball, x + d[0], y + d[1], z + d[2]);
+                if (low == OPEN && high == OPEN) open++;
+                if (sheetSolid(low) && sheetSolid(high)) solid++;
+            }
+            return solid >= 2 || (solid == 1 && open == 1);
+        }
+
+        private static byte neighbour(Ball ball, int x, int y, int z) {
+            return ball.inBox(x, y, z) ? ball.kind(x, y, z) : UNLOADED;
+        }
+
+        private static boolean sheetSolid(byte kind) {
+            return kind == GROUND || kind == STRUCTURE || kind == BELOW || kind == ABOVE;
         }
 
         private void planMain(int a, Ball ball, int x, int y, int z, int next) {
