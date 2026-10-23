@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -467,20 +468,38 @@ public final class EntityJobs {
      * that is not loaded is then left as a duplicate: a known limit, never a loss).
      *
      * <p>A target that cannot be put back (another plugin cancels its spawn, its data fails to load) is counted refused
-     * (or as a conflict), and what the step took away for it comes back instead, so an entity never exists only in the
-     * history and the entry stays undoable later:
+     * (or as a conflict), and what the step took away for it comes back instead, so the entity stays in the world and
+     * the entry stays undoable later:
      * <ul>
-     *   <li>the entity of the same UUID the step replaced (a Tinker edit's, a place-then-change record's), as it was;</li>
-     *   <li>for a target the step only puts back (a move's source), the entity the same step only took away whose data
-     *       matches it (the move's copy): one whose data matches exactly first ({@link EntityNbt#exactCopyForm}), else
-     *       one that matches but for what the game changes by itself ({@link EntityNbt#copyForm}). A copy the move
-     *       turned, whose facing data turned with it, does not pair; its source stays in the redo step.</li>
+     *   <li>the entity of the same UUID the step replaced (a Tinker edit's, a place-then-change record's), as it
+     *       was;</li>
+     *   <li>for a target the step only puts back (a move's source), an entity the same step only took away that stood
+     *       for it (the move's copy), by its data: first the copy as the step recorded placing it, then as it was when
+     *       taken away, both exactly ({@link EntityNbt#exactCopyForm}), then as taken away but for what the game
+     *       changes by itself ({@link EntityNbt#copyForm}); in the job's order, each used once. So a copy renamed or
+     *       re-equipped since and undone anyway still pairs (as recorded); one whose data the move itself changed (a
+     *       turned frame's facing) does not: logged as a warning, since that copy was taken away while its source
+     *       could not come back.</li>
      * </ul>
      * What comes back has only the riders its removal took along (the others were dismounted and stay), is checked
-     * against protection as its removal was, and is not counted as placed; when it cannot come back either, that counts
-     * as a conflict. Only a job with a step that puts an entity back keeps what its steps take away.
+     * against protection as its removal was, and is not counted as placed. It does not come back where it would not
+     * last (the job has restored the blocks there by now: a hanging entity whose wall is gone, a mob inside solid
+     * blocks); that, and any other failure to come back, counts as a conflict. Only a job with a step that puts an
+     * entity back keeps what its steps take away, and only one that only puts some back keeps what they only take away.
+     *
+     * <p>Known limits: an entity that cannot come back (refused, or it would not last) is only in the history step
+     * until a redo or a redo anyway puts it back. A recorded rider that was re-mounted since the step onto a newer
+     * rider of the same vehicle (boat, then a new rider, then the recorded one on it) is discarded with the vehicle by
+     * the removal, as recorded riders are, but not put back with it, since the newer rider between them is not the
+     * step's: it too is then only in the history step.
      */
     public static EntityWork history(List<EntityHistory.Step> steps, ConflictPolicy policy, EntityMatcher matcher) {
+        return history(steps, policy, matcher, (message, typeId) -> LOG.warn(message, typeId));
+    }
+
+    /** {@link #history}, its warnings about entities left only in the history going to {@code warn} (tests). */
+    static EntityWork history(List<EntityHistory.Step> steps, ConflictPolicy policy, EntityMatcher matcher,
+                              BiConsumer<String, String> warn) {
         Long2ObjectLinkedOpenHashMap<List<EntityHistory.Step>> columns = byColumn(steps,
                 s -> columnOf(s.where().x(), s.where().z()));
         List<EntityHistory.Step> restore = new ArrayList<>();
@@ -491,15 +510,15 @@ public final class EntityJobs {
             putsBack = true;
             if (step.expected() == null) onlyPutsBack = true;
         }
-        boolean keepReplaced = putsBack;
         boolean keepTakenAway = onlyPutsBack;
+        boolean anyPutBack = putsBack;
         return new EntityWork() {
             private final Cursor deciding = new Cursor();
             private final Cursor restoring = new Cursor();
             private Long2ObjectLinkedOpenHashMap<List<EntityHistory.Step>> targets;
             /** Entities of the same UUID a step replaced, by UUID, until their target is put back. */
             private final Map<UUID, Removed> replaced = new HashMap<>();
-            /** Entities steps only took away (a move's copies), for a target only put back that cannot be. */
+            /** Entities steps only took away (a move's copies), in the job's order. */
             private final List<Removed> takenAway = new ArrayList<>();
             private int warnings;
 
@@ -541,10 +560,10 @@ public final class EntityJobs {
                             }
                             EntityState taken = step.expected() != null ? step.expected() : live;
                             ctx.writer.remove(entity, taken);
-                            if (step.target() != null && keepReplaced) {
-                                replaced.put(step.id(), Removed.of(live, taken));
-                            } else if (step.target() == null && keepTakenAway) {
-                                takenAway.add(Removed.of(live, taken));
+                            if (step.target() != null) {
+                                replaced.put(step.id(), new Removed(live, taken));
+                            } else if (keepTakenAway) {
+                                takenAway.add(new Removed(live, taken));
                             }
                         }
                         if (step.target() != null) restore.add(step);
@@ -579,85 +598,110 @@ public final class EntityJobs {
                 }
                 if (back == null && step.expected() == null) back = counterpart(step.target());
                 if (back == null) return;
-                if (ctx.writer.putBack(back.state, e -> ctx.mayChange(ctx.world.cell(e))).entity() == null) {
+                if (ctx.writer.putBack(back.putBack(), e -> ctx.mayChange(ctx.world.cell(e))).entity() == null) {
                     ctx.conflicts++;
-                    warn("Sculptory: a {} an undo or redo took away could not be put back after what was to replace "
-                            + "it was refused; its data stays in the history step", back.state.typeId());
+                    warn("Sculptory: a {} an undo or redo took away could not be put back after what was to stand in "
+                            + "its place was refused (protected, or it would not last there); its data stays in the "
+                            + "history step", back.live.typeId());
                 }
             }
 
             /**
-             * The entity the job only took away that stood in for {@code target} (a move's copy of its source): the
-             * first unused one of its type whose data matches exactly, else the first that matches but for what the
-             * game changes by itself; null when none does.
+             * The entity the job only took away that stood for {@code target} (a move's copy of its source), in three
+             * passes over the job's order: as recorded when placed, exactly; as taken away, exactly; as taken away but
+             * for what the game changes by itself. Null when none matches (a warning when the job took copies away).
              */
             private Removed counterpart(EntityState target) {
-                byte[] exact = EntityNbt.exactCopyForm(target.nbt());
-                byte[] loose = EntityNbt.copyForm(target.nbt());
-                Removed found = null;
-                for (Removed copy : takenAway) {
-                    if (copy.used || !copy.state.typeId().equals(target.typeId())) continue;
-                    if (exact != null && Arrays.equals(copy.exactForm(), exact)) {
-                        found = copy;
-                        break;
+                if (anyPutBack && !takenAway.isEmpty()) {
+                    byte[] exact = EntityNbt.exactCopyForm(target.nbt());
+                    byte[] loose = EntityNbt.copyForm(target.nbt());
+                    Removed found = find(target, exact, Removed::takenExactForm);
+                    if (found == null) found = find(target, exact, Removed::liveExactForm);
+                    if (found == null) found = find(target, loose, Removed::liveForm);
+                    if (found != null) {
+                        found.used = true;
+                        return found;
                     }
-                    if (found == null && loose != null && Arrays.equals(copy.form(), loose)) found = copy;
                 }
-                if (found != null) {
-                    found.used = true;
+                boolean unused = takenAway.stream().anyMatch(copy -> !copy.used);
+                if (unused) {
+                    warn("Sculptory: a {} an undo or redo could not put back matches none of the entities it took away "
+                            + "(a copy whose data the move turned); that copy stays only in the history step",
+                            target.typeId());
                 } else if (LOG.isDebugEnabled()) {
                     LOG.debug("Sculptory: a {} an undo or redo could not put back had no copy taken away with it",
                             target.typeId());
                 }
-                return found;
+                return null;
+            }
+
+            private Removed find(EntityState target, byte[] form, Function<Removed, byte[]> formOf) {
+                if (form == null) return null;
+                for (Removed copy : takenAway) {
+                    if (copy.used || !copy.live.typeId().equals(target.typeId())) continue;
+                    if (Arrays.equals(formOf.apply(copy), form)) return copy;
+                }
+                return null;
             }
 
             private void warn(String message, String typeId) {
-                if (warnings++ < MAX_LOGGED_WARNINGS) LOG.warn(message, typeId);
+                if (warnings++ < MAX_LOGGED_WARNINGS) warn.accept(message, typeId);
             }
         };
     }
 
     /** Warnings one history job logs at most about entities it could not give back. */
-    private static final int MAX_LOGGED_WARNINGS = 5;
+    static final int MAX_LOGGED_WARNINGS = 5;
 
     /**
-     * An entity a history step took away, as it can be put back: with only the riders its removal took along. Its forms
-     * for pairing ({@link EntityNbt#exactCopyForm}, {@link EntityNbt#copyForm}) are worked out when first needed.
+     * An entity a history step took away: as it was ({@code live}) and as the step recorded it ({@code taken}). What is
+     * put back ({@link #putBack}) and its forms for pairing are worked out only when needed.
      */
     private static final class Removed {
-        final EntityState state;
+        final EntityState live;
+        final EntityState taken;
         boolean used;
-        private byte[] form;
-        private byte[] exactForm;
-        private boolean formed;
-        private boolean exactFormed;
+        private EntityState back;
+        private byte[] takenExact;
+        private byte[] liveExact;
+        private byte[] liveLoose;
 
-        private Removed(EntityState state) {
-            this.state = state;
+        Removed(EntityState live, EntityState taken) {
+            this.live = live;
+            this.taken = taken;
         }
 
         /** {@code live} with only the riders {@code taken} names ({@link EntityNbt#withRidersOf}). */
-        static Removed of(EntityState live, EntityState taken) {
-            if (taken == live) return new Removed(live);
-            byte[] nbt = EntityNbt.withRidersOf(live.nbt(), taken.nbt());
-            return new Removed(new EntityState(live.typeId(), live.x(), live.y(), live.z(), nbt));
+        EntityState putBack() {
+            if (back == null) {
+                if (taken == live || EntityNbt.riderCount(live.nbt()) == 0) {
+                    back = live;
+                } else {
+                    back = new EntityState(live.typeId(), live.x(), live.y(), live.z(),
+                            EntityNbt.withRidersOf(live.nbt(), taken.nbt()));
+                }
+            }
+            return back;
         }
 
-        byte[] form() {
-            if (!formed) {
-                form = EntityNbt.copyForm(state.nbt());
-                formed = true;
-            }
-            return form;
+        byte[] takenExactForm() {
+            if (takenExact == null) takenExact = orEmpty(EntityNbt.exactCopyForm(taken.nbt()));
+            return takenExact;
         }
 
-        byte[] exactForm() {
-            if (!exactFormed) {
-                exactForm = EntityNbt.exactCopyForm(state.nbt());
-                exactFormed = true;
-            }
-            return exactForm;
+        byte[] liveExactForm() {
+            if (liveExact == null) liveExact = orEmpty(EntityNbt.exactCopyForm(live.nbt()));
+            return liveExact;
+        }
+
+        byte[] liveForm() {
+            if (liveLoose == null) liveLoose = orEmpty(EntityNbt.copyForm(live.nbt()));
+            return liveLoose;
+        }
+
+        /** Data that does not decode pairs with nothing (an empty form matches no decoded one). */
+        private static byte[] orEmpty(byte[] form) {
+            return form == null ? new byte[0] : form;
         }
     }
 }

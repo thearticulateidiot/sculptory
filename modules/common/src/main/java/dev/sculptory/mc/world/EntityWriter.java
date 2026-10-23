@@ -233,7 +233,9 @@ public final class EntityWriter implements EntityPlacer<Entity> {
     /**
      * Puts back, with its UUIDs, an entity a history step of this job took away, because what was to stand in its place
      * could not be put there: the step is then a no-op for it, so it does not count as placed (its removal was counted,
-     * and the refusal is the step's).
+     * and the refusal is the step's). The blocks around it may have changed since it was taken away (the same job
+     * restored the blocks there): a hanging entity whose wall is gone, or a living one whose head would be inside solid
+     * blocks, is not put back (it would pop off and drop its item, or suffocate), and that counts as a failure.
      */
     @Override
     public Spawn<Entity> putBack(EntityState state, Predicate<Entity> allowed) {
@@ -252,8 +254,18 @@ public final class EntityWriter implements EntityPlacer<Entity> {
         }
         Entity root = load(nbt, state.typeId());
         if (root == null) return FAILED;
+        if (!count && !lasts(root)) {
+            return failed(state.typeId(), "it would not last where it was taken from (nothing to hang on, or inside "
+                    + "solid blocks)");
+        }
         if (!allowed.test(root)) return REFUSED;
         return add(root, state.typeId(), count);
+    }
+
+    /** Whether {@code entity} would last where it stands: a hanging one on its wall, a living one not inside a wall. */
+    private static boolean lasts(Entity entity) {
+        if (entity instanceof BlockAttachedEntity hanging) return hanging.survives();
+        return !(entity instanceof net.minecraft.world.entity.LivingEntity) || !entity.isInWall();
     }
 
     /**
