@@ -55,7 +55,7 @@ like 0.4.0-beta: the two work together, with one difference (below).
 
 ### NeoForge 0.5.0-beta+1.21.1 (planned)
 
-The first NeoForge release, a beta. For Minecraft 1.21.1 with NeoForge 21.1.264 or newer. Network protocol 6.
+The first NeoForge release, a beta. For Minecraft 1.21.1 with NeoForge 21.1.218 or newer. Network protocol 6.
 
 - **The whole editor on NeoForge**: every tool, window and key of the Fabric mod, in singleplayer and on NeoForge
   servers. Nothing else to install besides NeoForge.

@@ -109,7 +109,7 @@ says what a build needs.
 
 | You need | Version |
 |---|---|
-| [NeoForge](https://neoforged.net/) | 21.1.264 or newer (for 1.21.1) |
+| [NeoForge](https://neoforged.net/) | 21.1.218 or newer (for 1.21.1) |
 
 1. Install NeoForge for 1.21.1 and put the Sculptory for NeoForge jar into your `mods` folder. Nothing else is
    needed.

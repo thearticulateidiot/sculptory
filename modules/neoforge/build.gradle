@@ -183,7 +183,7 @@ tasks.named('test') {
 
 processResources {
     def version = project.version.toString()
-    def minNeoForge = rootProject.neoforge_version.toString()
+    def minNeoForge = rootProject.neoforge_min_version.toString()
     def minecraft = rootProject.minecraft_version.toString()
     inputs.property 'version', version
     inputs.property 'minNeoForge', minNeoForge
