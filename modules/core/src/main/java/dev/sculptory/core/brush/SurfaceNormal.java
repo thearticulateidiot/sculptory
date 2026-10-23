@@ -26,11 +26,19 @@ import java.util.Objects;
  * sixteenth inside a block is a sixteenth inside the mirrored one): when the cells on the two sides of that face are
  * one solid and one open, the point is on a surface facing from the solid cell to the open one. The estimate is then
  * centred on that open cell, the one in front of the face, not on the block holding the point: centred in a wall one
- * block thick, with open cells on both sides, the estimate cancels to zero. Next, a face beats the wider
- * estimate when the estimate within {@value #FACE_RADIUS} blocks of the open cell agrees with it: the side of a short
- * wall on a floor, or of a cliff smaller than the brush, is then the surface worked, while the side of a one-block bump
- * or step (where that small estimate already points up) is left to the brush-sized estimate, which keeps a stroke over
- * rough ground working the ground. Without a face at the point, the estimate is centred on the point's block as before.
+ * block thick, with open cells on both sides, the estimate cancels to zero.
+ *
+ * <p>Then a <b>side face</b> (east, west, north or south) wins outright when it belongs to a wall: when the face is at
+ * least {@value #WALL_HEIGHT} blocks tall where the point is, counting the cells of the column behind it, up and down
+ * from the point's row, that are solid with an open cell in front of them (a cell outside the build height or in an
+ * unloaded chunk ends the count). A wall is 3 or more blocks tall however thick it is and whatever it stands on, so
+ * every row of it is worked sideways, its foot too, even where a floor lies as near; the side of a lone block or of a
+ * step one or two blocks high is ground, left to the brush-sized estimate, so a stroke over rough land keeps working
+ * the land. A <b>top or bottom face</b> wins when the estimate within {@value #FACE_RADIUS} blocks of the open cell
+ * agrees with it: its component along the face's axis has the face's sign and is at least as large as the others (a tie
+ * keeps the face). Otherwise the estimate within the brush's estimate radius of the open cell decides, and when it is
+ * zero (a perfectly balanced scene) the face does. Without a face at the point, the estimate is centred on the point's
+ * block as before.
  */
 public final class SurfaceNormal {
     /** The smallest and largest radius of the estimate: the brush's radius, kept within these. */
@@ -38,8 +46,10 @@ public final class SurfaceNormal {
     public static final int MAX_RADIUS = 8;
     /** The radius of the estimate behind the Surface mode's Slope mask ({@link #slope}). */
     public static final int SLOPE_RADIUS = 2;
-    /** The radius of the small estimate that lets the face under a dab's point decide ({@link #facingAt}). */
+    /** The radius of the small estimate that lets a top or bottom face under a dab's point decide ({@link #facingAt}). */
     public static final int FACE_RADIUS = 2;
+    /** How tall a side face must be, in blocks, to count as a wall's and decide ({@link #facingAt}). */
+    public static final int WALL_HEIGHT = 3;
     /** Surfaces steeper than this many blocks up per block across (walls, overhangs) count as this for the Slope mask. */
     public static final int MAX_SLOPE = 16;
 
@@ -81,6 +91,16 @@ public final class SurfaceNormal {
         return facingAt(cells(world), x16, y16, z16, brushRadius);
     }
 
+    /**
+     * The direction of the face point (x16, y16, z16) lies on, as {@link #facingAt} finds it, or {@code null}: with the
+     * point's block, all {@link #facingAt} depends on besides the world and the radius (the client keys its caches on
+     * it).
+     */
+    public static Facing faceAt(WorldReader world, int x16, int y16, int z16) {
+        Face face = faceAt(cells(world), x16, y16, z16);
+        return face == null ? null : face.facing();
+    }
+
     /** {@link #facingAt(WorldReader, int, int, int, int)} over {@code cells}. */
     static Facing facingAt(Cells cells, int x16, int y16, int z16, int brushRadius) {
         Face face = faceAt(cells, x16, y16, z16);
@@ -89,12 +109,45 @@ public final class SurfaceNormal {
             cx = face.x();
             cy = face.y();
             cz = face.z();
-            long[] near = moment(cells, cx, cy, cz, FACE_RADIUS);
-            if (!zero(near) && facing(near) == face.facing()) return face.facing();
+            if (face.facing().axis() != 1) {
+                if (wallFace(cells, face)) return face.facing();
+            } else if (agrees(moment(cells, cx, cy, cz, FACE_RADIUS), face.facing())) {
+                return face.facing();
+            }
         }
         long[] n = moment(cells, cx, cy, cz, radiusFor(brushRadius));
         if (!zero(n)) return facing(n);
         return face == null ? null : face.facing();
+    }
+
+    /**
+     * Whether side face {@code face} is at least {@value #WALL_HEIGHT} blocks tall at its row: the cells of the column
+     * behind it, up and down from that row, that are solid with an open cell in front, counted until one is not.
+     */
+    private static boolean wallFace(Cells cells, Face face) {
+        // The open cell is in front; the solid one is a step back against the facing.
+        int fx = face.x(), fz = face.z();
+        int sx = face.facing() == Facing.EAST ? fx - 1 : face.facing() == Facing.WEST ? fx + 1 : fx;
+        int sz = face.facing() == Facing.SOUTH ? fz - 1 : face.facing() == Facing.NORTH ? fz + 1 : fz;
+        int height = 1;
+        for (int y = face.y() + 1; height < WALL_HEIGHT && exposed(cells, sx, fx, y, sz, fz); y++) height++;
+        for (int y = face.y() - 1; height < WALL_HEIGHT && exposed(cells, sx, fx, y, sz, fz); y--) height++;
+        return height >= WALL_HEIGHT;
+    }
+
+    /** Whether cell (sx, y, sz) is solid with the cell in front of it, (fx, y, fz), open. */
+    private static boolean exposed(Cells cells, int sx, int fx, int y, int sz, int fz) {
+        return cells.kind(sx, y, sz) == SOLID && cells.kind(fx, y, fz) == OPEN;
+    }
+
+    /**
+     * Whether estimate {@code n} agrees with {@code facing}: its component along the facing's axis has the facing's
+     * sign and is at least as large as the other two (a tie keeps the face, where {@link #facing} would break it).
+     */
+    private static boolean agrees(long[] n, Facing facing) {
+        int axis = facing.axis();
+        long along = n[axis] * facing.sign();
+        return along > 0 && along >= Math.abs(n[(axis + 1) % 3]) && along >= Math.abs(n[(axis + 2) % 3]);
     }
 
     /**

@@ -23,9 +23,9 @@ import java.util.List;
  * it, fixed to its side, hanging under it) is not removed.
  *
  * <p><b>Raise and Lower</b> work along the direction the surface faces at the dab's point,
- * {@link SurfaceNormal#facingAt}: the face the point lies on when the small estimate in front of it agrees, else the
- * brush-sized estimate snapped to one of the six directions (up on a floor, sideways on a wall, down under a ceiling;
- * up when nothing tells). The cylinder is cut
+ * {@link SurfaceNormal#facingAt}: the face the point lies on when it is a wall's side (3 or more blocks tall) or a top or
+ * bottom face the small estimate in front of it agrees with, else the brush-sized estimate snapped to one of the six
+ * directions (up on a floor, sideways on a wall, down under a ceiling; up when nothing tells). The cylinder is cut
  * into lines along that direction, one per cell of the footprint (as the Terrain mode's columns: weight by the distance
  * across, Circle or Square). On each line the surface is the ground cell with an open cell in front of it (toward the
  * direction) nearest the dab, searched outward from the dab's point; a line without one inside the cylinder is left

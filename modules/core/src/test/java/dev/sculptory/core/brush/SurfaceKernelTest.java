@@ -343,34 +343,108 @@ class SurfaceKernelTest {
     }
 
     /**
-     * A one-thick wall shorter than the brush, on a floor: aimed at its side, Raise thickens the wall instead of
-     * raising the floor around it (the brush-sized estimate sees mostly floor and points up; the small one in front of
-     * the face agrees with the face).
+     * A one-thick wall shorter than the brush, on a floor: aimed at the side of any of its rows, the bottom one next to
+     * the floor and the top one too, Raise thickens the wall instead of raising the floor around it (the brush-sized
+     * estimate sees mostly floor and points up; a side face 3 or more blocks tall decides). Its top face stays up.
      */
     @Test
     void raiseOnTheSideOfAWallShorterThanTheBrushWorksTheSide() {
         for (int top : new int[] {62, 64, 66}) {
             for (int radius : new int[] {3, 5, 8}) {
-                for (int side = 0; side < 2; side++) {
-                    int x16 = side == 0 ? 144 : 160, front = side == 0 ? 8 : 10;
-                    Dab dab = new Dab(0, x16, 61 * 16 + 8, 8, 255);
-                    String label = "wall to " + top + ", x16 " + x16 + " r" + radius;
-                    FakeWorld world = thinWall(top, true);
-                    assertEquals(side == 0 ? Facing.WEST : Facing.EAST,
-                            SurfaceNormal.facingAt(world, dab.x16(), dab.y16(), dab.z16(), radius), label);
-                    List<Write> raised = apply(spec(BrushTool.RAISE, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
-                            .withSurface(null), dab, world);
-                    int expected = 0;
-                    for (int y = 60; y <= top; y++) {
-                        for (int z = -10; z <= 10; z++) if (acrossX(dab, radius, y, z)) expected++;
-                    }
-                    assertEquals(expected, raised.size(), label);
-                    for (Write write : raised) {
-                        assertEquals(front, write.x, label + ": " + write);
-                        assertTrue(write.y >= 60 && write.y <= top, label + ": " + write);
+                for (int row = 60; row <= top; row++) {
+                    for (int side = 0; side < 2; side++) {
+                        int x16 = side == 0 ? 144 : 160, front = side == 0 ? 8 : 10;
+                        Dab dab = new Dab(0, x16, row * 16 + 8, 8, 255);
+                        String label = "wall to " + top + ", row " + row + ", x16 " + x16 + " r" + radius;
+                        FakeWorld world = thinWall(top, true);
+                        assertEquals(side == 0 ? Facing.WEST : Facing.EAST,
+                                SurfaceNormal.facingAt(world, dab.x16(), dab.y16(), dab.z16(), radius), label);
+                        List<Write> raised = apply(spec(BrushTool.RAISE, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
+                                .withSurface(null), dab, world);
+                        int expected = 0;
+                        for (int y = 60; y <= top; y++) {
+                            for (int z = -10; z <= 10; z++) if (acrossX(dab, radius, y, z)) expected++;
+                        }
+                        assertEquals(expected, raised.size(), label);
+                        for (Write write : raised) {
+                            assertEquals(front, write.x, label + ": " + write);
+                            assertTrue(write.y >= 60 && write.y <= top, label + ": " + write);
+                        }
                     }
                 }
+                FakeWorld world = thinWall(top, true);
+                assertEquals(Facing.UP, SurfaceNormal.facingAt(world, 9 * 16 + 8, (top + 1) * 16, 8, radius));
+                assertEquals(Facing.UP, SurfaceNormal.facingAt(world, 9 * 16 + 8, (top + 1) * 16 - 1, 8, radius));
             }
+        }
+    }
+
+    /**
+     * A side face decides when it is 3 or more blocks tall: every row of a thick wall standing on a floor, its foot
+     * too, facing west or north; every row of a three-high ledge; but neither row of a two-high ledge, which is ground.
+     * A floor hit right at a wall's foot works the floor (a tie between floor and wall keeps the top face). Points on
+     * the face, a sixteenth inside and a sixteenth outside.
+     */
+    @Test
+    void aSideFaceDecidesWhenItIsThreeOrMoreBlocksTall() {
+        FakeWorld westFacing = wallOnFloor(false);
+        FakeWorld northFacing = wallOnFloor(true);
+        FakeWorld twoHigh = terrain((x, z) -> x >= 0 ? 62 : 60);
+        FakeWorld threeHigh = terrain((x, z) -> x >= 0 ? 63 : 60);
+        for (int radius : new int[] {3, 5, 8}) {
+            for (int across : new int[] {144, 145, 143}) {
+                for (int row = 60; row <= 63; row++) {
+                    String label = "thick wall, row " + row + ", " + across + " r" + radius;
+                    assertEquals(Facing.WEST, SurfaceNormal.facingAt(westFacing, across, row * 16 + 8, 8, radius),
+                            label);
+                    assertEquals(Facing.NORTH, SurfaceNormal.facingAt(northFacing, 8, row * 16 + 8, across, radius),
+                            label + " (north)");
+                }
+            }
+            for (int across : new int[] {0, 1, -1}) {
+                for (int row = 61; row <= 62; row++) {
+                    assertEquals(Facing.UP, SurfaceNormal.facingAt(twoHigh, across, row * 16 + 8, 8, radius),
+                            "two-high ledge, row " + row + ", " + across + " r" + radius);
+                }
+                for (int row = 61; row <= 63; row++) {
+                    assertEquals(Facing.WEST, SurfaceNormal.facingAt(threeHigh, across, row * 16 + 8, 8, radius),
+                            "three-high ledge, row " + row + ", " + across + " r" + radius);
+                }
+            }
+            // The floor's top face right at the wall's foot, on it and a sixteenth short of it.
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(westFacing, 8 * 16 + 8, 60 * 16, 8, radius));
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(westFacing, 8 * 16 + 8, 60 * 16 - 1, 8, radius));
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(thinWall(62, true), 8 * 16 + 8, 60 * 16, 8, radius));
+            // Raise along the thick wall's foot thickens the wall, not the floor strip in front of it.
+            Dab foot = new Dab(0, 144, 60 * 16 + 8, 8, 255);
+            List<Write> raised = apply(spec(BrushTool.RAISE, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
+                    .withSurface(null), foot, wallOnFloor(false));
+            assertFalse(raised.isEmpty());
+            for (Write write : raised) assertEquals(8, write.x, "the foot, r" + radius + ": " + write);
+        }
+    }
+
+    /**
+     * When a face is found but neither estimate tells (a perfectly balanced scene), the face does: the west face of a
+     * lone block with another two blocks west of it, the top of a lone block with another two above it, and that
+     * one's underside.
+     */
+    @Test
+    void aBalancedSceneFallsBackToTheFaceThePointLiesOn() {
+        FakeWorld beside = new FakeWorld(states);
+        beside.set(0, 61, 0, stone);
+        beside.set(-2, 61, 0, stone);
+        FakeWorld stacked = new FakeWorld(states);
+        stacked.set(0, 61, 0, stone);
+        stacked.set(0, 63, 0, stone);
+        for (int radius : new int[] {3, 5, 8}) {
+            assertEquals(List.of(0L, 0L, 0L), List.of(boxed(SurfaceNormal.estimate(beside, -1, 61, 0,
+                    SurfaceNormal.radiusFor(radius)))));
+            assertEquals(Facing.WEST, SurfaceNormal.facingAt(beside, 0, 61 * 16 + 8, 8, radius), "r" + radius);
+            assertEquals(List.of(0L, 0L, 0L), List.of(boxed(SurfaceNormal.estimate(stacked, 0, 62, 0,
+                    SurfaceNormal.radiusFor(radius)))));
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(stacked, 8, 62 * 16, 8, radius), "r" + radius);
+            assertEquals(Facing.DOWN, SurfaceNormal.facingAt(stacked, 8, 63 * 16, 8, radius), "r" + radius);
         }
     }
 
@@ -397,7 +471,10 @@ class SurfaceKernelTest {
 
     /**
      * Where the face under the point is a bump's or a step's side, a staircase, or a thick floor, wall or ceiling, the
-     * direction is what the brush-sized estimate around the point's block gave before thin walls were handled.
+     * direction is what the brush-sized estimate around the point's block gave before thin walls were handled. Changed
+     * on purpose, and pinned by the tests above instead: one-thick walls aimed at from the west, north or below, or a
+     * sixteenth inside; walls under 8 blocks tall on a floor with a large brush; a thick wall's foot hit a sixteenth
+     * outside it; every row of a short wall on a floor, its bottom row included; balanced scenes.
      */
     @Test
     void theFaceUnderThePointDoesNotTurnTheBrushOnRoughGroundOrThickSurfaces() {
@@ -407,7 +484,6 @@ class SurfaceKernelTest {
         FakeWorld lowStep = terrain((x, z) -> x >= 0 ? 61 : 60);
         FakeWorld highStep = terrain((x, z) -> x >= 0 ? 62 : 60);
         FakeWorld bumpy = terrain((x, z) -> 60 + Math.floorMod(x, 2));
-        FakeWorld shortWall = thinWall(62, true);
         record Case(String name, FakeWorld world, int x16, int y16, int z16, Facing facing) {}
         List<Case> cases = List.of(
                 new Case("bump, west side", bump, 0, 61 * 16 + 8, 8, Facing.UP),
@@ -420,8 +496,8 @@ class SurfaceKernelTest {
                 new Case("one-high step, its side", lowStep, 0, 61 * 16 + 8, 8, Facing.UP),
                 new Case("two-high step, its side", highStep, 0, 61 * 16 + 8, 8, Facing.UP),
                 new Case("alternating columns, a side", bumpy, 16, 61 * 16 + 8, 8, Facing.UP),
-                // At a short wall's foot the floor is as near as the wall: the floor wins, as before.
-                new Case("short wall on a floor, its bottom row", shortWall, 144, 60 * 16 + 8, 8, Facing.UP),
+                new Case("thick wall on a floor, its foot", wallOnFloor(false), 144, 60 * 16 + 8, 8, Facing.WEST),
+                new Case("floor at a thick wall's foot", wallOnFloor(false), 8 * 16 + 8, 60 * 16, 8, Facing.UP),
                 new Case("floor", floor(60), 3 * 16, 61 * 16, -2 * 16, Facing.UP),
                 new Case("ceiling", ceiling(70), 8, 70 * 16, 8, Facing.DOWN),
                 new Case("ceiling, a sixteenth below", ceiling(70), 8, 70 * 16 - 1, 8, Facing.DOWN),
@@ -1172,6 +1248,23 @@ class SurfaceKernelTest {
             }
         }
         for (int y = 60; y <= top; y++) for (int z = -10; z <= 10; z++) world.set(9, y, z, dirt);
+        return world;
+    }
+
+    /**
+     * Stone up to y 59 over x -30..40, z -30..40, and on it a thick dirt wall from y 60 to 80: x 9..30 over z -20..20
+     * (facing west), or with {@code north} z 9..30 over x -20..20 (facing north).
+     */
+    private FakeWorld wallOnFloor(boolean north) {
+        FakeWorld world = new FakeWorld(states);
+        for (int x = -30; x <= 40; x++) {
+            for (int z = -30; z <= 40; z++) for (int y = 40; y <= 59; y++) world.set(x, y, z, stone);
+        }
+        for (int a = 9; a <= 30; a++) {
+            for (int b = -20; b <= 20; b++) {
+                for (int y = 60; y <= 80; y++) world.set(north ? b : a, y, north ? a : b, dirt);
+            }
+        }
         return world;
     }
 
