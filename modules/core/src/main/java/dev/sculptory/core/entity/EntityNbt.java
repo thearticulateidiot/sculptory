@@ -40,6 +40,14 @@ public final class EntityNbt {
             Set.of("id", "UUID", "Pos", "Motion", "Rotation", "TileX", "TileY", "TileZ");
     /** Keys a clipboard does not keep of a passenger: its own identity and place (it rides its vehicle). */
     public static final Set<String> PASSENGER_KEYS = Set.of("UUID", "Pos", "Motion");
+    /**
+     * Keys a clipboard does not keep at any level: how and where a Paper (CraftBukkit) server first spawned the entity
+     * (its spawn reason, the place and world of its first spawn, the player whose sleeplessness spawned a phantom,
+     * whether a nether portal spawned it). A placed copy is a new spawn, so the server gives it its own. History keeps
+     * them, so an undo puts the same entity back. Vanilla, Fabric and NeoForge never write them.
+     */
+    public static final Set<String> SPAWN_CONTEXT_KEYS = Set.of("Paper.SpawnReason", "Paper.Origin",
+            "Paper.OriginWorld", "Paper.SpawningEntity", "Paper.FromNetherPortal");
 
     /**
      * Keys undo and redo leave out when they compare an entity with what the step left there: the game rewrites them
@@ -90,7 +98,8 @@ public final class EntityNbt {
 
     /**
      * What a clipboard keeps of a whole entity compound (as {@code Entity.saveSelfNbt} writes it): the compound without
-     * {@link #PLACEMENT_KEYS}, its passengers (recursively) without {@link #PASSENGER_KEYS}, at most
+     * {@link #PLACEMENT_KEYS}, its passengers (recursively) without {@link #PASSENGER_KEYS}, none of them with
+     * {@link #SPAWN_CONTEXT_KEYS}, at most
      * {@link #MAX_RIDERS} of them (the first, depth first) and at most {@link #MAX_PASSENGER_DEPTH} deep.
      */
     public static NbtCompound snapshotData(NbtCompound entity) {
@@ -109,6 +118,7 @@ public final class EntityNbt {
     private static NbtCompound strip(NbtCompound compound, Set<String> keys, int depth, int[] room, int[] dropped) {
         NbtCompound.Builder out = compound.toBuilder();
         for (String key : keys) out.remove(key);
+        for (String key : SPAWN_CONTEXT_KEYS) out.remove(key);
         List<NbtCompound> riders = riders(compound);
         List<NbtCompound> kept = new ArrayList<>(Math.min(riders.size(), MAX_RIDERS));
         for (NbtCompound rider : riders) {
