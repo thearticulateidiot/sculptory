@@ -456,17 +456,19 @@ final class BulkJob<W> {
 
     /**
      * After section {@code key} is written: the early sweep around it ({@link HangingSupport#section}), for a job that
-     * records what it does and changed cells in that section, so a long job does not leave a frame whose wall it took
-     * early to the game's own check until its last sweep. It is charged like the other per-section work: a section's overhead for the entity query, and each entity taken
-     * as in an entity stage (also against the tick's block cap).
+     * records what it does, also when the section changed nothing (it may settle a frame whose wall the section before
+     * took), so a long job does not leave a frame whose wall it took early to the game's own check until its last sweep.
+     * It is charged like the other per-section work: a section's overhead for the entity query, and each entity taken as
+     * in an entity stage (also against the tick's block cap).
      *
      * @return units used
      */
     private long earlySweep(long key, EditExecutor.Budget budget) {
         if (unwritten == null) return 0;
         unwritten.remove(key);
-        if (writer.changed() == changedBeforeSection) return 0;
-        writtenSections.add(key);
+        // A section that changed nothing still settles the entities whose blocks reach into it (a frame whose wall the
+        // section before took): it is swept around too, but only a changed one is swept again at the end.
+        if (writer.changed() != changedBeforeSection) writtenSections.add(key);
         EntityWork.Context<?> ctx = entityContext();
         long removedBefore = ctx.writer.removed();
         ctx.allowance = Integer.MAX_VALUE; // a section's few hanging entities, decided in one go

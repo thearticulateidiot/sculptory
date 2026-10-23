@@ -223,6 +223,19 @@ final class HangingChecks {
         s.handle.settle();
         r.record("builder entities: a frame that dropped off by itself after the player's click is not their Break",
                 s.labels().size() == framed, "history " + s.labels());
+
+        // Broken by something that is not a player (here the armor stand stands in for an arrow or a mob).
+        BlockPos second = wall(r, x0 + 4, z0 + 1, 1);
+        ItemFrame other = hang(r, second, Items.APPLE);
+        Bukkit.getPluginManager().callEvent(new PlayerInteractEntityEvent(r.player.getBukkitEntity(),
+                other.getBukkitEntity(), org.bukkit.inventory.EquipmentSlot.HAND));
+        Bukkit.getPluginManager().callEvent(new org.bukkit.event.hanging.HangingBreakByEntityEvent(
+                (org.bukkit.entity.Hanging) other.getBukkitEntity(), stand.getBukkitEntity(),
+                org.bukkit.event.hanging.HangingBreakEvent.RemoveCause.ENTITY));
+        other.discard();
+        s.handle.settle();
+        r.record("builder entities: a frame another entity broke after the player's click is not their Break",
+                s.labels().size() == framed, "history " + s.labels());
     }
 
     /** What one entity tick may change by itself: where it stands, its motion, its fall. */

@@ -69,8 +69,10 @@ public interface WorldEntities<E> {
     boolean supportLoaded(E entity);
 
     /**
-     * The blocks {@code entity} stands in and touches, grown by one block (a hanging entity's wall): every block the
-     * game's test of whether it stays reads, so once none of them changes any more, neither does the answer.
+     * The blocks {@code entity}'s box lies in and, for an item frame or painting, the wall blocks right behind them
+     * (the box moved one block away from its face): the blocks whose change takes its support away. Once an edit writes
+     * none of them again, it cannot give the entity its support back. Not every block the game's collision test reads
+     * ({@link #supportLoaded} looks one block further).
      */
     Box supportBox(E entity);
 

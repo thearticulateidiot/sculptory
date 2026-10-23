@@ -164,8 +164,11 @@ public final class HangingSupport {
         if (ctx.world.removed(entity) || ctx.world.riding(entity)) return;
         // What it hangs on is not all loaded: asking would load it. Left to the game.
         if (!ctx.world.supportLoaded(entity) || !ctx.world.hangsUnsupported(entity)) return;
+        // One an undo kept because it changed since the step is counted as a conflict already, once: it is left to the
+        // game or taken into the step below, and either way no longer kept.
+        boolean kept = ctx.kept.remove(ctx.world.id(entity));
         if (!ctx.mayChange(ctx.world.cell(entity))) {
-            ctx.conflicts++; // the game drops it off, as it did before
+            if (!kept) ctx.conflicts++; // the game drops it off, as it did before
             return;
         }
         EntityState before = ctx.world.live(entity);
@@ -175,12 +178,12 @@ public final class HangingSupport {
             return;
         }
         if (!ctx.records.entityUnsupported(ctx.world.id(entity), before)) {
-            ctx.conflicts++; // no history could keep it: left to the game
+            if (!kept) ctx.conflicts++; // no history could keep it: left to the game
             return;
         }
         ctx.writer.remove(entity, before);
-        // An undo kept it because it changed since the step (a conflict); now it is in the step: no longer kept.
-        if (ctx.kept.remove(ctx.world.id(entity))) ctx.conflicts--;
+        // Kept by the undo (a conflict), now in the step: no longer a conflict.
+        if (kept) ctx.conflicts--;
     }
 
     /**

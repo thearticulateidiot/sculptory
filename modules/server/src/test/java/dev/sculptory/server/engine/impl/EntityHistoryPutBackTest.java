@@ -464,6 +464,35 @@ class EntityHistoryPutBackTest {
     }
 
     /**
+     * An entity an undo kept as a conflict that the sweep cannot take (its cell protected, or no history can keep it) is
+     * counted once, as the conflict it already is, and is no longer kept either way.
+     */
+    @Test
+    void aKeptEntityTheSweepCannotTakeIsCountedOnce() {
+        Thing guarded = put(pig(UUID.randomUUID(), 100.5, "kept, protected", 300));
+        world.unsupported.add(guarded.id);
+        EntityWork.Context<Thing> ctx = new EntityWork.Context<>(world, placer, permits, new Swept(), (x, y, z) -> true);
+        ctx.conflicts = 1;
+        ctx.kept.add(guarded.id);
+        sweep(List.of(section(100)), ctx);
+        assertNotNull(world.find(guarded.id), "protected: left to the game");
+        assertEquals(1, ctx.conflicts, "still the one conflict");
+        assertTrue(ctx.kept.isEmpty());
+
+        Thing unkept = put(pig(UUID.randomUUID(), 4.5, "kept, no history for it", 300));
+        world.unsupported.add(unkept.id);
+        Swept full = new Swept();
+        full.keeps = false;
+        EntityWork.Context<Thing> refused = new EntityWork.Context<>(world, placer, permits, full, (x, y, z) -> true);
+        refused.conflicts = 1;
+        refused.kept.add(unkept.id);
+        sweep(List.of(section(0)), refused);
+        assertNotNull(world.find(unkept.id));
+        assertEquals(1, refused.conflicts, "still the one conflict");
+        assertTrue(refused.kept.isEmpty());
+    }
+
+    /**
      * The early sweep after one section is written: an entity near it is taken only once nothing its support box touches
      * is still to be written; the section that unsettled it, written later, takes it (it lies within three of it).
      */

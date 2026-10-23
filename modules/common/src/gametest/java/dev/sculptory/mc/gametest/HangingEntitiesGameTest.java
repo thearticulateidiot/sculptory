@@ -525,6 +525,64 @@ public final class HangingEntitiesGameTest {
     }
 
     /**
+     * A frame on the east face of a wall block at a section border hangs in the next section, which holds only air:
+     * the job changes nothing there, yet that section settles the frame (its wall in the section before is written), so
+     * it is taken right after it, before the job goes on to the 224 blocks of the next two sections (one block a tick;
+     * sections are written x first, ascending), not at the job's end, by when the game would have dropped it off.
+     * Ticked once per game tick, so the game's own checks run.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_hanging_air_section", timeoutTicks = LIMIT)
+    public void aFrameIsTakenAfterTheAirSectionItHangsIn(GameTestHelper context) {
+        Sync s = new Sync(context, 2713, 1);
+        Box job = box(s.x, FLOOR + 1, s.z + 3, s.x + 63, FLOOR + 7, s.z + 3);
+        Box beyond = box(s.x + 32, FLOOR, s.z, s.x + 63, FLOOR + 3, s.z + 15);
+        loadAndForce(s.world, beyond);
+        BlockPos wall = new BlockPos(s.x + 15, FLOOR + 1, s.z + 3); // its frame hangs in x + 16, the next section
+        UUID[] id = {null};
+        boolean[] lateTaken = {false};
+        RecordingListener fill = new RecordingListener();
+        s.sequence().thenWaitUntil(() -> check(McEntities.firstUnloaded(s.world, beyond) == null,
+                "the entities beyond the area are not loaded yet")).thenExecute(() -> {
+            for (int x = s.x; x <= s.x + 63; x++) {
+                for (int z = s.z; z <= s.z + 15; z++) {
+                    s.world.setBlock(new BlockPos(x, FLOOR, z), Blocks.STONE.defaultBlockState(), 2);
+                }
+                // The wall of the next two sections keeps the job writing long after the frame's.
+                for (int y = FLOOR + 1; y <= FLOOR + 7 && x >= s.x + 32; y++) {
+                    s.world.setBlock(new BlockPos(x, y, s.z + 3), Blocks.STONE.defaultBlockState(), 2);
+                }
+            }
+            s.world.setBlock(wall, Blocks.STONE.defaultBlockState(), 2);
+            id[0] = hang(s.world, wall, Direction.EAST, Items.DIAMOND).getUUID();
+            try {
+                s.h.service.run(s.h.player, new OpSpec.Fill(job, new Pattern.Single(s.h.state("minecraft:air")),
+                        CellMask.ANY), RunOptions.DEFAULT, fill);
+            } catch (EditRejected e) {
+                throw new GameTestAssertException("the fill was refused: " + e.getMessage());
+            }
+        }).thenWaitUntil(() -> {
+            s.executor.tick();
+            // Once the job writes the next sections, the frame must be gone already.
+            if (s.find(id[0]) != null && s.world.getBlockState(new BlockPos(s.x + 32, FLOOR + 1, s.z + 3)).isAir()) {
+                lateTaken[0] = true;
+            }
+            check(fill.result != null, "the fill is still running");
+        }).thenExecute(() -> {
+            s.h.service.tick();
+            check(fill.result.outcome() == JobOutcome.COMPLETED, "the fill " + fill.result);
+            check(!lateTaken[0], "the frame was still there when the job moved on to the next sections");
+            List<ItemEntity> items = s.world.getEntitiesOfClass(ItemEntity.class, around(job), e -> !e.isRemoved());
+            check(items.isEmpty(), "no item dropped: " + items);
+            List<UUID> taken = s.entries().get(0).record().entities().stream().map(EntityChange::id).toList();
+            check(taken.equals(List.of(id[0])), "the Fill's step holds the frame: " + taken);
+            s.undo();
+            check(s.find(id[0]) != null, "the undo hangs it again");
+            forceChunks(s.world, beyond, false);
+            s.finish();
+        }).thenSucceed();
+    }
+
+    /**
      * A job written over several ticks takes a frame as soon as the section with its wall is written, not only at its
      * end: the game's own check could drop the frame off in between. Here 16 blocks a tick, a wall four sections long,
      * a frame at each end (whichever end the job writes first).
@@ -647,9 +705,14 @@ public final class HangingEntitiesGameTest {
 
     /** Hangs a frame holding {@code item} on the south face of {@code wall}, outside any history. */
     private static ItemFrame hang(ServerLevel world, BlockPos wall, Item item) {
-        ItemFrame frame = new ItemFrame(world, wall.south(), Direction.SOUTH);
+        return hang(world, wall, Direction.SOUTH, item);
+    }
+
+    /** Hangs a frame holding {@code item} on the {@code face} side of {@code wall}, outside any history. */
+    private static ItemFrame hang(ServerLevel world, BlockPos wall, Direction face, Item item) {
+        ItemFrame frame = new ItemFrame(world, wall.relative(face), face);
         frame.setItem(new ItemStack(item), false);
-        check(frame.survives() && world.addFreshEntity(frame), "a frame hung at " + wall.south().toShortString());
+        check(frame.survives() && world.addFreshEntity(frame), "a frame hung at " + wall.relative(face).toShortString());
         return frame;
     }
 

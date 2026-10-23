@@ -130,7 +130,12 @@ final class BuilderEntityListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void attacked(EntityDamageByEntityEvent event) {
-        if (!(event.getDamager() instanceof org.bukkit.entity.Player player)) return;
+        if (!(event.getDamager() instanceof org.bukkit.entity.Player player)) {
+            // Damage by something else (an arrow emptying a frame, a mob) is not the change a player's read waits for.
+            Pending read = pending.get(event.getEntity().getUniqueId());
+            if (read != null && !read.placed()) pending.remove(event.getEntity().getUniqueId());
+            return;
+        }
         touched(handle(player), ((CraftEntity) event.getEntity()).getHandle());
     }
 
@@ -141,13 +146,19 @@ final class BuilderEntityListener implements Listener {
     }
 
     /**
-     * A frame or painting that drops off by itself (its wall gone, its space filled, an explosion) between the player's
-     * action and the end of the tick: what the player did to it is not what removed it, so its read is dropped rather
-     * than recorded as the player's Break. (The by-entity event shares this event's handler list.)
+     * A frame or painting removed by anything but a player (its wall gone, its space filled, an explosion, an arrow, a
+     * mob) between the player's action and the end of the tick: what the player did to it is not what removed it, so
+     * its read is dropped rather than recorded as the player's Break. A player breaking it is handled as their action
+     * ({@link #broken}); the by-entity event shares this event's handler list.
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void droppedOff(HangingBreakEvent event) {
-        if (event instanceof HangingBreakByEntityEvent) return;
+        // A player breaking it is an action of theirs ({@link #broken}); anything else (an arrow, a creeper, the game)
+        // is not the player's who acted on it.
+        if (event instanceof HangingBreakByEntityEvent byEntity
+                && byEntity.getRemover() instanceof org.bukkit.entity.Player) {
+            return;
+        }
         pending.remove(event.getEntity().getUniqueId());
     }
 
