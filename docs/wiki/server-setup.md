@@ -51,7 +51,7 @@ The next section says what is different on Paper.
 - **Permissions** are Bukkit permission nodes, the same `sculptory.*` names as on [Permissions](permissions.md). A node nothing sets falls back to the operator level (`permissionFallbackOpLevel`). A wildcard such as `sculptory.*` needs a permissions plugin that understands wildcards; LuckPerms does. Changes apply at once, LuckPerms' too.
 - **Builder mode** fires Paper's block place and break events for each block it changes, so WorldGuard, claim plugins and logging plugins see builder mode actions and can cancel them: the action is then put back and refused. Bulk edits fire no block events (above).
 - **Jump and Through** teleport the Paper way: a plugin that cancels a teleport stops them too, with a message.
-- **Commands.** `/sculptory` needs `use`, as on Fabric and NeoForge. It has `version` (the server's build and yours; admins and the console also see every online player's), and with `admin` `fill`, `undo` and `redo`. `cancel`, `jobs`, `history` and `reload` are not there yet: after changing `server.json`, restart the server (or run Paper's `/reload`, which reloads every plugin: players stay on, but builders must rejoin before they can edit again, and a chat line tells them so).
+- **Commands.** `/sculptory` needs `use`, as on Fabric and NeoForge. It has `version` (the server's build and yours; admins and the console also see every online player's), and with `admin` `fill`, `undo` and `redo`. `cancel`, `jobs`, `history` and `reload` are not there yet: after changing `server.json`, restart the server. If you use Paper's `/reload confirm` instead, builders keep their connection but must rejoin before editing again; the editor tells them the next time they use it.
 
 ### Known limits on Paper
 
@@ -71,7 +71,7 @@ Sculptory used to be called Builder Suite (a Fabric mod). On its first start it 
 
 ## Settings
 
-`config/sculptory/server.json` (on Paper `plugins/Sculptory/server.json`) is written on first start. After editing it, run `/sculptory reload` (admins) on Fabric and NeoForge; on Paper, restart the server or run Paper's `/reload` (builders then rejoin before editing again). Changes under `history`, `library` and `transform` still need a restart. If the file can't be read at start, editing is off and the log says why; `/sculptory reload` with a broken file keeps the running settings and says why.
+`config/sculptory/server.json` (on Paper `plugins/Sculptory/server.json`) is written on first start. After editing it, run `/sculptory reload` (admins) on Fabric and NeoForge; on Paper, restart the server (see [On Paper](#on-paper) about `/reload confirm`). Changes under `history`, `library` and `transform` still need a restart. If the file can't be read at start, editing is off and the log says why; `/sculptory reload` with a broken file keeps the running settings and says why.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -97,7 +97,7 @@ Sculptory used to be called Builder Suite (a Fabric mod). On its first start it 
 
 ## Which build is this?
 
-Every build has a build id: its version and the Minecraft version it is for. A release has those alone (`0.5.0+1.21.1`, or `0.5.0-beta+1.21.1` for a beta), a build from source adds the commit (`0.5.0-dev+1.21.1.6a043a85`); releases up to 0.4.0-beta had the version alone (`0.4.0-beta`). The id is in the jar's name, the mod or plugin list and the log line (`Sculptory for Fabric 0.5.0+1.21.1 initializing`, likewise for NeoForge; `Sculptory for Paper 0.1.0-beta+1.21.1 enabling`), and `/sculptory version` names the server's build and yours.
+Every build has a build id: its version and the Minecraft version it is for. A release has those alone (`0.5.0-beta+1.21.1`, or `0.5.0+1.21.1` once out of beta), a build from source adds the commit (`0.5.0-dev+1.21.1.6a043a85`); releases up to 0.4.0-beta had the version alone (`0.4.0-beta`). The id is in the jar's name, the mod or plugin list and the log line (`Sculptory for Fabric 0.5.0-beta+1.21.1 initializing`, likewise for NeoForge; `Sculptory for Paper 0.1.0-beta+1.21.1 enabling`), and `/sculptory version` names the server's build and yours.
 
 ## Updating
 
@@ -109,7 +109,7 @@ Replace the jar on the server (in `plugins` on Paper) and on every client that e
 
 ## Removing the mod
 
-Take the Sculptory jar out of the `mods` folders (`plugins` on Paper). The blocks it placed are ordinary blocks, so worlds need nothing else. Left behind, to delete or keep: `config/sculptory/`, `sculptory/library/` (on Paper `plugins/Sculptory/`), the client's `sculptory/exports/` and each world's `sculptory/history/`. On Paper, chunks where water or lava was edited also keep a small `sculptory:fluid_marks` entry in their saved data; it is harmless, since nothing reads it without the plugin.
+Take the Sculptory jar out of the `mods` folders (`plugins` on Paper). The blocks it placed are ordinary blocks, so worlds need nothing else. Left behind, to delete or keep: `config/sculptory/`, `sculptory/library/` (on Paper `plugins/Sculptory/`), the client's `sculptory/exports/` and each world's `sculptory/history/`. Chunks where water or lava was edited also keep a small `sculptory:fluid_marks` entry in their saved data; it is harmless, since nothing reads it without Sculptory.
 
 ## Other mods
 

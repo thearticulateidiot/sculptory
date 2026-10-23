@@ -14,7 +14,7 @@ Sculptory comes in three products, all for Minecraft: Java Edition 1.21.1 and Ja
 | Sculptory for NeoForge | Your game, and NeoForge servers | NeoForge 21.1.264 or newer |
 | Sculptory for Paper | Paper servers only (a plugin) | Paper 1.21.1; players edit with the Fabric or NeoForge mod |
 
-To edit in your own game you need the mod for your loader: Fabric or NeoForge. The Fabric mod is released; the NeoForge mod and the Paper plugin are coming soon as betas and can be built from source today (the repository's README says how).
+To edit in your own game you need the mod for your loader: Fabric or NeoForge. The Fabric mod is released; the NeoForge mod and the Paper plugin are coming soon as betas and can be built from source today (the repository's README says how; for Paper, install the jar without `-dev` in its name).
 
 ## Install
 

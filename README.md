@@ -86,7 +86,7 @@ Sculptory comes as one product per platform, each with its own jar and version, 
 |---|---|---|
 | **Sculptory for Fabric** | The mod, for clients and servers | Released: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) and [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (a Modrinth page follows) |
 | **Sculptory for NeoForge** | The mod, for clients and servers | Coming soon as a beta; built from source today: `./gradlew :neoforge:assemble` makes `modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar` |
-| **Sculptory for Paper** | A server plugin; players edit with the mod | Coming soon as a beta; built from source today: `./gradlew :paper:assemble` makes `modules/paper/build/libs/sculptory-paper-<build id>.jar` |
+| **Sculptory for Paper** | A server plugin; players edit with the mod | Coming soon as a beta; built from source today: `./gradlew :paper:assemble` makes `modules/paper/build/libs/sculptory-paper-<build id>.jar` (install that one, not the `-dev.jar` beside it, which carries the developers' self-test) |
 
 A client and a server need the same network protocol, not the same loader: a Fabric client can edit on a NeoForge
 server and a NeoForge client on a Fabric server, and on a Paper server players edit with the Sculptory mod for their
@@ -181,7 +181,7 @@ You need a JDK 21; the Gradle wrapper fetches everything else.
 ./gradlew assemble             # the jars only, without tests
 ./gradlew :fabric:assemble     # one product: modules/fabric/build/libs/sculptory-fabric-<build id>.jar
 ./gradlew :neoforge:assemble   # modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar
-./gradlew :paper:assemble      # modules/paper/build/libs/sculptory-paper-<build id>.jar
+./gradlew :paper:assemble      # modules/paper/build/libs/sculptory-paper-<build id>.jar (and a -dev.jar: don't install that)
 ```
 
 On Windows, `scripts/gradle.ps1 <tasks>` runs the wrapper with the JDK in `$env:SCULPTORY_JDK` (or a portable JDK in a

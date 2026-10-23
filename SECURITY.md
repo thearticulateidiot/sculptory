@@ -14,7 +14,7 @@ Include:
 
 - what you found, and the steps or a file that shows it;
 - which product and build: Sculptory for Fabric, for NeoForge or for Paper, with its build id (`/sculptory version`,
-  the jar's name or the log line, e.g. `0.5.0+1.21.1`), on the server and on the client if one is involved;
+  the jar's name or the log line, e.g. `0.5.0-beta+1.21.1`), on the server and on the client if one is involved;
 - the Minecraft version and the loader or server with its version: Fabric Loader and Fabric API, NeoForge, or the
   Paper build, plus other mods or plugins that take part (a permissions mod or plugin, WorldGuard).
 
@@ -26,4 +26,4 @@ rather not be named.
 Sculptory comes as three products, each with its own release line: the Fabric mod, the NeoForge mod and the Paper
 plugin. Sculptory is in beta. Fixes go into the newest release of each product line only (the newest Fabric
 release, the newest NeoForge release, the newest Paper release); please check that the problem still happens there.
-A problem in the shared engine is fixed in the next release of every product line that has it.
+A problem in the shared engine affects every product line that includes it; the fix ships with each line's next release.
