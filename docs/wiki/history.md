@@ -14,6 +14,10 @@ Every edit goes into your own undo history: kept by the server, saved with the w
 
 Undoing water or lava you placed also takes back what it did afterwards: water that ran out, new sources, ice, grass turned to dirt, obsidian from lava. That holds across restarts too.
 
+## Frames and paintings
+
+An item frame or painting needs the block it hangs on. When an edit takes that block away (a fill, a brush, a paste, a builder-mode break), the frame goes into the edit's step with its item instead of dropping off, and undoing the edit hangs it back once the wall is back. The same goes for undo and redo themselves: undoing the step that built a wall takes along the frames hung on it since, and redo hangs them again. A frame whose wall is swapped for another solid block stays where it is. Where you may not edit, the frame is left alone and drops off as in vanilla.
+
 ## Undo anyway
 
 Undo leaves alone blocks that someone or something changed after your edit. When it had to keep some, a toast offers **Undo anyway** to overwrite them as well. Undo anyway itself can't be undone, and the offer ends when you leave. Redo has the same **Redo anyway**.

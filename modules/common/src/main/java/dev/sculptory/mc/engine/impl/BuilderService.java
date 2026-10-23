@@ -121,6 +121,14 @@ import org.slf4j.LoggerFactory;
  * undo waits for it. Actions go after the player's brush strokes in the history ({@code commitStroke}); one refused
  * because a large stroke is still being written is {@link Refusal#BUSY}.
  *
+ * <p><b>Entities.</b> Item frames, paintings and armor stands the player hangs, places, changes (an item put in, a stand
+ * dressed) or breaks with a power on are steps of entity changes only ("Place · item frame", "Change · armor stand",
+ * "Break · painting"), through the platform's hooks into the game's own actions ({@link #useEntityItem},
+ * {@link #beforeInteract} and {@link #afterInteract} on the loaders, events on Paper, all ending in
+ * {@link #pushEntities}); a placement is refused where a block would be ({@link #entityPlacementRefusal}). Mirror
+ * copies none of them. Every action also takes along the item frames and paintings its changes left with nothing to
+ * hang on ({@code HangingSupport}), into its own record.
+ *
  * <p><b>Long reach</b> adds a transient modifier ({@value #LONG_REACH_PATH}) that raises the player's block interaction
  * range to 64 while the player holds the power and may use builder mode, so vanilla's aiming, outline and interactions
  * reach as far; it is removed as soon as they may not (checked every tick for the game mode and the modifier, every
