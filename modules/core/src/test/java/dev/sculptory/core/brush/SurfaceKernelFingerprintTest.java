@@ -24,8 +24,8 @@ import org.junit.jupiter.api.Test;
  * and Flatten its first-dab block (the moving radius-7 Raise and Lower strokes came out the same). Smooth pinned again
  * on 2026-10-22, when it stopped removing walls (3 or more blocks tall) and slabs one block thick with their rims: the
  * scene's rolling ground has fins one block thick and several blocks high (columns well above both neighbours along
- * z), whose cells and rims Smooth now keeps, which changes eight of the Smooth strokes (31 to 150 cells kept per
- * stroke when this was pinned: about a quarter fin cells, the rest their rims, all but at most four in the ground; no
+ * z), whose cells and rims Smooth now keeps, which changes seven of the Smooth strokes (20 to 111 cells kept per
+ * stroke when this was pinned: a third or more fin cells, the rest their rims, all but at most four in the ground; no
  * slab cells). Any change to the output of Raise, Lower, Smooth or Flatten in the Surface mode fails here: strokes
  * with accumulators, falloffs, both shapes, symmetry copies whose balls overlap, steps listed in any order, masks (slope
  * included), the clip box, an unloaded chunk, the world's bottom and top, structures, plants and water.
@@ -44,16 +44,16 @@ class SurfaceKernelFingerprintTest {
     private static final Map<String, String> EXPECTED = new LinkedHashMap<>();
 
     static {
-        EXPECTED.put("smooth r32 wall", "981963c5139991be/2175");
+        EXPECTED.put("smooth r32 wall", "998fd4b387e44a7b/2216");
         EXPECTED.put("smooth r32 overhang, twice", "f5973b29a347391c/13");
         EXPECTED.put("smooth r10 along the wall", "2d1b677fed802cd1/4");
-        EXPECTED.put("smooth r24 held still", "4768db745f98971e/1168");
-        EXPECTED.put("smooth r16 square linear mirror x", "74c28e4a4f06536b/301");
-        EXPECTED.put("smooth r12 sphere rotate 4", "8291ecac65d79d77/596");
+        EXPECTED.put("smooth r24 held still", "2cf0d90bca2d3ab6/1197");
+        EXPECTED.put("smooth r16 square linear mirror x", "965c7d075c1cbff1/303");
+        EXPECTED.put("smooth r12 sphere rotate 4", "3e40e289f62cef1a/602");
         EXPECTED.put("smooth r14 overlapping step", "e0823544f01dbd06/22");
-        EXPECTED.put("smooth r20 masked and clipped", "df32128cd2f59320/87");
-        EXPECTED.put("smooth r20 by an unloaded chunk", "1556fedab82e5efe/459");
-        EXPECTED.put("smooth r32 at the bottom and top", "4801fc3bf611c3ef/1820");
+        EXPECTED.put("smooth r20 masked and clipped", "7f4bf374c3496399/88");
+        EXPECTED.put("smooth r20 by an unloaded chunk", "bb8c137bff135e7a/465");
+        EXPECTED.put("smooth r32 at the bottom and top", "29ff00dd677c638a/1836");
         EXPECTED.put("RAISE r32 wall", "fe33af6f748fb3f1/1765");
         EXPECTED.put("RAISE r7 stroke", "f9a119e340b2d264/304");
         EXPECTED.put("LOWER r32 wall", "1fb230603db5e7a5/1796");

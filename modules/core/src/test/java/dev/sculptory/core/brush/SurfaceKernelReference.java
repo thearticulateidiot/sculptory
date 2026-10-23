@@ -817,6 +817,10 @@ final class SurfaceKernelReference {
          */
         private static boolean sheet(Ball ball, int x, int y, int z) {
             if (slab(ball, x, y, z) || wallAxis(ball, x, y, z) >= 0) return true;
+            // A single block on a sheet (open both ways along two axes) is a bump, not a rim.
+            int openAxes = 0;
+            for (int axis = 0; axis < 3; axis++) if (both(ball, x, y, z, axis, true)) openAxes++;
+            if (openAxes >= 2) return false;
             for (int axis = 0; axis < 3; axis++) {
                 int[] d = AXES[axis];
                 for (int s : new int[] {-1, 1}) {

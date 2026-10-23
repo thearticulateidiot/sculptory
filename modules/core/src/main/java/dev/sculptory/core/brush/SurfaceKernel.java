@@ -54,7 +54,8 @@ import java.util.List;
  * corners 1; a tie goes to the first in x, then y, then z order). Smooth never removes a cell of a <b>sheet</b> one
  * block thick or of its rim ({@code Pass.kept}): a slab (open above and below, solid on both sides along x or z), an
  * upright wall at least {@value SurfaceNormal#WALL_HEIGHT} blocks tall (open on both sides along x or z, as the
- * direction rule counts a wall), and the solid cells beside those in the sheet's plane (its free ends and corners).
+ * direction rule counts a wall), and the solid cells beside those in the sheet's plane (its free ends and corners, but
+ * not a single block sitting on it, open on both sides along two axes).
  * The vote alone takes them (9 solid cells of 27), one layer a step under a held stroke. Bumps, spikes, pillars one
  * block across and ridges or fins under 3 blocks high still smooth away. Above and below the build height count as
  * solid there, an unloaded cell or one outside the ball's box as neither. Filling is unchanged.
@@ -1178,10 +1179,16 @@ final class SurfaceKernel {
          * thick ({@link #slab}, {@link #wallAxis}) or of a sheet's rim, a solid cell with a sheet cell beside it in the
          * sheet's own plane (a slab's cell beside it along x or z; a wall's beside it along any axis but the one the
          * wall is open along). The rim keeps a sheet's free ends and corners, which would otherwise go one layer a
-         * step under a held stroke; a bump standing off a sheet, along its open axis, is no rim and goes.
+         * step under a held stroke; a bump standing off a sheet, along its open axis, is no rim and goes, and neither
+         * is a cell open on both sides along two axes (a single block on a wall's top or end).
          */
         private static boolean kept(Ball ball, int x, int y, int z) {
             if (slab(ball, x, y, z) || wallAxis(ball, x, y, z) >= 0) return true;
+            // A single block sitting on a sheet (on a wall's top or end, open on both sides along two axes) is a bump,
+            // not a rim, and rounds off; a free corner is open along one axis only and stays.
+            int openAxes = 0;
+            for (int axis = 0; axis < 3; axis++) if (openAlong(ball, axis, x, y, z)) openAxes++;
+            if (openAxes >= 2) return false;
             for (int axis = 0; axis < 3; axis++) {
                 for (int side = -1; side <= 1; side += 2) {
                     int nx = x + (axis == 0 ? side : 0), ny = y + (axis == 1 ? side : 0), nz = z + (axis == 2 ? side : 0);

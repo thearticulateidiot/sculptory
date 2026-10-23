@@ -578,6 +578,25 @@ class SurfaceKernelTest {
         }
     }
 
+    /**
+     * A single block sitting on a wall one block thick, on its top or beyond its end (open on both sides along two
+     * axes), is a bump and goes; the wall stays.
+     */
+    @Test
+    void aSingleBlockOnAThinWallRoundsOff() {
+        for (int radius : new int[] {3, 8}) {
+            BrushSpec smooth = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
+            FakeWorld onTop = thinWall(70, false);
+            onTop.set(9, 71, 0, dirt);
+            assertEquals(List.of(new Write(9, 71, 0, air)), apply(smooth, new Dab(0, 152, 71 * 16 + 8, 8, 255), onTop),
+                    "on the top, r" + radius);
+            FakeWorld onEnd = thinWall(70, false);
+            onEnd.set(9, 65, 11, dirt);
+            assertEquals(List.of(new Write(9, 65, 11, air)),
+                    apply(smooth, new Dab(0, 152, 65 * 16 + 8, 11 * 16 + 8, 255), onEnd), "on the end, r" + radius);
+        }
+    }
+
     /** A slab one block thick, held on its middle and on a free corner, from above and below: nothing changes. */
     @Test
     void heldSmoothKeepsASlabOneBlockThickWithItsCorners() {
