@@ -34,7 +34,7 @@ To check, join and press `B`: the status dot should read **Connected**. `/sculpt
 
 ### Paper
 
-1. Set up a Paper server for Minecraft 1.21.1 (build 133, the last 1.21.1 build). On another Minecraft version the plugin refuses to enable and says why in the log; Spigot and Folia are not supported (see [Known limits on Paper](#known-limits-on-paper)).
+1. Set up a Paper server for Minecraft 1.21.1 (build 133, the last 1.21.1 build). On another Minecraft version the plugin refuses to enable, with a log line naming both versions; Spigot and Folia are not supported (see [Known limits on Paper](#known-limits-on-paper)).
 2. Put the Sculptory for Paper jar in its `plugins` folder and start it. The log says `Sculptory for Paper <build> enabling`.
 3. Players who want to edit install the Sculptory mod for their loader (Fabric or NeoForge) on their client: the plugin is the server side only.
 4. Optional: WorldGuard (with WorldEdit, which it needs) to protect regions, and LuckPerms or another permissions plugin to decide who may edit.
@@ -51,7 +51,7 @@ The next section says what is different on Paper.
 - **Permissions** are Bukkit permission nodes, the same `sculptory.*` names as on [Permissions](permissions.md). A node nothing sets falls back to the operator level (`permissionFallbackOpLevel`). A wildcard such as `sculptory.*` needs a permissions plugin that understands wildcards; LuckPerms does. Changes apply at once, LuckPerms' too.
 - **Builder mode** fires Paper's block place and break events for each block it changes, so WorldGuard, claim plugins and logging plugins see builder mode actions and can cancel them: the action is then put back and refused. Bulk edits fire no block events (above).
 - **Jump and Through** teleport the Paper way: a plugin that cancels a teleport stops them too, with a message.
-- **Commands.** `/sculptory` needs `use`, as on Fabric and NeoForge. It has `version` (the server's build and yours; admins and the console also see every online player's), and with `admin` `fill`, `undo` and `redo`. `cancel`, `jobs`, `history` and `reload` are not there yet: after changing `server.json`, restart the server (or run Paper's `/reload`, which reloads every plugin).
+- **Commands.** `/sculptory` needs `use`, as on Fabric and NeoForge. It has `version` (the server's build and yours; admins and the console also see every online player's), and with `admin` `fill`, `undo` and `redo`. `cancel`, `jobs`, `history` and `reload` are not there yet: after changing `server.json`, restart the server (or run Paper's `/reload`, which reloads every plugin: players stay on, but builders must rejoin before they can edit again, and a chat line tells them so).
 
 ### Known limits on Paper
 
@@ -71,7 +71,7 @@ Sculptory used to be called Builder Suite (a Fabric mod). On its first start it 
 
 ## Settings
 
-`config/sculptory/server.json` (on Paper `plugins/Sculptory/server.json`) is written on first start. After editing it, run `/sculptory reload` (admins) on Fabric and NeoForge; on Paper, restart the server or run Paper's `/reload`. Changes under `history`, `library` and `transform` still need a restart. If the file can't be read at start, editing is off and the log says why; `/sculptory reload` with a broken file keeps the running settings and says why.
+`config/sculptory/server.json` (on Paper `plugins/Sculptory/server.json`) is written on first start. After editing it, run `/sculptory reload` (admins) on Fabric and NeoForge; on Paper, restart the server or run Paper's `/reload` (builders then rejoin before editing again). Changes under `history`, `library` and `transform` still need a restart. If the file can't be read at start, editing is off and the log says why; `/sculptory reload` with a broken file keeps the running settings and says why.
 
 | Key | Default | What it does |
 |---|---|---|
