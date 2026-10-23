@@ -1,5 +1,6 @@
-# Runs the project-owned Sculptory test server on port 25580, under .local/run/server.
-# Offline mode so dev clients can join; "BuilderDev" is op, other names are not.
+# Runs the project-owned Sculptory test server on 127.0.0.1:25580, under .local/run/server.
+# Offline mode so dev clients can join, and this machine only, since "BuilderDev" is op whoever joins as that name;
+# other names are not op.
 # The dev-only playtest setup runs by default (PlaytestSetup): the time is locked at day, mob spawning is off, the
 # difficulty is peaceful and hostile mobs are removed; "Sculptory playtest setup:" lines in the console show it.
 #   scripts/playtest-server.ps1
@@ -20,7 +21,8 @@ if ($listening) { throw "Port $Port is already in use (PID $($listening[0].Ownin
 Set-Content -Path (Join-Path $runDir 'eula.txt') -Value 'eula=true' -Encoding ascii
 $props = Join-Path $runDir 'server.properties'
 $settings = [ordered]@{
-    'server-port' = "$Port"; 'online-mode' = 'false'; 'gamemode' = 'creative'; 'level-name' = 'bs-test'
+    'server-port' = "$Port"; 'server-ip' = '127.0.0.1'; 'online-mode' = 'false'; 'gamemode' = 'creative'
+    'level-name' = 'bs-test'
     'spawn-protection' = '16'; 'motd' = 'Sculptory test server'
 }
 $lines = if (Test-Path $props) { Get-Content $props } else { @() }

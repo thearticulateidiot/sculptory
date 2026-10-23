@@ -1,0 +1,12 @@
+// The server.properties keys of the dev servers, shared by modules/fabric and modules/neoforge (apply from: this file;
+// it adds the closure ext.setServerProperties(File runDir, Map<String, String> keys), which a task calls in
+// doLast). The keys given are set, every other key of the file stays as it is: the file is read and written as
+// Latin-1, so the bytes of the lines that are not touched come back unchanged.
+ext.setServerProperties = { File runDir, Map<String, String> keys ->
+    runDir.mkdirs()
+    def properties = new File(runDir, 'server.properties')
+    def lines = properties.exists() ? properties.readLines('ISO-8859-1') : []
+    lines = lines.findAll { line -> !keys.keySet().any { key -> line.startsWith(key + '=') } }
+    lines += keys.collect { key, value -> "${key}=${value}".toString() }
+    properties.setText(lines.join('\n') + '\n', 'ISO-8859-1')
+}

@@ -67,6 +67,15 @@ loom {
     }
 }
 
+// The dev server listens on 127.0.0.1:25580 in offline mode however it is started (-PbsPlaytest ops whoever joins as
+// BuilderDev); scripts/playtest-server.ps1 sets the other keys (gradle/dev-server-properties.gradle).
+apply from: rootProject.file('gradle/dev-server-properties.gradle')
+tasks.named { it == 'runServer' }.configureEach {
+    def runDir = rootProject.file('.local/run/server')
+    def setProperties = setServerProperties
+    doFirst { setProperties(runDir, ['server-port': '25580', 'server-ip': '127.0.0.1', 'online-mode': 'false']) }
+}
+
 fabricApi {
     configureTests {
         createSourceSet = true

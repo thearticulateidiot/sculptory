@@ -10,10 +10,20 @@ Please **don't open a public issue** for a security problem. Report it privately
 advisories: on the repository page, open **Security > Advisories > Report a vulnerability**
 (<https://github.com/thearticulateidiot/sculptory/security/advisories/new>).
 
-Include what you found, the Sculptory, Minecraft and Fabric versions, and the steps or a file that shows it. We'll
-answer in the advisory, agree on a fix and a date with you, and credit you in the release notes unless you'd rather
-not be named.
+Include:
+
+- what you found, and the steps or a file that shows it;
+- which product and build: Sculptory for Fabric, for NeoForge or for Paper, with its build id (`/sculptory version`,
+  the jar's name or the log line, e.g. `0.5.0-beta+1.21.1`), on the server and on the client if one is involved;
+- the Minecraft version and the loader or server with its version: Fabric Loader and Fabric API, NeoForge, or the
+  Paper build, plus other mods or plugins that take part (a permissions mod or plugin, WorldGuard).
+
+We'll answer in the advisory, agree on a fix and a date with you, and credit you in the release notes unless you'd
+rather not be named.
 
 ## Supported versions
 
-Sculptory is in alpha. Fixes go into the newest release only; please check that the problem still happens there.
+Sculptory comes as three products, each with its own release line: the Fabric mod, the NeoForge mod and the Paper
+plugin. Sculptory is in beta. Fixes go into the newest release of each product line only (the newest Fabric
+release, the newest NeoForge release, the newest Paper release); please check that the problem still happens there.
+A problem in the shared engine affects every product line that includes it; the fix ships with each line's next release.

@@ -1,4 +1,4 @@
-// The server engine shared by every platform (Fabric now, Paper and NeoForge later): no Minecraft imports.
+// The server engine shared by every platform (Fabric, NeoForge and Paper): no Minecraft imports.
 dependencies {
     api project(':protocol')
     // Minecraft and Paper ship these at runtime; don't bundle them.

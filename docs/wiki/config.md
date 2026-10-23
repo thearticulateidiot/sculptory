@@ -6,12 +6,12 @@ For server admins: every key of `config/sculptory/server.json`, the `/sculptory`
 
 ## The settings file
 
-- Sculptory writes `config/sculptory/server.json` with the defaults on its first start and never rewrites it. On a dedicated server the path is in the server folder; in singleplayer, in the game folder. The Paper plugin keeps it in `plugins/Sculptory/server.json`, and has no `/sculptory reload` yet: restart the server after a change (see [On Paper](server-setup.md#on-paper)).
+- Sculptory writes `config/sculptory/server.json` with the defaults on its first start and never rewrites it. On a dedicated server the path is in the server folder; in singleplayer, in the game folder. The Paper plugin keeps it in `plugins/Sculptory/server.json`, and has no `/sculptory reload` yet: restart the server after a change (see [On Paper](server-setup.md#on-paper)). If you use Paper's `/reload confirm` instead, builders keep their connection but must rejoin before editing again; the editor tells them the next time they use it.
 - A key missing from the file uses its default, and unknown keys are ignored. Keys added by a newer build aren't added to your file: the start-up log lists, in one line, the keys your file doesn't set.
 - An existing file keeps its values, even the old defaults of the build that wrote it. Delete the file to have the current defaults written.
 - A value out of range is clamped into it, with a warning in the log.
 - Write switches as `true` or `false`, without quotes: a quoted `"true"` is on, any other text is off.
-- If the file can't be read or isn't valid JSON at start, Sculptory starts with editing off and the log names the file. Fix it or delete it, then run `/sculptory reload`.
+- If the file can't be read or isn't valid JSON at start, Sculptory starts with editing off and the log names the file. Fix it or delete it, then run `/sculptory reload` (on Paper, restart the server).
 
 A job is one server-side edit: a box operation, a paste, move or stack, a scatter commit, an undo or a redo. A dab is one step of a brush stroke. Sizes are in bytes: 16777216 is 16 MiB, 268435456 is 256 MiB and 1073741824 is 1 GiB.
 
@@ -132,7 +132,7 @@ The entity caps count passengers and may be passed with `limit.bypass`. Players,
 
 ## Commands
 
-`/sculptory cancel` and `/sculptory version` need only `use`; the rest need `admin`. Players see only the commands they may use. The console can run them for a player with `execute as <player> run sculptory …`.
+`/sculptory cancel` and `/sculptory version` need only `use`; the rest need `admin`. Players see only the commands they may use. The console can run them for a player with `execute as <player> run sculptory …`. The commands need the same permissions on Fabric, NeoForge and Paper; the Paper plugin has only `version`, `fill`, `undo` and `redo` so far.
 
 | Command | Needs | What it does |
 |---|---|---|

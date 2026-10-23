@@ -96,6 +96,33 @@ neoForge {
     }
 }
 
+// The dev server (runServer) runs in .local/run/neoforge-server on the project's test port, in offline mode so dev
+// clients can join, and on 127.0.0.1 only: -PbsPlaytest ops whoever joins as BuilderDev, which must not be open to the
+// network. Before each run the keys below are set in its server.properties (gradle/dev-server-properties.gradle; every
+// other key stays as it is) and the EULA is accepted; with -PbsPlaytest also creative, peaceful and no monsters, the
+// playtest conditions, as scripts/playtest-server.ps1 sets them for the Fabric dev server.
+apply from: rootProject.file('gradle/dev-server-properties.gradle')
+def devServerDir = rootProject.file('.local/run/neoforge-server')
+def devServerProperties = ['server-port': '25580', 'server-ip': '127.0.0.1', 'online-mode': 'false', 'level-name': 'bs-test']
+if (project.hasProperty('bsPlaytest')) {
+    devServerProperties += ['gamemode': 'creative', 'difficulty': 'peaceful', 'spawn-monsters': 'false']
+}
+def writeDevServerProperties = tasks.register('writeDevServerProperties') {
+    description = 'Writes the NeoForge dev server\'s server.properties keys and eula.txt (.local/run/neoforge-server).'
+    outputs.upToDateWhen { false }
+    def setProperties = setServerProperties
+    doLast {
+        setProperties(devServerDir, devServerProperties)
+        new File(devServerDir, 'eula.txt').text = 'eula=true\n'
+    }
+}
+tasks.named { it == 'runServer' }.configureEach {
+    dependsOn writeDevServerProperties
+    // The server's console reads the build's standard input, so "stop" and other commands typed or piped into the run
+    // reach it, as with the Fabric dev server (Loom's run task does the same); ModDevGradle's leaves it unset.
+    standardInput = System.in
+}
+
 // The loader-free Minecraft code is compiled into this mod's one source set (NeoForge has no client/server source set
 // split; DedicatedServerClassesTest in modules/fabric and the common module's own split compile keep server code off
 // client classes).

@@ -123,9 +123,11 @@ nodes and chunk permits), `McHost` (what Tinker and Navigate need from the host,
 (how builder mode runs and records one action: the mixin capture on the loaders, CraftBukkit's events on Paper) and,
 for the tests, `GameTestLoader`. New platform-specific behaviour goes behind one of these rather than into common.
 
-Paper has no GameTests, so the plugin carries a **self-test runner**: groups of checks against the real server (edits
+Paper has no GameTests, so the plugin has a **self-test runner**: groups of checks against the real server (edits
 and exact undo, physics-off writes, WorldGuard refusals, entities, builder mode, Tinker and Navigate, fluid trails,
-scatter, permission changes, history saving, the join race). It exists only when the server starts with
+scatter, permission changes, history saving, the join race). It is only in the plugin's **dev jar**:
+`scripts/gradle.ps1 :paper:devJar` builds `modules/paper/build/libs/sculptory-paper-<build id>-dev.jar`, the release
+jar plus the self-test; the release jar has none. In the dev jar it is active only when the server starts with
 `-Dsculptory.selftest.enabled=true` (or the property below), and runs:
 
 - by `/sculptory selftest [player]`, from the console or for a player with the `sculptory.selftest` permission (false
@@ -134,9 +136,12 @@ scatter, permission changes, history saving, the join race). It exists only when
   `-Dsculptory.selftest.stop=true` to stop the server when it is done, and `-Dsculptory.selftest.player=<name>` to run
   as a real client that has joined instead of a fake player (some checks run only then).
 
-The CI job `paper-selftest` (`.github/workflows/ci.yml`) runs it at start-up on Paper 1.21.1 with WorldEdit and
-WorldGuard, and fails on any failed check or on fewer checks than it expects. Every box a check touches is restored at
-the end.
+The `paper-selftest` workflow (`.github/workflows/paper-selftest.yml`) runs the dev jar's self-test at start-up on
+Paper 1.21.1 with WorldEdit and WorldGuard, once per redstone implementation, and fails on any failed check or on fewer
+checks than it expects. CI runs it on every push, and the release workflow before a Paper release is published. Every
+box a check touches is restored at the end. Since it became a called workflow, its checks are named
+`paper-selftest / paper-selftest (<redstone mode>)` (`paper-selftest / paper-selftest (VANILLA)` and so on): a branch
+protection rule that required the old `paper-selftest (<mode>)` names needs the new ones.
 
 The wiki lives in `docs/wiki/` and is bundled into the mod for the in-game reader. Its page ids are frozen
 (`WikiPages`); `scripts/check-wiki.ps1` checks its links, pictures and Markdown subset, and `check` runs the same
@@ -163,16 +168,37 @@ Useful tasks (the examples use `scripts/gradle.ps1`; `./gradlew` takes the same 
 scripts/gradle.ps1 build          # compile, test and build every product's jar (modules/<product>/build/libs)
 scripts/gradle.ps1 assemble       # the jars only, without tests; :paper:assemble and so on for one product
 scripts/gradle.ps1 runClient      # dev client (singleplayer); add -PbsWorld="<world>" to open a world directly
-scripts/gradle.ps1 runServer      # dev server in .local/run/server
+scripts/gradle.ps1 :fabric:runServer  # Fabric dev server in .local/run/server (NeoForge: :neoforge:runServer)
 scripts/gradle.ps1 :neoforge:runClient -PbsPlaytest -PbsWorld="<world>"  # NeoForge dev client, with the playtest setup
 ```
 
-`scripts/playtest.ps1` and `scripts/playtest-server.ps1` wrap the dev client and a dev server on port 25580; their
-headers list the options (the screenshot tour, the play check, the scripted demo). By default both apply the playtest
-setup: the player is op at level 4 (even in a singleplayer world without cheats), the time is locked at day, mob spawning
-is off, the difficulty is peaceful and hostile mobs are removed; `-NoSetup` leaves the world as it is. On the run tasks it is `-PbsPlaytest`
-(`:fabric:` or `:neoforge:` `runClient` and `runServer`), and the log shows "Sculptory playtest setup:" lines. These
-dev-only harnesses and the setup run from the source sets and are left out of every jar.
+### Dev clients, test servers and playtests
+
+Every test server runs on `127.0.0.1:25580` in offline mode (one at a time), so dev clients can join and nothing on the
+network can: the playtest setup ops whoever joins as `BuilderDev`. Every playtest has the same conditions on every
+loader and server: `BuilderDev` is op at level 4 (even in a singleplayer world without cheats), the time is locked at
+day, mob spawning is off and the difficulty is peaceful (hostile mobs are removed). Each script's header lists its
+options.
+
+- `scripts/playtest.ps1`: the Fabric dev client, also the screenshot tour, the play check and the scripted demo.
+- `scripts/playtest-server.ps1`: the Fabric dev server in `.local/run/server`; it writes the port, address, offline
+  mode, creative and the world name into `server.properties` and `BuilderDev` into `ops.json`. `:fabric:runServer`
+  alone still sets the port, the address and offline mode.
+- `:neoforge:runServer`: the NeoForge dev server in `.local/run/neoforge-server`; the build writes the port, the
+  address, offline mode and the world name into `server.properties` before each run (with `-PbsPlaytest` also
+  creative, peaceful, no monsters), and its console reads the build's input, so `stop` works.
+- `scripts/playtest-paper.ps1`: Paper 1.21.1 in a run copy, `.local/run/paper-server`, made on first use from the
+  install `.local/installs/paper-1.21.1-133` (server jar, libraries, WorldEdit and WorldGuard; a fresh world), so the
+  install stays clean for the release-jar smoke test; `-Install <dir>` runs an install itself. The newest plugin jar
+  from `modules/paper/build/libs` (not the `-dev.jar`) goes into `plugins` (refused while a server runs). It writes
+  `server.properties` and `ops.json` (`-Ops A,B` for other players than `BuilderDev`) and, once the server is up,
+  sends the day, mob and difficulty commands to its console. Lines appended to `.local/run/paper-stdin.txt` go to the
+  console; `-Stop` sends `stop`.
+
+On the Fabric and NeoForge scripts and run tasks the setup is the dev-only `PlaytestSetup` (`-PbsPlaytest` on
+`:fabric:` or `:neoforge:` `runClient` and `runServer`; the scripts pass it), and the log shows "Sculptory playtest
+setup:" lines; on Paper, which has no such code, the script's "Playtest setup:" lines. `-NoSetup` leaves the world as it
+is. These dev-only harnesses and the setup run from the source sets and are left out of every jar.
 
 Each loader module has two GameTest runs: `runGameTest` (vanilla tests) and `runFidelityGameTest` (Chipped/Farmer's
 Delight tests), as `:fabric:runGameTest`, `:neoforge:runGameTest` and so on; a task name without the module runs both
@@ -205,31 +231,48 @@ shown by client and server when a player joins (`/sculptory version`):
 
 - A **dev build** (any ordinary build) adds the commit: `0.5.0-dev+1.21.1.6a043a85`, with `.dirty` for uncommitted
   changes and `nogit` without git. Its jar is `sculptory-fabric-0.5.0-dev+1.21.1.6a043a85.jar` (and
-  `sculptory-neoforge-…`, `sculptory-paper-…` for the others).
-- A **release build** is the version and the Minecraft version alone: `0.5.0+1.21.1`, in
-  `sculptory-fabric-0.5.0+1.21.1.jar`. Gradle makes one of every product with `-Prelease`
-  (`scripts/gradle.ps1 :fabric:remapJar :neoforge:jar :paper:jar -Prelease`), and one of a single product when it
-  runs in GitHub Actions for that product's tag. The tag must match `gradle.properties`, or the build stops; a bare
-  `v…` tag stops it too. A local release build from a checkout with uncommitted changes warns, since its id no longer
-  says so.
+  `sculptory-neoforge-…`, `sculptory-paper-…` for the others). The commit is what tells a dev build from a release,
+  also while a product's version is already its next release's (`0.5.0-beta+1.21.1.6a043a85`).
+- A **release build** is the version and the Minecraft version alone: `0.5.0-beta+1.21.1`, in
+  `sculptory-fabric-0.5.0-beta+1.21.1.jar`. Gradle makes one of a product with `-Prelease=<product>`
+  (`scripts/gradle.ps1 :neoforge:jar -Prelease=neoforge`; the other products stay dev builds), and when it runs in
+  GitHub Actions for that product's tag. The tag must match `gradle.properties`, or the build stops; a bare `v…` tag
+  stops it too. A local release build from a checkout with uncommitted changes warns, since its id no longer says so.
+
+The version rules:
+
+- **A release never has a `-dev` version**, neither the released product's nor the engine's: a release build stops on
+  one, and so does the release workflow. A version is a `-dev` version when `-dev` is a dash-separated part of it,
+  followed by the end, `+` or `.`: `0.5.0-dev`, `0.5.0-dev.2`, `0.5.0-dev+1.21.1`, but not `0.5.0-devel` or
+  `0.5.0-beta.dev`. The Gradle build and the workflow apply the same test (and the workflow refuses `-devel` anyway, as
+  a suffix it has no type for).
+- **A pre-release has a suffix**: `-alpha` (an alpha on the stores), `-beta` or `-rc` (a beta on the stores; `-rc` is a
+  release candidate). The next releases are betas: Fabric and NeoForge `0.5.0-beta`, Paper `0.1.0-beta`. A version
+  without a suffix is a full release; the release workflow refuses any other suffix.
+- **The engine version moves with shared code.** A release shows the engine version alone as the engine's build id,
+  so bump `sculptory_engine_version` for every product release that includes changes to `core`, `protocol`, `server`
+  or `common` since the last product release (of any product). Two releases built from different shared code then
+  never show the same engine id. After a release the engine version goes to the next `-dev` (`0.6.0-dev`), which keeps
+  every release on a deliberate engine version. A later product release with no shared-code changes since the last one
+  sets it back to the last released engine version (`0.5.0`), so the same engine code keeps the same id.
 
 Each product has its own tag pattern, `<product>/v<build id>`:
 
 | Product | Tag | Release jar | GitHub Release title |
 |---|---|---|---|
-| Fabric mod | `fabric/v<build id>` (`fabric/v0.5.0+1.21.1`) | `sculptory-fabric-<build id>.jar` | Sculptory for Fabric `<build id>` |
-| NeoForge mod | `neoforge/v<build id>` (`neoforge/v0.5.0+1.21.1`) | `sculptory-neoforge-<build id>.jar` | Sculptory for NeoForge `<build id>` |
-| Paper plugin | `paper/v<build id>` (`paper/v0.1.0+1.21.1`) | `sculptory-paper-<build id>.jar` | Sculptory for Paper `<build id>` |
+| Fabric mod | `fabric/v<build id>` (`fabric/v0.5.0-beta+1.21.1`) | `sculptory-fabric-<build id>.jar` | Sculptory for Fabric `<build id>` |
+| NeoForge mod | `neoforge/v<build id>` (`neoforge/v0.5.0-beta+1.21.1`) | `sculptory-neoforge-<build id>.jar` | Sculptory for NeoForge `<build id>` |
+| Paper plugin | `paper/v<build id>` (`paper/v0.1.0-beta+1.21.1`) | `sculptory-paper-<build id>.jar` | Sculptory for Paper `<build id>` |
 
-To release a product: set its version in `gradle.properties`, add a `CHANGELOG.md` section headed
-`## <Product> <build id>` (`## Fabric 0.5.0+1.21.1`, `## NeoForge 0.5.0+1.21.1`, `## Paper 0.1.0+1.21.1`), commit,
-and push the tag. The release workflow (`.github/workflows/release.yml`) runs `check`, builds that product's release
-jar, attaches it to a GitHub Release with the changelog entry (a pre-release for versions with a `-`; only the Fabric
-mod's releases become "Latest"), and uploads it to the product's stores when their tokens are set up: the Fabric and
-NeoForge mods to one Modrinth project and one CurseForge project (the loader tells their files apart), the Paper
-plugin to its own Modrinth project, a CurseForge Bukkit plugin project and Hangar. A client and a server need the
-same protocol, not the same product or version: a Fabric client can edit on any server whose Sculptory speaks its
-protocol.
+To release a product: set its version and the engine's (above) in `gradle.properties`, add a
+`CHANGELOG.md` section headed `## <Product> <build id>` (`## Fabric 0.5.0-beta+1.21.1`, `## NeoForge 0.5.0-beta+1.21.1`,
+`## Paper 0.1.0-beta+1.21.1`), commit, and push the tag. The release workflow (`.github/workflows/release.yml`) runs
+`check`, builds that product's release jar, runs the Paper self-test for the Paper plugin, attaches the jar to a GitHub
+Release with the changelog entry (a pre-release for versions with a `-`; only the Fabric mod's releases become
+"Latest"), and uploads it to the product's stores when their tokens are set up: the Fabric and NeoForge mods to one
+Modrinth project and one CurseForge project (the loader tells their files apart), the Paper plugin to its own Modrinth
+project, a CurseForge Bukkit plugin project and Hangar. A client and a server need the same protocol, not the same
+product or version: a Fabric client can edit on any server whose Sculptory speaks its protocol.
 
 ## Pull requests
 

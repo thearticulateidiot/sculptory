@@ -62,8 +62,9 @@ servers, where the server decides who may edit.
 - **History and undo.** One `Ctrl+Z` / `Ctrl+Y` history for every tool, a History window to jump to any point, and
   undo that keeps what other players changed since. The history is saved with the world and survives restarts and
   crashes.
-- **Permissions for servers.** Permission nodes per tool (`sculptory.*`) through any permissions mod, such as
-  LuckPerms; operators by default. Size limits, rate limits and job queues keep one player from stalling the server.
+- **Permissions for servers.** Permission nodes per tool (`sculptory.*`) through a permissions mod or plugin, such as
+  LuckPerms on Fabric and Paper; operators by default. Size limits, rate limits and job queues keep one player from
+  stalling the server.
 - **In-game tutorial and wiki.** Short lessons that run in your own world, and the whole [wiki](docs/wiki/home.md)
   readable in game (Help > Wiki).
 
@@ -84,8 +85,8 @@ Sculptory comes as one product per platform, each with its own jar and version, 
 | Product | What it is | Status |
 |---|---|---|
 | **Sculptory for Fabric** | The mod, for clients and servers | Released: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) and [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (a Modrinth page follows) |
-| **Sculptory for NeoForge** | The mod, for clients and servers | Coming soon; built from source today: `./gradlew :neoforge:assemble` makes `modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar` |
-| **Sculptory for Paper** | A server plugin; players edit with the mod | Coming soon; built from source today: `./gradlew :paper:assemble` makes `modules/paper/build/libs/sculptory-paper-<build id>.jar` |
+| **Sculptory for NeoForge** | The mod, for clients and servers | Coming soon as a beta; built from source today: `./gradlew :neoforge:assemble` makes `modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar` |
+| **Sculptory for Paper** | A server plugin; players edit with the mod | Coming soon as a beta; built from source today: `./gradlew :paper:assemble` makes `modules/paper/build/libs/sculptory-paper-<build id>.jar` (install that one, not the `-dev.jar` beside it, which carries the developers' self-test) |
 
 A client and a server need the same network protocol, not the same loader: a Fabric client can edit on a NeoForge
 server and a NeoForge client on a Fabric server, and on a Paper server players edit with the Sculptory mod for their
@@ -113,21 +114,26 @@ says what a build needs.
 1. Install NeoForge for 1.21.1 and put the Sculptory for NeoForge jar into your `mods` folder. Nothing else is
    needed.
 2. **Singleplayer** works with that alone.
-3. **On a server**, put the jar on the server and on every client that wants to edit. By default operators may edit;
-   a permissions mod can decide per player or group, with the same `sculptory.*` nodes as on Fabric.
+3. **On a server**, put the jar on the server and on every client that wants to edit. By default operators may edit,
+   and that is the supported setup on NeoForge for now: permissions mods are untested there, since no LuckPerms build
+   for NeoForge 1.21.1 works yet (its 5.4 builds kick every player at login on NeoForge 21.1.264). The nodes are the
+   same `sculptory.*` as on Fabric.
 
 ### Paper
 
 | You need | Version |
 |---|---|
-| [Paper](https://papermc.io/) | 1.21.1, build 133 |
-| [WorldGuard](https://enginehub.org/worldguard) (optional) | 7.0.12 for 1.21.1, if you want its regions respected |
+| [Paper](https://papermc.io/) | 1.21.1, build 133 (not Spigot or Folia; on another Minecraft version the plugin refuses to enable) |
+| [WorldGuard](https://enginehub.org/worldguard) (optional) | 7.0.12 for 1.21.1, if you want its regions respected; it needs [WorldEdit](https://enginehub.org/worldedit) (7.3.9 for 1.21.1) |
 
 1. Put the Sculptory for Paper jar into the server's `plugins` folder and start the server.
 2. Players who want to edit install the Sculptory mod for their loader (Fabric or NeoForge) on their client; everyone
    else joins with nothing installed.
 3. By default operators may edit; LuckPerms or another permissions plugin can decide per player or group, with the
    same `sculptory.*` nodes.
+4. Bulk edits (fills, brushes, pastes) respect WorldGuard regions, but not other claim plugins such as
+   GriefPrevention, Lands, Towny or PlotSquared: they fire no block events, like WorldEdit's. Builder mode does fire
+   them. See [Server setup](docs/wiki/server-setup.md#on-paper).
 
 **Updating:** replace the jar (on a server, on the server and every editing client). Your settings, layouts, presets,
 undo history and library carry over: [Updating Sculptory](docs/wiki/updating.md) lists what is kept and where the
@@ -175,12 +181,12 @@ You need a JDK 21; the Gradle wrapper fetches everything else.
 ./gradlew assemble             # the jars only, without tests
 ./gradlew :fabric:assemble     # one product: modules/fabric/build/libs/sculptory-fabric-<build id>.jar
 ./gradlew :neoforge:assemble   # modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar
-./gradlew :paper:assemble      # modules/paper/build/libs/sculptory-paper-<build id>.jar
+./gradlew :paper:assemble      # modules/paper/build/libs/sculptory-paper-<build id>.jar (and a -dev.jar: don't install that)
 ```
 
 On Windows, `scripts/gradle.ps1 <tasks>` runs the wrapper with the JDK in `$env:SCULPTORY_JDK` (or a portable JDK in a
 `toolchains\jdk-21*` folder beside the repository, or `JAVA_HOME`). `check` runs the JUnit tests and the headless
-GameTests on Fabric and on NeoForge; the Paper plugin has a self-test that runs on a Paper server.
+GameTests on Fabric and on NeoForge; the Paper plugin's dev jar has a self-test that runs on a Paper server.
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the dev client, GameTest filters, render-mod checks, the Paper self-test
 and release builds.
 

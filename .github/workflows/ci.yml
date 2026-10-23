@@ -1,8 +1,8 @@
 # CI, on every push to a branch and every pull request. Two independent jobs:
 #   check:           ./gradlew check: the JUnit tests of every module and the headless GameTests (vanilla and mod
 #                    fidelity) on Fabric and on NeoForge;
-#   paper-selftest:  builds the Paper plugin (:paper:jar) and runs its self-test on a real Paper 1.21.1 server with
-#                    WorldEdit and WorldGuard; fails on any failed check or on fewer checks than SELFTEST_MIN_TESTS.
+#   paper-selftest:  builds the Paper plugin's dev jar (:paper:devJar) and runs its self-test on a real Paper 1.21.1
+#                    server with WorldEdit and WorldGuard (paper-selftest.yml, which release.yml runs too).
 # Neither job sees a secret. Actions are pinned to full commit SHAs; the comment names the release.
 name: CI
 
@@ -58,109 +58,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # The Paper plugin's self-test on a real Paper server (Paper has no GameTests): Paper 1.21.1 build 133 with WorldEdit
-  # and WorldGuard, the plugin built from this commit, the self-test run at start as a fake player, then the server
-  # stops. Every download is pinned: Paper by its build and SHA-256 (PaperMC's Fill v3 API), WorldEdit and WorldGuard by
-  # their Modrinth version ids and SHA-512. A separate job, so the check above is unchanged. It runs once per Paper
-  # redstone implementation (misc.redstone-implementation): Eigencraft and Alternate Current set wires without physics
-  # events, which the builder steps follow through the wire power event.
+  # The Paper plugin's self-test on a real Paper server (paper-selftest.yml, shared with release.yml): a separate job,
+  # so the check above is unchanged.
   paper-selftest:
-    name: paper-selftest (${{ matrix.redstone }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        redstone: [VANILLA, EIGENCRAFT, ALTERNATE_CURRENT]
-    env:
-      REDSTONE: ${{ matrix.redstone }}
-      PAPER_VERSION: "1.21.1"
-      PAPER_BUILD: "133"
-      PAPER_SHA256: 39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9
-      # The checks the fake-player run makes: fewer means a group was skipped or never ran (raise it with new checks).
-      SELFTEST_MIN_TESTS: "104"
-      # WorldEdit 7.3.9 and WorldGuard 7.0.12 (Modrinth version ids), the versions the plugin is built against.
-      WORLDEDIT_VERSION_ID: Bu1zaaoc
-      WORLDEDIT_SHA512: ce19097ab93a3ff75a929a1efec58138adc5b700f876ec8ac7a96c97d98d77a06f22661f0418c3407d644ca2d9713fde417d5789c79864d9c2094f203f372c76
-      WORLDGUARD_VERSION_ID: J66QOTLZ
-      WORLDGUARD_SHA512: 5917a0bf2de577021a3881e440386acefa285dfb3625c4a69be12922e4bc03cfea16ea07335f0cc71d4ea516f19477679001f6968d853969a89bfee0c9ecd7b9
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-
-      - name: Build the plugin
-        run: ./gradlew :paper:jar --stacktrace
-
-      - name: Download Paper, WorldEdit and WorldGuard
-        run: |
-          set -euo pipefail
-          mkdir -p paper-server/plugins
-          cd paper-server
-          url=$(curl -fsSL "https://fill.papermc.io/v3/projects/paper/versions/${PAPER_VERSION}/builds/${PAPER_BUILD}" \
-            | jq -r '.downloads["server:default"].url')
-          curl -fsSL -o paper.jar "$url"
-          echo "${PAPER_SHA256}  paper.jar" | sha256sum -c -
-          for plugin in WORLDEDIT WORLDGUARD; do
-            id_var="${plugin}_VERSION_ID"; sha_var="${plugin}_SHA512"
-            file_url=$(curl -fsSL "https://api.modrinth.com/v2/version/${!id_var}" | jq -r '.files[0].url')
-            curl -fsSL -o "plugins/${plugin,,}.jar" "$file_url"
-            echo "${!sha_var}  plugins/${plugin,,}.jar" | sha512sum -c -
-          done
-          echo "eula=true" > eula.txt
-          printf 'server-port=25580\nonline-mode=false\nspawn-protection=16\n' > server.properties
-
-      - name: Set the redstone implementation
-        working-directory: paper-server
-        run: |
-          set -euo pipefail
-          mkdir -p config
-          file=config/paper-world-defaults.yml
-          if [ -f "$file" ]; then
-            sed -i -E "s/^(  redstone-implementation: ).*/\1${REDSTONE}/" "$file"
-          else
-            # Paper writes the whole file at its first start and keeps what is set here (version 31: Paper 1.21.1).
-            printf '_version: 31\nmisc:\n  redstone-implementation: %s\n' "$REDSTONE" > "$file"
-          fi
-          grep -n 'redstone-implementation' "$file"
-
-      - name: Run the Paper self-test
-        working-directory: paper-server
-        run: |
-          set -euo pipefail
-          jars=(../modules/paper/build/libs/sculptory-paper-*.jar)
-          jar="$(realpath "${jars[0]}")"
-          java -Xmx2G -Dsculptory.selftest.enabled=true -Dsculptory.checkPermitBounds=true \
-            -Dsculptory.selftest="$PWD/selftest-report.xml" -Dsculptory.selftest.stop=true \
-            -jar paper.jar --add-plugin="$jar" --nogui < /dev/null
-          test -f selftest-report.xml
-          grep -o '<testsuite[^>]*>' selftest-report.xml
-          grep -q 'failures="0" errors="0"' selftest-report.xml
-          tests=$(grep -o '<testsuite[^>]*>' selftest-report.xml | sed -E 's/.* tests="([0-9]+)".*/\1/')
-          echo "${tests} checks ran (at least ${SELFTEST_MIN_TESTS} expected)"
-          test "${tests}" -ge "${SELFTEST_MIN_TESTS}"
-
-      - name: Check the redstone implementation in force
-        working-directory: paper-server
-        run: |
-          set -euo pipefail
-          grep -n 'redstone-implementation' config/paper-world-defaults.yml
-          grep -q "redstone ${REDSTONE}" selftest-report.xml
-
-      - name: Upload the self-test report
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: paper-selftest-${{ matrix.redstone }}
-          path: |
-            paper-server/selftest-report.xml
-            paper-server/logs/latest.log
-          if-no-files-found: ignore
-          retention-days: 14
+    uses: ./.github/workflows/paper-selftest.yml
