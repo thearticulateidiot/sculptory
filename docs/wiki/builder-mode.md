@@ -39,6 +39,7 @@ Powers that are on show as small tags above the hotbar. With no power on, the ga
 - The server allows about 100 blocks a second. Beyond that a click is refused with "Slow down", and a sweep leaves those blocks standing.
 - Command, structure and jigsaw blocks stay with operators, Force place or not.
 - A bucket, bone meal, flint and steel, a spawn egg, a boat or a minecart works as in vanilla and can't be undone. Item frames, paintings and armor stands are the only entities builder mode records.
+- Putting an item in a frame, dressing an armor stand or punching one works wherever vanilla lets you (reach and the mask don't apply; claims do as in vanilla), and its undo checks protection again. On Fabric and NeoForge an armor stand knocked down by a sweeping attack aimed at something else is not recorded.
 - An item frame or painting whose wall a click breaks goes into that click's step instead of dropping off, and comes back with its item when you undo it. The same holds for any edit, and for undo: see [History](history.md#frames-and-paintings).
 
 ## Related
