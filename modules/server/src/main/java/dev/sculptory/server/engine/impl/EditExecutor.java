@@ -854,9 +854,9 @@ public final class EditExecutor<W> {
     /**
      * {@code world} is about to unload while the server goes on: its jobs end as at {@link #shutdown} (each running one
      * finishes its current section, then every one ends {@code CANCELLED}; what they applied stays recorded), its edited
-     * chunks go out to the players watching them, and what this executor kept for the world goes, so nothing it runs
-     * touches the world afterwards. Jobs in other worlds, brush work and area holds are left alone (the edit service and
-     * the scatter planner end theirs). Returns how many jobs ended.
+     * chunks and the queued biome changes go out to the players watching them, and what this executor kept for the world
+     * goes, so nothing it runs touches the world afterwards. Jobs in other worlds, brush work and area holds are left
+     * alone (the edit service and the scatter planner end theirs). Returns how many jobs ended.
      */
     public int endWorld(W world) {
         checkThread();
@@ -884,6 +884,9 @@ public final class EditExecutor<W> {
                 LOG.error("Sculptory could not send edited chunks to players", e);
             }
         }
+        // The biome flushes queued for this tick's end may name the world: they go out now, while it is there (any
+        // other world's with them, a little earlier than they would have).
+        flushBiomes();
         tickets.remove(world);
         return ended;
     }

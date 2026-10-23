@@ -32,6 +32,11 @@ import org.slf4j.LoggerFactory;
  * Then the unload goes on. Bukkit refuses to unload a world with players in it (or the main world) before the event, so
  * no player is building there when this runs; their entries stay in their history and undo there once the world is back
  * (an undo of an entry whose world is not loaded is refused).
+ *
+ * <p>A plugin unloading without saving ({@code Bukkit.unloadWorld(world, false)}) gets the same: the history then holds
+ * steps whose changes the disk never got, since the world was not saved. Their undo on the reloaded world finds cells
+ * and entities other than it expects and keeps them as conflicts: nothing is corrupted, the steps just undo nothing
+ * there.
  */
 public final class WorldUnloads implements Listener {
     private static final Logger LOG = LoggerFactory.getLogger("sculptory");

@@ -202,6 +202,8 @@ public final class PaperEditHost {
             service.shutdown();
         } finally {
             try {
+                // After the engine stopped, so the marks are those of the world as the final save writes it: what the
+                // chunk-save hook writes at Fabric's and NeoForge's final save.
                 int columns = flushFluidMarks();
                 if (columns > 0) LOG.info("Sculptory: wrote the fluid marks of {} chunk columns for the final save", columns);
             } catch (RuntimeException | LinkageError e) {
