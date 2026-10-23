@@ -53,6 +53,7 @@ final class ScatterChecks {
                     + "<player>); the engine's scatter is covered by the GameTests");
             return CompletableFuture.completedFuture(null);
         }
+        if (r.regionChecksSkipped("scatter")) return CompletableFuture.completedFuture(null);
         int x0 = r.baseX + 496, z0 = r.baseZ; // chunk-aligned: the region starts at the next chunk
         Box all = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 30, z0 + 15);
         r.claim(all);

@@ -4,8 +4,6 @@ import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
 
 import com.mojang.brigadier.CommandDispatcher;
-import com.mojang.brigadier.arguments.IntegerArgumentType;
-import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -16,9 +14,8 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.net.ServerNet;
-import dev.sculptory.paper.devtest.NetTest;
-import dev.sculptory.paper.devtest.RegionBench;
-import dev.sculptory.paper.devtest.SelfTest;
+import dev.sculptory.mc.net.VersionReport;
+import dev.sculptory.paper.DevExtras;
 import dev.sculptory.paper.engine.PaperEditHost;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.server.engine.EditRejected;
@@ -27,11 +24,11 @@ import dev.sculptory.server.engine.JobResult;
 import dev.sculptory.server.engine.JobTicket;
 import dev.sculptory.server.engine.Perm;
 import dev.sculptory.server.engine.RunOptions;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.arguments.EntityArgument;
 import net.minecraft.commands.arguments.blocks.BlockStateArgument;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
@@ -41,8 +38,8 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
- * {@code /sculptory} on Paper (spike): fill, undo, redo and version as the loaders' command has them, plus the dev
- * self-test and network test. Registered on the server's Brigadier dispatcher, so {@code execute as <player> run
+ * {@code /sculptory} on Paper: fill, undo, redo and version as the loaders' command has them, plus, in the dev jar
+ * only, the self-test and network test ({@link DevExtras}). Registered on the server's Brigadier dispatcher, so {@code execute as <player> run
  * sculptory ...} acts as that player. Fill, undo and redo run as a player and through that player's permissions and
  * protection, like an editor request; their outcome is logged.
  */
@@ -50,13 +47,16 @@ public final class PaperCommands {
     private static final SimpleCommandExceptionType NOT_RUNNING =
             new SimpleCommandExceptionType(Component.literal("The Sculptory engine is not running"));
     private final Supplier<PaperEditHost> host;
+    private final Optional<DevExtras> extras;
 
-    public PaperCommands(Supplier<PaperEditHost> host) {
+    public PaperCommands(Supplier<PaperEditHost> host, Optional<DevExtras> extras) {
         this.host = host;
+        this.extras = extras;
     }
 
     public void register(CommandDispatcher<CommandSourceStack> dispatcher, CommandBuildContext context) {
-        LiteralArgumentBuilder<CommandSourceStack> root = literal("sculptory")
+        // Like the loaders' command: only a holder of use (or admin) sees /sculptory at all; the console always.
+        LiteralArgumentBuilder<CommandSourceStack> root = literal("sculptory").requires(source -> allowed(source, Perm.USE))
                 .then(literal("fill").requires(source -> allowed(source, Perm.ADMIN))
                         .then(argument("from", BlockPosArgument.blockPos())
                                 .then(argument("to", BlockPosArgument.blockPos())
@@ -65,28 +65,8 @@ public final class PaperCommands {
                 .then(literal("undo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, true)))
                 .then(literal("redo").requires(source -> allowed(source, Perm.ADMIN)).executes(c -> undoRedo(c, false)))
                 .then(literal("version").executes(this::version));
-        // Dev only: the adapter checks, the frame-size probe and the region benchmark exist only when the JVM was started
-        // for them (SelfTest.enabled), and then only for the console or a holder of sculptory.selftest (not ops).
-        if (SelfTest.enabled()) {
-            root.then(literal("selftest").requires(SelfTest::allowed)
-                            .executes(c -> SelfTest.run(host.get(), c.getSource(), ""))
-                            .then(argument("player", EntityArgument.player())
-                                    .executes(c -> SelfTest.run(host.get(), c.getSource(),
-                                            EntityArgument.getPlayer(c, "player").getGameProfile().getName()))))
-                    .then(literal("wgbench").requires(SelfTest::allowed)
-                            .executes(c -> RegionBench.run(host.get(), c.getSource(), 48))
-                            .then(argument("height", IntegerArgumentType.integer(1, 384))
-                                    .executes(c -> RegionBench.run(host.get(), c.getSource(),
-                                            IntegerArgumentType.getInteger(c, "height")))))
-                    .then(literal("nettest").requires(SelfTest::allowed)
-                            .then(argument("player", EntityArgument.player())
-                                    .then(argument("bytes", IntegerArgumentType.integer(1, 4 * 1024 * 1024))
-                                            .then(argument("route", StringArgumentType.word())
-                                                    .executes(c -> NetTest.send(c.getSource(),
-                                                            EntityArgument.getPlayer(c, "player"),
-                                                            IntegerArgumentType.getInteger(c, "bytes"),
-                                                            StringArgumentType.getString(c, "route")))))));
-        }
+        // The dev jar's self-test commands (DevExtras); the release jar has none.
+        extras.ifPresent(dev -> dev.commands(root, host));
         dispatcher.register(root);
     }
 
@@ -97,11 +77,18 @@ public final class PaperCommands {
         return running;
     }
 
+    /**
+     * Who may address a command node, as the loaders' command decides it: a player holding {@code node}, or holding
+     * {@code admin} (a permissions plugin may grant admin alone, so it counts for every node), or the console and RCON
+     * (level 4, not command blocks). Without a running engine, no player.
+     */
     private boolean allowed(CommandSourceStack source, Perm node) {
         ServerPlayer player = source.getPlayer();
         if (player == null) return source.hasPermission(4);
         PaperEditHost running = host.get();
-        return running != null && running.engine().permissions().has(player, node);
+        if (running == null) return false;
+        return running.engine().permissions().has(player, Perm.ADMIN)
+                || node != Perm.ADMIN && running.engine().permissions().has(player, node);
     }
 
     private int fill(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
@@ -148,15 +135,15 @@ public final class PaperCommands {
         }
     }
 
+    /**
+     * {@code /sculptory version} ({@code use}): the server's builds and protocol and the caller's client build; for admins
+     * and the console every other online player's too. The same report as the loaders' command ({@link VersionReport}).
+     */
     private int version(CommandContext<CommandSourceStack> context) {
         CommandSourceStack source = context.getSource();
-        StringBuilder text = new StringBuilder("Sculptory for Paper ").append(Sculptory.productBuildId())
-                .append(" (engine ").append(Sculptory.buildId()).append(")");
-        ServerPlayer player = source.getPlayer();
-        if (player != null) {
-            text.append("; your client: ").append(ServerNet.clientBuild(player).orElse("no Sculptory handshake"));
-        }
-        source.sendSuccess(() -> Component.literal(text.toString()), false);
+        String text = VersionReport.text(source.getPlayer(), source.getServer().getPlayerList().getPlayers(),
+                allowed(source, Perm.ADMIN));
+        source.sendSuccess(() -> Component.literal(text), false);
         return 1;
     }
 

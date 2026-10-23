@@ -12,7 +12,8 @@ website: https://github.com/thearticulateidiot/sculptory
 softdepend: [WorldGuard, WorldEdit, LuckPerms]
 load: POSTWORLD
 permissions:
-  # The dev-only self-test, network test and region benchmark (they exist only with -Dsculptory.selftest.enabled=true).
+  # The dev-only self-test, network test and region benchmark (they exist only with -Dsculptory.selftest.enabled=true,
+  # and only in the dev jar).
   # Never granted by default, operators included.
   sculptory.selftest:
     default: false

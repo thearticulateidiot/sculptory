@@ -74,6 +74,7 @@ public final class SelfTest {
                 new Group("fill-undo", EditChecks::fillUndo),
                 new Group("physics-off", EditChecks::physicsOff),
                 new Group("worldguard", RegionChecks::cells),
+                new Group("worldguard missing region data", RegionChecks::missingRegionData),
                 new Group("worldguard flags", RegionChecks::flags),
                 new Group("worldguard loopholes", RegionChecks::loopholes),
                 new Group("entities", RegionChecks::entities),
@@ -86,7 +87,8 @@ public final class SelfTest {
                 new Group("scatter", ScatterChecks::run),
                 new Group("permissions", PermissionChecks::run),
                 new Group("history saving", HistoryChecks::saveHooks),
-                new Group("network", NetChecks::joinRace));
+                new Group("network", NetChecks::joinRace),
+                new Group("network: reload", NetChecks::reload));
     }
 
     /** Whether the dev commands and the start-up run exist at all (JVM properties; never on by default). */

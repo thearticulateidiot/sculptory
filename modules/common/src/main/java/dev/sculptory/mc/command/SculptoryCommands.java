@@ -13,14 +13,12 @@ import dev.sculptory.core.edit.CellMask;
 import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.ConflictPolicy;
-import dev.sculptory.mc.Sculptory;
 import dev.sculptory.mc.engine.impl.EditServiceHost;
 import dev.sculptory.mc.engine.impl.EngineRuntime;
 import dev.sculptory.mc.loader.Loaders;
 import dev.sculptory.mc.net.ServerNet;
-import dev.sculptory.protocol.v2.Handshake;
+import dev.sculptory.mc.net.VersionReport;
 import dev.sculptory.protocol.v2.Phase;
-import dev.sculptory.protocol.v2.ProtocolV2;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.JobListener;
 import dev.sculptory.server.engine.JobResult;
@@ -203,24 +201,13 @@ public final class SculptoryCommands {
 
     /**
      * {@code /sculptory version} ({@code use}): the server's build id and protocol, and the build of the caller's client; for
-     * admins and the console also every other online player's.
+     * admins and the console also every other online player's ({@link VersionReport}, shared with Paper's command).
      */
     private static int version(CommandContext<CommandSourceStack> context) {
         CommandSourceStack source = context.getSource();
-        // The engine build id is what client and server compare; the product id says which mod this server runs.
-        String server = Sculptory.buildId();
-        StringBuilder text = new StringBuilder("Sculptory ").append(server).append(" on this server (")
-                .append(Sculptory.productBuildId()).append(", protocol ").append(ProtocolV2.VERSION).append(')');
-        ServerPlayer caller = source.getPlayer();
-        if (caller != null) text.append("\nYour client: ").append(describeClient(caller, server));
-        if (admin(source)) {
-            for (ServerPlayer player : source.getServer().getPlayerList().getPlayers()) {
-                if (player == caller) continue;
-                text.append("\n  ").append(player.getGameProfile().getName()).append(": ")
-                        .append(describeClient(player, server));
-            }
-        }
-        source.sendSuccess(() -> Component.literal(text.toString()), false);
+        String text = VersionReport.text(source.getPlayer(), source.getServer().getPlayerList().getPlayers(),
+                admin(source));
+        source.sendSuccess(() -> Component.literal(text), false);
         return 1;
     }
 
@@ -277,20 +264,6 @@ public final class SculptoryCommands {
         return text.toString();
     }
 
-    private static String describeClient(ServerPlayer player, String serverBuild) {
-        return describeClient(ServerNet.clientBuild(player).orElse(""), ServerNet.isIncompatible(player), serverBuild);
-    }
-
-    /** How {@code /sculptory version} describes a client's build next to the server's. */
-    static String describeClient(String clientBuild, boolean incompatible, String serverBuild) {
-        if (clientBuild.isEmpty()) return "no Sculptory editor connected";
-        if (incompatible) return clientBuild + ", another protocol: editing is off (install the server's build)";
-        if (clientBuild.equals(serverBuild)) return clientBuild + ", the same build";
-        if (Handshake.differentBuilds(clientBuild, serverBuild)) {
-            return clientBuild + ", a different build of the same protocol: editing works, but the same build is safer";
-        }
-        return clientBuild + ", the same protocol (which build isn't known)";
-    }
 
     private static int cancel(CommandContext<CommandSourceStack> context) throws CommandSyntaxException {
         CommandSourceStack source = context.getSource();

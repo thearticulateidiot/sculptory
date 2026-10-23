@@ -3,12 +3,17 @@ package dev.sculptory.paper.perm;
 import com.sk89q.worldedit.bukkit.BukkitAdapter;
 import com.sk89q.worldedit.math.BlockVector2;
 import com.sk89q.worldedit.math.BlockVector3;
+import com.sk89q.worldedit.world.World;
 import com.sk89q.worldguard.WorldGuard;
+import com.sk89q.worldguard.config.WorldConfiguration;
 import com.sk89q.worldguard.protection.flags.Flags;
 import com.sk89q.worldguard.protection.flags.StateFlag;
 import com.sk89q.worldguard.protection.managers.RegionManager;
 import com.sk89q.worldguard.protection.regions.ProtectedCuboidRegion;
 import com.sk89q.worldguard.protection.regions.ProtectedPolygonalRegion;
+import com.sk89q.worldguard.protection.regions.RegionContainer;
+import java.lang.reflect.Method;
+import java.util.function.Supplier;
 import net.minecraft.server.level.ServerLevel;
 
 /**
@@ -79,6 +84,71 @@ public final class WorldGuardTestRegions {
         return id + ": " + (region == null ? "missing" : "contains=" + region.contains(x, y, z) + " min="
                 + region.getMinimumPoint() + " max=" + region.getMaximumPoint()) + ", regions at the point "
                 + manager.getApplicableRegions(BlockVector3.at(x, y, z)).size();
+    }
+
+
+    /**
+     * Runs {@code body} while {@code level} has no region manager: with {@code regionsOn}, as when the world's region
+     * data failed to load (WorldGuard then protects everything there); without, as when regions are off in the world.
+     * The world's regions are unloaded first (WorldGuard saves them as it does) and loaded back afterwards, whatever
+     * {@code body} does. Server thread, within one call, so no tick passes without them.
+     */
+    public static <T> T withoutRegionManager(ServerLevel level, boolean regionsOn, Supplier<T> body) {
+        World world = BukkitAdapter.adapt(level.getWorld());
+        RegionContainer container = WorldGuard.getInstance().getPlatform().getRegionContainer();
+        WorldConfiguration config = WorldGuard.getInstance().getPlatform().getGlobalStateManager().get(world);
+        boolean wasOn = config.useRegions;
+        container.unload(world);
+        config.useRegions = regionsOn;
+        try {
+            if (container.get(world) != null) {
+                throw new IllegalStateException("WorldGuard kept a region manager for " + level.dimension().location());
+            }
+            return body.get();
+        } finally {
+            config.useRegions = wasOn;
+            load(container, world);
+        }
+    }
+
+    /** WorldGuard loads a world's regions in its protected {@code RegionContainer.load(World)} (what world load calls). */
+    private static void load(RegionContainer container, World world) {
+        try {
+            Method load = RegionContainer.class.getDeclaredMethod("load", World.class);
+            load.setAccessible(true);
+            if (load.invoke(container, world) == null) {
+                throw new IllegalStateException("WorldGuard did not load the regions of " + world.getName() + " back");
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("could not load the regions of " + world.getName() + " back", e);
+        }
+    }
+
+    /** Whether WorldGuard lets {@code player} bypass its regions in {@code level} (an operator does by default). */
+    public static boolean bypasses(net.minecraft.server.level.ServerPlayer player, ServerLevel level) {
+        return WorldGuard.getInstance().getPlatform().getSessionManager().hasBypass(
+                com.sk89q.worldguard.bukkit.WorldGuardPlugin.inst().wrapPlayer(player.getBukkitEntity()),
+                BukkitAdapter.adapt(level.getWorld()));
+    }
+
+    /** Whether WorldGuard has a region manager for {@code level} (regions on and loaded). */
+    public static boolean hasManager(ServerLevel level) {
+        return WorldGuard.getInstance().getPlatform().getRegionContainer().get(BukkitAdapter.adapt(level.getWorld())) != null;
+    }
+
+    /**
+     * A per-cell answer whose WorldGuard call fails to link (as with another WorldGuard API) refuses the cell instead of
+     * throwing into the executor: true when the guarded answer was "refused" and nothing escaped.
+     */
+    public static boolean linkageErrorRefuses() {
+        Protection.CellTest guarded = WorldGuardProtection.guarded((x, y, z) -> {
+            throw new NoSuchMethodError("com.sk89q.worldguard.protection.regions.RegionQuery.testBuild (self-test)");
+        });
+        try {
+            return !guarded.allowed(0, 0, 0);
+        } catch (LinkageError e) {
+            return false;
+        }
     }
 
     public static void remove(ServerLevel level, String id) {
