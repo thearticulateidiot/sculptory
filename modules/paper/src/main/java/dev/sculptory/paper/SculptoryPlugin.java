@@ -10,10 +10,11 @@ import dev.sculptory.paper.perm.SculptoryProtection;
 import dev.sculptory.protocol.v2.ProtocolV2;
 import java.util.Optional;
 import net.minecraft.server.MinecraftServer;
+import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
- * Sculptory on Paper (spike). A Bukkit plugin: Paper enables it after the worlds have loaded and disables it before
+ * Sculptory on Paper. A Bukkit plugin: Paper enables it after the worlds have loaded and disables it before
  * they are saved, which is where the engine starts and stops ({@link PaperServerLoader} turns that into the loader
  * seam's lifecycle hooks for the common code).
  */
@@ -23,6 +24,8 @@ public final class SculptoryPlugin extends JavaPlugin {
     private volatile PaperEditHost host;
     /** The dev jar's self-test (empty in the release jar). */
     private final Optional<DevExtras> extras = DevExtras.find();
+    /** Why the plugin stays disabled on this server (another Minecraft version), or empty. */
+    private Optional<String> refusal = Optional.empty();
 
     /** The loader seam this plugin installed (the self-test asks it about the network). */
     public PaperServerLoader loader() {
@@ -38,6 +41,13 @@ public final class SculptoryPlugin extends JavaPlugin {
     @Override
     public void onLoad() {
         instance = this;
+        // Before anything touches the server's internals: on another Minecraft version they may not be what this jar
+        // was compiled against (MinecraftVersionGuard), so nothing more is set up there.
+        refusal = MinecraftVersionGuard.refusal(MinecraftVersionGuard.builtFor(), Bukkit.getMinecraftVersion());
+        if (refusal.isPresent()) {
+            Sculptory.LOG.error(refusal.get());
+            return;
+        }
         // Before any common code runs: the game internals it reads, Paper's way.
         McInternals.install(PaperAccess.INSTANCE);
         loader = new PaperServerLoader(this);
@@ -46,6 +56,11 @@ public final class SculptoryPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        if (refusal.isPresent()) {
+            Sculptory.LOG.error(refusal.get());
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
         MinecraftServer server = MinecraftServer.getServer();
         Sculptory.LOG.info("Sculptory for Paper {} enabling (engine {}, protocol {}, s2c through {})",
                 Sculptory.productBuildId(), Sculptory.buildId(), ProtocolV2.VERSION,
@@ -62,6 +77,7 @@ public final class SculptoryPlugin extends JavaPlugin {
 
     @Override
     public void onDisable() {
+        if (refusal.isPresent()) return; // nothing was set up (another Minecraft version)
         // A self-test in progress puts its test areas back while the plugin can still write (dev only).
         extras.ifPresent(DevExtras::disabling);
         MinecraftServer server = MinecraftServer.getServer();

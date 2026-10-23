@@ -99,17 +99,42 @@ def commonPatches = [
 ].collectEntries { k, v -> [k, v.collect { [it[0].toString(), it[1].toString()] }] }
 
 // What the patches leave must stay as it is: a new use of these in the sources the plugin compiles would run on Paper
-// without the mixin, the light-engine call or the patch it relies on.
+// without the mixin, the light-engine call or the patch it relies on. Each guard is [pattern, the files allowed to use
+// it with how many uses each ("path=count,..."; empty: none), why]. The patterns are matched on each file's code with
+// comments left out and whitespace normalised, so a call split over several lines is seen too.
 def commonDriftGuards = [
-        [/waitForPendingTasks\(/, '0',
+        [/waitForPendingTasks\(/, '',
          "Paper's (Moonrise's) light engine throws there: route it through PaperAccess.lightMarker (a patch)."],
-        [/setBlock\([^;]*UPDATE_KNOWN_SHAPE/, '0',
+        [/setBlock\([^;]*UPDATE_KNOWN_SHAPE/, '',
          'A physics-off write needs PaperAccess.setBlockWithoutCallbacks on Paper (no mixin cancels onPlace/onRemove).'],
-        [/saveAsPassenger\(|saveWithoutId\(|\.save\(new CompoundTag/, '1',
+        [/saveAsPassenger\(|saveWithoutId\(|\.save\(new CompoundTag/, 'dev/sculptory/mc/world/McEntities.java=1',
          "Entity NBT is captured in McEntities.save alone, where CraftBukkit's world and spawn keys are stripped (a patch); another capture would keep them."],
-        [/EditScope\.suppressPhysics\(\)/, '2',
+        // BlockWriter.apply: the physics-off write (patched to PaperAccess.setBlockWithoutCallbacks, which skips
+        // onPlace and onRemove itself) and Clearable.tryClear on the physics-on path. The second runs unsuppressed on
+        // Paper, which is harmless for vanilla's block entities (checked against Paper 1.21.1's sources): every
+        // clearContent only empties the block entity's items except the jukebox's, which changes its own HAS_RECORD
+        // property, and a same-block change runs no onRemove or onPlace behaviour (nothing drops). The cell is then
+        // written with physics on anyway, and its emptied contents cannot spill.
+        [/EditScope\.suppressPhysics\(\)/, 'dev/sculptory/mc/world/BlockWriter.java=2',
          "EditScope suppresses nothing on Paper (its mixin is absent): BlockWriter's two uses are covered, a new one is not."],
 ].collect { it.collect { s -> s.toString() } }
+
+// Every mixin of modules/common, with what does its work on Paper, which has no mixins: a mixin added to common would
+// otherwise be silently absent from the plugin. The build fails when the mixin folder holds other files than these.
+def commonMixinsOnPaper = [
+        'AbstractBlockStateMixin.java'            : 'PaperAccess.setBlockWithoutCallbacks (the BlockWriter patch)',
+        'BlockItemInvoker.java'                   : 'PaperAccess (McInternals)',
+        'BuilderCaptureMixin.java'                : 'PaperBuilderSteps',
+        'EntityChunkDataAccessMixin.java'         : 'HistorySaveHooks',
+        'FluidTrailBlockChangeMixin.java'         : 'PaperFluidTrails',
+        'FluidTrailChunkDataMixin.java'           : 'PaperFluidTrails',
+        'FluidTrailTickMixin.java'                : 'PaperFluidTrails',
+        'LightBatchMixin.java'                    : 'the LightBatch stand-in (src/commonReplacements)',
+        'PlayerManagerMixin.java'                 : 'PermissionWatch',
+        'ServerChunkLoadingManagerMixin.java'     : 'HistorySaveHooks',
+        'ServerPlayerInteractionManagerMixin.java': 'BuilderModeListener',
+        'VerticallyAttachableBlockItemAccessor.java': 'PaperAccess (McInternals)',
+]
 // Known detail, not patched: ClientSync and ServerNet resend whole chunks with the four-argument
 // ClientboundLevelChunkWithLightPacket constructor, which Paper marks @Deprecated @DoNotUse in favour of the one with
 // Anti-Xray's "modifyBlocks" flag. Paper's four-argument form passes modifyBlocks = true, so with Anti-Xray on a resent
@@ -121,6 +146,8 @@ def commonForPaper = tasks.register('commonForPaper', CommonOverlay) {
     excludes = commonExcludes
     patches = commonPatches
     limits = commonDriftGuards
+    pinnedFolder = 'dev/sculptory/mc/mixin'
+    pinnedFiles = commonMixinsOnPaper
     outputDir = layout.buildDirectory.dir('generated/commonForPaper')
 }
 
@@ -204,7 +231,7 @@ processResources {
     def minecraft = rootProject.minecraft_version.toString()
     inputs.property 'version', version
     inputs.property 'minecraft', minecraft
-    filesMatching('plugin.yml') { expand version: version, minecraft: minecraft }
+    filesMatching(['plugin.yml', 'sculptory-paper.properties']) { expand version: version, minecraft: minecraft }
 }
 
 // The probe: all of modules/common/src/main (the mixin classes too, compiled but never applied: Paper has no mixins)
@@ -248,6 +275,8 @@ tasks.named('test') {
         systemProperty 'sculptory.devJar', devJarFile.get().asFile.absolutePath
     }
     systemProperty 'sculptory.devClassDirs', sourceSets.devtest.output.classesDirs.asPath
+    // MinecraftVersionGuardTest: the version processResources wrote into the plugin's resources.
+    systemProperty 'sculptory.minecraftVersion', rootProject.minecraft_version.toString()
 }
 
 /** Copies Java sources with literal patches; each patch must match at least once in its file. */
@@ -262,13 +291,24 @@ abstract class CommonOverlay extends DefaultTask {
     abstract MapProperty<String, List<List<String>>> getPatches()
 
     /**
-     * Drift guards, checked on the patched copy: [regex, most occurrences allowed, why]. Code lines only (comment lines
-     * are skipped). A new use in modules/common of something only a patch makes Paper-safe fails the build here.
-     * The patterns match one line at a time: a call split over two lines, or reached through a helper of another name,
-     * is not seen, so a guard is a tripwire for the plain form of the call, not a proof.
+     * Drift guards, checked on the patched copy: [regex, the files allowed to match it ("path=count,..." relative to
+     * the source root; empty: none), why]. Each file's code is matched with its comments left out and its whitespace
+     * normalised (runs of whitespace become one space, none around . ( ) , ;), so a call split over lines is seen. A new
+     * use in modules/common of something only a patch makes Paper-safe fails the build here. A call reached through a
+     * helper of another name is not seen: a guard is a tripwire for the call itself, not a proof.
      */
     @Input
     abstract ListProperty<List<String>> getLimits()
+
+    /** A folder of the source (relative path) whose files must be exactly {@link #getPinnedFiles}'s keys; optional. */
+    @Input
+    @org.gradle.api.tasks.Optional
+    abstract Property<String> getPinnedFolder()
+
+    /** The pinned folder's files (paths relative to it) and, for each, what replaces it on Paper. */
+    @Input
+    @org.gradle.api.tasks.Optional
+    abstract MapProperty<String, String> getPinnedFiles()
 
     @OutputDirectory
     abstract DirectoryProperty getOutputDir()
@@ -282,6 +322,7 @@ abstract class CommonOverlay extends DefaultTask {
         // Read before the closure: inside it, the copy spec's own source and excludes would be found first.
         File from = source.get().asFile
         List<String> skipped = excludes.get()
+        if (pinnedFolder.isPresent()) checkPin(new File(from, pinnedFolder.get()))
         fs.sync { spec ->
             spec.from(from)
             spec.exclude(skipped)
@@ -300,22 +341,85 @@ abstract class CommonOverlay extends DefaultTask {
             }
             file.setText(text, 'UTF-8')
         }
-        limits.getOrElse([]).each { List<String> limit ->
-            def pattern = java.util.regex.Pattern.compile(limit[0])
-            int max = limit[1] as int
-            List<String> found = []
-            out.eachFileRecurse(groovy.io.FileType.FILES) { File f ->
-                if (!f.name.endsWith('.java')) return
-                f.readLines('UTF-8').eachWithIndex { String line, int i ->
-                    String code = line.trim()
-                    if (code.startsWith('*') || code.startsWith('//') || code.startsWith('/*')) return
-                    if (pattern.matcher(line).find()) found << "${out.toPath().relativize(f.toPath())}:${i + 1}"
-                }
-            }
-            if (found.size() > max) {
-                throw new GradleException("Paper drift guard: ${found.size()} uses of /${limit[0]}/ in modules/common " +
-                        "(at most ${max}): ${found}. ${limit[2]}")
+        List<List<String>> guards = limits.getOrElse([])
+        if (guards.isEmpty()) return
+        Map<String, String> code = [:]
+        out.eachFileRecurse(groovy.io.FileType.FILES) { File f ->
+            if (f.name.endsWith('.java')) {
+                code[out.toPath().relativize(f.toPath()).toString().replace(File.separatorChar, (char) '/')] =
+                        normalised(f.getText('UTF-8'))
             }
         }
+        guards.each { List<String> guard ->
+            def pattern = java.util.regex.Pattern.compile(guard[0])
+            Map<String, Integer> allowed = guard[1].split(',').findAll { !it.isBlank() }.collectEntries {
+                def (path, count) = it.split('=')
+                [(path.trim()): count.trim() as int]
+            }
+            List<String> over = []
+            code.each { String path, String text ->
+                int uses = 0
+                def matcher = pattern.matcher(text)
+                while (matcher.find()) uses++
+                int max = allowed.getOrDefault(path, 0)
+                if (uses > max) over << "${path}: ${uses} (allowed ${max})"
+            }
+            if (!over.isEmpty()) {
+                throw new GradleException("Paper drift guard: /${guard[0]}/ in modules/common where it is not covered: " +
+                        "${over}. ${guard[2]} (Allowed: ${allowed.isEmpty() ? 'nowhere' : allowed}; modules/paper/build.gradle, " +
+                        "commonDriftGuards.)")
+            }
+        }
+    }
+
+    private void checkPin(File folder) {
+        Set<String> found = new TreeSet<>()
+        if (folder.isDirectory()) {
+            folder.eachFileRecurse(groovy.io.FileType.FILES) { File f ->
+                found << folder.toPath().relativize(f.toPath()).toString().replace(File.separatorChar, (char) '/')
+            }
+        }
+        Set<String> pinned = new TreeSet<>(pinnedFiles.get().keySet())
+        if (found == pinned) return
+        Set<String> added = found - pinned
+        Set<String> gone = pinned - found
+        throw new GradleException("modules/common's ${pinnedFolder.get()} changed (new: ${added ?: 'none'}; gone: " +
+                "${gone ?: 'none'}). Paper has no mixins, so a mixin there does nothing in the Paper plugin: write its " +
+                "Paper replacement first (as PaperBuilderSteps, PaperFluidTrails or PermissionWatch replace the others), " +
+                "then pin the file with that replacement in commonMixinsOnPaper (modules/paper/build.gradle); for a " +
+                "removed file, remove its pin.")
+    }
+
+    /**
+     * A Java source's code without its comments, whitespace normalised: runs of whitespace become one space, and none
+     * is left around . ( ) , ; so a call reads the same however it is split over lines. String and character literals
+     * are kept as they are (a comment marker inside one is not a comment).
+     */
+    static String normalised(String source) {
+        StringBuilder code = new StringBuilder(source.length())
+        int i = 0
+        int n = source.length()
+        while (i < n) {
+            if (source.startsWith('//', i)) {
+                int end = source.indexOf('\n', i)
+                i = end < 0 ? n : end
+            } else if (source.startsWith('/*', i)) {
+                int end = source.indexOf('*/', i + 2)
+                i = end < 0 ? n : end + 2
+                code.append(' ')
+            } else if (source.startsWith('"', i) || source.startsWith("'", i)) {
+                String close = source.startsWith('"""', i) ? '"""' : source.substring(i, i + 1)
+                int start = i
+                i += close.length()
+                // A backslash (char 92) escapes the next character.
+                while (i < n && !source.startsWith(close, i)) i += (source.charAt(i) as int) == 92 ? 2 : 1
+                i = Math.min(n, i + close.length())
+                code.append(source, start, i)
+            } else {
+                code.append(source.charAt(i))
+                i++
+            }
+        }
+        return code.toString().replaceAll(/\s+/, ' ').replaceAll(/ ?([.(),;]) ?/, '$1')
     }
 }
