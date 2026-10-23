@@ -593,16 +593,79 @@ class SurfaceKernelTest {
                     new Case("beyond the end", 9, 65, 11, new Dab(0, 152, 65 * 16 + 8, 11 * 16 + 8, 255)),
                     new Case("on the face", 8, 65, 0, new Dab(0, 128, 65 * 16 + 8, 8, 255)));
             for (Case c : cases) {
-                FakeWorld world = thinWall(70, false);
-                world.set(c.x(), c.y(), c.z(), dirt);
-                List<List<Write>> steps = heldByStep(smooth, c.dab(), world, 5);
-                String label = c.name() + ", r" + radius;
-                assertEquals(List.of(new Write(c.x(), c.y(), c.z(), air)), steps.get(0), label + ", step 1");
-                for (int s = 1; s < 5; s++) assertEquals(List.of(), steps.get(s), label + ", step " + (s + 1));
-                for (int y = 60; y <= 70; y++) {
-                    for (int z = -10; z <= 10; z++) assertEquals(dirt, world.get(9, y, z), label + " at " + y + "," + z);
+                for (boolean floored : new boolean[] {false, true}) {
+                    FakeWorld world = thinWall(70, floored);
+                    world.set(c.x(), c.y(), c.z(), dirt);
+                    List<List<Write>> steps = heldByStep(smooth, c.dab(), world, 5);
+                    String label = c.name() + (floored ? ", on a floor" : "") + ", r" + radius;
+                    assertEquals(List.of(new Write(c.x(), c.y(), c.z(), air)), steps.get(0), label + ", step 1");
+                    for (int s = 1; s < 5; s++) assertEquals(List.of(), steps.get(s), label + ", step " + (s + 1));
+                    for (int y = 60; y <= 70; y++) {
+                        for (int z = -10; z <= 10; z++) {
+                            assertEquals(dirt, world.get(9, y, z), label + " at " + y + "," + z);
+                            if (floored && y == 60) {
+                                assertEquals(air, world.get(8, y, z), label + ", the foot open at " + z);
+                                assertEquals(air, world.get(10, y, z), label + ", the foot open at " + z);
+                            }
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    /**
+     * A slot one block wide between a thin flake (6 high, on a floor) and a thick cliff fills in the first step, as it
+     * did before Smooth kept sheets (the flake then belongs to the cliff and nothing more changes over five steps); the
+     * flake's open side, a real foot, stays open (before the sheet rules, radius 8 filled 15 cells of it).
+     */
+    @Test
+    void aSlotBetweenAThinFlakeAndACliffFills() {
+        for (int radius : new int[] {3, 8}) {
+            FakeWorld world = floor(60);
+            for (int x = 2; x <= 20; x++) {
+                for (int z = -20; z <= 20; z++) for (int y = 61; y <= 70; y++) world.set(x, y, z, stone);
+            }
+            for (int z = -20; z <= 20; z++) for (int y = 61; y <= 66; y++) world.set(0, y, z, dirt);
+            Dab dab = new Dab(0, 24, 63 * 16 + 8, 8, 255);
+            List<List<Write>> steps = heldByStep(spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
+                    .withSurface(null), dab, world, 5);
+            int filled = 0, removed = 0;
+            for (Write write : steps.get(0)) {
+                if (write.state == air) {
+                    assertEquals(2, write.x, "only the cliff's top edge rounds off: " + write);
+                    removed++;
+                } else {
+                    assertEquals(1, write.x, "only the slot fills: " + write);
+                    filled++;
+                }
+            }
+            String label = "r" + radius;
+            assertEquals(radius == 3 ? 28 : 92, filled, label);
+            assertEquals(radius == 3 ? 0 : 7, removed, label);
+            for (int y = 61; y <= 66; y++) {
+                for (int z = -6; z <= 6; z++) {
+                    if (inBall(dab, radius, 1, y, z)) assertNotEquals(air, world.get(1, y, z), label + " slot " + y + "," + z);
+                }
+            }
+            for (int s = 1; s < 5; s++) assertEquals(List.of(), steps.get(s), label + ", step " + (s + 1));
+        }
+    }
+
+    /**
+     * A ledge one block thick sticking out of a thick cliff, held for five steps: the ledge stays whole, and the inside
+     * corners above and below it, where it meets the cliff (15 solid cells of 27), stay open (before, they filled).
+     */
+    @Test
+    void aLedgeOutOfACliffKeepsItsCornersOpen() {
+        for (int radius : new int[] {3, 8}) {
+            FakeWorld world = new FakeWorld(states);
+            for (int x = 5; x <= 20; x++) {
+                for (int z = -20; z <= 20; z++) for (int y = 50; y <= 80; y++) world.set(x, y, z, stone);
+            }
+            for (int x = -3; x <= 4; x++) for (int z = -10; z <= 10; z++) world.set(x, 65, z, stone);
+            assertEquals(List.of(), held(spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
+                    .withSurface(null), new Dab(0, 72, 65 * 16 + 8, 8, 255), world, 5), "r" + radius);
         }
     }
 

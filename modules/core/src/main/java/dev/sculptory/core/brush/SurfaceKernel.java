@@ -60,7 +60,8 @@ import java.util.List;
  * block across and ridges or fins under 3 blocks high still smooth away. Above and below the build height count as
  * solid there, an unloaded cell or one outside the ball's box as neither. Nor does Smooth fill an open cell against a
  * sheet's face ({@code Pass.againstSheet}: beside a wall cell along the wall's open axis, or above or below a slab
- * cell), which would pile ground at a thin wall's foot and then cost the wall its rows; other fills are unchanged.
+ * cell, with no solid cell beyond it), which would pile ground at a thin wall's foot and then cost the wall its rows;
+ * a slot one block wide between a sheet and other ground, and other fills, are as before.
  *
  * <p><b>Masks and the clip box</b> behave as in the Terrain mode, per changed cell instead of per column: the mask sees
  * the line's surface block (Raise, Lower, Flatten) or the cell with the block it becomes or loses (Smooth), its y, and
@@ -1213,18 +1214,22 @@ final class SurfaceKernel {
          * Whether Smooth leaves open cell (x, y, z) open although its vote says fill: it lies against a sheet's face,
          * beside a wall cell along the axis the wall is open along, or above or below a slab cell. Filling there would
          * pile ground against a wall one block thick (a three-high wall on a floor gets 15 solid cells of 27 at its
-         * foot), and the wall, no longer open on both sides at its bottom row, would lose the rest a row a step.
-         * Reads stay within the ball's box: a wall cell's height reaches two cells above and below it, at most the
-         * box's edge for a cell of the ball.
+         * foot), and the wall, no longer open on both sides at its bottom row, would lose the rest a row a step. Only
+         * where the cell is open beyond, on its other side along that axis: a slot one block wide between a sheet and
+         * other ground (a flake against a cliff, a ledge under a ceiling, the inside corner where a wall ends against
+         * thick ground) fills as before. Reads stay within the ball's box: a wall cell's height reaches two cells above
+         * and below it, at most the box's edge for a cell of the ball.
          */
         private static boolean againstSheet(Ball ball, int x, int y, int z) {
             for (int axis : new int[] {0, 2}) {
                 for (int side = -1; side <= 1; side += 2) {
                     int nx = x + (axis == 0 ? side : 0), nz = z + (axis == 2 ? side : 0);
-                    if (wallAxis(ball, nx, y, nz) == axis) return true;
+                    int bx = x - (axis == 0 ? side : 0), bz = z - (axis == 2 ? side : 0);
+                    if (wallAxis(ball, nx, y, nz) == axis && !sheetSolid(neighbour(ball, bx, y, bz))) return true;
                 }
             }
-            return slab(ball, x, y - 1, z) || slab(ball, x, y + 1, z);
+            return slab(ball, x, y - 1, z) && !sheetSolid(neighbour(ball, x, y + 1, z))
+                    || slab(ball, x, y + 1, z) && !sheetSolid(neighbour(ball, x, y - 1, z));
         }
 
         /**

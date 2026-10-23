@@ -834,15 +834,22 @@ final class SurfaceKernelReference {
             return false;
         }
 
-        /** Whether an open cell lies against a sheet's face (beside a wall along its open axis, above or below a slab). */
+        /**
+         * Whether an open cell lies against a sheet's face (beside a wall along its open axis, above or below a slab)
+         * with no solid cell beyond it on that axis (a slot one block wide fills).
+         */
         private static boolean againstSheet(Ball ball, int x, int y, int z) {
             for (int axis : new int[] {0, 2}) {
                 int[] d = AXES[axis];
                 for (int s : new int[] {-1, 1}) {
-                    if (wallAxis(ball, x + s * d[0], y, z + s * d[2]) == axis) return true;
+                    boolean beyondSolid = sheetSolid(neighbour(ball, x - s * d[0], y, z - s * d[2]));
+                    if (!beyondSolid && wallAxis(ball, x + s * d[0], y, z + s * d[2]) == axis) return true;
                 }
             }
-            return slab(ball, x, y + 1, z) || slab(ball, x, y - 1, z);
+            for (int s : new int[] {-1, 1}) {
+                if (!sheetSolid(neighbour(ball, x, y - s, z)) && slab(ball, x, y + s, z)) return true;
+            }
+            return false;
         }
 
         private static boolean slab(Ball ball, int x, int y, int z) {
