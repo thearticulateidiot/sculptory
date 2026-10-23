@@ -808,21 +808,55 @@ final class SurfaceKernelReference {
             return ball.inBox(x, y, z) && ball.kind(x, y, z) == STRUCTURE;
         }
 
+        private static final int[][] AXES = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+
         /**
-         * Whether a ground cell is part of a sheet one block thick (solid on both sides along one axis and open on both
-         * sides along exactly one other, or solid on both sides along two): Smooth does not remove it. Added with the
-         * kernel's own (2026-10-22), so the two still compare the same rule.
+         * Whether Smooth keeps a ground cell its vote would open: a cell of a slab or of a wall at least 3 blocks tall,
+         * one block thick, or a solid cell beside one in the sheet's plane (its rim). Added with the kernel's own
+         * (2026-10-22), so the two still compare the same rule.
          */
         private static boolean sheet(Ball ball, int x, int y, int z) {
-            int open = 0, solid = 0;
-            int[][] axes = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
-            for (int[] d : axes) {
-                byte low = neighbour(ball, x - d[0], y - d[1], z - d[2]);
-                byte high = neighbour(ball, x + d[0], y + d[1], z + d[2]);
-                if (low == OPEN && high == OPEN) open++;
-                if (sheetSolid(low) && sheetSolid(high)) solid++;
+            if (slab(ball, x, y, z) || wallAxis(ball, x, y, z) >= 0) return true;
+            for (int axis = 0; axis < 3; axis++) {
+                int[] d = AXES[axis];
+                for (int s : new int[] {-1, 1}) {
+                    int nx = x + s * d[0], ny = y + s * d[1], nz = z + s * d[2];
+                    if (axis != 1 && slab(ball, nx, ny, nz)) return true;
+                    int open = wallAxis(ball, nx, ny, nz);
+                    if (open >= 0 && open != axis) return true;
+                }
             }
-            return solid >= 2 || (solid == 1 && open == 1);
+            return false;
+        }
+
+        private static boolean slab(Ball ball, int x, int y, int z) {
+            return sheetSolid(neighbour(ball, x, y, z)) && both(ball, x, y, z, 1, true)
+                    && !both(ball, x, y, z, 0, true) && !both(ball, x, y, z, 2, true)
+                    && (both(ball, x, y, z, 0, false) || both(ball, x, y, z, 2, false));
+        }
+
+        private static int wallAxis(Ball ball, int x, int y, int z) {
+            if (!sheetSolid(neighbour(ball, x, y, z))) return -1;
+            boolean openX = both(ball, x, y, z, 0, true), openZ = both(ball, x, y, z, 2, true);
+            if (openX == openZ) return -1;
+            int open = openX ? 0 : 2;
+            if (!both(ball, x, y, z, 1, false) && !both(ball, x, y, z, 2 - open, false)) return -1;
+            int run = 1;
+            for (int dy = 1; dy <= 2 && thin(ball, x, y + dy, z, open); dy++) run++;
+            for (int dy = 1; dy <= 2 && thin(ball, x, y - dy, z, open); dy++) run++;
+            return run >= 3 ? open : -1;
+        }
+
+        private static boolean thin(Ball ball, int x, int y, int z, int open) {
+            return sheetSolid(neighbour(ball, x, y, z)) && both(ball, x, y, z, open, true);
+        }
+
+        /** Whether both neighbours along {@code axis} are open ({@code open}) or solid. */
+        private static boolean both(Ball ball, int x, int y, int z, int axis, boolean open) {
+            int[] d = AXES[axis];
+            byte low = neighbour(ball, x - d[0], y - d[1], z - d[2]);
+            byte high = neighbour(ball, x + d[0], y + d[1], z + d[2]);
+            return open ? low == OPEN && high == OPEN : sheetSolid(low) && sheetSolid(high);
         }
 
         private static byte neighbour(Ball ball, int x, int y, int z) {

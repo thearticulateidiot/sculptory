@@ -22,13 +22,12 @@ import org.junit.jupiter.api.Test;
  * write of every step, in order, as a fingerprint taken on main 6a043a85 before the Smooth kernel was made faster
  * (2026-09-29); Raise, Lower and Flatten pinned again the same day, after the brush feel round gave them the cylinder
  * and Flatten its first-dab block (the moving radius-7 Raise and Lower strokes came out the same). Smooth pinned again
- * on 2026-10-22, when it stopped removing sheets one block thick: the scene's rolling ground has fins one block thick
- * (columns several blocks above both neighbours along z), and the cells of those Smooth now keeps change seven of the
- * Smooth strokes (16 to 71 cells kept per stroke, nearly all in the ground, each listed with its neighbours when this
- * was pinned: solid on both sides along one axis and open on both along one other, or solid on both sides along two).
- * Any change to the output of Raise, Lower, Smooth or Flatten in the Surface
- * mode fails here: strokes with
- * accumulators, falloffs, both shapes, symmetry copies whose balls overlap, steps listed in any order, masks (slope
+ * on 2026-10-22, when it stopped removing walls (3 or more blocks tall) and slabs one block thick with their rims: the
+ * scene's rolling ground has fins one block thick and several blocks high (columns well above both neighbours along
+ * z), whose cells and rims Smooth now keeps, which changes eight of the Smooth strokes (31 to 150 cells kept per
+ * stroke when this was pinned: about a quarter fin cells, the rest their rims, all but at most four in the ground; no
+ * slab cells). Any change to the output of Raise, Lower, Smooth or Flatten in the Surface mode fails here: strokes
+ * with accumulators, falloffs, both shapes, symmetry copies whose balls overlap, steps listed in any order, masks (slope
  * included), the clip box, an unloaded chunk, the world's bottom and top, structures, plants and water.
  */
 class SurfaceKernelFingerprintTest {
@@ -45,16 +44,16 @@ class SurfaceKernelFingerprintTest {
     private static final Map<String, String> EXPECTED = new LinkedHashMap<>();
 
     static {
-        EXPECTED.put("smooth r32 wall", "5140b10a7e9ae679/2265");
+        EXPECTED.put("smooth r32 wall", "981963c5139991be/2175");
         EXPECTED.put("smooth r32 overhang, twice", "f5973b29a347391c/13");
         EXPECTED.put("smooth r10 along the wall", "2d1b677fed802cd1/4");
-        EXPECTED.put("smooth r24 held still", "e54df0e279bf9f21/1231");
-        EXPECTED.put("smooth r16 square linear mirror x", "a2e68f5e2d40e13b/307");
-        EXPECTED.put("smooth r12 sphere rotate 4", "1198b390d95e9f9f/606");
-        EXPECTED.put("smooth r14 overlapping step", "1aaa98622bfa5d95/27");
-        EXPECTED.put("smooth r20 masked and clipped", "7f4bf374c3496399/88");
-        EXPECTED.put("smooth r20 by an unloaded chunk", "ad673a3a1cc43ede/481");
-        EXPECTED.put("smooth r32 at the bottom and top", "406508242e688e77/1901");
+        EXPECTED.put("smooth r24 held still", "4768db745f98971e/1168");
+        EXPECTED.put("smooth r16 square linear mirror x", "74c28e4a4f06536b/301");
+        EXPECTED.put("smooth r12 sphere rotate 4", "8291ecac65d79d77/596");
+        EXPECTED.put("smooth r14 overlapping step", "e0823544f01dbd06/22");
+        EXPECTED.put("smooth r20 masked and clipped", "df32128cd2f59320/87");
+        EXPECTED.put("smooth r20 by an unloaded chunk", "1556fedab82e5efe/459");
+        EXPECTED.put("smooth r32 at the bottom and top", "4801fc3bf611c3ef/1820");
         EXPECTED.put("RAISE r32 wall", "fe33af6f748fb3f1/1765");
         EXPECTED.put("RAISE r7 stroke", "f9a119e340b2d264/304");
         EXPECTED.put("LOWER r32 wall", "1fb230603db5e7a5/1796");

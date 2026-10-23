@@ -387,8 +387,10 @@ class SurfaceKernelTest {
      */
     @Test
     void aSideFaceDecidesWhenItIsThreeOrMoreBlocksTall() {
-        FakeWorld westFacing = wallOnFloor(false);
-        FakeWorld northFacing = wallOnFloor(true);
+        FakeWorld westFacing = wallOnFloor(Facing.WEST);
+        FakeWorld northFacing = wallOnFloor(Facing.NORTH);
+        FakeWorld eastFacing = wallOnFloor(Facing.EAST);
+        FakeWorld southFacing = wallOnFloor(Facing.SOUTH);
         FakeWorld twoHigh = terrain((x, z) -> x >= 0 ? 62 : 60);
         FakeWorld threeHigh = terrain((x, z) -> x >= 0 ? 63 : 60);
         for (int radius : new int[] {3, 5, 8}) {
@@ -399,6 +401,15 @@ class SurfaceKernelTest {
                             label);
                     assertEquals(Facing.NORTH, SurfaceNormal.facingAt(northFacing, 8, row * 16 + 8, across, radius),
                             label + " (north)");
+                }
+            }
+            for (int across : new int[] {160, 159, 161}) {
+                for (int row = 60; row <= 63; row++) {
+                    String label = "thick wall, row " + row + ", " + across + " r" + radius;
+                    assertEquals(Facing.EAST, SurfaceNormal.facingAt(eastFacing, across, row * 16 + 8, 8, radius),
+                            label + " (east)");
+                    assertEquals(Facing.SOUTH, SurfaceNormal.facingAt(southFacing, 8, row * 16 + 8, across, radius),
+                            label + " (south)");
                 }
             }
             for (int across : new int[] {0, 1, -1}) {
@@ -418,10 +429,29 @@ class SurfaceKernelTest {
             // Raise along the thick wall's foot thickens the wall, not the floor strip in front of it.
             Dab foot = new Dab(0, 144, 60 * 16 + 8, 8, 255);
             List<Write> raised = apply(spec(BrushTool.RAISE, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE)
-                    .withSurface(null), foot, wallOnFloor(false));
+                    .withSurface(null), foot, wallOnFloor(Facing.WEST));
             assertFalse(raised.isEmpty());
             for (Write write : raised) assertEquals(8, write.x, "the foot, r" + radius + ": " + write);
         }
+    }
+
+    /**
+     * Only cells with an open cell in front count toward a face's height: a stair (a structure, as a torch is) in front
+     * of the middle row of a three-high wall on a floor cuts the count, so its top and bottom rows fall to the
+     * brush-sized estimate (pinned as it is: up, except the top row at radius 3), and the middle row, with no open cell
+     * in front, has no face at the point at all.
+     */
+    @Test
+    void aStructureInFrontOfAWallCutsTheFacesHeight() {
+        FakeWorld world = thinWall(62, true);
+        world.set(8, 61, 0, stairs);
+        for (int radius : new int[] {3, 5, 8}) {
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(world, 144, 60 * 16 + 8, 8, radius), "bottom r" + radius);
+            assertEquals(Facing.UP, SurfaceNormal.facingAt(world, 144, 61 * 16 + 8, 8, radius), "middle r" + radius);
+            assertEquals(radius == 3 ? Facing.WEST : Facing.UP,
+                    SurfaceNormal.facingAt(world, 144, 62 * 16 + 8, 8, radius), "top r" + radius);
+        }
+        assertEquals(null, SurfaceNormal.faceAt(world, 144, 61 * 16 + 8, 8));
     }
 
     /**
@@ -496,8 +526,8 @@ class SurfaceKernelTest {
                 new Case("one-high step, its side", lowStep, 0, 61 * 16 + 8, 8, Facing.UP),
                 new Case("two-high step, its side", highStep, 0, 61 * 16 + 8, 8, Facing.UP),
                 new Case("alternating columns, a side", bumpy, 16, 61 * 16 + 8, 8, Facing.UP),
-                new Case("thick wall on a floor, its foot", wallOnFloor(false), 144, 60 * 16 + 8, 8, Facing.WEST),
-                new Case("floor at a thick wall's foot", wallOnFloor(false), 8 * 16 + 8, 60 * 16, 8, Facing.UP),
+                new Case("thick wall on a floor, its foot", wallOnFloor(Facing.WEST), 144, 60 * 16 + 8, 8, Facing.WEST),
+                new Case("floor at a thick wall's foot", wallOnFloor(Facing.WEST), 8 * 16 + 8, 60 * 16, 8, Facing.UP),
                 new Case("floor", floor(60), 3 * 16, 61 * 16, -2 * 16, Facing.UP),
                 new Case("ceiling", ceiling(70), 8, 70 * 16, 8, Facing.DOWN),
                 new Case("ceiling, a sixteenth below", ceiling(70), 8, 70 * 16 - 1, 8, Facing.DOWN),
@@ -527,28 +557,93 @@ class SurfaceKernelTest {
     }
 
     /**
-     * Smooth keeps a wall one block thick, aimed at from either side: its inner cells, its top row and its end column
-     * stay (the vote alone, 9 solid cells of 27, took every one), and nothing fills beside it. Its top corner, open on
-     * three sides, still rounds off.
+     * Smooth held on a wall one block thick with free ends, aimed at from either side, at its middle, at an end's top
+     * corner, and (on a five-high wall) at an end with both corners in reach: nothing changes, over five steps of one
+     * stroke. The vote alone (9 solid cells of 27) took every cell; protecting only the sheet's own cells let the free
+     * corner go, and with it the next cells in, one layer a step.
      */
     @Test
-    void smoothKeepsAWallOneBlockThick() {
+    void heldSmoothKeepsAWallOneBlockThickWithItsEndsAndCorners() {
         for (int radius : new int[] {3, 8}) {
             BrushSpec smooth = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
             for (int x16 : new int[] {144, 160}) {
-                FakeWorld world = thinWall(70, false);
-                List<Write> writes = apply(smooth, new Dab(0, x16, 65 * 16 + 8, 8, 255), world);
-                assertEquals(List.of(), writes, "x16 " + x16 + " r" + radius);
-                // At the top end: the top row and the end column stay, the corner goes.
-                List<Write> end = apply(smooth, new Dab(1, x16, 70 * 16 + 8, 10 * 16 + 8, 255), world);
-                assertEquals(List.of(new Write(9, 70, 10, air)), end, "x16 " + x16 + " r" + radius);
+                String label = "x16 " + x16 + " r" + radius;
+                assertEquals(List.of(), held(smooth, new Dab(0, x16, 65 * 16 + 8, 8, 255), thinWall(70, false), 5),
+                        label + ", the middle");
+                assertEquals(List.of(), held(smooth, new Dab(0, x16, 70 * 16 + 8, 10 * 16 + 8, 255),
+                        thinWall(70, false), 5), label + ", the top corner");
+                assertEquals(List.of(), held(smooth, new Dab(0, x16, 62 * 16 + 8, 10 * 16 + 8, 255),
+                        thinWall(64, false), 5), label + ", a five-high wall's end");
+            }
+        }
+    }
+
+    /** A slab one block thick, held on its middle and on a free corner, from above and below: nothing changes. */
+    @Test
+    void heldSmoothKeepsASlabOneBlockThickWithItsCorners() {
+        for (int radius : new int[] {3, 8}) {
+            BrushSpec smooth = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
+            for (int y16 : new int[] {71 * 16, 70 * 16}) {
+                for (int corner = 0; corner < 2; corner++) {
+                    FakeWorld slab = new FakeWorld(states);
+                    for (int x = -10; x <= 10; x++) for (int z = -10; z <= 10; z++) slab.set(x, 70, z, stone);
+                    int at = corner == 0 ? 8 : 10 * 16 + 8;
+                    assertEquals(List.of(), held(smooth, new Dab(0, at, y16, at, 255), slab, 5),
+                            "r" + radius + " y16 " + y16 + (corner == 0 ? " middle" : " corner"));
+                }
             }
         }
     }
 
     /**
+     * Ridges and fins one block thick on a floor: one or two high they smooth away as before the sheet rule (the write
+     * sets the kernel wrote then: a one-high ridge removed, a two-high one loses its top while its foot fills out on
+     * both sides); three high it is a wall and stays, though its foot still fills out.
+     */
+    @Test
+    void smoothLevelsRidgesUnderThreeBlocksAndKeepsTallerFins() {
+        for (int radius : new int[] {3, 8}) {
+            BrushSpec smooth = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
+            int reach = radius == 3 ? 2 : 7;
+            for (int high = 1; high <= 3; high++) {
+                FakeWorld world = floor(60);
+                for (int z = -20; z <= 20; z++) for (int y = 61; y <= 60 + high; y++) world.set(0, y, z, stone);
+                Set<Write> expected = new HashSet<>();
+                for (int z = -reach; z <= reach; z++) {
+                    if (high == 1) expected.add(new Write(0, 61, z, air));
+                    if (high == 2) expected.add(new Write(0, 62, z, air));
+                }
+                int foot = high == 1 ? -1 : high == 2 ? reach : radius == 3 ? 1 : 7;
+                for (int z = -foot; z <= foot; z++) {
+                    expected.add(new Write(-1, 61, z, grass));
+                    expected.add(new Write(1, 61, z, grass));
+                }
+                List<Write> writes = apply(smooth, new Dab(0, 8, (61 + high) * 16, 8, 255), world);
+                assertEquals(expected, new HashSet<>(writes), high + " high, r" + radius);
+            }
+        }
+    }
+
+    /**
+     * Known limit, pinned as it is: a wall one block thick that runs diagonally (its blocks touch only at their edges)
+     * is no sheet to the rule, which looks at the six face neighbours: Smooth takes every cell of it inside the ball,
+     * as it always did.
+     */
+    @Test
+    void smoothStillTakesADiagonalWallOneBlockThick() {
+        FakeWorld world = new FakeWorld(states);
+        for (int i = -8; i <= 8; i++) for (int y = 60; y <= 66; y++) world.set(i, y, i, dirt);
+        Dab dab = new Dab(0, -8, 63 * 16 + 8, 8, 255);
+        List<Write> writes = apply(spec(BrushTool.SMOOTH, 3, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null), dab,
+                world);
+        Set<Write> expected = new HashSet<>();
+        for (int i = -2; i <= 1; i++) for (int y = 61; y <= 65; y++) expected.add(new Write(i, y, i, air));
+        assertEquals(expected, new HashSet<>(writes));
+    }
+
+    /**
      * A bump on a wall one block thick goes and the wall behind it stays, aimed at from the bump's side or the other;
-     * a floor or roof one block thick stays; a pillar one block across goes.
+     * a pillar one block across goes.
      */
     @Test
     void smoothRoundsOffBumpsButKeepsSheetsOneBlockThick() {
@@ -565,13 +660,6 @@ class SurfaceKernelTest {
             } else {
                 assertEquals(List.of(), writes, "from the other side the bump is behind the wall");
             }
-        }
-        for (int radius : new int[] {3, 8}) {
-            FakeWorld slab = new FakeWorld(states);
-            for (int x = -10; x <= 10; x++) for (int z = -10; z <= 10; z++) slab.set(x, 70, z, stone);
-            BrushSpec smoothR = spec(BrushTool.SMOOTH, radius, 1f, Falloff.CONSTANT, Shape.CIRCLE).withSurface(null);
-            assertEquals(List.of(), apply(smoothR, new Dab(0, 8, 71 * 16, 8, 255), slab), "from above, r" + radius);
-            assertEquals(List.of(), apply(smoothR, new Dab(1, 8, 70 * 16, 8, 255), slab), "from below, r" + radius);
         }
         // A pillar one block across, open on both sides along x and z, is no sheet: it goes in one dab, as before.
         FakeWorld pillar = floor(60);
@@ -1203,6 +1291,16 @@ class SurfaceKernelTest {
         return List.of(n[0], n[2]);
     }
 
+    /** A stroke of {@code steps} dabs at {@code dab}'s point, one stroke state throughout: every write, in order. */
+    private static List<Write> held(BrushSpec spec, Dab dab, FakeWorld world, int steps) {
+        StrokeState stroke = new StrokeState();
+        List<Write> writes = new ArrayList<>();
+        for (int i = 0; i < steps; i++) {
+            apply(spec, stroke, new Dab(i, dab.x16(), dab.y16(), dab.z16(), dab.pressure()), world, writes);
+        }
+        return writes;
+    }
+
     private static Long[] boxed(long[] n) {
         return new Long[] {n[0], n[1], n[2]};
     }
@@ -1307,17 +1405,20 @@ class SurfaceKernelTest {
     }
 
     /**
-     * Stone up to y 59 over x -30..40, z -30..40, and on it a thick dirt wall from y 60 to 80: x 9..30 over z -20..20
-     * (facing west), or with {@code north} z 9..30 over x -20..20 (facing north).
+     * Stone up to y 59 over x -30..40, z -30..40, and on it a thick dirt wall from y 60 to 80, 22 blocks deep and
+     * 41 wide, facing {@code facing}: its face at x = 9 (west, solid east of it), x = 10 (east, solid west of it), z = 9
+     * (north) or z = 10 (south), so a point on the face has x16 or z16 160 or 144 as in the thin-wall tests.
      */
-    private FakeWorld wallOnFloor(boolean north) {
+    private FakeWorld wallOnFloor(Facing facing) {
         FakeWorld world = new FakeWorld(states);
         for (int x = -30; x <= 40; x++) {
             for (int z = -30; z <= 40; z++) for (int y = 40; y <= 59; y++) world.set(x, y, z, stone);
         }
-        for (int a = 9; a <= 30; a++) {
+        boolean alongZ = facing == Facing.NORTH || facing == Facing.SOUTH;
+        int from = facing.sign() < 0 ? 9 : -12;
+        for (int a = from; a <= from + 21; a++) {
             for (int b = -20; b <= 20; b++) {
-                for (int y = 60; y <= 80; y++) world.set(north ? b : a, y, north ? a : b, dirt);
+                for (int y = 60; y <= 80; y++) world.set(alongZ ? b : a, y, alongZ ? a : b, dirt);
             }
         }
         return world;

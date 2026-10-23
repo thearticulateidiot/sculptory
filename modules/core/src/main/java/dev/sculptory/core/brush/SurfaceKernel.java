@@ -51,12 +51,13 @@ import java.util.List;
  * touching those, so a cave or cellar the ball reaches behind a wall is left alone. Each cell keeps an accumulator: a
  * cell that should flip adds the weight (by its distance from the dab's point) and flips at one whole block; a cell that
  * shouldn't flip is reset. A cell that fills takes the ground block most common around it (faces count 3, edges 2,
- * corners 1; a tie goes to the first in x, then y, then z order). Smooth never removes a cell of a <b>sheet</b>
- * ({@code Pass.sheet}): a ground cell with solid cells on both sides along one axis and open cells on both sides along
- * exactly one other, or solid cells on both sides along two axes, so walls, floors and roofs one block thick stay (the
- * vote alone would take them, 9 solid cells of 27), while bumps, spikes and pillars one block across, and a sheet's
- * corners, still round off. Above and below the build height count as solid there, an unloaded cell as neither.
- * Filling is unchanged.
+ * corners 1; a tie goes to the first in x, then y, then z order). Smooth never removes a cell of a <b>sheet</b> one
+ * block thick or of its rim ({@code Pass.kept}): a slab (open above and below, solid on both sides along x or z), an
+ * upright wall at least {@value SurfaceNormal#WALL_HEIGHT} blocks tall (open on both sides along x or z, as the
+ * direction rule counts a wall), and the solid cells beside those in the sheet's plane (its free ends and corners).
+ * The vote alone takes them (9 solid cells of 27), one layer a step under a held stroke. Bumps, spikes, pillars one
+ * block across and ridges or fins under 3 blocks high still smooth away. Above and below the build height count as
+ * solid there, an unloaded cell or one outside the ball's box as neither. Filling is unchanged.
  *
  * <p><b>Masks and the clip box</b> behave as in the Terrain mode, per changed cell instead of per column: the mask sees
  * the line's surface block (Raise, Lower, Flatten) or the cell with the block it becomes or loses (Smooth), its y, and
@@ -972,7 +973,7 @@ final class SurfaceKernel {
         /** The rest of {@link #smoothCell} for a cell whose vote says it should flip ({@code wantSolid}: fill). */
         private void flip(int a, Ball ball, int x, int y, int z, int i, boolean wantSolid) {
             if (cellDecidedBefore(a, x, y, z)) return;
-            if (!wantSolid && (supports(ball, x, y, z) || sheet(ball, x, y, z))) return;
+            if (!wantSolid && (supports(ball, x, y, z) || kept(ball, x, y, z))) return;
             int k = ball.weight(ball.distance(x, y, z));
             for (int b = a + 1; b < balls.length; b++) {
                 Ball other = balls[b];
@@ -1173,29 +1174,78 @@ final class SurfaceKernel {
         }
 
         /**
-         * Whether a ground cell is part of a sheet, one block thick, which Smooth does not remove: solid cells (ground,
-         * structures, beyond the build height) on both sides of it along one axis and open cells on both sides along
-         * exactly one other (a wall's inner cells, its top row and end column, a floor or roof one block thick), or
-         * solid on both sides along two axes (a sheet's cell behind a bump on it). A spike or pillar one block across is
-         * open on both sides along two axes and goes, as do a sheet's corners and bumps. Its six neighbours only, so the
-         * answer is the same however the ball is read.
+         * Whether Smooth keeps ground cell (x, y, z) although its vote says open: it is a cell of a sheet one block
+         * thick ({@link #slab}, {@link #wallAxis}) or of a sheet's rim, a solid cell with a sheet cell beside it in the
+         * sheet's own plane (a slab's cell beside it along x or z; a wall's beside it along any axis but the one the
+         * wall is open along). The rim keeps a sheet's free ends and corners, which would otherwise go one layer a
+         * step under a held stroke; a bump standing off a sheet, along its open axis, is no rim and goes.
          */
-        private static boolean sheet(Ball ball, int x, int y, int z) {
-            int openAxes = 0, solidAxes = 0;
+        private static boolean kept(Ball ball, int x, int y, int z) {
+            if (slab(ball, x, y, z) || wallAxis(ball, x, y, z) >= 0) return true;
             for (int axis = 0; axis < 3; axis++) {
-                int dx = axis == 0 ? 1 : 0, dy = axis == 1 ? 1 : 0, dz = axis == 2 ? 1 : 0;
-                byte low = neighbour(ball, x - dx, y - dy, z - dz), high = neighbour(ball, x + dx, y + dy, z + dz);
-                if (low == OPEN && high == OPEN) openAxes++;
-                if (sheetSolid(low) && sheetSolid(high)) solidAxes++;
+                for (int side = -1; side <= 1; side += 2) {
+                    int nx = x + (axis == 0 ? side : 0), ny = y + (axis == 1 ? side : 0), nz = z + (axis == 2 ? side : 0);
+                    if (axis != 1 && slab(ball, nx, ny, nz)) return true;
+                    int open = wallAxis(ball, nx, ny, nz);
+                    if (open >= 0 && open != axis) return true;
+                }
             }
-            return solidAxes >= 2 || (solidAxes == 1 && openAxes == 1);
+            return false;
         }
 
+        /**
+         * A cell of a slab one block thick (a floor or roof): solid, open on both sides along y, solid on both sides
+         * along x or z, and not open on both sides along either.
+         */
+        private static boolean slab(Ball ball, int x, int y, int z) {
+            if (!sheetSolid(neighbour(ball, x, y, z)) || !openAlong(ball, 1, x, y, z)) return false;
+            if (openAlong(ball, 0, x, y, z) || openAlong(ball, 2, x, y, z)) return false;
+            return solidAlong(ball, 0, x, y, z) || solidAlong(ball, 2, x, y, z);
+        }
+
+        /**
+         * For a cell of an upright wall one block thick, the horizontal axis it is open along (0 for x, 2 for z); else
+         * -1. The cell is solid, open on both sides along exactly one of x and z, solid on both sides along y or the
+         * other, and the wall is at least {@value SurfaceNormal#WALL_HEIGHT} blocks tall there, as the Surface mode's
+         * direction counts a wall ({@link SurfaceNormal#facingAt}): the cell and the cells above and below it in a row
+         * that are solid and open on both sides along that axis. A ridge or fin one or two blocks high is no wall and
+         * smooths away. Reads up to two cells above and below the cell; outside the ball's box counts as neither solid
+         * nor open.
+         */
+        private static int wallAxis(Ball ball, int x, int y, int z) {
+            if (!sheetSolid(neighbour(ball, x, y, z))) return -1;
+            boolean openX = openAlong(ball, 0, x, y, z), openZ = openAlong(ball, 2, x, y, z);
+            if (openX == openZ) return -1;
+            int open = openX ? 0 : 2, other = openX ? 2 : 0;
+            if (!solidAlong(ball, 1, x, y, z) && !solidAlong(ball, other, x, y, z)) return -1;
+            int height = 1;
+            for (int up = y + 1; height < SurfaceNormal.WALL_HEIGHT && thin(ball, open, x, up, z); up++) height++;
+            for (int down = y - 1; height < SurfaceNormal.WALL_HEIGHT && thin(ball, open, x, down, z); down--) height++;
+            return height >= SurfaceNormal.WALL_HEIGHT ? open : -1;
+        }
+
+        /** Whether the cell is solid and open on both sides along {@code axis}. */
+        private static boolean thin(Ball ball, int axis, int x, int y, int z) {
+            return sheetSolid(neighbour(ball, x, y, z)) && openAlong(ball, axis, x, y, z);
+        }
+
+        private static boolean openAlong(Ball ball, int axis, int x, int y, int z) {
+            int dx = axis == 0 ? 1 : 0, dy = axis == 1 ? 1 : 0, dz = axis == 2 ? 1 : 0;
+            return neighbour(ball, x - dx, y - dy, z - dz) == OPEN && neighbour(ball, x + dx, y + dy, z + dz) == OPEN;
+        }
+
+        private static boolean solidAlong(Ball ball, int axis, int x, int y, int z) {
+            int dx = axis == 0 ? 1 : 0, dy = axis == 1 ? 1 : 0, dz = axis == 2 ? 1 : 0;
+            return sheetSolid(neighbour(ball, x - dx, y - dy, z - dz))
+                    && sheetSolid(neighbour(ball, x + dx, y + dy, z + dz));
+        }
+
+        /** A cell's kind, or {@link #UNLOADED} (neither solid nor open) outside the ball's box. */
         private static byte neighbour(Ball ball, int x, int y, int z) {
             return ball.inBox(x, y, z) ? ball.kind(x, y, z) : UNLOADED;
         }
 
-        /** Solid for {@link #sheet}: ground, a structure, or beyond the build height either way. */
+        /** Solid for {@link #kept}: ground, a structure, or beyond the build height either way. */
         private static boolean sheetSolid(byte kind) {
             return kind == GROUND || kind == STRUCTURE || kind == BELOW || kind == ABOVE;
         }
