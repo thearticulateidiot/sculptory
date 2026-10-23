@@ -113,6 +113,10 @@ public final class PaperEditHost {
         host.saveHooks = HistorySaveHooks.register(plugin, service);
         // After the history hooks: on a chunk unload the trails are folded before the marks are written.
         host.fluidTrails = PaperFluidTrails.register(plugin, engine.fluidTrails());
+        // A world unloaded while the server runs: the engine lets go of it before it saves (jobs, strokes, drags,
+        // history, fluid marks).
+        org.bukkit.Bukkit.getPluginManager().registerEvents(new WorldUnloads(service, planning, host.fluidTrails,
+                engine.fluidTrails()), plugin);
         dev.sculptory.paper.perm.PermissionWatch.register(plugin, service, planning);
         org.bukkit.Bukkit.getPluginManager().registerEvents(new BuilderModeListener(service), plugin);
         ServerNet.install(new NetFacade(service), clips, planning, service, engine.permissions(),

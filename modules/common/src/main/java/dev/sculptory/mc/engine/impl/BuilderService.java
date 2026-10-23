@@ -834,6 +834,15 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
         }
     }
 
+    /** A world is unloading while the server goes on: the drags open in it become entries now. */
+    @Override
+    public void worldUnloading(String worldId) {
+        for (Map.Entry<UUID, PlayerState> entry : List.copyOf(players.entrySet())) {
+            Drag drag = entry.getValue().drag;
+            if (drag != null && drag.worldId.equals(worldId)) closeDrag(entry.getKey(), true);
+        }
+    }
+
     /** Server stop: open drags become entries when history is saved. */
     @Override
     public void shutdown(boolean keep) {

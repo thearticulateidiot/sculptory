@@ -852,6 +852,51 @@ public final class EditExecutor<W> {
     }
 
     /**
+     * {@code world} is about to unload while the server goes on: its jobs end as at {@link #shutdown} (each running one
+     * finishes its current section, then every one ends {@code CANCELLED}; what they applied stays recorded), its edited
+     * chunks go out to the players watching them, and what this executor kept for the world goes, so nothing it runs
+     * touches the world afterwards. Jobs in other worlds, brush work and area holds are left alone (the edit service and
+     * the scatter planner end theirs). Returns how many jobs ended.
+     */
+    public int endWorld(W world) {
+        checkThread();
+        int ended = 0;
+        for (BulkJob<W> job : new ArrayList<>(active)) {
+            if (job.world != world) continue;
+            try {
+                job.completeCurrentSection();
+            } catch (RuntimeException e) {
+                LOG.error("Sculptory job {} failed while finishing its section before its world unloaded", job.id, e);
+            }
+            finish(job, JobOutcome.CANCELLED);
+            ended++;
+        }
+        for (BulkJob<W> job : new ArrayList<>(waiting)) {
+            if (job.world != world) continue;
+            finish(job, JobOutcome.CANCELLED);
+            ended++;
+        }
+        ClientUpdates sync = clientSyncs.remove(world);
+        if (sync != null) {
+            try {
+                sync.flush(tickCount, true);
+            } catch (RuntimeException e) {
+                LOG.error("Sculptory could not send edited chunks to players", e);
+            }
+        }
+        tickets.remove(world);
+        return ended;
+    }
+
+    /** Whether an admitted job (waiting or running) is in {@code world} (tests). */
+    public boolean hasJobIn(W world) {
+        for (BulkJob<W> job : jobs.values()) {
+            if (job.world == world && !job.isDone()) return true;
+        }
+        return false;
+    }
+
+    /**
      * Serves the owners in turn, one {@link BrushWork#runPart} of their head item each, until {@code deadline}. The
      * tick's first turn always runs; a later one only when its item's next piece is predicted to end by the deadline
      * ({@link BrushWork#nextPieceNanos}), else that owner goes first next tick. A finished item leaves its queue (by

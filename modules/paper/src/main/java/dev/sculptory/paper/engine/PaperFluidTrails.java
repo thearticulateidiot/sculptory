@@ -69,15 +69,16 @@ import org.bukkit.plugin.RegisteredListener;
  *
  * <p><b>Marks with the chunks.</b> A column's marks live in its chunk's persistent data container under
  * {@value FluidTrails#NBT_KEY} (the key Fabric writes into the chunk data): read when the chunk loads, written before it
- * unloads, before a full world save, when the plugin is disabled ({@link #flushAll}: Paper disables plugins before
- * its final chunk save, so the unload and save handlers here no longer run for that save), and every {@value #FLUSH_TICKS} ticks for the loaded columns whose
+ * unloads, before a full world save, before a world is unloaded while the server runs ({@link #worldUnloading}), when
+ * the plugin is disabled ({@link #flushAll}: Paper disables plugins before its final chunk save, so the unload and
+ * save handlers here no longer run for that save), and every {@value #FLUSH_TICKS} ticks for the loaded columns whose
  * marks changed (Moonrise's incremental autosave has no event, so a chunk it saves may carry marks up to that old). A
- * clean stop or restart keeps every mark; after a crash the
- * marks of up to the last ~5 s are lost: fluid an entry wrote just before is then no longer followed (its later flow is
- * not undone with it), and marks cleared in those seconds come back stale (fluid poured there later may be taken for
- * the entry's until the cell changes). A column whose trail still holds a part the history could not fold yet (its
- * player's step in flight, its history not loaded) is flagged unsaved at every flush ({@link FluidTrails#chunkSaved}),
- * so the autosave writes that chunk again every flush until the part is folded.
+ * clean stop or restart keeps every mark; after a crash the marks of up to the last ~5 s are lost: fluid an entry wrote
+ * just before is then no longer followed (its later flow is not undone with it), and marks cleared in those seconds
+ * come back stale (fluid poured there later may be taken for the entry's until the cell changes). A column whose trail
+ * still holds a part the history could not fold yet (its player's step in flight, its history not loaded) is flagged
+ * unsaved at every flush ({@link FluidTrails#chunkSaved}), so the autosave writes that chunk again every flush until
+ * the part is folded.
  */
 final class PaperFluidTrails implements Listener {
     /** How often (ticks) changed marks are copied into their chunks' data containers. */
@@ -320,6 +321,19 @@ final class PaperFluidTrails implements Listener {
     int flushAll() {
         int changed = 0;
         for (ServerLevel level : net.minecraft.server.MinecraftServer.getServer().getAllLevels()) changed += flushWorld(level);
+        return changed;
+    }
+
+    /**
+     * {@code level} is unloading while the server runs: its marks go into its chunks' containers (saved by the unload
+     * when it saves the world) and everything held for it here goes. The caller then has FluidTrails forget it.
+     *
+     * @return the columns whose container changed
+     */
+    int worldUnloading(ServerLevel level) {
+        int changed = flushWorld(level);
+        written.remove(level);
+        physicsOn.remove(level);
         return changed;
     }
 

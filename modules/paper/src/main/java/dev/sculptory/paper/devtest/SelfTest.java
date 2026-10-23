@@ -87,6 +87,7 @@ public final class SelfTest {
                 new Group("scatter", ScatterChecks::run),
                 new Group("permissions", PermissionChecks::run),
                 new Group("history saving", HistoryChecks::saveHooks),
+                new Group("world unload", WorldChecks::unload),
                 new Group("network", NetChecks::joinRace));
     }
 
