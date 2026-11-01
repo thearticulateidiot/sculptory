@@ -13,8 +13,9 @@
 #
 # Needs JAVA_HOME (or java on the PATH) pointing to a JDK 21, taskset, curl and jq or python3. Downloads for the Paper
 # self-test are pinned and kept in OUT_DIR/../selftest-cache between runs (scripts/paper-selftest.sh). Prints one line
-# per part and exits non-zero when any part failed. Run one at a time per checkout: two Gradle builds in the same
-# folder overwrite each other's output.
+# per part and exits non-zero when any part failed; a part whose JVMs (checked while it runs) are not on the pinned
+# cores fails as not throttled. It stops the user's Gradle daemons first and builds without one. Run one at a time per
+# checkout: two Gradle builds in the same folder overwrite each other's output.
 set -uo pipefail
 
 cores=2
@@ -45,20 +46,61 @@ fi
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 cpus="0-$((cores - 1))"
+mask="$(printf '%x' $(( (1 << cores) - 1 )))"
 pin=(taskset -c "$cpus")
 verdicts=()
 failed=0
 
-# Runs one part ("$1", logged to "$2"), pinned, and notes its verdict and wall time.
+# Every process under $1, children first.
+descendants() {
+  local child
+  for child in $(ps -o pid= --ppid "$1" 2> /dev/null); do
+    echo "$child"
+    descendants "$child"
+  done
+}
+
+# Runs one part ("$1", logged to "$2") pinned to the cores, and notes its verdict and wall time. taskset pins only the
+# process it starts and what that process starts, so while the part runs every JVM under it (the Gradle build, the
+# GameTest servers it forks, the Paper server) has its affinity checked every 2 s; one that runs on other cores fails
+# the part at once and its processes are stopped, so a check that is not throttled never passes as one.
 part() {
   local name="$1" log="$2"
   shift 2
   local start=$SECONDS
   echo "== $name (cores $cpus, log $log)"
-  if "${pin[@]}" "$@" > "$log" 2>&1; then
-    verdicts+=("PASS  $name  ($((SECONDS - start)) s)")
+  "${pin[@]}" "$@" > "$log" 2>&1 &
+  local top=$! checked=0 wrong="" pid seen=" "
+  while kill -0 "$top" 2> /dev/null; do
+    for pid in $top $(descendants "$top"); do
+      case "$seen" in *" $pid "*) continue ;; esac
+      [ "$(ps -o comm= -p "$pid" 2> /dev/null)" = "java" ] || continue
+      seen="$seen$pid "
+      local got
+      got="$(taskset -p "$pid" 2> /dev/null | sed -E 's/.*: *//')"
+      [ -n "$got" ] || continue
+      checked=$((checked + 1))
+      echo "affinity: pid $pid mask $got ($(ps -o args= -p "$pid" 2> /dev/null | grep -oE '[A-Za-z.]*(GradleDaemon|GradleWrapperMain|GradleMain|KnotServer|paper\.jar|BootstrapLauncher|Worker)[A-Za-z.]*' | head -1))" >> "$log.affinity"
+      if [ "$got" != "$mask" ]; then wrong="pid $pid has affinity mask $got, not $mask"; fi
+    done
+    if [ -n "$wrong" ]; then
+      kill $(descendants "$top") "$top" 2> /dev/null
+      break
+    fi
+    sleep 2
+  done
+  wait "$top"
+  local status=$?
+  if [ -n "$wrong" ]; then
+    verdicts+=("FAIL  $name  (not throttled: $wrong; see $log.affinity)")
+    failed=1
+  elif [ "$checked" -eq 0 ]; then
+    verdicts+=("FAIL  $name  (no JVM seen to check its affinity; see $log)")
+    failed=1
+  elif [ "$status" -eq 0 ]; then
+    verdicts+=("PASS  $name  ($((SECONDS - start)) s, $checked JVMs on mask $mask)")
   else
-    verdicts+=("FAIL  $name  ($((SECONDS - start)) s, see $log)")
+    verdicts+=("FAIL  $name  ($((SECONDS - start)) s, $checked JVMs on mask $mask, see $log)")
     failed=1
   fi
 }
@@ -69,11 +111,14 @@ counts() {
 }
 
 cd "$repo"
+# A Gradle daemon started earlier runs on every core, and a build handed to it would not be throttled: stop the daemons
+# and build without one, so the build JVM and every JVM it forks are children of the pinned process.
+./gradlew --stop > /dev/null
 if [ "$gradle_check" -eq 1 ]; then
-  part "gradle check" "$out/gradle-check.log" ./gradlew check --stacktrace
+  part "gradle check" "$out/gradle-check.log" ./gradlew --no-daemon check --stacktrace
 fi
 if [ "$paper" -eq 1 ]; then
-  part "paper dev jar" "$out/paper-devjar.log" ./gradlew :paper:devJar --stacktrace
+  part "paper dev jar" "$out/paper-devjar.log" ./gradlew --no-daemon :paper:devJar --stacktrace
   if [ "${verdicts[-1]:0:4}" = "PASS" ]; then
     for redstone in VANILLA EIGENCRAFT ALTERNATE_CURRENT; do
       server="$out/paper-$redstone"
