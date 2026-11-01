@@ -388,6 +388,8 @@ class WireGoldenTest {
 
         // Builder mode
         s.put("builder_powers", new C2S.BuilderPowers(BuilderPower.LONG_REACH.bit() | BuilderPower.TINKER.bit()));
+        // Record (after 0.4.0-beta) under the builder_record feature: the ninth bit, sent only when negotiated.
+        s.put("builder_powers_record", new C2S.BuilderPowers(BuilderPower.RECORD.bit() | BuilderPower.LONG_REACH.bit()));
         s.put("builder_place", new C2S.BuilderPlace(9, false, new BlockPos(3, 64, -2), Facing.UP, 0.25f, 1f, 0.5f,
                 BuilderPower.KEEP_SHAPE.bit(), Symmetry.NONE));
         s.put("builder_place_air_mirrored", new C2S.BuilderPlace(-4, true, new BlockPos(-30, 70, 12), Facing.WEST, 0f,

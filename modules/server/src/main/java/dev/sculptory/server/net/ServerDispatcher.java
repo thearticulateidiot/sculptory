@@ -153,7 +153,7 @@ public final class ServerDispatcher<P> {
     /** What this server offers (M1, M2 and M3, and builder mode). */
     public static final Features SERVER_FEATURES = Features.of(Features.STROKES, Features.REGION_OPS, Features.HISTORY,
             Features.CLIPBOARD, Features.SCHEMATICS, Features.LIBRARY, Features.SCATTER, Features.TINKER,
-            Features.BUILDER, Features.EDIT_MASK, Features.NAVIGATE);
+            Features.BUILDER, Features.EDIT_MASK, Features.NAVIGATE, Features.BUILDER_RECORD);
     public static final String NOTICE_REQUEST_REFUSED = "sculptory.notice.request_refused";
     public static final String NOTICE_PREVIEW_REFUSED = "sculptory.notice.preview_refused";
     public static final String NOTICE_LIBRARY_TRUNCATED = "sculptory.notice.library_truncated";
