@@ -25,10 +25,10 @@ like 0.4.0-beta: the two work together, with one difference (below).
 #### New
 
 - **Building by hand goes into the history by default**: builder mode has a ninth power, **Record**, on from the
-  first start. In Creative (with the builder permission on servers), every block you place or break with a block
-  item, and every item frame, painting and armor stand you hang, place, change or break, is one undo step (`Ctrl+Z`)
-  without switching anything on. Buckets, flint and steel, bone meal, an axe, hoe or shovel used on a block, spawn
-  eggs, doors and repeaters switched by hand and lily pads stay vanilla's and can't be undone (see
+  first start. In Creative (with the builder permission on servers), every block you place with a block item or
+  break, and every item frame, painting and armor stand you hang, place, change or break, is one undo step (`Ctrl+Z`)
+  without switching anything on. Buckets, flint and steel, bone meal, the debug stick, an axe, hoe or shovel used on a
+  block, spawn eggs, doors and repeaters switched by hand and lily pads stay vanilla's and can't be undone (see
   [Builder mode](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/builder-mode.md#rules)).
   Switch Record off in the `G` ring, with every other power off too, to play the vanilla way with nothing recorded;
   it stays as you left it across restarts (the other powers are still forgotten). It shows no tag above the hotbar.
@@ -116,8 +116,8 @@ installed. Network protocol 6.
 - **Builder mode fires the server's block events**, so protection and logging plugins see every place and break it
   makes and can cancel one (the step is then put back and refused).
 - **Building by hand goes into the history by default**: the plugin knows builder mode's Record power, so for a
-  player with the Sculptory 0.5.0-beta mod and the builder permission, every block they place or break with a block
-  item in Creative, and every item frame, painting and armor stand they hang, place, change or break, is recorded
+  player with the Sculptory 0.5.0-beta mod and the builder permission, every block they place with a block item or
+  break in Creative, and every item frame, painting and armor stand they hang, place, change or break, is recorded
   without switching a power on; other item uses stay vanilla's (see Fabric 0.5.0-beta, "New").
 - **Other claim plugins are not respected by bulk edits**: fills, brushes and pastes fire no block events, like
   WorldEdit's, so GriefPrevention, Lands, Towny, PlotSquared and other claim plugins neither see nor stop them. Only

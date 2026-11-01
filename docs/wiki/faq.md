@@ -36,7 +36,7 @@ Palette Paint with a weighted mix and a [pattern](mix-patterns.md): Patches for 
 
 ### Can I build by hand with the editor's undo?
 
-Yes: in Creative (with the builder permission on a server), every block you place or break with a block item outside the editor already goes into the history, and so does every item frame, painting and armor stand you hang, place, change or break (the Record power, on from the start), so `Ctrl+Z` takes it back. Buckets, bone meal and other item uses stay vanilla's. Hold `G` for more powers. See [Builder mode](builder-mode.md).
+Yes: in Creative (with the builder permission on a server), every block you place with a block item or break outside the editor already goes into the history, and so does every item frame, painting and armor stand you hang, place, change or break (the Record power, on from the start), so `Ctrl+Z` takes it back. Buckets, bone meal and other item uses stay vanilla's. Hold `G` for more powers. See [Builder mode](builder-mode.md).
 
 ### Do my settings survive a restart or an update?
 
