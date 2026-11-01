@@ -610,7 +610,10 @@ final class HangingChecks {
     /**
      * Claims {@code area} (up to {@link #FLOOR} + 8) with the layer above it, where {@link #floor} puts a glass lid: the
      * checks count the items in their area, and the world may hold blocks over it (bamboo, a tree) that, once the cells
-     * under them are cleared, break in the game's own ticks and drop their items, which the lid keeps out.
+     * under them are cleared, break in the game's own ticks and drop their items, which the lid keeps out. Such a drop
+     * lands on the lid, outside the counted area, and is the world's own (it may lie there until it despawns). That this
+     * is what put the Bamboo item into a CI run's supports check is a hypothesis, not seen: that run's report and log
+     * (the item's position above {@link #FLOOR} + 8, bamboo in the area's columns) would confirm it.
      */
     private static SelfTestRun.Area claim(SelfTestRun r, Box area) {
         return r.claim(box(area.min().x(), area.min().y(), area.min().z(), area.max().x(), FLOOR + 9, area.max().z()));

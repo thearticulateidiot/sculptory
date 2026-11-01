@@ -227,6 +227,10 @@ final class SelfTestRun {
         }
     }
 
+    /** An entity an area set aside ({@link #ready}): its name for the log, its saved data with its passengers. */
+    private record SetAside(String name, CompoundTag data) {
+    }
+
     /** A box as it was when claimed: its cells (state and block entity), its quarts' biomes, its entities. */
     final class Area {
         final Box box;
@@ -235,7 +239,7 @@ final class SelfTestRun {
         private final int[] biomes;
         private final Set<UUID> entities = new HashSet<>();
         /** The entities {@link #ready} took out of the box (their saved data, passengers included), put back last. */
-        private final List<CompoundTag> setAside = new ArrayList<>();
+        private final List<SetAside> setAside = new ArrayList<>();
 
         private Area(Box box) {
             this.box = box;
@@ -267,22 +271,36 @@ final class SelfTestRun {
         }
 
         /**
-         * Takes the entities in the box (not players, nor what a player rides) out of the world, with their passengers,
-         * so the checks start on an area without any: an animal the world spawned there would be counted by them, or
-         * fall onto their floor. {@link #restore} puts them back last. Returns what it took, for the log.
+         * Takes the entities in the box out of the world, with their passengers, so the checks start on an area without
+         * any: an animal the world spawned there would be counted by them, or fall onto their floor. {@link #restore}
+         * puts them back last. Left in place (named in {@code left}, for the group's own guard to refuse): a stack that
+         * holds a player, and one with an entity the world does not save (another plugin's NPC or display), which
+         * could not be put back. Returns what it took.
          */
-        private List<String> setAsideEntities() {
+        private List<String> setAsideEntities(List<String> left) {
             Set<Entity> roots = new java.util.LinkedHashSet<>();
             for (Entity entity : level.getEntities((Entity) null, aabb(box), e -> !(e instanceof Player))) {
                 Entity root = entity.getRootVehicle();
-                if (!(root instanceof Player) && !root.isRemoved()) roots.add(root);
+                if (!root.isRemoved()) roots.add(root);
             }
             List<String> taken = new ArrayList<>();
             for (Entity root : roots) {
+                String name = EntityType.getKey(root.getType()) + " at " + root.blockPosition().toShortString();
+                List<Entity> stack = root.getSelfAndPassengers().toList();
+                boolean saved = stack.stream().allMatch(e -> e.saveAsPassenger(new CompoundTag()));
+                String why = stack.stream().anyMatch(e -> e instanceof Player) ? "carries a player"
+                        : !saved ? "not saved with the world" : null;
+                if (why != null) {
+                    // The area's own from now on: kept at the end, and seen by hadEntities.
+                    for (Entity part : stack) if (!(part instanceof Player)) entities.add(part.getUUID());
+                    left.add(name + " (" + why + ")");
+                    continue;
+                }
                 CompoundTag data = new CompoundTag();
-                if (root.saveAsPassenger(data)) setAside.add(data);
-                taken.add(EntityType.getKey(root.getType()) + " at " + root.blockPosition().toShortString());
-                for (Entity part : root.getSelfAndPassengers().toList()) {
+                root.saveAsPassenger(data);
+                setAside.add(new SetAside(name, data));
+                taken.add(name);
+                for (Entity part : stack) {
                     entities.remove(part.getUUID());
                     part.discard();
                 }
@@ -337,9 +355,18 @@ final class SelfTestRun {
                 if (biomes[i] >= 0 && world.get(q[0], q[1], q[2]) != biomes[i]) world.set(q[0], q[1], q[2], biomes[i]);
             }
             world.flush();
-            for (CompoundTag data : setAside) {
-                Entity back = EntityType.loadEntityRecursive(data.copy(), level, e -> e);
-                if (back != null) level.addFreshEntityWithPassengers(back, CreatureSpawnEvent.SpawnReason.CUSTOM);
+            List<String> lost = new ArrayList<>();
+            for (SetAside entity : setAside) {
+                Entity back = EntityType.loadEntityRecursive(entity.data().copy(), level, e -> e);
+                // Another plugin may cancel the spawn event: then the entity is not back either.
+                boolean added = back != null
+                        && level.tryAddFreshEntityWithPassengers(back, CreatureSpawnEvent.SpawnReason.CUSTOM);
+                if (!added) lost.add(entity.name());
+            }
+            if (!lost.isEmpty()) {
+                Sculptory.LOG.warn("Sculptory self-test: the entities set aside could not all be put back: {}", lost);
+                // Thrown after everything else is put back; finish() rethrows it and the report shows it as an error.
+                throw new IllegalStateException("cleanup: set-aside entities put back: not put back " + lost);
             }
         }
     }
@@ -477,8 +504,10 @@ final class SelfTestRun {
             return null;
         }).thenAccept(ticks -> {
             for (Area area : areas) {
-                List<String> taken = area.setAsideEntities();
+                List<String> left = new ArrayList<>();
+                List<String> taken = area.setAsideEntities(left);
                 if (!taken.isEmpty()) Sculptory.LOG.info("Sculptory self-test: set aside until the end {}", taken);
+                if (!left.isEmpty()) Sculptory.LOG.info("Sculptory self-test: left in place {}", left);
             }
         });
     }
@@ -486,7 +515,10 @@ final class SelfTestRun {
     private String notReady(Box box) {
         for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
             for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
-                if (!level.shouldTickBlocksAt(ChunkPos.asLong(cx, cz))) return "chunk " + cx + "," + cz + " runs no ticks";
+                // On Paper this is the test the world's tick lists make (the chunk holder is ticking-ready).
+                if (!level.shouldTickBlocksAt(ChunkPos.asLong(cx, cz))) {
+                    return "chunk " + cx + "," + cz + " runs no ticks";
+                }
             }
         }
         String unloaded = McEntities.firstUnloaded(level, box);
