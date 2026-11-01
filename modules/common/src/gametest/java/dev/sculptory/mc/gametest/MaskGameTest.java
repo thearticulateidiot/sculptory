@@ -1002,7 +1002,8 @@ public final class MaskGameTest {
     }
 
     /** A transport collecting what the dispatcher sends, decoded. */
-    private static final class Transport implements McTransport {
+    /** A connection that keeps what the dispatcher sends, decoded (MultiplayerGameTest uses it too). */
+    static final class Transport implements McTransport {
         final Harness h;
         final List<S2C> sent = new ArrayList<>();
 
