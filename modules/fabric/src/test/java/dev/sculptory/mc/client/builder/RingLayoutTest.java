@@ -24,7 +24,7 @@ class RingLayoutTest {
     };
     private static final int FONT = 9;
     private static final List<String> NAMES = List.of("Long reach", "Place in air", "Replace", "Bulldozer", "Keep shape",
-            "Force place", "Mirror", "Tinker");
+            "Force place", "Mirror", "Tinker", "Record");
     private static final String TITLE = "Builder powers";
     private static final String HINT = "Release on a power to switch it · tap: Place in air";
     private static final String LONGEST_DESCRIPTION = "Hold and sweep to break everything the crosshair crosses (Shift: only the "

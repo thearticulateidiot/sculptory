@@ -7,7 +7,9 @@ import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
 
 /**
- * The powers that are on, as small tagged chips above the right end of the hotbar; nothing while none is on. Drawn each frame by {@link BuilderClient}'s HUD hook while the editor is closed.
+ * The powers that are on, as small tagged chips above the right end of the hotbar; nothing while none is on. Record,
+ * the default state, has no chip ({@link BuilderClient} passes {@link PowerSet#shown()}). Drawn each frame by
+ * {@link BuilderClient}'s HUD hook while the editor is closed.
  */
 final class BuilderHud {
     static final int CHIP_HEIGHT = 11;

@@ -54,15 +54,40 @@ public final class RingLayout {
         double radiusX = plateWidth / 2.0 + widestChip / 2.0 + GAP;
         double radiusY = plateHeight / 2.0 + CHIP_HEIGHT / 2.0 + GAP;
         menu.setAxes(radiusX, radiusY);
+        plate = new Rect((int) Math.round(menu.centreX() - plateWidth / 2.0), (int) Math.round(menu.centreY() - plateHeight / 2.0),
+                plateWidth, plateHeight);
         chips = new ArrayList<>(names.size());
+        placeChips(names, textWidth);
+        // With an odd number of entries no chip sits square beside or below the plate, and one between (the ninth
+        // power puts Bulldozer at 120°) can reach the plate's corner first: the ring grows a unit at a time along that
+        // chip's direction until every chip clears the plate. Bounded, so a plate wider than any screen still ends.
+        for (int step = 0; step < 400; step++) {
+            int meeting = firstMeeting();
+            if (meeting < 0) break;
+            double angle = Math.toRadians(menu.angleOf(meeting));
+            menu.setAxes(menu.radiusX() + Math.abs(Math.sin(angle)), menu.radiusY() + Math.abs(Math.cos(angle)));
+            placeChips(names, textWidth);
+        }
+    }
+
+    private void placeChips(List<String> names, ToIntFunction<String> textWidth) {
+        chips.clear();
         for (int i = 0; i < names.size(); i++) {
             double[] at = menu.labelCentre(i);
             int width = textWidth.applyAsInt(names.get(i)) + CHIP_PADDING;
             chips.add(new Rect((int) Math.round(at[0] - width / 2.0), (int) Math.round(at[1] - CHIP_HEIGHT / 2.0), width,
                     CHIP_HEIGHT));
         }
-        plate = new Rect((int) Math.round(menu.centreX() - plateWidth / 2.0), (int) Math.round(menu.centreY() - plateHeight / 2.0),
-                plateWidth, plateHeight);
+    }
+
+    /** The first chip that comes within {@link #GAP} of the plate, or -1. */
+    private int firstMeeting() {
+        for (int i = 0; i < chips.size(); i++) {
+            Rect chip = chips.get(i);
+            Rect around = new Rect(chip.x() - GAP, chip.y() - GAP, chip.width() + 2 * GAP, chip.height() + 2 * GAP);
+            if (around.intersects(plate)) return i;
+        }
+        return -1;
     }
 
     /** Entry {@code index}'s chip. */

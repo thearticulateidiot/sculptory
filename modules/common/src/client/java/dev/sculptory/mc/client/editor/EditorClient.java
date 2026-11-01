@@ -209,11 +209,23 @@ public final class EditorClient implements EditorMode.Host {
 
     /**
      * Builder mode tells the editor whether any of its powers is on and how its ring key is bound (the tutorial's
-     * builder-mode lesson asks).
+     * builder-mode lesson asks). Record, on by default, does not count as a power on there.
      */
     public void setBuilderMode(BooleanSupplier powerOn, Supplier<String> ringKey) {
         builderPowerOn = Objects.requireNonNull(powerOn);
         builderRingKey = Objects.requireNonNull(ringKey);
+    }
+
+    /** Whether builder mode's Record power is on, as {@code editor-ui.json} remembers it (on when nothing was saved). */
+    public boolean builderRecord() {
+        uiScale();
+        return uiSizeStore.builderRecord();
+    }
+
+    /** Builder mode's Record power was switched: {@code editor-ui.json} remembers it at once. */
+    public void builderRecordChanged(boolean on) {
+        uiScale();
+        uiSizeStore.builderRecordChanged(on);
     }
 
     // ---- Screenshot tour hooks (dev only: -Dsculptory.tour) ----

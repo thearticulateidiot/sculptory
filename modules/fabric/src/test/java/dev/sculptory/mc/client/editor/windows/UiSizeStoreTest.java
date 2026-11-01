@@ -462,6 +462,60 @@ class UiSizeStoreTest {
         assertEquals(List.of(), problems);
     }
 
+    /** Builder mode's Record power: on with no file, saved at once when switched, left out while on. */
+    @Test
+    void recordIsOnByDefaultSavedAtOnceAndLeftOutWhileOn(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("editor-ui.json");
+        UiSizeStore store = store(path);
+        store.load();
+        assertTrue(store.builderRecord(), "no file: Record is on");
+        store.builderRecordChanged(true);
+        assertFalse(Files.exists(path), "switching to what it is writes nothing");
+        store.builderRecordChanged(false);
+        assertEquals("{\n  \"version\": 1,\n  \"uiSize\": 100,\n  \"builderRecord\": false\n}\n", read(path),
+                "saved at once, without waiting for a settle");
+
+        UiSizeStore reopened = store(path);
+        assertEquals(100, reopened.load());
+        assertFalse(reopened.builderRecord(), "survives a restart");
+        reopened.builderRecordChanged(true);
+        assertEquals("{\n  \"version\": 1,\n  \"uiSize\": 100\n}\n", read(path), "on is left out again");
+        assertEquals(List.of(), problems);
+    }
+
+    /** Record is off only for a JSON false; malformed values, broken and newer files read as on. */
+    @Test
+    void recordIsOffOnlyForAJsonFalse(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("editor-ui.json");
+        assertFalse(recordOf(path, "{\"version\": 1, \"uiSize\": 100, \"builderRecord\": false}"));
+        assertTrue(recordOf(path, "{\"version\": 1, \"uiSize\": 100, \"builderRecord\": true}"));
+        assertTrue(recordOf(path, "{\"version\": 1, \"uiSize\": 100, \"builderRecord\": \"no\"}"));
+        assertTrue(recordOf(path, "{\"version\": 1, \"uiSize\": 100, \"builderRecord\": 0}"));
+        assertTrue(recordOf(path, "{\"version\": 1, \"uiSize\": 100}"), "a file from before Record");
+        assertTrue(recordOf(path, "not json"));
+        assertTrue(recordOf(path, "{\"version\": 2, \"uiSize\": 100, \"builderRecord\": false}"),
+                "a newer file is not used");
+        // Switching Record keeps the other settings and the fields of a newer build.
+        Files.writeString(path, "{\"version\": 1, \"uiSize\": 90, \"flySpeed\": 2, \"other\": 3}",
+                StandardCharsets.UTF_8);
+        UiSizeStore store = store(path);
+        store.load();
+        store.builderRecordChanged(false);
+        JsonObject saved = JsonParser.parseString(read(path)).getAsJsonObject();
+        assertFalse(saved.get("builderRecord").getAsBoolean());
+        assertEquals(90, saved.get("uiSize").getAsInt());
+        assertEquals(2, saved.get("flySpeed").getAsDouble());
+        assertEquals(3, saved.get("other").getAsInt());
+    }
+
+    /** Whether Record is on in a store that read a file holding {@code json}. */
+    private boolean recordOf(Path path, String json) throws Exception {
+        Files.writeString(path, json, StandardCharsets.UTF_8);
+        UiSizeStore store = store(path);
+        store.load();
+        return store.builderRecord();
+    }
+
     /** The fly speed a store reads from a file holding {@code json}. */
     private double flySpeedOf(Path path, String json) throws Exception {
         Files.writeString(path, json, StandardCharsets.UTF_8);
