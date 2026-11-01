@@ -10,21 +10,22 @@
 # the current directory); "download" makes it and refuses one that holds a world already.
 #
 # Every download is pinned: Paper by its build and SHA-256 (PaperMC's Fill v3 API), WorldEdit and WorldGuard by their
-# Modrinth version ids and SHA-512. The pins are the environment variables below, with the defaults CI uses.
+# Modrinth version ids and SHA-512. The pins below are the only copy (the workflow passes none in), so CI and a local
+# run always fetch the same files; a new Paper build or plugin version changes them here.
 # SELFTEST_CACHE (optional, local runs) names a folder that keeps the verified downloads and the server jar Paper
 # patches at its first start, so a fresh server folder does not download them again.
 set -euo pipefail
 
-: "${PAPER_VERSION:=1.21.1}"
-: "${PAPER_BUILD:=133}"
-: "${PAPER_SHA256:=39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9}"
+readonly PAPER_VERSION=1.21.1
+readonly PAPER_BUILD=133
+readonly PAPER_SHA256=39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9
 # The checks the fake-player run makes: fewer means a group was skipped or never ran.
-: "${SELFTEST_MIN_TESTS:=171}"
+readonly SELFTEST_MIN_TESTS=171
 # WorldEdit 7.3.9 and WorldGuard 7.0.12 (Modrinth version ids), the versions the plugin is built against.
-: "${WORLDEDIT_VERSION_ID:=Bu1zaaoc}"
-: "${WORLDEDIT_SHA512:=ce19097ab93a3ff75a929a1efec58138adc5b700f876ec8ac7a96c97d98d77a06f22661f0418c3407d644ca2d9713fde417d5789c79864d9c2094f203f372c76}"
-: "${WORLDGUARD_VERSION_ID:=J66QOTLZ}"
-: "${WORLDGUARD_SHA512:=5917a0bf2de577021a3881e440386acefa285dfb3625c4a69be12922e4bc03cfea16ea07335f0cc71d4ea516f19477679001f6968d853969a89bfee0c9ecd7b9}"
+readonly WORLDEDIT_VERSION_ID=Bu1zaaoc
+readonly WORLDEDIT_SHA512=ce19097ab93a3ff75a929a1efec58138adc5b700f876ec8ac7a96c97d98d77a06f22661f0418c3407d644ca2d9713fde417d5789c79864d9c2094f203f372c76
+readonly WORLDGUARD_VERSION_ID=J66QOTLZ
+readonly WORLDGUARD_SHA512=5917a0bf2de577021a3881e440386acefa285dfb3625c4a69be12922e4bc03cfea16ea07335f0cc71d4ea516f19477679001f6968d853969a89bfee0c9ecd7b9
 : "${SERVER_DIR:=paper-server}"
 : "${SELFTEST_CACHE:=}"
 
@@ -93,7 +94,9 @@ step_download() {
       fetch "$file_url" "plugins/${plugin,,}.jar" sha512sum "${!sha_var}"
     done
     # The vanilla server jar Paper patches at its first start (it checks the jar's hash itself).
-    if [ -n "$SELFTEST_CACHE" ] && [ -d "$SELFTEST_CACHE/paper-cache" ]; then cp -r "$SELFTEST_CACHE/paper-cache" cache; fi
+    if [ -n "$SELFTEST_CACHE" ] && [ -d "$SELFTEST_CACHE/paper-cache" ]; then
+      cp -r "$SELFTEST_CACHE/paper-cache" cache
+    fi
     echo "eula=true" > eula.txt
     printf 'server-port=25580\nonline-mode=false\nspawn-protection=16\n' > server.properties
   )

@@ -163,12 +163,14 @@ redo, saved formats, the network protocol or permissions need tests for the fail
 failure, an exact undo).
 
 On Linux (or WSL), `scripts/paper-selftest.sh <VANILLA|EIGENCRAFT|ALTERNATE_CURRENT>` runs the Paper self-test as the
-`paper-selftest` workflow does (the workflow calls it, with the same pinned downloads), after
+`paper-selftest` workflow does (the workflow calls it, and the pinned downloads live in the script only), after
 `./gradlew :paper:devJar`. GitHub's runners are slower than most desktops, and a test that waits a fixed number of
 ticks for something the game does in the background can pass on a fast machine only: `scripts/check-throttled.sh`
-runs `check` and the self-test for all three redstone implementations pinned to two cores (`-c` sets how many;
-Gradle runs without a daemon, and a part whose JVMs are not on those cores fails) and prints one verdict per part, a stand-in for CI before you push. Tests wait for the state they need (a chunk's entities
-loaded, the game's own tick run) with a generous limit, rather than for a fixed number of ticks.
+runs `check` and the self-test for all three redstone implementations pinned to two cores with taskset (`-c` sets
+how many) and prints one verdict per part, a stand-in for CI before you push. Gradle runs with `--no-daemon`, so the
+build and the test servers it starts stay under the pinned process; the script checks that their JVMs stay on those
+cores and fails a part where one does not. Tests wait for the state they need (a chunk's entities loaded, the game's
+own tick run) with a generous limit, rather than for a fixed number of ticks.
 
 Useful tasks (the examples use `scripts/gradle.ps1`; `./gradlew` takes the same arguments):
 

@@ -13,9 +13,11 @@
 #
 # Needs JAVA_HOME (or java on the PATH) pointing to a JDK 21, taskset, curl and jq or python3. Downloads for the Paper
 # self-test are pinned and kept in OUT_DIR/../selftest-cache between runs (scripts/paper-selftest.sh). Prints one line
-# per part and exits non-zero when any part failed; a part whose JVMs (checked while it runs) are not on the pinned
-# cores fails as not throttled. It stops the user's Gradle daemons first and builds without one. Run one at a time per
-# checkout: two Gradle builds in the same folder overwrite each other's output.
+# per part and exits non-zero when any part failed. Gradle runs with --no-daemon, so it never hands the build to a
+# daemon started earlier (which would run on every core): the build JVM and every JVM it forks are children of the
+# pinned process. While a part runs, the script checks that the pinned process's JVMs stay on the pinned cores, and a
+# part where one does not fails as not throttled. Run one at a time per checkout: two Gradle builds in the same folder
+# overwrite each other's output.
 set -uo pipefail
 
 cores=2
@@ -31,6 +33,10 @@ while getopts "c:o:sp" opt; do
     *) sed -n '5,13p' "$0" >&2; exit 2 ;;
   esac
 done
+if [ "$gradle_check" -eq 0 ] && [ "$paper" -eq 0 ]; then
+  echo "-s and -p together leave nothing to run" >&2
+  exit 2
+fi
 if ! [[ "$cores" =~ ^[1-9][0-9]*$ ]]; then
   echo "CORES must be a positive number, not '$cores'" >&2
   exit 2
@@ -80,7 +86,12 @@ part() {
       got="$(taskset -p "$pid" 2> /dev/null | sed -E 's/.*: *//')"
       [ -n "$got" ] || continue
       checked=$((checked + 1))
-      echo "affinity: pid $pid mask $got ($(ps -o args= -p "$pid" 2> /dev/null | grep -oE '[A-Za-z.]*(GradleDaemon|GradleWrapperMain|GradleMain|KnotServer|paper\.jar|BootstrapLauncher|Worker)[A-Za-z.]*' | head -1))" >> "$log.affinity"
+      local what
+      # A name for the log: the JVM's main class or jar.
+      what="$(ps -o args= -p "$pid" 2> /dev/null \
+        | grep -oE '[A-Za-z.]*(GradleDaemon|GradleWrapperMain|KnotServer|paper\.jar|BootstrapLauncher|Worker)[A-Za-z.]*' \
+        | head -1)"
+      echo "affinity: pid $pid mask $got ($what)" >> "$log.affinity"
       if [ "$got" != "$mask" ]; then wrong="pid $pid has affinity mask $got, not $mask"; fi
     done
     if [ -n "$wrong" ]; then
@@ -111,9 +122,7 @@ counts() {
 }
 
 cd "$repo"
-# A Gradle daemon started earlier runs on every core, and a build handed to it would not be throttled: stop the daemons
-# and build without one, so the build JVM and every JVM it forks are children of the pinned process.
-./gradlew --stop > /dev/null
+# --no-daemon: a Gradle daemon started earlier runs on every core, and a build handed to it would not be throttled.
 if [ "$gradle_check" -eq 1 ]; then
   part "gradle check" "$out/gradle-check.log" ./gradlew --no-daemon check --stacktrace
 fi
@@ -132,5 +141,5 @@ fi
 
 echo
 echo "Throttled check, $cores cores ($out):"
-printf '  %s\n' "${verdicts[@]}"
+printf '  %s\n' ${verdicts[@]+"${verdicts[@]}"}
 exit "$failed"

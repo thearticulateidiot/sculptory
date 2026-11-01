@@ -1,11 +1,12 @@
 # The Paper plugin's self-test on a real Paper server (Paper has no GameTests), called by ci.yml on every push and by
-# release.yml before a Paper release. Paper 1.21.1 build 133 with WorldEdit and WorldGuard, the plugin's dev jar built
-# from this commit (:paper:devJar, sculptory-paper-<build id>-dev.jar: the release jar with the self-test added; the
-# release jar has none), the self-test run at start as a fake player, then the server stops. Fails on any failed check
-# or on fewer checks than SELFTEST_MIN_TESTS. Every download is pinned: Paper by its build and SHA-256 (PaperMC's
-# Fill v3 API), WorldEdit and WorldGuard by their Modrinth version ids and SHA-512. It runs once per Paper redstone
-# implementation (misc.redstone-implementation): Eigencraft and Alternate Current set wires without physics events,
-# which the builder steps follow through the wire power event.
+# release.yml before a Paper release. Paper 1.21.1 with WorldEdit and WorldGuard, the plugin's dev jar built from this
+# commit (:paper:devJar, sculptory-paper-<build id>-dev.jar: the release jar with the self-test added; the release jar
+# has none), the self-test run at start as a fake player, then the server stops. Fails on any failed check
+# or on fewer checks than expected. Every download is pinned: Paper by its build and SHA-256 (PaperMC's Fill v3 API),
+# WorldEdit and WorldGuard by their Modrinth version ids and SHA-512; the pins and the expected count are in
+# scripts/paper-selftest.sh, which the steps run. It runs once per Paper redstone implementation
+# (misc.redstone-implementation): Eigencraft and Alternate Current set wires without physics events, which the builder
+# steps follow through the wire power event.
 # No secret is passed in. Actions are pinned to full commit SHAs; the comment names the release.
 name: Paper self-test
 
@@ -26,17 +27,8 @@ jobs:
         redstone: [VANILLA, EIGENCRAFT, ALTERNATE_CURRENT]
     env:
       REDSTONE: ${{ matrix.redstone }}
-      PAPER_VERSION: "1.21.1"
-      PAPER_BUILD: "133"
-      PAPER_SHA256: 39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9
-      # The checks the fake-player run makes: fewer means a group was skipped or never ran. It must match the
-      # fake-player run's count (raise it with new checks).
-      SELFTEST_MIN_TESTS: "171"
-      # WorldEdit 7.3.9 and WorldGuard 7.0.12 (Modrinth version ids), the versions the plugin is built against.
-      WORLDEDIT_VERSION_ID: Bu1zaaoc
-      WORLDEDIT_SHA512: ce19097ab93a3ff75a929a1efec58138adc5b700f876ec8ac7a96c97d98d77a06f22661f0418c3407d644ca2d9713fde417d5789c79864d9c2094f203f372c76
-      WORLDGUARD_VERSION_ID: J66QOTLZ
-      WORLDGUARD_SHA512: 5917a0bf2de577021a3881e440386acefa285dfb3625c4a69be12922e4bc03cfea16ea07335f0cc71d4ea516f19477679001f6968d853969a89bfee0c9ecd7b9
+      # The pins (Paper's build and SHA-256, WorldEdit's and WorldGuard's Modrinth version ids and SHA-512) and the
+      # least number of checks are scripts/paper-selftest.sh's, in one place for CI and local runs alike.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,8 +45,7 @@ jobs:
       - name: Build the plugin's dev jar
         run: ./gradlew :paper:devJar --stacktrace
 
-      # The steps below are scripts/paper-selftest.sh, which a local run uses too (scripts/check-throttled.sh); the pins
-      # are this job's env, passed to the script.
+      # The steps below are scripts/paper-selftest.sh, which a local run uses too (scripts/check-throttled.sh).
       - name: Download Paper, WorldEdit and WorldGuard
         run: scripts/paper-selftest.sh "$REDSTONE" download
 
