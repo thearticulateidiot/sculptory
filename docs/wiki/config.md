@@ -29,7 +29,7 @@ A job is one server-side edit: a box operation, a paste, move or stack, a scatte
 
 | Key | Default | Range | What it does |
 |---|---|---|---|
-| `editingEnabled` | `true` | `true`, `false` | The master switch. When off, every edit is refused with "Editing is switched off on this server". |
+| `editingEnabled` | `true` | `true`, `false` | The master switch. When off, every edit is refused with "Editing is switched off on this server", and players can't open the editor (`B` says "Editing is off here") or use builder mode: their clicks are the game's own, unrecorded. A reload that switches it back on gives both back at once. |
 | `permissionFallbackOpLevel` | `2` | 0–4 | The op level that holds a node no permissions mod decides. `0` lets every player use everything not denied. |
 | `singleplayerHostAlwaysAllowed` | `true` | `true`, `false` | The singleplayer world's owner holds every node. LAN guests are always checked. |
 | `unloadedChunks` | `"LOAD"` | `"LOAD"`, `"REFUSE"` | What box operations, pastes and moves do where the area isn't loaded: load the chunks (for players with `edit.unloaded`) or refuse. Brushes always need loaded chunks. |

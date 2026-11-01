@@ -34,6 +34,16 @@ public interface EditService<P> {
      */
     default void predicted(P p) {}
 
+    /**
+     * Whether editing is switched on for {@code p} (the config's {@code editingEnabled}, off as the failsafe for a
+     * malformed config). While it is off the dispatcher leaves {@code use} and {@code builder} out of the permissions
+     * it tells the client, so the client sends the player's clicks the vanilla way instead of as builder actions the
+     * server would refuse.
+     */
+    default boolean editingEnabled(P p) {
+        return true;
+    }
+
     /** Ends a stroke, turning its coalesced record into one history entry. */
     void endStroke(P p, int strokeId);
 

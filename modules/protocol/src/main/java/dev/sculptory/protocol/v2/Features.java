@@ -43,6 +43,11 @@ public record Features(SortedSet<String> names) {
      * {@code Navigate}.
      */
     public static final String NAVIGATE = "navigate";
+    /**
+     * The Record builder power (protocol 6, after 0.4.0-beta): the server knows {@link BuilderPower#RECORD}'s bit in
+     * {@code BuilderPowers}. A client sends that bit only when this was negotiated; no message changes with it.
+     */
+    public static final String BUILDER_RECORD = "builder_record";
 
     private static final Pattern NAME = Pattern.compile("[a-z0-9_.:-]{1,64}");
 

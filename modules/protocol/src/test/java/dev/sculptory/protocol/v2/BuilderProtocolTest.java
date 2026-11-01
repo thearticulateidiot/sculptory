@@ -59,17 +59,37 @@ class BuilderProtocolTest {
     @Test
     void powersAreAppendOnlyBits() {
         assertEquals(List.of(BuilderPower.LONG_REACH, BuilderPower.PLACE_IN_AIR, BuilderPower.REPLACE, BuilderPower.BULLDOZER,
-                BuilderPower.KEEP_SHAPE, BuilderPower.FORCE_PLACE, BuilderPower.MIRROR, BuilderPower.TINKER),
-                List.of(BuilderPower.values()), "wire order");
-        assertEquals(0xFF, BuilderPower.ALL);
+                BuilderPower.KEEP_SHAPE, BuilderPower.FORCE_PLACE, BuilderPower.MIRROR, BuilderPower.TINKER,
+                BuilderPower.RECORD), List.of(BuilderPower.values()), "wire order");
+        assertEquals(0x1FF, BuilderPower.ALL);
         assertTrue(BuilderPower.valid(0));
         assertTrue(BuilderPower.valid(BuilderPower.ALL));
-        assertFalse(BuilderPower.valid(0x100));
+        assertFalse(BuilderPower.valid(0x200));
         assertFalse(BuilderPower.valid(-1));
         EnumSet<BuilderPower> some = EnumSet.of(BuilderPower.REPLACE, BuilderPower.TINKER);
         assertEquals(some, BuilderPower.of(BuilderPower.mask(some)));
         assertTrue(BuilderPower.TINKER.in(0x80));
         assertFalse(BuilderPower.TINKER.in(0x7F));
+    }
+
+    /**
+     * Record was appended after 0.4.0-beta: the eight earlier bits keep their values, its bit is the ninth, a v6 mask
+     * holding it is valid and round-trips, and {@link BuilderPower#ALL} covers it. Its own feature name tells a client
+     * whether the server knows the bit.
+     */
+    @Test
+    void recordIsTheNinthBitAndAValidV6Mask() throws ProtocolException {
+        assertEquals(1 << 8, BuilderPower.RECORD.bit());
+        assertEquals(0x80, BuilderPower.TINKER.bit(), "the earlier bits keep their values");
+        assertEquals(BuilderPower.RECORD.bit(), BuilderPower.ALL & BuilderPower.RECORD.bit(), "ALL covers Record");
+        assertTrue(BuilderPower.valid(BuilderPower.RECORD.bit()));
+        assertTrue(BuilderPower.valid(BuilderPower.RECORD.bit() | BuilderPower.LONG_REACH.bit()));
+        assertEquals(EnumSet.of(BuilderPower.RECORD), BuilderPower.of(BuilderPower.RECORD.bit()));
+        C2S.BuilderPowers recordOnly = new C2S.BuilderPowers(BuilderPower.RECORD.bit());
+        byte[] frame = encode(recordOnly);
+        assertArrayEquals(new byte[] {44, (byte) 0x80, 2}, frame, "varint 256");
+        assertEquals(recordOnly, Codec.decodeC2S(frame, STATES));
+        assertEquals("builder_record", Features.BUILDER_RECORD);
     }
 
     @Test
@@ -116,25 +136,25 @@ class BuilderProtocolTest {
 
     @Test
     void invalidValuesAreRefusedByTheRecordsAndMalformedOnTheWire() throws ProtocolException {
-        assertThrows(IllegalArgumentException.class, () -> new C2S.BuilderPowers(0x100));
+        assertThrows(IllegalArgumentException.class, () -> new C2S.BuilderPowers(0x200));
         assertThrows(IllegalArgumentException.class, () -> new C2S.BuilderPowers(-1));
         for (float bad : new float[] {Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, -0.01f, 1.01f}) {
             assertThrows(IllegalArgumentException.class, () -> place(1, bad, 0.5f, 0.5f, 0, Symmetry.NONE), "x " + bad);
             assertThrows(IllegalArgumentException.class, () -> place(1, 0.5f, bad, 0.5f, 0, Symmetry.NONE), "y " + bad);
             assertThrows(IllegalArgumentException.class, () -> place(1, 0.5f, 0.5f, bad, 0, Symmetry.NONE), "z " + bad);
         }
-        assertThrows(IllegalArgumentException.class, () -> place(1, 0.5f, 0.5f, 0.5f, 0x100, Symmetry.NONE));
+        assertThrows(IllegalArgumentException.class, () -> place(1, 0.5f, 0.5f, 0.5f, 0x200, Symmetry.NONE));
         assertThrows(IllegalArgumentException.class,
                 () -> new C2S.BuilderBreak(1, 1, List.of(), 0, Symmetry.NONE, false, true));
         assertThrows(IllegalArgumentException.class,
                 () -> new C2S.BuilderBreak(1, 1, nCells(C2S.BuilderBreak.MAX_CELLS + 1), 0, Symmetry.NONE, false, true));
         assertThrows(IllegalArgumentException.class,
-                () -> new C2S.BuilderBreak(1, 1, List.of(BlockPos.ORIGIN), 1 << 8, Symmetry.NONE, false, true));
+                () -> new C2S.BuilderBreak(1, 1, List.of(BlockPos.ORIGIN), 1 << 9, Symmetry.NONE, false, true));
         assertThrows(NullPointerException.class,
                 () -> new C2S.BuilderBreak(1, 1, java.util.Arrays.asList((BlockPos) null), 0, Symmetry.NONE, false, true));
 
         // On the wire the same values are malformed, never an exception escaping the decoder.
-        assertEquals(ProtocolException.Reason.MALFORMED, reason(new byte[] {44, (byte) 0x80, 2}), "power bit 8");
+        assertEquals(ProtocolException.Reason.MALFORMED, reason(new byte[] {44, (byte) 0x80, 4}), "power bit 9");
         byte[] good = encode(place(1, 0.5f, 0.5f, 0.5f, 0, Symmetry.NONE));
         int hitX = good.length - 14; // f32 x, y, z | varint powers | symmetry mode
         for (float bad : new float[] {Float.NaN, 1.5f, -2f}) {

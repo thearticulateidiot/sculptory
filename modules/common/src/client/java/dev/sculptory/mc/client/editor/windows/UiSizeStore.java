@@ -21,12 +21,14 @@ import java.util.Set;
  * Loads and saves {@code editor-ui.json}: the editor UI size (format in {@link UiScale}), whether the player has
  * dismissed the quick start card ({@code "quickStartSeen": true}, left out until then), the opacity settings of
  * View > Opacity… ({@link UiOpacity}; each left out while at its default) and the fly speed ({@link FlySpeed}, set
- * by the editor's scroll and {@code /flyspeed}; left out at 1×):
+ * by the editor's scroll and {@code /flyspeed}; left out at 1×) and whether builder mode's Record power is on
+ * ({@code "builderRecord": false}, left out while on, its default):
  * <pre>{@code
  * {"version": 1, "uiSize": 80, "quickStartSeen": true,
- *  "panelOpacity": 60, "fadeWhenNotHovered": true, "toolOutlineOpacity": 40, "flySpeed": 2.5}
+ *  "panelOpacity": 60, "fadeWhenNotHovered": true, "toolOutlineOpacity": 40, "flySpeed": 2.5, "builderRecord": false}
  * }</pre>
- * A fly speed that isn't a number reads as 1×; one outside 0.25-8 is clamped into it ({@link FlySpeed#clamp}).
+ * A fly speed that isn't a number reads as 1×; one outside 0.25-8 is clamped into it ({@link FlySpeed#clamp}). Record
+ * is off only for a JSON {@code false}: anything else, a missing file or one from a newer Sculptory, reads as on.
  * A missing, empty or malformed file gives 100%, an unseen card and everything opaque, and the next save replaces it; a
  * file that isn't a JSON object is copied aside as {@code editor-ui.json.bad} ({@link ConfigFile#keepAside}), reported
  * and replaced at once by a version-1 file, so it isn't copied again at every start (a malformed or missing flag reads
@@ -38,15 +40,15 @@ import java.util.Set;
  * version 1. A file of another version (from a newer Sculptory) also gives 100% and the defaults, but is reported and
  * left unchanged; the card then counts as seen, since that can't be saved.
  *
- * <p>The opacity and fly speed fields are new in the same version 1: a build from before reads the size and the flag as
- * always (it ignores fields it doesn't know) and drops them when it saves. This build keeps the fields it doesn't know
- * (from a newer build of version 1) on a save, after its own.
+ * <p>The opacity, fly speed and Record fields are new in the same version 1: a build from before reads the size and
+ * the flag as always (it ignores fields it doesn't know) and drops them when it saves. This build keeps the fields it
+ * doesn't know (from a newer build of version 1) on a save, after its own.
  *
  * <p>Size, opacity and fly speed changes are saved once they settle: holding a UI-size key steps through sizes
  * quickly, a dragged slider changes the opacity at every step, and so does the scroll the fly speed; each step
  * shouldn't write the file. The editor calls
- * {@link #saveIfSettled} every tick and {@link #saveNow} when it closes. Dismissing the card is saved at once. Each
- * save writes every value. Client thread only.
+ * {@link #saveIfSettled} every tick and {@link #saveNow} when it closes. Dismissing the card and switching Record are
+ * saved at once. Each save writes every value. Client thread only.
  */
 public final class UiSizeStore {
     /** How long the size and opacity must stay unchanged before they are written. */
@@ -56,9 +58,10 @@ public final class UiSizeStore {
     static final String FADE_WHEN_NOT_HOVERED = "fadeWhenNotHovered";
     static final String TOOL_OUTLINE_OPACITY = "toolOutlineOpacity";
     static final String FLY_SPEED = "flySpeed";
+    static final String BUILDER_RECORD = "builderRecord";
     /** The fields this build writes itself; any other field of a version-1 file is kept as it was. */
     private static final Set<String> KNOWN = Set.of("version", "uiSize", QUICK_START_SEEN, PANEL_OPACITY,
-            FADE_WHEN_NOT_HOVERED, TOOL_OUTLINE_OPACITY, FLY_SPEED);
+            FADE_WHEN_NOT_HOVERED, TOOL_OUTLINE_OPACITY, FLY_SPEED, BUILDER_RECORD);
 
     private final ConfigFile file;
     /** Whether the size or the opacity changed since the last save. */
@@ -69,6 +72,7 @@ public final class UiSizeStore {
     private boolean quickStartSeen;
     private UiOpacity.Values opacity = UiOpacity.Values.DEFAULT;
     private double flySpeed = FlySpeed.DEFAULT;
+    private boolean builderRecord = true;
     /** The fields of the file read that this build doesn't know, written back after its own. */
     private JsonObject unknown = new JsonObject();
 
@@ -83,6 +87,7 @@ public final class UiSizeStore {
         quickStartSeen = false;
         opacity = UiOpacity.Values.DEFAULT;
         flySpeed = FlySpeed.DEFAULT;
+        builderRecord = true;
         unknown = new JsonObject();
         if (text.isEmpty() || text.get().isBlank()) {
             percent = UiScale.DEFAULT_PERCENT;
@@ -110,6 +115,7 @@ public final class UiSizeStore {
         quickStartSeen = readSeen(root);
         opacity = readOpacity(root);
         flySpeed = readFlySpeed(root);
+        builderRecord = readBuilderRecord(root);
         unknown = unknownFields(root);
         if (keptAside) {
             // Replaced at once with what was read, so the next start doesn't copy it aside again.
@@ -179,16 +185,31 @@ public final class UiSizeStore {
         write();
     }
 
+    /** Whether builder mode's Record power is on (as read by {@link #load}: on unless saved off, or since). */
+    public boolean builderRecord() {
+        return builderRecord;
+    }
+
+    /** Record was switched: saved at once (a switch in the ring is one change, not a run of them), with the rest. */
+    public void builderRecordChanged(boolean on) {
+        if (builderRecord == on) {
+            return;
+        }
+        builderRecord = on;
+        pending = false;
+        write();
+    }
+
     private void write() {
-        file.write(toJson(percent, quickStartSeen, opacity, flySpeed, unknown));
+        file.write(toJson(percent, quickStartSeen, opacity, flySpeed, builderRecord, unknown));
     }
 
     /**
      * The file's text: {@link UiScale#toJson}, the flag once it is set, each opacity value that differs from its
-     * default, the fly speed unless it is 1×, then {@code unknown}'s fields.
+     * default, the fly speed unless it is 1×, Record while it is off, then {@code unknown}'s fields.
      */
     static String toJson(int percent, boolean quickStartSeen, UiOpacity.Values opacity, double flySpeed,
-            JsonObject unknown) {
+            boolean builderRecord, JsonObject unknown) {
         JsonObject root = JsonParser.parseString(UiScale.toJson(percent)).getAsJsonObject();
         if (quickStartSeen) {
             root.addProperty(QUICK_START_SEEN, true);
@@ -205,6 +226,9 @@ public final class UiSizeStore {
         }
         if (flySpeed != FlySpeed.DEFAULT) {
             root.addProperty(FLY_SPEED, flySpeed);
+        }
+        if (!builderRecord) {
+            root.addProperty(BUILDER_RECORD, false);
         }
         for (Map.Entry<String, JsonElement> field : unknown.entrySet()) {
             if (!KNOWN.contains(field.getKey())) {
@@ -241,6 +265,12 @@ public final class UiSizeStore {
                 && value.getAsBoolean();
         int outlines = clampedPercent(root.get(TOOL_OUTLINE_OPACITY), UiOpacity.OUTLINES_MIN, defaults.toolOutlines());
         return new UiOpacity.Values(panels, fade, outlines);
+    }
+
+    /** Record in a version-1 file ({@code null}: none): off only for a JSON {@code false}, on for anything else. */
+    static boolean readBuilderRecord(JsonObject root) {
+        return root == null || !(root.get(BUILDER_RECORD) instanceof JsonPrimitive value) || !value.isBoolean()
+                || value.getAsBoolean();
     }
 
     /** The fly speed in a version-1 file ({@code null}: none): a number, clamped; 1× for anything else. */

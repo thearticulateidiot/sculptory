@@ -393,14 +393,14 @@ public final class EditServiceHost {
         }
     }
 
-    /** The scatter service of a running server. */
     /**
-     * Builder mode: the powers {@code player} has on (0 when none, or before the engine started), read by
-     * {@code ServerPlayerInteractionManagerMixin} to keep vanilla from placing blocks while builder mode is on.
+     * Builder mode: whether it acts for {@code player} now ({@link BuilderService#acts}: a power on and builder mode
+     * allowed; false before the engine started), read by {@code ServerPlayerInteractionManagerMixin} to keep vanilla
+     * from placing blocks while the player's clicks come as builder actions.
      */
-    public static int builderPowers(UUID player) {
-        var service = current;
-        return service == null ? 0 : service.builderPowersOf(player);
+    public static boolean builderActs(ServerPlayer player) {
+        BuilderService builder = builder(player);
+        return builder != null && builder.acts(player);
     }
 
     /** The running server's builder mode, or {@code null} before the engine started. */
@@ -546,6 +546,12 @@ public final class EditServiceHost {
         @Override
         public JobTicket historyOverwrite(ServerPlayer p, boolean redo, int steps) throws EditRejected {
             return of(p).historyOverwrite(p, redo, steps);
+        }
+
+        @Override
+        public boolean editingEnabled(ServerPlayer p) {
+            // Without a running engine every edit is refused: the client is told it may not edit at all.
+            return find(p.getServer()).map(service -> service.editingEnabled(p)).orElse(false);
         }
 
         @Override

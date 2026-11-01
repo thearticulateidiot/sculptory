@@ -22,6 +22,7 @@ import dev.sculptory.mc.client.editor.mask.EditMaskModel;
 import dev.sculptory.mc.client.editor.tool.ToolId;
 import dev.sculptory.mc.client.nav.Navigation;
 import dev.sculptory.protocol.v2.AssetAccess;
+import dev.sculptory.protocol.v2.BuilderPower;
 import dev.sculptory.protocol.v2.C2S;
 import dev.sculptory.protocol.v2.Codec;
 import dev.sculptory.protocol.v2.Features;
@@ -143,7 +144,7 @@ public final class McEditorSession implements EditorSession {
      */
     public static final Features CLIENT_FEATURES = Features.of(Features.STROKES, Features.REGION_OPS, Features.HISTORY,
             Features.CLIPBOARD, Features.SCHEMATICS, Features.LIBRARY, Features.SCATTER, Features.MODDED_FACING_FALLBACK,
-            Features.TINKER, Features.BUILDER, Features.EDIT_MASK, Features.NAVIGATE);
+            Features.TINKER, Features.BUILDER, Features.EDIT_MASK, Features.NAVIGATE, Features.BUILDER_RECORD);
     /** Largest inbound stream (a schematic file; previews are capped at 32 MiB). */
     public static final long MAX_INBOUND_STREAM_BYTES = ClipboardTransfers.MAX_FILE_STREAM;
     public static final int MAX_INBOUND_STREAMS = ClipboardTransfers.MAX_INBOUND_STREAMS;
@@ -1362,9 +1363,19 @@ public final class McEditorSession implements EditorSession {
     }
 
     /**
+     * Whether the server knows the Record power on this connection (builder mode offered and
+     * {@link Features#BUILDER_RECORD} negotiated).
+     */
+    public boolean builderRecordOffered() {
+        return builderOffered() && capabilities.features().has(Features.BUILDER_RECORD);
+    }
+
+    /**
      * Builder mode: sends a {@code BuilderPowers}, {@code BuilderPlace},
      * {@code BuilderBreak} or {@code BuilderDragEnd}. Returns why it was not sent (not connected, the server does not
-     * offer builder mode, an encoding problem), or {@code null}.
+     * offer builder mode, an encoding problem), or {@code null}. A {@code BuilderPowers} holding Record goes to a server
+     * without {@link Features#BUILDER_RECORD} without that bit: such a server refuses a mask with a bit it does not
+     * know, and would drop every power with it (or fail to read the message).
      */
     public String sendBuilder(C2S message) {
         if (!(message instanceof C2S.BuilderPowers || message instanceof C2S.BuilderPlace
@@ -1373,6 +1384,10 @@ public final class McEditorSession implements EditorSession {
         }
         if (state != SessionState.READY) return "NOT_READY: no Sculptory session";
         if (!capabilities.features().has(Features.BUILDER)) return "NOT_OFFERED: the server has no builder mode";
+        if (message instanceof C2S.BuilderPowers powers && BuilderPower.RECORD.in(powers.powers())
+                && !capabilities.features().has(Features.BUILDER_RECORD)) {
+            message = new C2S.BuilderPowers(powers.powers() & ~BuilderPower.RECORD.bit());
+        }
         return sendMessage(message);
     }
 

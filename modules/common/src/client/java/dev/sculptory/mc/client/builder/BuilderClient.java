@@ -52,6 +52,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.PlaceOnWaterBlockItem;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -67,6 +68,12 @@ import org.lwjgl.glfw.GLFW;
  * one power is on, every right-click placement and left-click break goes through the engine ({@code BuilderPlace},
  * {@code BuilderBreak}) instead of vanilla's packets, predicted locally under a vanilla prediction sequence the server
  * acknowledges, so each click is one undoable step of the shared history. With no power on, vanilla plays as usual.
+ *
+ * <p>Record is the power that does nothing but be on: it is on from the first start and remembered across restarts
+ * ({@link EditorClient#builderRecord}), so by default every click goes into the history. Against a server that does
+ * not know it ({@code builder_record} not negotiated) its ring entry is greyed out and it counts as off: its bit is
+ * never sent there (the server would drop every power over an unknown bit) and plain clicks stay vanilla's. It shows
+ * no tag above the hotbar and does not make the tutorial count builder mode as on.
  *
  * <ul>
  *   <li><b>Right-click on a block:</b> the block's own use comes first, as vanilla orders it (a chest opens, a door
@@ -121,6 +128,8 @@ public final class BuilderClient {
     private volatile Set<Integer> pinnedKeys = Set.of();
     private int sentPowers = -1;
     private long sentEpoch = -1;
+    /** Whether Record was put back from the client's settings ({@link #restoreRecord}). */
+    private boolean recordRestored;
     private boolean undoDown;
     private boolean redoDown;
     /** Whether the attack button was down at the end of the last tick: a click that starts now is a fresh one. */
@@ -151,8 +160,9 @@ public final class BuilderClient {
                 new KeyMapping(RING_KEY, InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_G, EditorClient.CATEGORY));
         instance = new BuilderClient(Minecraft.getInstance(), ring, new McTranslator(), sessions, states, editor);
         instance.installTinker();
+        instance.installRecord();
         instance.registerEvents();
-        editor.setBuilderMode(() -> instance.powers.mask() != 0,
+        editor.setBuilderMode(() -> instance.powers.shown() != 0,
                 () -> instance.ringKey.getTranslatedKeyMessage().getString());
         return instance;
     }
@@ -176,6 +186,28 @@ public final class BuilderClient {
         powers.setGate(BuilderPower.TINKER, () -> TinkerPower.gate(Optional.ofNullable(sessions.get())));
     }
 
+    /**
+     * The Record power: greyed out with "needs a newer server" while the server has builder mode but not Record
+     * ({@link PowerSet#recordGate}); its remembered state comes back at the first tick ({@link #restoreRecord}).
+     */
+    private void installRecord() {
+        powers.setGate(BuilderPower.RECORD, () -> {
+            McEditorSession session = sessions.get();
+            if (session == null) return null;
+            return PowerSet.recordGate(session.builderOffered(), session.builderRecordOffered());
+        });
+    }
+
+    /**
+     * Puts Record back as the player left it, from {@code editor-ui.json}, which then hears each change. Run at the
+     * first tick, when the editor reads that file anyway (nothing can be clicked before).
+     */
+    private void restoreRecord() {
+        if (recordRestored) return;
+        recordRestored = true;
+        powers.restoreRecord(editor.builderRecord(), editor::builderRecordChanged);
+    }
+
     /** The Tinker power's controller (tests). */
     TinkerPower tinkerPower() {
         return tinkerPower;
@@ -195,7 +227,7 @@ public final class BuilderClient {
         loader.onHudRender((context, tickCounter) -> {
             tinkerFrame(tickCounter.getGameTimeDeltaPartialTick(true));
             if (client.player != null && !client.options.hideGui && !editor.mode().isEditing() && unavailable() == null) {
-                BuilderHud.render(context, client.font, powers.mask(), translator);
+                BuilderHud.render(context, client.font, powers.shown(), translator);
                 drawTinkerLabel(context);
             }
         });
@@ -273,6 +305,7 @@ public final class BuilderClient {
     // ---- ticking ----
 
     private void tick() {
+        restoreRecord();
         syncNotices();
         sendPowersIfNeeded();
         if (breakCooldown > 0) breakCooldown--;
@@ -295,7 +328,12 @@ public final class BuilderClient {
         redoDown = false;
     }
 
-    /** Tells the server the powers whenever they change and once per connection. */
+    /**
+     * Tells the server the powers whenever they change and once per connection. Record's bit goes only while builder
+     * mode is available to this client ({@link #unavailable}): with it the server holds back the game's own placement,
+     * so while the client still clicks the vanilla way (a permission granted a moment ago, not yet pushed; Survival)
+     * the bit would cost the player their clicks.
+     */
     private void sendPowersIfNeeded() {
         McEditorSession session = sessions.get();
         if (session == null || !session.builderOffered()) {
@@ -303,10 +341,12 @@ public final class BuilderClient {
             return;
         }
         long epoch = session.capabilities().sessionEpoch();
-        if (epoch == sentEpoch && powers.mask() == sentPowers) return;
-        if (session.sendBuilder(new C2S.BuilderPowers(powers.mask())) == null) {
+        int mask = powers.effective();
+        if (unavailable() != null) mask &= ~BuilderPower.RECORD.bit();
+        if (epoch == sentEpoch && mask == sentPowers) return;
+        if (session.sendBuilder(new C2S.BuilderPowers(mask)) == null) {
             sentEpoch = epoch;
-            sentPowers = powers.mask();
+            sentPowers = mask;
         }
     }
 
@@ -379,7 +419,7 @@ public final class BuilderClient {
 
     /** Whether clicks are builder mode's now: a power on, the editor closed, the server and the player allowing it. */
     private boolean active() {
-        return powers.mask() != 0 && !editor.mode().isEditing() && client.screen == null && unavailable() == null;
+        return powers.effective() != 0 && !editor.mode().isEditing() && client.screen == null && unavailable() == null;
     }
 
     // ---- placing ----
@@ -387,7 +427,7 @@ public final class BuilderClient {
     private InteractionResult useBlock(Player player, Level world, InteractionHand hand, BlockHitResult hit) {
         if (player != client.player || !(world instanceof ClientLevel clientWorld) || !active()) return InteractionResult.PASS;
         ItemStack stack = player.getItemInHand(hand);
-        if (!(stack.getItem() instanceof BlockItem)) return InteractionResult.PASS;
+        if (!placesByClick(stack)) return InteractionResult.PASS;
         if (powers.onClick(GLFW.GLFW_MOUSE_BUTTON_RIGHT, MinecraftInput.modifiers())) return InteractionResult.FAIL;
         // The block's own use first, as vanilla orders it; when it takes the click, vanilla's packet carries it.
         if (!player.isSecondaryUseActive()) {
@@ -406,7 +446,7 @@ public final class BuilderClient {
     private InteractionResultHolder<ItemStack> useItem(Player player, Level world, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
         if (player != client.player || !(world instanceof ClientLevel clientWorld) || !active()
-                || !powers.on(BuilderPower.PLACE_IN_AIR) || !(stack.getItem() instanceof BlockItem)) {
+                || !powers.on(BuilderPower.PLACE_IN_AIR) || !placesByClick(stack)) {
             return InteractionResultHolder.pass(stack);
         }
         HitResult target = client.hitResult;
@@ -475,10 +515,13 @@ public final class BuilderClient {
         // Held down (vanilla asks every tick in Creative): a break every HELD_BREAK_TICKS, as vanilla breaks.
         if (attackHeld && breakCooldown > 0) return InteractionResult.FAIL;
         BlockState state = clientWorld.getBlockState(pos);
-        if (!BuilderPlacement.breakable(clientWorld, player, pos)
-                || !player.getMainHandItem().getItem().canAttackBlock(state, clientWorld, pos, player)) {
-            return InteractionResult.FAIL;
+        // An item that does not break blocks (a debug stick, a sword in Creative) gets vanilla's left-click: the debug
+        // stick's property change reaches the server only through vanilla's packet. Unrecorded, as other non-block
+        // item uses are.
+        if (!player.getMainHandItem().getItem().canAttackBlock(state, clientWorld, pos, player)) {
+            return InteractionResult.PASS;
         }
+        if (!BuilderPlacement.breakable(clientWorld, player, pos)) return InteractionResult.FAIL;
         boolean dozer = powers.on(BuilderPower.BULLDOZER);
         drags.begin(dozer && player.isShiftKeyDown());
         drags.add(wire(pos));
@@ -609,6 +652,15 @@ public final class BuilderClient {
     }
 
     // ---- helpers ----
+
+    /**
+     * Whether builder mode places {@code stack} on a right-click: a block item, but not one placed on water (a lily
+     * pad, frogspawn), which aims at the water through the item's own use; builder mode would aim at the block below.
+     * Those go vanilla's way, unrecorded, as other non-block items do.
+     */
+    static boolean placesByClick(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem && !(stack.getItem() instanceof PlaceOnWaterBlockItem);
+    }
 
     /** The Mirror power's symmetry, or none (with a hint when Mirror is on but the editor has no centre or mode). */
     private Symmetry symmetry() {

@@ -11,6 +11,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class PowerSetTest {
+    /** Record's bit: on in every new set. */
+    private static final int RECORD = BuilderPower.RECORD.bit();
+
     /** A controller that records what it hears. */
     private static final class Recording implements PowerController {
         final List<String> events = new ArrayList<>();
@@ -45,23 +48,24 @@ class PowerSetTest {
         PowerSet powers = new PowerSet();
         List<Integer> heard = new ArrayList<>();
         powers.addListener(() -> heard.add(powers.mask()));
-        assertEquals(0, powers.mask());
+        assertEquals(RECORD, powers.mask(), "Record is on from the start");
         assertEquals(BuilderPower.LONG_REACH, powers.last(), "a tap before anything was toggled means Long reach");
 
         assertTrue(powers.toggle(BuilderPower.REPLACE));
         assertTrue(powers.on(BuilderPower.REPLACE));
-        assertEquals(BuilderPower.REPLACE.bit(), powers.mask());
+        assertEquals(RECORD | BuilderPower.REPLACE.bit(), powers.mask());
         assertEquals(BuilderPower.REPLACE, powers.last());
 
         assertTrue(powers.toggle(BuilderPower.MIRROR));
-        assertEquals(BuilderPower.REPLACE.bit() | BuilderPower.MIRROR.bit(), powers.mask());
+        assertEquals(RECORD | BuilderPower.REPLACE.bit() | BuilderPower.MIRROR.bit(), powers.mask());
         assertEquals(BuilderPower.MIRROR, powers.last());
 
         assertTrue(powers.toggleLast());
         assertFalse(powers.on(BuilderPower.MIRROR));
         assertTrue(powers.on(BuilderPower.REPLACE));
-        assertEquals(List.of(BuilderPower.REPLACE.bit(), BuilderPower.REPLACE.bit() | BuilderPower.MIRROR.bit(),
-                BuilderPower.REPLACE.bit()), heard);
+        assertEquals(List.of(RECORD | BuilderPower.REPLACE.bit(),
+                RECORD | BuilderPower.REPLACE.bit() | BuilderPower.MIRROR.bit(), RECORD | BuilderPower.REPLACE.bit()),
+                heard);
 
         assertTrue(powers.set(BuilderPower.REPLACE, true), "setting what is already set changes nothing");
         assertEquals(3, heard.size());
@@ -77,7 +81,7 @@ class PowerSetTest {
         assertEquals(PowerSet.TINKER_UNAVAILABLE, powers.unavailableKey(BuilderPower.TINKER));
         assertNull(powers.unavailableKey(BuilderPower.BULLDOZER));
         assertFalse(powers.toggle(BuilderPower.TINKER), "greyed out: nothing happens");
-        assertEquals(0, powers.mask());
+        assertEquals(RECORD, powers.mask());
         assertEquals(BuilderPower.LONG_REACH, powers.last(), "a refused toggle is not the last one");
 
         Recording tinker = new Recording();
@@ -113,9 +117,96 @@ class PowerSetTest {
 
         powers.toggle(BuilderPower.LONG_REACH);
         powers.clear();
-        assertEquals(0, powers.mask());
+        assertEquals(RECORD, powers.mask(), "every power off but Record, a setting kept across restarts");
         assertEquals(List.of("on", "off"), replacement.events);
         powers.clear();
         assertEquals(List.of("on", "off"), replacement.events, "clearing nothing says nothing");
+    }
+
+    /**
+     * Record is on in a new set and counts toward what takes effect, but not toward what builder mode shows as on;
+     * putting back the saved state is not a toggle (the tap still means the power toggled last) and is not saved
+     * again; each later switch is handed to the settings; clearing leaves it alone.
+     */
+    @Test
+    void recordIsOnByDefaultRememberedAndNotTheLastToggledPower() {
+        PowerSet powers = new PowerSet();
+        assertTrue(powers.on(BuilderPower.RECORD));
+        assertEquals(RECORD, powers.effective(), "Record alone takes the clicks into the history");
+        assertEquals(0, powers.shown(), "no tag, and builder mode does not show as on for Record alone");
+
+        List<Boolean> saved = new ArrayList<>();
+        List<Integer> heard = new ArrayList<>();
+        powers.addListener(() -> heard.add(powers.mask()));
+        powers.restoreRecord(false, saved::add);
+        assertEquals(0, powers.mask(), "saved off: off after a restart");
+        assertEquals(0, powers.effective());
+        assertEquals(List.of(), saved, "putting back what was saved saves nothing");
+        assertEquals(List.of(0), heard, "the mask change is heard (the server is told)");
+        assertEquals(BuilderPower.LONG_REACH, powers.last(), "putting Record back is not a toggle");
+
+        assertTrue(powers.toggle(BuilderPower.PLACE_IN_AIR));
+        assertEquals(BuilderPower.PLACE_IN_AIR.bit(), powers.shown());
+        assertTrue(powers.toggle(BuilderPower.RECORD));
+        assertEquals(List.of(true), saved);
+        assertEquals(BuilderPower.PLACE_IN_AIR.bit(), powers.shown(), "Record shows nothing");
+        assertEquals(RECORD | BuilderPower.PLACE_IN_AIR.bit(), powers.effective());
+        assertEquals(BuilderPower.PLACE_IN_AIR, powers.last(), "switching Record is never the last toggle");
+        assertTrue(powers.toggleLast(), "a tap after switching Record toggles the last visible power");
+        assertFalse(powers.on(BuilderPower.PLACE_IN_AIR));
+        assertTrue(powers.on(BuilderPower.RECORD), "and leaves Record alone");
+        assertEquals(List.of(true), saved);
+
+        PowerSet fresh = new PowerSet();
+        fresh.toggle(BuilderPower.RECORD);
+        assertEquals(BuilderPower.LONG_REACH, fresh.last(), "Record first: a tap still means Long reach");
+        assertTrue(fresh.toggleLast());
+        assertEquals(BuilderPower.LONG_REACH.bit(), fresh.mask(), "Long reach on, Record still off");
+
+        powers.set(BuilderPower.RECORD, false);
+        powers.set(BuilderPower.RECORD, true);
+        powers.clear();
+        assertEquals(RECORD, powers.mask(), "clearing keeps Record");
+        assertEquals(List.of(true, false, true), saved, "clearing saves nothing");
+
+        PowerSet savedOn = new PowerSet();
+        savedOn.restoreRecord(true, on -> {
+            throw new AssertionError("nothing to save");
+        });
+        assertEquals(RECORD, savedOn.mask(), "saved on (or nothing saved): on");
+        assertEquals(BuilderPower.LONG_REACH, savedOn.last());
+    }
+
+    /**
+     * Against a server with builder mode but without Record, Record's chip is greyed out with the reason, its bit is
+     * dropped from what takes effect (and is sent) while the player's choice stays, switching it on is refused and
+     * switching it off still works; the other powers are not affected.
+     */
+    @Test
+    void recordIsGatedAndLeftOutOnAServerWithoutIt() {
+        assertEquals(PowerSet.RECORD_NEEDS_SERVER, PowerSet.recordGate(true, false));
+        assertNull(PowerSet.recordGate(true, true));
+        assertNull(PowerSet.recordGate(false, false), "no builder mode at all: the ring itself says why");
+
+        PowerSet powers = new PowerSet();
+        boolean[] recordOffered = {false};
+        powers.setGate(BuilderPower.RECORD, () -> PowerSet.recordGate(true, recordOffered[0]));
+        List<Boolean> saved = new ArrayList<>();
+        powers.restoreRecord(true, saved::add);
+        assertFalse(powers.available(BuilderPower.RECORD));
+        assertEquals(PowerSet.RECORD_NEEDS_SERVER, powers.unavailableKey(BuilderPower.RECORD));
+        assertTrue(powers.on(BuilderPower.RECORD), "the player's choice is kept");
+        assertEquals(0, powers.effective(), "but not sent, and the clicks stay vanilla's");
+        assertTrue(powers.toggle(BuilderPower.LONG_REACH));
+        assertEquals(BuilderPower.LONG_REACH.bit(), powers.effective(), "the other powers work as before");
+
+        recordOffered[0] = true;
+        assertEquals(RECORD | BuilderPower.LONG_REACH.bit(), powers.effective(), "a server with Record gets it");
+        recordOffered[0] = false;
+        assertTrue(powers.set(BuilderPower.RECORD, false), "switching off always works");
+        assertEquals(List.of(false), saved);
+        assertFalse(powers.toggle(BuilderPower.RECORD), "switching on is refused while greyed out");
+        assertFalse(powers.on(BuilderPower.RECORD));
+        assertEquals(List.of(false), saved);
     }
 }

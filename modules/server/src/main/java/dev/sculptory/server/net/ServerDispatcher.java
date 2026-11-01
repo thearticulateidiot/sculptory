@@ -153,7 +153,7 @@ public final class ServerDispatcher<P> {
     /** What this server offers (M1, M2 and M3, and builder mode). */
     public static final Features SERVER_FEATURES = Features.of(Features.STROKES, Features.REGION_OPS, Features.HISTORY,
             Features.CLIPBOARD, Features.SCHEMATICS, Features.LIBRARY, Features.SCATTER, Features.TINKER,
-            Features.BUILDER, Features.EDIT_MASK, Features.NAVIGATE);
+            Features.BUILDER, Features.EDIT_MASK, Features.NAVIGATE, Features.BUILDER_RECORD);
     public static final String NOTICE_REQUEST_REFUSED = "sculptory.notice.request_refused";
     public static final String NOTICE_PREVIEW_REFUSED = "sculptory.notice.preview_refused";
     public static final String NOTICE_LIBRARY_TRUNCATED = "sculptory.notice.library_truncated";
@@ -2054,12 +2054,31 @@ public final class ServerDispatcher<P> {
         }
     }
 
+    /**
+     * The permissions the client is told. While editing is switched off ({@link EditService#editingEnabled}) every edit
+     * is refused, so {@code use} and {@code builder} are left out: a client with builder mode on (Record is on by
+     * default) then clicks the vanilla way instead of sending builder actions that would be refused. A config reload
+     * re-checks every player ({@link #permissionsChanged}), so the change reaches clients at once.
+     */
     private PermissionMask permissionMask(NetSession<P> s) {
         EnumSet<Perm> granted = EnumSet.noneOf(Perm.class);
         for (Perm perm : Perm.values()) {
             if (has(s, perm)) granted.add(perm);
         }
+        if (!editingEnabled(s)) {
+            granted.remove(Perm.USE);
+            granted.remove(Perm.BUILDER);
+        }
         return Perm.mask(granted);
+    }
+
+    private boolean editingEnabled(NetSession<P> s) {
+        try {
+            return edits.editingEnabled(s.transport.player());
+        } catch (RuntimeException e) {
+            ServerLog.LOG.error("Sculptory: reading whether editing is on failed", e);
+            return false;
+        }
     }
 
     private static int lastIndex(C2S.Dabs m) {

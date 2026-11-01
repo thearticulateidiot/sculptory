@@ -2057,6 +2057,11 @@ public final class EngineEditService<P, W> implements EditService<P>, TinkerServ
         return runtime.navigate(p, m);
     }
 
+    @Override
+    public boolean editingEnabled(P p) {
+        return config().editingEnabled;
+    }
+
     /** The builder powers the player last reported (0 when none or unknown). */
     public int builderPowersOf(UUID player) {
         return builder.powersOf(player);

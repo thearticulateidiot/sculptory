@@ -37,9 +37,13 @@ import dev.sculptory.mc.gametest.EditTestSupport.WorldSnapshot;
 import dev.sculptory.mc.gametest.EngineTestSupport.RecordingListener;
 import dev.sculptory.mc.gametest.mixin.PlayerListAccessor;
 import dev.sculptory.mc.world.BlockWriter;
+import dev.sculptory.protocol.v2.Features;
+import dev.sculptory.protocol.v2.Handshake;
 import dev.sculptory.protocol.v2.JobOutcome;
+import dev.sculptory.protocol.v2.Limits;
 import dev.sculptory.protocol.v2.Phase;
 import dev.sculptory.protocol.v2.RejectReason;
+import dev.sculptory.protocol.v2.S2C;
 import dev.sculptory.server.config.UnloadedPolicy;
 import dev.sculptory.server.engine.ClipboardService;
 import dev.sculptory.server.engine.DabOutcome;
@@ -53,6 +57,8 @@ import dev.sculptory.server.engine.impl.EngineEditService;
 import dev.sculptory.server.engine.impl.HistorySnapshot;
 import dev.sculptory.server.engine.impl.ServerClipboards;
 import dev.sculptory.server.engine.impl.ServerScatter;
+import dev.sculptory.server.net.NetSession;
+import dev.sculptory.server.net.ServerDispatcher;
 import dev.sculptory.server.platform.WriteOptions;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -309,6 +315,44 @@ public final class MultiplayerGameTest {
     }
 
     // ---------------------------------------------------------------- permissions
+
+    /**
+     * Editing switched off, through the dispatcher's real handshake over the server's engine: the Welcome tells the
+     * client neither use nor builder (its editor stays closed, builder mode greys out, its clicks go the vanilla way),
+     * the other nodes as they are; switched on again, the next re-check (a reload re-checks every player) pushes
+     * PermissionsChanged with both.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_mp_editing_off", timeoutTicks = LIMIT)
+    public void editingSwitchedOffIsToldInTheWelcomeAndAfterAReload(GameTestHelper context) {
+        Harness h = new Harness(context);
+        var config = h.runtime.config();
+        ServerDispatcher<ServerPlayer> dispatcher = new ServerDispatcher<>(h.service, h.runtime.permissions(),
+                () -> Limits.DEFAULTS, h.runtime::states, System::nanoTime);
+        MaskGameTest.Transport transport = new MaskGameTest.Transport(h);
+        NetSession<ServerPlayer> session = dispatcher.open(transport);
+        try {
+            config.editingEnabled = false;
+            transport.receive(dispatcher, session, Handshake.hello("test", Features.of(Features.REGION_OPS,
+                    Features.BUILDER, Features.BUILDER_RECORD)));
+            S2C.Welcome welcome = transport.first(S2C.Welcome.class);
+            check(!welcome.permissions().has(Perm.USE.bit()) && !welcome.permissions().has(Perm.BUILDER.bit()),
+                    "editing off: the Welcome holds use or builder: " + Perm.granted(welcome.permissions()));
+            check(welcome.permissions().has(Perm.REGION.bit()), "the other nodes are told as they are");
+            check(welcome.features().has(Features.BUILDER_RECORD), "the server offers builder_record");
+            transport.sent.clear();
+
+            config.editingEnabled = true;
+            dispatcher.permissionsChanged(session);
+            S2C.PermissionsChanged on = transport.first(S2C.PermissionsChanged.class);
+            check(on.permissions().has(Perm.USE.bit()) && on.permissions().has(Perm.BUILDER.bit()),
+                    "editing on again: " + Perm.granted(on.permissions()));
+        } finally {
+            config.editingEnabled = true;
+            dispatcher.close(session);
+            h.close();
+        }
+        context.succeed();
+    }
 
     /**
      * Every server entry point checks its node before any work, and the op-level fallback is exactly level 2: a player

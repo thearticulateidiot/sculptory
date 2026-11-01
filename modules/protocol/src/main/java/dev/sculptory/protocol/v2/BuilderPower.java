@@ -24,7 +24,13 @@ public enum BuilderPower {
     /** Placements and breaks are mirrored with the editor's symmetry. */
     MIRROR,
     /** Alt+scroll and Alt+click change the aimed block in place. */
-    TINKER;
+    TINKER,
+    /**
+     * Record: no effect of its own beyond being a power that is on, so the player's plain clicks go through builder
+     * mode and into the history. Added after 0.4.0-beta under {@link Features#BUILDER_RECORD}: a client sets this bit
+     * only for a server that negotiated that feature, since an older server refuses a mask with a bit it does not know.
+     */
+    RECORD;
 
     /** Every bit a known power may set. */
     public static final int ALL = (1 << values().length) - 1;

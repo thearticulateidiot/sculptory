@@ -24,6 +24,15 @@ like 0.4.0-beta: the two work together, with one difference (below).
 
 #### New
 
+- **Building by hand goes into the history by default**: builder mode has a ninth power, **Record**, on from the
+  first start. In Creative (with the builder permission on servers), every block you place with a block item or
+  break, and every item frame, painting and armor stand you hang, place, change or break, is one undo step (`Ctrl+Z`)
+  without switching anything on. Buckets, flint and steel, bone meal, the debug stick, an axe, hoe or shovel used on a
+  block, spawn eggs, doors and repeaters switched by hand and lily pads stay vanilla's and can't be undone (see
+  [Builder mode](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/builder-mode.md#rules)).
+  Switch Record off in the `G` ring, with every other power off too, to play the vanilla way with nothing recorded;
+  it stays as you left it across restarts (the other powers are still forgotten). It shows no tag above the hotbar.
+  Before, a block was recorded only while another power was on.
 - **Item frames, paintings and armor stands in builder mode's history**: with a builder power on, hanging a frame or
   a painting, placing an armor stand, putting an item in a frame (or turning it), dressing a stand and breaking any
   of them are each one step ("Place · item frame", "Change · armor stand", "Break · painting"), undone and redone
@@ -32,6 +41,14 @@ like 0.4.0-beta: the two work together, with one difference (below).
 
 #### Fixed
 
+- **Placing blocks in Survival with a builder power on**: a player who switched to Survival (or lost the builder
+  permission) with a power still on could not place blocks on a server with Sculptory, since the server held back the
+  game's own placement as if builder mode were placing for them. It now does that only while builder mode acts for the
+  player (Creative and the permission).
+- **Building by hand on a server with editing switched off** (`editingEnabled` false, also what a broken
+  `server.json` falls back to): a player with a builder power on had every place and break refused. The server now
+  tells clients that editing isn't available while it is off, so their clicks go the vanilla way and the editor
+  can't be opened (`B` says "Editing is off here"); a reload that switches it back on gives both back at once.
 - **Frames and paintings no longer drop off when their wall goes**: an edit that takes away the block an item frame
   or painting hangs on (a fill, a brush, a paste, a builder-mode break) takes the frame into its step, and its undo
   hangs it back with its item. Undoing the step that built a wall takes along the frames hung on it since, and redo
@@ -66,6 +83,9 @@ like 0.4.0-beta: the two work together, with one difference (below).
 - A 0.4.0-beta client on a server with this version still predicts Surface Raise, Lower and Smooth near walls the old
   way, so its preview there can differ from the result; the server's result is what is built. Update the clients and
   the server together.
+- On a 0.4.0-beta server, Record is greyed out in the ring ("needs a newer server") and plain clicks are recorded only
+  while another power is on, as before. A 0.4.0-beta client on a server with this version has no Record power and
+  works as it did.
 
 ### NeoForge 0.5.0-beta+1.21.1 (planned)
 
@@ -80,6 +100,8 @@ The first NeoForge release, a beta. For Minecraft 1.21.1 with NeoForge 21.1.218 
   current NeoForge 21.1 releases).
 - Tried on a server next to Cobblemon, Create and JEI: no conflicts, and their blocks fill, undo and redo like vanilla
   ones.
+- **Building by hand goes into the history by default** through builder mode's Record power, as on Fabric (see
+  Fabric 0.5.0-beta, "New"), on NeoForge clients and servers alike.
 
 ### Paper 0.1.0-beta+1.21.1 (planned)
 
@@ -93,6 +115,10 @@ installed. Network protocol 6.
   rule WorldGuard applies to building by hand. WorldGuard (which needs WorldEdit) is optional.
 - **Builder mode fires the server's block events**, so protection and logging plugins see every place and break it
   makes and can cancel one (the step is then put back and refused).
+- **Building by hand goes into the history by default**: the plugin knows builder mode's Record power, so for a
+  player with the Sculptory 0.5.0-beta mod and the builder permission, every block they place with a block item or
+  break in Creative, and every item frame, painting and armor stand they hang, place, change or break, is recorded
+  without switching a power on; other item uses stay vanilla's (see Fabric 0.5.0-beta, "New").
 - **Other claim plugins are not respected by bulk edits**: fills, brushes and pastes fire no block events, like
   WorldEdit's, so GriefPrevention, Lands, Towny, PlotSquared and other claim plugins neither see nor stop them. Only
   WorldGuard regions, spawn protection and the world border limit bulk edits. Builder mode is covered (above).

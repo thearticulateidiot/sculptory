@@ -24,6 +24,7 @@ import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.core.state.StateSpace;
 import dev.sculptory.core.testing.FakeStateSpace;
+import dev.sculptory.mc.client.builder.PowerSet;
 import dev.sculptory.mc.client.editor.EditorMode;
 import dev.sculptory.mc.client.editor.EditorState;
 import dev.sculptory.mc.client.editor.tool.DeactivateReason;
@@ -1132,6 +1133,47 @@ class McEditorSessionTest {
         assertEquals(powers, transport.sent.get(0));
         assertFalse(session.history().canUndo(), "builder steps reach the mirror through HistoryState, not the send");
         assertThrows(IllegalArgumentException.class, () -> session.sendBuilder(new C2S.Undo(1, ConflictPolicy.SKIP_CONFLICTS)));
+    }
+
+    /**
+     * The Record power's bit goes only to a server that negotiated {@code builder_record}: to one with builder mode but
+     * without it (0.4.0-beta) the powers go without that bit, the others intact, and Record's chip is greyed out; a
+     * server with it gets the bit. The client offers the feature and this server lists it.
+     */
+    @Test
+    void theRecordBitGoesOnlyToAServerThatKnowsIt() {
+        assertTrue(McEditorSession.CLIENT_FEATURES.has(Features.BUILDER_RECORD));
+        assertTrue(ServerDispatcher.SERVER_FEATURES.intersect(McEditorSession.CLIENT_FEATURES)
+                .has(Features.BUILDER_RECORD));
+        int record = BuilderPower.RECORD.bit();
+        int reach = BuilderPower.LONG_REACH.bit();
+
+        session.onJoin();
+        server(new S2C.Welcome(ProtocolV2.VERSION, Features.of(Features.STROKES, Features.BUILDER), Limits.DEFAULTS,
+                Perm.mask(EnumSet.of(Perm.USE, Perm.BUILDER)), 100L));
+        transport.sent.clear();
+        assertTrue(session.builderOffered());
+        assertFalse(session.builderRecordOffered(), "a 0.4.0-beta server: builder mode without Record");
+        assertEquals(PowerSet.RECORD_NEEDS_SERVER,
+                PowerSet.recordGate(session.builderOffered(), session.builderRecordOffered()), "the chip is greyed out");
+        assertNull(session.sendBuilder(new C2S.BuilderPowers(record | reach)));
+        assertNull(session.sendBuilder(new C2S.BuilderPowers(record)));
+        assertEquals(List.of(new C2S.BuilderPowers(reach), new C2S.BuilderPowers(0)), transport.sent,
+                "the bit is dropped, the other powers stay");
+
+        session.onDisconnect();
+        session.onJoin();
+        server(new S2C.Welcome(ProtocolV2.VERSION, Features.of(Features.STROKES, Features.BUILDER,
+                Features.BUILDER_RECORD), Limits.DEFAULTS, Perm.mask(EnumSet.of(Perm.USE, Perm.BUILDER)), 101L));
+        transport.sent.clear();
+        assertTrue(session.builderRecordOffered());
+        assertNull(PowerSet.recordGate(session.builderOffered(), session.builderRecordOffered()));
+        assertNull(session.sendBuilder(new C2S.BuilderPowers(record | reach)));
+        assertEquals(List.of(new C2S.BuilderPowers(record | reach)), transport.sent,
+                "a server with Record gets the bit");
+
+        session.onDisconnect();
+        assertFalse(session.builderRecordOffered(), "not connected");
     }
 
     // ---------------------------------------------------------------- permissions

@@ -31,7 +31,7 @@ jobs:
       PAPER_SHA256: 39bd8c00b9e18de91dcabd3cc3dcfa5328685a53b7187a2f63280c22e2d287b9
       # The checks the fake-player run makes: fewer means a group was skipped or never ran. It must match the
       # fake-player run's count (raise it with new checks).
-      SELFTEST_MIN_TESTS: "165"
+      SELFTEST_MIN_TESTS: "171"
       # WorldEdit 7.3.9 and WorldGuard 7.0.12 (Modrinth version ids), the versions the plugin is built against.
       WORLDEDIT_VERSION_ID: Bu1zaaoc
       WORLDEDIT_SHA512: ce19097ab93a3ff75a929a1efec58138adc5b700f876ec8ac7a96c97d98d77a06f22661f0418c3407d644ca2d9713fde417d5789c79864d9c2094f203f372c76

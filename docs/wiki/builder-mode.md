@@ -2,7 +2,7 @@
 
 [Home](home.md) · [Build faster](home.md#build-faster)
 
-Builder mode is for building block by block in normal creative play, with a few powers switched on: reach 64 blocks, place into the air, sweep blocks away, mirror what you do. Use it when the editor is too much for the job and vanilla is too little. While a power is on, every click goes into the editor's history, so `Ctrl+Z` takes it back: blocks placed and broken, and item frames, paintings and armor stands hung, placed, filled, dressed or broken.
+Builder mode is for building block by block in normal creative play. From the start, every block you place with a block item or break, and every item frame, painting and armor stand you hang, place, change or break, goes into the editor's history, so `Ctrl+Z` takes it back. That is the **Record** power, on unless you switch it off. Other items (a bucket, bone meal, a spawn egg, ...) stay vanilla's and can't be undone: see [Rules](#rules). More powers wait in a ring: reach 64 blocks, place into the air, sweep blocks away, mirror what you do. Use them when the editor is too much for the job and vanilla is too little.
 
 ![The ring of powers over the world, shown while G is held](images/builder-mode-ring.png)
 
@@ -13,7 +13,7 @@ Builder mode is for building block by block in normal creative play, with a few 
 3. Let go of `G` to switch that power on or off. You can also left-click powers while the ring is open; `Esc` closes it.
 4. A short tap of `G` switches the last power you toggled (Long reach, the first time).
 
-Powers that are on show as small tags above the hotbar. With no power on, the game plays as usual and nothing goes into the history. Powers are forgotten when you close the game.
+Powers that are on show as small tags above the hotbar; Record, the usual state, has none. With every power off, Record included, the game plays as usual and nothing goes into the history. Record stays as you left it when you restart the game; the other powers are forgotten when you close it.
 
 ## The powers
 
@@ -27,6 +27,7 @@ Powers that are on show as small tags above the hotbar. With no power on, the ga
 | Force place | Place where the game refuses: a torch on glass, a flower on stone |
 | Mirror | Repeats every block placement and break under the editor's symmetry (not frames, paintings or armor stands): set the centre with `M` in the editor and a Symmetry mode in the Place tool's settings, or the click happens unmirrored with a hint |
 | Tinker | Hold `Alt` to aim: `Alt+Scroll` changes the shown property, `Alt+Shift+Scroll` picks another, `Alt+left-click` opens a small panel. Sign text, poses and the rest need the editor's [Tinker](tinker.md) tool |
+| Record | On from the start: every block you place with a block item or break, and every item frame, painting and armor stand you hang, place, change or break, goes into the history. Switch it off, with every other power off too, to play the vanilla way with nothing recorded. On a server with an older Sculptory (0.4.0-beta) it is greyed out ("needs a newer server") and clicks are recorded only while another power is on |
 
 ## Undo outside the editor
 
@@ -34,11 +35,11 @@ Powers that are on show as small tags above the hotbar. With no power on, the ga
 
 ## Rules
 
-- Needs Creative mode, the `sculptory.builder` [permission](permissions.md) and a server running this Sculptory version.
+- Needs Creative mode, the `sculptory.builder` [permission](permissions.md) and a server running this Sculptory version. In Survival, or without the permission, the powers (Record too) do nothing and the game plays as usual.
 - Spawn protection, claims and areas an edit is working on refuse the click; the reason shows above the hotbar. A block whose other half would land there (a bed's head) is refused whole.
 - The server allows about 100 blocks a second. Beyond that a click is refused with "Slow down", and a sweep leaves those blocks standing.
 - Command, structure and jigsaw blocks stay with operators, Force place or not.
-- A bucket, bone meal, flint and steel, a spawn egg, a boat or a minecart works as in vanilla and can't be undone. Item frames, paintings and armor stands are the only entities builder mode records.
+- A bucket, flint and steel, bone meal, the debug stick, an axe, hoe or shovel used on a block (stripping, tilling, paths), a spawn egg, a boat or a minecart, a lily pad or frogspawn, and a door, trapdoor or repeater switched by hand work as in vanilla and can't be undone. Item frames, paintings and armor stands are the only entities builder mode records.
 - Putting an item in a frame, dressing an armor stand or punching one works wherever vanilla lets you (reach and the mask don't apply; claims do as in vanilla), and its undo checks protection again. On Fabric and NeoForge an armor stand knocked down by a sweeping attack aimed at something else is not recorded.
 - An item frame or painting whose wall a click breaks goes into that click's step instead of dropping off, and comes back with its item when you undo it. The same holds for any edit, and for undo: see [History](history.md#frames-and-paintings).
 

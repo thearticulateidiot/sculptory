@@ -16,9 +16,21 @@ class RingMenuTest {
         return new RingMenu(ALL, 100, 100, 50, 1_000);
     }
 
+    /** The ring builder mode opens holds every power, Record last: nine sectors of 40°. */
+    @Test
+    void theRingHoldsEveryPowerWithRecordLast() {
+        RingMenu ring = ring();
+        assertEquals(9, ring.entries().size());
+        assertEquals(BuilderPower.RECORD, ring.entries().get(8));
+        assertEquals(320.0, ring.angleOf(8));
+        ring.pointer(60, 60); // up-left, 315°: Record's sector (300°-340°)
+        assertEquals(BuilderPower.RECORD, ring.hoveredPower().orElseThrow());
+    }
+
+    /** The geometry on a ring of eight entries, where the four sides fall on entries. */
     @Test
     void theSectorsGoClockwiseFromTheTop() {
-        RingMenu ring = ring();
+        RingMenu ring = new RingMenu(ALL.subList(0, 8), 100, 100, 50, 1_000);
         assertEquals(8, ring.entries().size());
         assertEquals(0.0, ring.angleOf(0));
         assertEquals(90.0, ring.angleOf(2));

@@ -4,14 +4,20 @@ import static dev.sculptory.paper.devtest.SelfTestRun.aabb;
 import static dev.sculptory.paper.devtest.SelfTestRun.box;
 
 import dev.sculptory.core.Box;
+import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.history.EntityChange;
 import dev.sculptory.core.history.HistoryEntry;
+import dev.sculptory.core.region.Facing;
 import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.paper.SculptoryPlugin;
+import dev.sculptory.paper.engine.SelfTestBuilderMode;
 import dev.sculptory.paper.engine.SelfTestEntities;
 import dev.sculptory.paper.nms.PaperAccess;
 import dev.sculptory.protocol.v2.BuilderPower;
+import dev.sculptory.protocol.v2.C2S;
+import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.JobResult;
+import dev.sculptory.server.engine.Perm;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -27,19 +33,24 @@ import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 import org.bukkit.Bukkit;
+import org.bukkit.block.BlockFace;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.hanging.HangingPlaceEvent;
 import org.bukkit.event.player.PlayerInteractAtEntityEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.util.Vector;
 
 /**
@@ -49,6 +60,10 @@ import org.bukkit.util.Vector;
  * interact events the packet handler fires before the interaction, a punch): a frame hung, filled, emptied and broken,
  * a painting hung and broken, an armor stand placed, dressed and broken are each one step, undone and redone exactly
  * with no item dropped; a placement out of builder reach, and one another plugin cancels, place and record nothing.
+ *
+ * <p><b>Record</b>: with builder mode's Record power alone, a place, a break and a frame are three steps undone exactly;
+ * with no power on, a frame hung through the game's own item use records nothing. With Record on where builder mode cannot
+ * act (Survival, no builder node) a block-item click is the game's placement, unrecorded; in Creative it is held back.
  *
  * <p><b>Supports</b> ({@code HangingSupport}, the same engine code as the loaders): a Fill of air over a framed wall
  * takes the frame into its step and the undo brings it back with its item; a frame on a wall swapped for dirt, and one
@@ -266,6 +281,145 @@ final class HangingChecks {
         r.record("builder entities: a frame out of builder reach is neither placed nor recorded",
                 s.all(ItemFrame.class).isEmpty() && s.labels().size() == before,
                 s.all(ItemFrame.class) + ", history " + s.labels());
+    }
+
+    // ============================================================================================ Record
+
+    /**
+     * Builder mode's Record power alone (a client's default): a place and a break are one step each, a frame hung
+     * through the game's own item use is one, and undoing the three puts the blocks back exactly and the frame away,
+     * with no item dropped; with no power on, the same frame placement is the game's and records nothing.
+     */
+    static CompletableFuture<Void> record(SelfTestRun r) {
+        int x0 = r.baseX + 640, z0 = r.baseZ + 64;
+        Box area = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 8, z0 + 31);
+        SelfTestRun.Area claimed = r.claim(area);
+        floor(r, x0, z0);
+        SelfTestEntities.Handle handle = SelfTestEntities.listen(SculptoryPlugin.instance(), r.service);
+        r.cleanup(handle::close);
+        Scene s = new Scene(r, handle, area);
+        BlockPos wall = wall(r, x0 + 6, z0 + 3, 1);
+        Box work = box(x0, FLOOR, z0, x0 + 31, FLOOR + 8, z0 + 31);
+        int[][] before = {null};
+        int[] earlier = {0};
+        return r.ticks(5).thenCompose(v -> {
+            if (claimed.hadEntities()) throw new IllegalStateException("the area holds entities already");
+            r.service.builderPowers(r.player, BuilderPower.RECORD.bit());
+            r.cleanup(() -> r.service.builderPowers(r.player, 0));
+            r.stand(x0 + 6.5, FLOOR + 1, z0 + 7.5, 180f, new ItemStack(Items.STONE, 64));
+            before[0] = r.snapshot(work);
+            earlier[0] = s.labels().size();
+            BuilderOutcome placed = r.service.builderPlace(r.player, new C2S.BuilderPlace(9001, false,
+                    new dev.sculptory.core.BlockPos(x0 + 6, FLOOR, z0 + 5), Facing.UP, 0.5f, 1f, 0.5f, 0,
+                    Symmetry.NONE));
+            BuilderOutcome broken = r.service.builderBreak(r.player, new C2S.BuilderBreak(9002, 77,
+                    List.of(new dev.sculptory.core.BlockPos(x0 + 8, FLOOR, z0 + 5)), 0, Symmetry.NONE, false, true));
+            hold(r, Items.ITEM_FRAME);
+            s.useOn(wall, Direction.SOUTH);
+            List<String> labels = s.labels();
+            boolean steps = labels.size() == earlier[0] + 3
+                    && labels.subList(0, 3).equals(List.of("Place · item frame", "Break · 1 block", "Place · 1 block"));
+            r.record("builder Record: with Record alone a place, a break and a frame are three steps",
+                    placed.accepted() && placed.changed() == 1 && broken.accepted() && broken.changed() == 1
+                            && s.all(ItemFrame.class).size() == 1 && steps,
+                    placed + ", " + broken + ", frames " + s.all(ItemFrame.class).size() + ", history " + labels);
+            return r.undo();
+        }).thenCompose(undo -> r.undo()).thenCompose(undo -> r.undo()).thenAccept(undo -> {
+            int differ = r.countDiffering(work, before[0]);
+            r.record("builder Record: the three steps undo exactly", differ == 0 && s.all(ItemFrame.class).isEmpty()
+                            && s.items().isEmpty() && s.labels().size() == earlier[0],
+                    differ + " cells differ, frames " + s.all(ItemFrame.class) + ", items " + s.items()
+                            + ", history " + s.labels());
+            // The negative control: with no power on, the game hangs the frame and nothing is recorded.
+            r.service.builderPowers(r.player, 0);
+            hold(r, Items.ITEM_FRAME);
+            s.useOn(wall, Direction.SOUTH);
+            List<ItemFrame> frames = s.all(ItemFrame.class);
+            r.record("builder Record: with no power on a frame is the game's and is not recorded",
+                    frames.size() == 1 && s.labels().size() == earlier[0], frames + ", history " + s.labels());
+            frames.forEach(Entity::discard);
+        });
+    }
+
+    /**
+     * A block-item click with Record on where builder mode cannot act: in Survival the game places the block and nothing
+     * is recorded; in Creative with the builder node the game's placement is held back (the click comes as a
+     * BuilderPlace, which is recorded); without the node the game places again, nothing recorded.
+     */
+    static CompletableFuture<Void> recordWhereBuilderModeCannotAct(SelfTestRun r) {
+        int x0 = r.baseX + 640, z0 = r.baseZ + 96;
+        Box area = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 8, z0 + 31);
+        r.claim(area);
+        floor(r, x0, z0);
+        SelfTestEntities.Handle handle = SelfTestEntities.listen(SculptoryPlugin.instance(), r.service);
+        r.cleanup(handle::close);
+        r.cleanup(SelfTestBuilderMode.listen(SculptoryPlugin.instance(), r.service));
+        Scene s = new Scene(r, handle, area);
+        PermissionAttachment grants = r.attachment != null ? r.attachment
+                : r.player.getBukkitEntity().addAttachment(SculptoryPlugin.instance());
+        if (r.attachment == null) r.cleanup(grants::remove);
+        int earlier = s.labels().size();
+        r.service.builderPowers(r.player, BuilderPower.RECORD.bit());
+        r.cleanup(() -> r.service.builderPowers(r.player, 0));
+        r.stand(x0 + 6.5, FLOOR + 1, z0 + 7.5, 180f, new ItemStack(Items.STONE, 64));
+        BlockPos survival = new BlockPos(x0 + 4, FLOOR + 1, z0 + 5);
+        BlockPos creative = new BlockPos(x0 + 6, FLOOR + 1, z0 + 5);
+        BlockPos unpermitted = new BlockPos(x0 + 8, FLOOR + 1, z0 + 5);
+
+        gameMode(r, GameType.SURVIVAL);
+        s.useOn(survival.below(), Direction.UP);
+        r.record("builder Record: in Survival the game places the block, nothing recorded",
+                r.level.getBlockState(survival).is(Blocks.STONE) && s.labels().size() == earlier,
+                r.level.getBlockState(survival) + ", history " + s.labels());
+
+        gameMode(r, GameType.CREATIVE);
+        hold(r, Items.STONE);
+        boolean heldBack;
+        if (r.player.connection != null) {
+            s.useOn(creative.below(), Direction.UP);
+            heldBack = r.level.getBlockState(creative).isAir();
+        } else {
+            // The game's item use after a denied interact resyncs the player through their connection, which the fake
+            // player has none of: the interact event alone shows whether builder mode holds the placement back.
+            PlayerInteractEvent event = new PlayerInteractEvent(r.player.getBukkitEntity(), Action.RIGHT_CLICK_BLOCK,
+                    r.player.getBukkitEntity().getInventory().getItemInMainHand(),
+                    r.level.getWorld().getBlockAt(creative.getX(), FLOOR, creative.getZ()), BlockFace.UP,
+                    org.bukkit.inventory.EquipmentSlot.HAND);
+            Bukkit.getPluginManager().callEvent(event);
+            heldBack = event.useItemInHand() == org.bukkit.event.Event.Result.DENY
+                    && r.level.getBlockState(creative).isAir();
+        }
+        BuilderOutcome placed = r.service.builderPlace(r.player, new C2S.BuilderPlace(9003, false,
+                new dev.sculptory.core.BlockPos(creative.getX(), FLOOR, creative.getZ()), Facing.UP, 0.5f, 1f, 0.5f, 0,
+                Symmetry.NONE));
+        r.record("builder Record: in Creative the game's placement is held back and the builder place recorded",
+                heldBack && placed.accepted() && s.labels().size() == earlier + 1
+                        && s.labels().get(0).equals("Place · 1 block"),
+                "held back " + heldBack + ", " + placed + ", history " + s.labels());
+
+        grants.setPermission(Perm.BUILDER.node(), false);
+        try {
+            s.useOn(unpermitted.below(), Direction.UP);
+            r.record("builder Record: without the builder node the game places the block, nothing recorded",
+                    r.level.getBlockState(unpermitted).is(Blocks.STONE) && s.labels().size() == earlier + 1,
+                    r.level.getBlockState(unpermitted) + ", history " + s.labels());
+        } finally {
+            // The fake player gets its grant back for the checks after these; a real player's attachment goes.
+            if (r.attachment != null) grants.setPermission(Perm.BUILDER.node(), true);
+            else grants.unsetPermission(Perm.BUILDER.node());
+        }
+        return r.undo().thenAccept(undo -> { });
+    }
+
+    /** Sets the self-test player's game mode (the fake player directly: it has no connection to tell). */
+    private static void gameMode(SelfTestRun r, GameType mode) {
+        if (r.attachment == null) {
+            r.player.setGameMode(mode);
+        } else {
+            net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
+            tag.putInt("playerGameType", mode.getId());
+            r.player.loadGameTypes(tag);
+        }
     }
 
     // ============================================================================================ supports

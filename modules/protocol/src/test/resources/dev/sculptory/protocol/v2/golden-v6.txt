@@ -291,3 +291,10 @@ cap TINKER_TEXT_BYTES 3072
 
 # Stream payloads with a format of their own
 payload scatter_placements 425353500103148001270001040109021704ef040eba0e0108
+
+# ---------------------------------------------------------------- v6 + feature builder_record
+# Appended after 0.4.0-beta without a new protocol: BuilderPower RECORD (bit 8). A client sets it only in a
+# BuilderPowers to a server that negotiated builder_record, so no v6 peer without the feature ever reads it. The
+# frozen lines above stay as released.
+enum+builder_record BuilderPower RECORD
+msg+builder_record builder_powers_record 2c8102

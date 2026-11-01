@@ -2364,6 +2364,35 @@ class ServerDispatcherTest {
         assertTrue(session.ready());
     }
 
+    /**
+     * Editing switched off (config, or the failsafe for a malformed one): the client is told it has neither use nor
+     * builder, so its clicks go the vanilla way; switched on again, the next re-check (a reload re-checks every player
+     * at once) gives both back, and off again takes them away.
+     */
+    @Test
+    void editingSwitchedOffLeavesUseAndBuilderOutOfThePermissions() {
+        permissions.granted.add(Perm.BUILDER);
+        edits.editing = false;
+        receive(Handshake.hello("test", Features.of(Features.BUILDER, Features.BUILDER_RECORD)));
+        S2C.Welcome welcome = transport.first(S2C.Welcome.class);
+        assertFalse(welcome.permissions().has(Perm.USE.bit()), "no use while editing is off");
+        assertFalse(welcome.permissions().has(Perm.BUILDER.bit()), "no builder while editing is off");
+        assertTrue(welcome.permissions().has(Perm.BRUSH.bit()), "the other nodes are told as they are");
+        transport.sent.clear();
+
+        edits.editing = true;
+        dispatcher.permissionsChanged(session);
+        S2C.PermissionsChanged on = transport.first(S2C.PermissionsChanged.class);
+        assertTrue(on.permissions().has(Perm.USE.bit()) && on.permissions().has(Perm.BUILDER.bit()));
+        transport.sent.clear();
+
+        edits.editing = false;
+        dispatcher.permissionsChanged(session);
+        S2C.PermissionsChanged off = transport.first(S2C.PermissionsChanged.class);
+        assertFalse(off.permissions().has(Perm.USE.bit()) || off.permissions().has(Perm.BUILDER.bit()));
+        assertEquals(session.permissions(), off.permissions());
+    }
+
     @Test
     void theServerOffersBuilderMode() {
         receive(Handshake.hello("test", Features.of(Features.BUILDER)));
@@ -2776,6 +2805,14 @@ class ServerDispatcherTest {
         S2C.HistoryState historyState = new S2C.HistoryState(true, false, "Fill", "", 100);
         int historyQueries;
         int predictions;
+
+        /** What {@link #editingEnabled} answers (the config's {@code editingEnabled}). */
+        boolean editing = true;
+
+        @Override
+        public boolean editingEnabled(FakePlayer p) {
+            return editing;
+        }
 
         private void refuseIfAsked() throws EditRejected {
             EditRejected rejected = rejectNext;
