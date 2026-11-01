@@ -327,7 +327,12 @@ public final class BuilderClient {
         redoDown = false;
     }
 
-    /** Tells the server the powers whenever they change and once per connection. */
+    /**
+     * Tells the server the powers whenever they change and once per connection. Record's bit goes only while builder
+     * mode is available to this client ({@link #unavailable}): with it the server holds back the game's own placement,
+     * so while the client still clicks the vanilla way (a permission granted a moment ago, not yet pushed; Survival)
+     * the bit would cost the player their clicks.
+     */
     private void sendPowersIfNeeded() {
         McEditorSession session = sessions.get();
         if (session == null || !session.builderOffered()) {
@@ -336,6 +341,7 @@ public final class BuilderClient {
         }
         long epoch = session.capabilities().sessionEpoch();
         int mask = powers.effective();
+        if (unavailable() != null) mask &= ~BuilderPower.RECORD.bit();
         if (epoch == sentEpoch && mask == sentPowers) return;
         if (session.sendBuilder(new C2S.BuilderPowers(mask)) == null) {
             sentEpoch = epoch;
