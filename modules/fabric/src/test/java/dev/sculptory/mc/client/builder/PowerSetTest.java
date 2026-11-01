@@ -151,9 +151,19 @@ class PowerSetTest {
         assertEquals(List.of(true), saved);
         assertEquals(BuilderPower.PLACE_IN_AIR.bit(), powers.shown(), "Record shows nothing");
         assertEquals(RECORD | BuilderPower.PLACE_IN_AIR.bit(), powers.effective());
-        assertTrue(powers.toggleLast(), "a tap after switching Record in the ring toggles Record");
-        assertEquals(List.of(true, false), saved);
+        assertEquals(BuilderPower.PLACE_IN_AIR, powers.last(), "switching Record is never the last toggle");
+        assertTrue(powers.toggleLast(), "a tap after switching Record toggles the last visible power");
+        assertFalse(powers.on(BuilderPower.PLACE_IN_AIR));
+        assertTrue(powers.on(BuilderPower.RECORD), "and leaves Record alone");
+        assertEquals(List.of(true), saved);
 
+        PowerSet fresh = new PowerSet();
+        fresh.toggle(BuilderPower.RECORD);
+        assertEquals(BuilderPower.LONG_REACH, fresh.last(), "Record first: a tap still means Long reach");
+        assertTrue(fresh.toggleLast());
+        assertEquals(BuilderPower.LONG_REACH.bit(), fresh.mask(), "Long reach on, Record still off");
+
+        powers.set(BuilderPower.RECORD, false);
         powers.set(BuilderPower.RECORD, true);
         powers.clear();
         assertEquals(RECORD, powers.mask(), "clearing keeps Record");

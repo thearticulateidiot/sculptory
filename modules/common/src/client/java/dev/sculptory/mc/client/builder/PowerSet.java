@@ -14,9 +14,10 @@ import java.util.function.Supplier;
  * power toggled (a tap of the ring key toggles it again) and which powers are available. A power with a
  * {@link PowerController} tells it when it goes on and off; Tinker is unavailable until its controller is registered.
  *
- * <p>Record is the one power kept across restarts: it is on in a new set (every click goes into the history by
- * default), the client's settings put back what the player chose last ({@link #restoreRecord}) and hear each later
- * change. Putting it back is not a toggle, so a tap of the ring key still means the power the player toggled last.
+ * <p>Record is the one power kept across restarts: it is on in a new set (every block and entity action goes into the
+ * history by default), the client's settings put back what the player chose last ({@link #restoreRecord}) and hear
+ * each later change. Record never becomes the power toggled last: it shows no tag, so a tap of the ring key toggles
+ * the last power the player can see (Long reach the first time).
  * Pure Java; client thread only.
  */
 public final class PowerSet {
@@ -65,7 +66,7 @@ public final class PowerSet {
         return power.in(mask);
     }
 
-    /** The power toggled last (Long reach before any was). */
+    /** The power toggled last, the one a tap toggles (Long reach before any was; never Record). */
     public BuilderPower last() {
         return last;
     }
@@ -119,11 +120,12 @@ public final class PowerSet {
 
     /**
      * Switches the power on or off; false when it is unavailable and asked on (switching off always works). Remembers
-     * it as the last one either way.
+     * it as the last one either way, except Record: a tap of the ring key never toggles Record.
      */
     public boolean set(BuilderPower power, boolean on) {
         if (on && !available(power)) return false;
-        last = power;
+        // Record shows no tag, so a tap that switched it again would change something the player cannot see.
+        if (power != BuilderPower.RECORD) last = power;
         if (on == on(power)) return true;
         mask = on ? mask | power.bit() : mask & ~power.bit();
         PowerController controller = controllers.get(power);
