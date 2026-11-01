@@ -52,6 +52,7 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.PlaceOnWaterBlockItem;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
@@ -426,7 +427,7 @@ public final class BuilderClient {
     private InteractionResult useBlock(Player player, Level world, InteractionHand hand, BlockHitResult hit) {
         if (player != client.player || !(world instanceof ClientLevel clientWorld) || !active()) return InteractionResult.PASS;
         ItemStack stack = player.getItemInHand(hand);
-        if (!(stack.getItem() instanceof BlockItem)) return InteractionResult.PASS;
+        if (!placesByClick(stack)) return InteractionResult.PASS;
         if (powers.onClick(GLFW.GLFW_MOUSE_BUTTON_RIGHT, MinecraftInput.modifiers())) return InteractionResult.FAIL;
         // The block's own use first, as vanilla orders it; when it takes the click, vanilla's packet carries it.
         if (!player.isSecondaryUseActive()) {
@@ -445,7 +446,7 @@ public final class BuilderClient {
     private InteractionResultHolder<ItemStack> useItem(Player player, Level world, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
         if (player != client.player || !(world instanceof ClientLevel clientWorld) || !active()
-                || !powers.on(BuilderPower.PLACE_IN_AIR) || !(stack.getItem() instanceof BlockItem)) {
+                || !powers.on(BuilderPower.PLACE_IN_AIR) || !placesByClick(stack)) {
             return InteractionResultHolder.pass(stack);
         }
         HitResult target = client.hitResult;
@@ -651,6 +652,15 @@ public final class BuilderClient {
     }
 
     // ---- helpers ----
+
+    /**
+     * Whether builder mode places {@code stack} on a right-click: a block item, but not one placed on water (a lily
+     * pad, frogspawn), which aims at the water through the item's own use; builder mode would aim at the block below.
+     * Those go vanilla's way, unrecorded, as other non-block items do.
+     */
+    static boolean placesByClick(ItemStack stack) {
+        return stack.getItem() instanceof BlockItem && !(stack.getItem() instanceof PlaceOnWaterBlockItem);
+    }
 
     /** The Mirror power's symmetry, or none (with a hint when Mirror is on but the editor has no centre or mode). */
     private Symmetry symmetry() {

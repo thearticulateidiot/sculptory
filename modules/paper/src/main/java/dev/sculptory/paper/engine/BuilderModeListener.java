@@ -6,6 +6,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.BlockItem;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.PlaceOnWaterBlockItem;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
@@ -39,7 +41,10 @@ final class BuilderModeListener implements Listener {
         ServerPlayer player = ((CraftPlayer) event.getPlayer()).getHandle();
         InteractionHand hand = event.getHand() == EquipmentSlot.OFF_HAND ? InteractionHand.OFF_HAND
                 : InteractionHand.MAIN_HAND;
-        if (!(player.getItemInHand(hand).getItem() instanceof BlockItem)) return;
+        Item item = player.getItemInHand(hand).getItem();
+        // A lily pad or frogspawn is placed by its own use on the water, which the client sends the vanilla way and
+        // builder mode leaves alone; a denied block click just before may make CraftBukkit refuse that use too.
+        if (!(item instanceof BlockItem) || item instanceof PlaceOnWaterBlockItem) return;
         if (!(service.builderMode() instanceof BuilderService builder) || !builder.acts(player)) return;
         event.setUseItemInHand(Event.Result.DENY);
     }
