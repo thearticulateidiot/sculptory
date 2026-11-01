@@ -36,7 +36,7 @@ Palette Paint with a weighted mix and a [pattern](mix-patterns.md): Patches for 
 
 ### Can I build by hand with the editor's undo?
 
-Yes: hold `G` outside the editor and switch a power on. See [Builder mode](builder-mode.md).
+Yes: in Creative, every block you place or break outside the editor already goes into the history (the Record power, on from the start), so `Ctrl+Z` takes it back. Hold `G` for more powers. See [Builder mode](builder-mode.md).
 
 ### Do my settings survive a restart or an update?
 

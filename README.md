@@ -48,7 +48,8 @@ servers, where the server decides who may edit.
 - **Scatter** vanilla trees and features, your own schematics, rocks and plants over an area, with rotations, mirrors
   and a preview before you commit. `Alt+click` places one.
 - **Tinker.** Change one block's properties, a sign's text or an entity in place, by scrolling over it.
-- **Builder mode.** Hold `G` in normal creative play for a ring of powers, without opening the editor.
+- **Builder mode.** In normal creative play every block you place or break goes into the history (`Ctrl+Z`), and
+  holding `G` opens a ring of powers, without opening the editor.
 - **Jump.** `J` puts you on the block you look at, `Shift+J` through the wall.
 - **Generate and Extrude.** Generate builds roads, roofs, lines and curves, sweeps a profile along a path, stamps copies
   along a path and shapes terrain from a heightmap picture. Extrude pulls a face out, carves it in, smears it, carries
