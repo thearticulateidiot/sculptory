@@ -66,6 +66,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.context.BlockPlaceContext;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -81,6 +82,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Half;
 import net.minecraft.world.level.block.state.properties.StairsShape;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
 
@@ -640,7 +642,8 @@ public final class BuilderModeGameTest {
     /**
      * Keep shape over water: breaking the block under a still water source leaves the water where it is (no neighbour
      * update, no fluid tick), and a bulldozed waterlogged slab leaves its water as the step's; the drag is undone and
-     * redone exactly.
+     * redone exactly. The water is watched in a chunk that runs its scheduled ticks, where a fluid tick the break set off
+     * would make it flow.
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_water", timeoutTicks = LIMIT)
     public void keepShapeOverWaterAndWaterloggedBreaksUndoExactly(GameTestHelper context) {
@@ -650,20 +653,30 @@ public final class BuilderModeGameTest {
         BlockPos under = pos(r.x + 10, FLOOR, r.z + 4);
         BlockPos water = pos(r.x + 10, FLOOR + 1, r.z + 4);
         BlockPos slab = pos(r.x + 5, FLOOR + 1, r.z + 4);
-        h.world.setBlock(water, Blocks.WATER.defaultBlockState(), 2);
-        h.world.setBlock(slab, Blocks.OAK_SLAB.defaultBlockState().setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED, true), 2);
-        stand(h.player, r.x + 2, r.z + 4, -90f);
-        hold(h.player, Items.AIR);
-        WorldSnapshot before = capture(h.world, r.area);
-        try {
-            check(breakCells(h, h.player, 1, List.of(under), powers, false, true).changed() == 1, "the block under the water");
-            check(h.world.getBlockState(under).isAir() && h.world.getBlockState(water).is(Blocks.WATER), "broken, water still there");
-        } catch (RuntimeException | Error e) {
-            cleanup(h, List.of(), r);
-            throw e;
-        }
+        WorldSnapshot[] before = {null};
         context.startSequence()
+                // A freshly forced chunk runs no scheduled tick until its entities are loaded, some ticks after it
+                // loads (how many depends on the machine): until then the water could not flow whatever the break did.
+                .thenWaitUntil(() -> check(runsScheduledTicks(h.world, water), "the region's chunk runs its scheduled ticks"))
+                .thenExecute(() -> {
+                    try {
+                        h.world.setBlock(water, Blocks.WATER.defaultBlockState(), 2);
+                        // Still water, as an edit writes it: placing it scheduled its first fluid tick, which would make
+                        // it flow (sideways, and down once the block under it is gone) whatever the break did.
+                        h.world.getFluidTicks().clearArea(new BoundingBox(water));
+                        h.world.setBlock(slab, Blocks.OAK_SLAB.defaultBlockState().setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED, true), 2);
+                        stand(h.player, r.x + 2, r.z + 4, -90f);
+                        hold(h.player, Items.AIR);
+                        before[0] = capture(h.world, r.area);
+                        check(breakCells(h, h.player, 1, List.of(under), powers, false, true).changed() == 1, "the block under the water");
+                        check(h.world.getBlockState(under).isAir() && h.world.getBlockState(water).is(Blocks.WATER), "broken, water still there");
+                    } catch (RuntimeException | Error e) {
+                        cleanup(h, List.of(), r);
+                        throw e;
+                    }
+                })
                 .thenExecuteAfter(10, () -> {
+                    check(runsScheduledTicks(h.world, water), "the chunk still runs its scheduled ticks");
                     check(h.world.getBlockState(under).isAir(), "keep shape: the water did not flow down in 10 ticks");
                     check(h.world.getFluidState(water).isSource(), "the source is still a source");
                     WorldSnapshot afterFirst = capture(h.world, r.area);
@@ -698,7 +711,7 @@ public final class BuilderModeGameTest {
                                         .thenWaitUntil(() -> check(last.result != null, "last undo running"))
                                         .thenWaitUntil(() -> {
                                             check(entries(h).isEmpty(), "everything undone");
-                                            checkSame(before, capture(h.world, r.area), "back to the start exactly");
+                                            checkSame(before[0], capture(h.world, r.area), "back to the start exactly");
                                             cleanup(h, List.of(), r);
                                         })
                                         .thenSucceed();
@@ -1418,6 +1431,15 @@ public final class BuilderModeGameTest {
             }
         }
         return new Region(at[0], at[1], area);
+    }
+
+    /**
+     * Whether the chunk holding {@code pos} runs its scheduled block and fluid ticks: it ticks and its entities are loaded
+     * (the test the world's tick lists make). A freshly forced chunk gets there some ticks after it loads.
+     */
+    private static boolean runsScheduledTicks(ServerLevel world, BlockPos pos) {
+        long chunk = ChunkPos.asLong(pos);
+        return world.shouldTickBlocksAt(chunk) && world.areEntitiesLoaded(chunk);
     }
 
     private static BlockPos pos(int x, int y, int z) {
