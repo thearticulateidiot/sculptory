@@ -77,8 +77,8 @@ if [ "$paper" -eq 1 ]; then
   if [ "${verdicts[-1]:0:4}" = "PASS" ]; then
     for redstone in VANILLA EIGENCRAFT ALTERNATE_CURRENT; do
       server="$out/paper-$redstone"
-      SERVER_DIR="$server" SELFTEST_CACHE="$out/../selftest-cache" \
-        part "paper self-test $redstone" "$out/paper-$redstone.log" "$repo/scripts/paper-selftest.sh" "$redstone"
+      part "paper self-test $redstone" "$out/paper-$redstone.log" env SERVER_DIR="$server" \
+        SELFTEST_CACHE="$(dirname "$out")/selftest-cache" "$repo/scripts/paper-selftest.sh" "$redstone"
       summary="$(counts "$server/selftest-report.xml")"
       [ -n "$summary" ] && verdicts[-1]="${verdicts[-1]}: $summary"
     done

@@ -53,65 +53,19 @@ jobs:
       - name: Build the plugin's dev jar
         run: ./gradlew :paper:devJar --stacktrace
 
+      # The steps below are scripts/paper-selftest.sh, which a local run uses too (scripts/check-throttled.sh); the pins
+      # are this job's env, passed to the script.
       - name: Download Paper, WorldEdit and WorldGuard
-        run: |
-          set -euo pipefail
-          mkdir -p paper-server/plugins
-          cd paper-server
-          url=$(curl -fsSL "https://fill.papermc.io/v3/projects/paper/versions/${PAPER_VERSION}/builds/${PAPER_BUILD}" \
-            | jq -r '.downloads["server:default"].url')
-          curl -fsSL -o paper.jar "$url"
-          echo "${PAPER_SHA256}  paper.jar" | sha256sum -c -
-          for plugin in WORLDEDIT WORLDGUARD; do
-            id_var="${plugin}_VERSION_ID"; sha_var="${plugin}_SHA512"
-            file_url=$(curl -fsSL "https://api.modrinth.com/v2/version/${!id_var}" | jq -r '.files[0].url')
-            curl -fsSL -o "plugins/${plugin,,}.jar" "$file_url"
-            echo "${!sha_var}  plugins/${plugin,,}.jar" | sha512sum -c -
-          done
-          echo "eula=true" > eula.txt
-          printf 'server-port=25580\nonline-mode=false\nspawn-protection=16\n' > server.properties
+        run: scripts/paper-selftest.sh "$REDSTONE" download
 
       - name: Set the redstone implementation
-        working-directory: paper-server
-        run: |
-          set -euo pipefail
-          mkdir -p config
-          file=config/paper-world-defaults.yml
-          if [ -f "$file" ]; then
-            sed -i -E "s/^(  redstone-implementation: ).*/\1${REDSTONE}/" "$file"
-          else
-            # Paper writes the whole file at its first start and keeps what is set here (version 31: Paper 1.21.1).
-            printf '_version: 31\nmisc:\n  redstone-implementation: %s\n' "$REDSTONE" > "$file"
-          fi
-          grep -n 'redstone-implementation' "$file"
+        run: scripts/paper-selftest.sh "$REDSTONE" redstone
 
       - name: Run the Paper self-test
-        working-directory: paper-server
-        run: |
-          set -euo pipefail
-          jars=(../modules/paper/build/libs/sculptory-paper-*-dev.jar)
-          if [ "${#jars[@]}" -ne 1 ] || [ ! -f "${jars[0]}" ]; then
-            echo "::error::Expected one dev jar in modules/paper/build/libs, found: ${jars[*]}"
-            exit 1
-          fi
-          jar="$(realpath "${jars[0]}")"
-          echo "Self-test jar: $jar"
-          java -Xmx2G -Dsculptory.selftest.enabled=true -Dsculptory.checkPermitBounds=true \
-            -Dsculptory.selftest="$PWD/selftest-report.xml" -Dsculptory.selftest.stop=true \
-            -jar paper.jar --add-plugin="$jar" --nogui < /dev/null
-          test -f selftest-report.xml
-          grep -o '<testsuite[^>]*>' selftest-report.xml
-          grep -q 'failures="0" errors="0"' selftest-report.xml
-          tests=$(grep -o '<testsuite[^>]*>' selftest-report.xml | sed -E 's/.* tests="([0-9]+)".*/\1/')
-          echo "${tests} checks ran (at least ${SELFTEST_MIN_TESTS} expected)"
-          test "${tests}" -ge "${SELFTEST_MIN_TESTS}"
+        run: scripts/paper-selftest.sh "$REDSTONE" run verify
 
       - name: Check the redstone implementation in force
-        working-directory: paper-server
-        run: |
-          set -euo pipefail
-          grep -n 'redstone-implementation' config/paper-world-defaults.yml
-          grep -q "redstone ${REDSTONE}" selftest-report.xml
+        run: scripts/paper-selftest.sh "$REDSTONE" implementation
 
       - name: Upload the self-test report
         if: always()
