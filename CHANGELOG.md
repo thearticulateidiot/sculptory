@@ -47,8 +47,8 @@ like 0.4.0-beta: the two work together, with one difference (below).
   player (Creative and the permission).
 - **Building by hand on a server with editing switched off** (`editingEnabled` false, also what a broken
   `server.json` falls back to): a player with a builder power on had every place and break refused. The server now
-  tells clients they may not edit while editing is off (and again when a reload switches it back on), so their
-  clicks go the vanilla way.
+  tells clients that editing isn't available while it is off, so their clicks go the vanilla way and the editor
+  can't be opened (`B` says "Editing is off here"); a reload that switches it back on gives both back at once.
 - **Frames and paintings no longer drop off when their wall goes**: an edit that takes away the block an item frame
   or painting hangs on (a fill, a brush, a paste, a builder-mode break) takes the frame into its step, and its undo
   hangs it back with its item. Undoing the step that built a wall takes along the frames hung on it since, and redo
