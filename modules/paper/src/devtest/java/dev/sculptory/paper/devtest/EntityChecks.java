@@ -91,7 +91,7 @@ final class EntityChecks {
         int x = r.baseX + 320, z = r.baseZ + 4;
         Box area = box(x, 99, z, x + 9, 106, z + 9);
         SelfTestRun.Area claimed = r.claim(area);
-        return r.ticks(5).thenCompose(v -> {
+        return r.ready(claimed).thenCompose(v -> {
             if (claimed.hadEntities() || !r.level.getEntitiesOfClass(ArmorStand.class, aabb(area)).isEmpty()) {
                 throw new IllegalStateException("the entity check's area holds entities already; it changes nothing");
             }
@@ -226,8 +226,7 @@ final class EntityChecks {
         r.info("entities: the server's spawn rules", "difficulty " + r.level.getDifficulty().getKey() + ", monsters "
                 + r.level.getWorld().getAllowMonsters() + ", animals " + r.level.getWorld().getAllowAnimals()
                 + ", villagers " + r.level.getServer().areNpcsEnabled());
-        // Paper loads a chunk's entities a little after the chunk: look again once they are in.
-        return r.ticks(5).thenCompose(v -> {
+        return r.ready(claimed).thenCompose(v -> {
             if (claimed.hadEntities()) {
                 throw new IllegalStateException("the spawning check's area holds entities already; it changes nothing");
             }

@@ -239,8 +239,7 @@ final class RegionChecks {
         if (r.regionChecksSkipped("entities")) return CompletableFuture.completedFuture(null);
         int x = r.baseX + 160, z = r.baseZ + 4;
         SelfTestRun.Area area = r.claim(box(x - 2, 98, z - 2, x + 18, 108, z + 8));
-        // Paper loads a chunk's entities a little after the chunk: look again once they are in.
-        return r.ticks(5).thenCompose(v -> {
+        return r.ready(area).thenCompose(v -> {
             if (area.hadEntities() || !r.level.getEntitiesOfClass(ArmorStand.class, aabb(area.box)).isEmpty()) {
                 throw new IllegalStateException("the entity check's area holds entities already; it changes nothing");
             }

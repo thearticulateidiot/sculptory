@@ -93,7 +93,7 @@ final class HangingChecks {
     static CompletableFuture<Void> builderMode(SelfTestRun r) {
         int x0 = r.baseX + 640, z0 = r.baseZ; // chunk-aligned, beside the other groups' areas
         Box area = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 8, z0 + 31);
-        SelfTestRun.Area claimed = r.claim(area);
+        SelfTestRun.Area claimed = claim(r, area);
         floor(r, x0, z0);
         SelfTestEntities.Handle handle = SelfTestEntities.listen(SculptoryPlugin.instance(), r.service);
         r.cleanup(handle::close);
@@ -103,8 +103,7 @@ final class HangingChecks {
         r.record("builder entities: the plugin's own listener hears the place events",
                 SelfTestEntities.pluginListens(SculptoryPlugin.instance()), "");
         Scene s = new Scene(r, handle, area);
-        // Paper loads a chunk's entities a little after the chunk: look again once they are in.
-        return r.ticks(5).thenCompose(v -> {
+        return r.ready(claimed).thenCompose(v -> {
             if (claimed.hadEntities()) throw new IllegalStateException("the area holds entities already");
             r.service.builderPowers(r.player, BuilderPower.KEEP_SHAPE.bit());
             r.cleanup(() -> r.service.builderPowers(r.player, 0));
@@ -293,7 +292,7 @@ final class HangingChecks {
     static CompletableFuture<Void> record(SelfTestRun r) {
         int x0 = r.baseX + 640, z0 = r.baseZ + 64;
         Box area = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 8, z0 + 31);
-        SelfTestRun.Area claimed = r.claim(area);
+        SelfTestRun.Area claimed = claim(r, area);
         floor(r, x0, z0);
         SelfTestEntities.Handle handle = SelfTestEntities.listen(SculptoryPlugin.instance(), r.service);
         r.cleanup(handle::close);
@@ -302,7 +301,7 @@ final class HangingChecks {
         Box work = box(x0, FLOOR, z0, x0 + 31, FLOOR + 8, z0 + 31);
         int[][] before = {null};
         int[] earlier = {0};
-        return r.ticks(5).thenCompose(v -> {
+        return r.ready(claimed).thenCompose(v -> {
             if (claimed.hadEntities()) throw new IllegalStateException("the area holds entities already");
             r.service.builderPowers(r.player, BuilderPower.RECORD.bit());
             r.cleanup(() -> r.service.builderPowers(r.player, 0));
@@ -349,7 +348,7 @@ final class HangingChecks {
     static CompletableFuture<Void> recordWhereBuilderModeCannotAct(SelfTestRun r) {
         int x0 = r.baseX + 640, z0 = r.baseZ + 96;
         Box area = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 8, z0 + 31);
-        r.claim(area);
+        claim(r, area);
         floor(r, x0, z0);
         SelfTestEntities.Handle handle = SelfTestEntities.listen(SculptoryPlugin.instance(), r.service);
         r.cleanup(handle::close);
@@ -427,7 +426,7 @@ final class HangingChecks {
     static CompletableFuture<Void> supports(SelfTestRun r) {
         int x0 = r.baseX + 640, z0 = r.baseZ + 32;
         Box area = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 8, z0 + 31);
-        SelfTestRun.Area claimed = r.claim(area);
+        SelfTestRun.Area claimed = claim(r, area);
         floor(r, x0, z0);
         Scene s = new Scene(r, null, area);
         BlockPos wall = wall(r, x0 + 6, z0 + 3, 1);
@@ -436,7 +435,7 @@ final class HangingChecks {
         Box built = box(x0 + 24, FLOOR + 1, z0 + 3, x0 + 25, FLOOR + 2, z0 + 3);
         UUID[] ids = new UUID[5];
         String[] hung = new String[5];
-        return r.ticks(5).thenCompose(v -> {
+        return r.ready(claimed).thenCompose(v -> {
             if (claimed.hadEntities()) throw new IllegalStateException("the area holds entities already");
             ItemFrame frame = hang(r, wall, Items.DIAMOND);
             ItemFrame far = hang(r, farWall, Items.EMERALD);
@@ -608,12 +607,22 @@ final class HangingChecks {
         }
     }
 
-    /** A stone floor at {@link #FLOOR} with air above, over the 32 × 32 area at (x0, z0). */
+    /**
+     * Claims {@code area} (up to {@link #FLOOR} + 8) with the layer above it, where {@link #floor} puts a glass lid: the
+     * checks count the items in their area, and the world may hold blocks over it (bamboo, a tree) that, once the cells
+     * under them are cleared, break in the game's own ticks and drop their items, which the lid keeps out.
+     */
+    private static SelfTestRun.Area claim(SelfTestRun r, Box area) {
+        return r.claim(box(area.min().x(), area.min().y(), area.min().z(), area.max().x(), FLOOR + 9, area.max().z()));
+    }
+
+    /** Over the 32 × 32 area at (x0, z0): a stone floor at {@link #FLOOR}, air above it, a glass lid 9 blocks up. */
     private static void floor(SelfTestRun r, int x0, int z0) {
         for (int x = x0; x <= x0 + 31; x++) {
             for (int z = z0; z <= z0 + 31; z++) {
                 set(r, new BlockPos(x, FLOOR, z), Blocks.STONE.defaultBlockState());
                 for (int y = FLOOR + 1; y <= FLOOR + 8; y++) set(r, new BlockPos(x, y, z), Blocks.AIR.defaultBlockState());
+                set(r, new BlockPos(x, FLOOR + 9, z), Blocks.GLASS.defaultBlockState());
             }
         }
     }
