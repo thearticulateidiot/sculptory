@@ -86,9 +86,6 @@ msg selection_upload 1826ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1
 msg selection_ready 5226ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879
 msg generated_upload 1e2e05780a188c01280cac02
 msg builder_powers 2c8101
-# Added after 0.4.0-beta without a new protocol: BuilderPower RECORD (bit 8) travels only to a server that negotiated
-# the builder_record feature, so no v6 peer without it ever reads the bit.
-msg builder_powers_record 2c8102
 msg builder_place 2d120006800103003e8000003f8000003f0000001000
 msg builder_place_air_mirrored 2d07013b8c011805000000003f4000003e00000062035132
 msg builder_break_click 2e1404010680010300000001
@@ -232,7 +229,7 @@ type WELCOME 64
 # Enums written by ordinal, in wire order (append-only within a version is still a change)
 enum AssetAccess$Mode EVERYONE,LISTED
 enum BrushTool RAISE,LOWER,SMOOTH,FLATTEN,PAINT,PALETTE,SHAPE,WEATHER,HEIGHTMAP,BIOME
-enum BuilderPower LONG_REACH,PLACE_IN_AIR,REPLACE,BULLDOZER,KEEP_SHAPE,FORCE_PLACE,MIRROR,TINKER,RECORD
+enum BuilderPower LONG_REACH,PLACE_IN_AIR,REPLACE,BULLDOZER,KEEP_SHAPE,FORCE_PLACE,MIRROR,TINKER
 enum ConflictPolicy SKIP_CONFLICTS,OVERWRITE
 enum EntityEdit$Billboard FIXED,VERTICAL,HORIZONTAL,CENTER
 enum EntityEdit$Flag SMALL,SHOW_ARMS,NO_BASE_PLATE,INVISIBLE,NO_GRAVITY,FIXED
@@ -294,3 +291,10 @@ cap TINKER_TEXT_BYTES 3072
 
 # Stream payloads with a format of their own
 payload scatter_placements 425353500103148001270001040109021704ef040eba0e0108
+
+# ---------------------------------------------------------------- v6 + feature builder_record
+# Appended after 0.4.0-beta without a new protocol: BuilderPower RECORD (bit 8). A client sets it only in a
+# BuilderPowers to a server that negotiated builder_record, so no v6 peer without the feature ever reads it. The
+# frozen lines above stay as released.
+enum+builder_record BuilderPower RECORD
+msg+builder_record builder_powers_record 2c8102

@@ -79,6 +79,12 @@ import org.junit.jupiter.api.Test;
  * here (a field, a tag, an appended enum value, a cap) is a new protocol: raise {@link ProtocolV2#VERSION} to 7, keep
  * this fixture as it is, and add a {@code golden-v7.txt} with the new bytes.
  *
+ * <p>The one exception within a protocol: an enum value may be appended under a negotiated feature, when frames
+ * carrying it are sent only to peers that negotiated that feature (a peer without it never reads the value). The
+ * frozen lines stay exactly as released; the feature's values and samples go in their own section of the fixture,
+ * kinds {@code enum+<feature>} and {@code msg+<feature>} ({@link #FEATURE_VALUES}, {@link #featureSamples}). Anything
+ * else is a new protocol. So far: {@code builder_record} (BuilderPower.RECORD, after 0.4.0-beta).
+ *
  * <p>A failure prints the lines the fixture would need, to copy into the next version's file.
  */
 class WireGoldenTest {
@@ -144,10 +150,66 @@ class WireGoldenTest {
     void wireEnumsKeepTheirValues() {
         Map<String, String> actual = new TreeMap<>();
         for (Class<? extends Enum<?>> type : WIRE_ENUMS) {
-            actual.put(type.getName().substring(type.getName().lastIndexOf('.') + 1),
-                    Arrays.stream(type.getEnumConstants()).map(Enum::name).collect(Collectors.joining(",")));
+            List<String> gated = new ArrayList<>();
+            for (Map<Class<? extends Enum<?>>, List<String>> values : FEATURE_VALUES.values()) {
+                gated.addAll(values.getOrDefault(type, List.of()));
+            }
+            List<String> names = Arrays.stream(type.getEnumConstants()).map(Enum::name).toList();
+            // A value appended under a feature comes after every frozen one, so the frozen ordinals keep their meaning.
+            List<String> frozen = names.subList(0, names.size() - gated.size());
+            assertEquals(gated, names.subList(frozen.size(), names.size()), type.getSimpleName()
+                    + ": feature values must be the last ones");
+            actual.put(name(type), String.join(",", frozen));
         }
         assertEquals(new TreeMap<>(fixture("enum")), actual, "a wire enum changed:\n" + lines("enum", actual));
+    }
+
+    /** The values appended under each feature are the fixture's {@code enum+<feature>} lines, in wire order. */
+    @Test
+    void featureEnumValuesAreFrozenInTheirOwnSection() {
+        for (Map.Entry<String, Map<Class<? extends Enum<?>>, List<String>>> feature : FEATURE_VALUES.entrySet()) {
+            Map<String, String> actual = new TreeMap<>();
+            feature.getValue().forEach((type, values) -> actual.put(name(type), String.join(",", values)));
+            String kind = "enum+" + feature.getKey();
+            assertEquals(new TreeMap<>(fixture(kind)), actual, feature.getKey() + "'s values changed:\n"
+                    + lines(kind, actual));
+        }
+    }
+
+    /** Each feature's samples encode to the fixture's {@code msg+<feature>} bytes, which decode to the sample. */
+    @Test
+    void featureSamplesEncodeAndDecodeExactlyAsFrozen() throws ProtocolException {
+        for (Map.Entry<String, Map<String, Message>> feature : featureSamples().entrySet()) {
+            String kind = "msg+" + feature.getKey();
+            Map<String, String> fixture = fixture(kind);
+            assertEquals(new TreeMap<>(fixture).keySet(), new TreeMap<>(feature.getValue()).keySet(), kind);
+            for (Map.Entry<String, Message> sample : feature.getValue().entrySet()) {
+                String actual = HEX.formatHex(encode(sample.getValue()));
+                assertEquals(fixture.get(sample.getKey()), actual, kind + " " + sample.getKey());
+                byte[] bytes = HEX.parseHex(actual);
+                Message decoded = sample.getValue() instanceof C2S ? Codec.decodeC2S(bytes, STATES)
+                        : Codec.decodeS2C(bytes, STATES);
+                assertEquals(sample.getValue(), decoded, sample.getKey());
+            }
+        }
+    }
+
+    /**
+     * Enum values appended within v6 under a negotiated feature: by feature name, the enum and its new values in wire
+     * order. A frame carrying one goes only to a peer that negotiated the feature.
+     */
+    static final Map<String, Map<Class<? extends Enum<?>>, List<String>>> FEATURE_VALUES = Map.of(
+            Features.BUILDER_RECORD, Map.of(BuilderPower.class, List.of("RECORD")));
+
+    /** Samples that carry a feature's values, by feature name. */
+    static Map<String, Map<String, Message>> featureSamples() {
+        Map<String, Message> record = new LinkedHashMap<>();
+        record.put("builder_powers_record", new C2S.BuilderPowers(BuilderPower.RECORD.bit() | BuilderPower.LONG_REACH.bit()));
+        return Map.of(Features.BUILDER_RECORD, record);
+    }
+
+    private static String name(Class<?> type) {
+        return type.getName().substring(type.getName().lastIndexOf('.') + 1);
     }
 
     /** The caps a v6 decoder enforces. */
@@ -388,8 +450,6 @@ class WireGoldenTest {
 
         // Builder mode
         s.put("builder_powers", new C2S.BuilderPowers(BuilderPower.LONG_REACH.bit() | BuilderPower.TINKER.bit()));
-        // Record (after 0.4.0-beta) under the builder_record feature: the ninth bit, sent only when negotiated.
-        s.put("builder_powers_record", new C2S.BuilderPowers(BuilderPower.RECORD.bit() | BuilderPower.LONG_REACH.bit()));
         s.put("builder_place", new C2S.BuilderPlace(9, false, new BlockPos(3, 64, -2), Facing.UP, 0.25f, 1f, 0.5f,
                 BuilderPower.KEEP_SHAPE.bit(), Symmetry.NONE));
         s.put("builder_place_air_mirrored", new C2S.BuilderPlace(-4, true, new BlockPos(-30, 70, 12), Facing.WEST, 0f,
