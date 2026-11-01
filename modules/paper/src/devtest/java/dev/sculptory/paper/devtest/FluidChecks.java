@@ -59,13 +59,15 @@ final class FluidChecks {
     static CompletableFuture<Void> run(SelfTestRun r) {
         int x0 = r.baseX + 448, z0 = r.baseZ; // chunk-aligned
         Box area = box(x0, FLOOR, z0, x0 + 31, FLOOR + 4, z0 + 15);
-        r.claim(area);
+        SelfTestRun.Area claimed = r.claim(area);
         for (BlockPos cell : cells(area)) {
             BlockState state = cell.getY() == FLOOR ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState();
             if (r.level.getBlockState(cell) != state) PaperAccess.setBlockWithoutCallbacks(r.level, cell, state);
             r.level.getChunkSource().blockChanged(cell);
         }
-        return covered(r, x0, z0).thenCompose(v -> redstone(r, x0 + 16, z0)).thenCompose(v -> otherPlugin(r, x0, z0))
+        // Water flows in the game's own fluid ticks, which the area's chunks must run.
+        return r.ready(claimed).thenCompose(v -> covered(r, x0, z0)).thenCompose(v -> redstone(r, x0 + 16, z0))
+                .thenCompose(v -> otherPlugin(r, x0, z0))
                 .thenCompose(v -> furnaceBeside(r, x0, z0 + 16))
                 .thenCompose(v -> unexplained(r, x0 + 16, z0 + 16));
     }
@@ -195,7 +197,7 @@ final class FluidChecks {
      */
     private static CompletableFuture<Void> furnaceBeside(SelfTestRun r, int x0, int z0) {
         Box area = box(x0, FLOOR, z0, x0 + 15, FLOOR + 4, z0 + 15);
-        r.claim(area);
+        SelfTestRun.Area claimed = r.claim(area);
         for (BlockPos cell : cells(area)) {
             BlockState state = cell.getY() == FLOOR ? Blocks.STONE.defaultBlockState() : Blocks.AIR.defaultBlockState();
             if (r.level.getBlockState(cell) != state) PaperAccess.setBlockWithoutCallbacks(r.level, cell, state);
@@ -209,7 +211,8 @@ final class FluidChecks {
         Bukkit.getPluginManager().registerEvents(lighter, SculptoryPlugin.instance());
         r.cleanup(() -> HandlerList.unregisterAll(lighter));
         Box one = box(source.getX(), source.getY(), source.getZ(), source.getX(), source.getY(), source.getZ());
-        return r.fill(one, Block.getId(Blocks.WATER.defaultBlockState())).thenCompose(result -> {
+        int water = Block.getId(Blocks.WATER.defaultBlockState());
+        return r.ready(claimed).thenCompose(v -> r.fill(one, water)).thenCompose(result -> {
             r.level.scheduleTick(source, Fluids.WATER, 1);
             return r.ticks(60);
         }).thenCompose(v -> {
@@ -367,9 +370,10 @@ final class FluidChecks {
     /** The cells the fluid does not explain, in an area of their own: a piston's push, a plant beside lava. */
     private static CompletableFuture<Void> unexplained(SelfTestRun r, int x0, int z0) {
         Box area = box(x0, FLOOR, z0, x0 + 15, FLOOR + 4, z0 + 15);
-        r.claim(area);
+        SelfTestRun.Area claimed = r.claim(area);
         floor(r, area);
-        return pistonInto(r, x0, z0).thenCompose(v -> plantBesideLava(r, x0 + 8, z0))
+        return r.ready(claimed).thenCompose(v -> pistonInto(r, x0, z0))
+                .thenCompose(v -> plantBesideLava(r, x0 + 8, z0))
                 .thenCompose(v -> lavaOntoWater(r, x0, z0, false))
                 .thenCompose(v -> lavaOntoWater(r, x0, z0, true))
                 .thenCompose(v -> lavaBesideWater(r, x0, z0, false))

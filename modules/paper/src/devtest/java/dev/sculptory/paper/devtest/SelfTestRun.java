@@ -6,6 +6,7 @@ import dev.sculptory.core.edit.OpSpec;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.mc.Sculptory;
+import dev.sculptory.mc.world.McEntities;
 import dev.sculptory.paper.SculptoryPlugin;
 import dev.sculptory.paper.engine.PaperEditHost;
 import dev.sculptory.paper.nms.PaperAccess;
@@ -25,14 +26,17 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import net.minecraft.core.BlockPos;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -40,7 +44,9 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.AABB;
 import org.bukkit.Bukkit;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.permissions.PermissionAttachment;
+import org.bukkit.scheduler.BukkitTask;
 
 /**
  * One self-test run: what the checks share (the player, the throwaway edit service, the world, the results) and what
@@ -57,6 +63,8 @@ import org.bukkit.permissions.PermissionAttachment;
  */
 final class SelfTestRun {
     static final int JOB_TIMEOUT_TICKS = 400;
+    /** The longest {@link #ready} waits, in ticks: several times what a slow machine needs. */
+    static final int READY_TIMEOUT_TICKS = 600;
     static final String REGION_PREFIX = "sculptory_selftest_";
 
     final PaperEditHost host;
@@ -219,6 +227,10 @@ final class SelfTestRun {
         }
     }
 
+    /** An entity an area set aside ({@link #ready}): its name for the log, its saved data with its passengers. */
+    private record SetAside(String name, CompoundTag data) {
+    }
+
     /** A box as it was when claimed: its cells (state and block entity), its quarts' biomes, its entities. */
     final class Area {
         final Box box;
@@ -226,6 +238,8 @@ final class SelfTestRun {
         private final CompoundTag[] tiles;
         private final int[] biomes;
         private final Set<UUID> entities = new HashSet<>();
+        /** The entities {@link #ready} took out of the box (their saved data, passengers included), put back last. */
+        private final List<SetAside> setAside = new ArrayList<>();
 
         private Area(Box box) {
             this.box = box;
@@ -251,9 +265,47 @@ final class SelfTestRun {
             }
         }
 
-        /** Whether the box held entities (not players) when it was claimed. */
+        /** Whether the box holds entities (not players) from before the claim that {@link #ready} did not set aside. */
         boolean hadEntities() {
             return !entities.isEmpty();
+        }
+
+        /**
+         * Takes the entities in the box out of the world, with their passengers, so the checks start on an area without
+         * any: an animal the world spawned there would be counted by them, or fall onto their floor. {@link #restore}
+         * puts them back last. Left in place (named in {@code left}, for the group's own guard to refuse): a stack that
+         * holds a player, and one with an entity the world does not save (another plugin's NPC or display), which
+         * could not be put back. Returns what it took.
+         */
+        private List<String> setAsideEntities(List<String> left) {
+            Set<Entity> roots = new java.util.LinkedHashSet<>();
+            for (Entity entity : level.getEntities((Entity) null, aabb(box), e -> !(e instanceof Player))) {
+                Entity root = entity.getRootVehicle();
+                if (!root.isRemoved()) roots.add(root);
+            }
+            List<String> taken = new ArrayList<>();
+            for (Entity root : roots) {
+                String name = EntityType.getKey(root.getType()) + " at " + root.blockPosition().toShortString();
+                List<Entity> stack = root.getSelfAndPassengers().toList();
+                boolean saved = stack.stream().allMatch(e -> e.saveAsPassenger(new CompoundTag()));
+                String why = stack.stream().anyMatch(e -> e instanceof Player) ? "carries a player"
+                        : !saved ? "not saved with the world" : null;
+                if (why != null) {
+                    // The area's own from now on: kept at the end, and seen by hadEntities.
+                    for (Entity part : stack) if (!(part instanceof Player)) entities.add(part.getUUID());
+                    left.add(name + " (" + why + ")");
+                    continue;
+                }
+                CompoundTag data = new CompoundTag();
+                root.saveAsPassenger(data);
+                setAside.add(new SetAside(name, data));
+                taken.add(name);
+                for (Entity part : stack) {
+                    entities.remove(part.getUUID());
+                    part.discard();
+                }
+            }
+            return taken;
         }
 
         private List<int[]> quarts() {
@@ -266,7 +318,10 @@ final class SelfTestRun {
             return out;
         }
 
-        /** Puts the box back as it was claimed, physics-free; entities that came since are removed. */
+        /**
+         * Puts the box back as it was claimed, physics-free; entities that came since are removed, and the ones
+         * {@link #ready} set aside are put back.
+         */
         void restore() {
             for (Entity entity : level.getEntities((Entity) null, aabb(box),
                     e -> !(e instanceof Player) && !entities.contains(e.getUUID()))) {
@@ -300,6 +355,27 @@ final class SelfTestRun {
                 if (biomes[i] >= 0 && world.get(q[0], q[1], q[2]) != biomes[i]) world.set(q[0], q[1], q[2], biomes[i]);
             }
             world.flush();
+            List<String> lost = new ArrayList<>();
+            for (SetAside entity : setAside) {
+                Entity back = EntityType.loadEntityRecursive(entity.data().copy(), level, e -> e);
+                if (back == null) {
+                    lost.add(entity.name());
+                    continue;
+                }
+                // The add answers false only when the UUID is taken: a plugin cancelling the spawn event leaves it true
+                // with the entity not added, so every part of the stack is looked for in the world.
+                level.tryAddFreshEntityWithPassengers(back, CreatureSpawnEvent.SpawnReason.CUSTOM);
+                List<String> missing = back.getSelfAndPassengers()
+                        .filter(part -> part.isRemoved() || level.getEntity(part.getUUID()) != part)
+                        .map(part -> EntityType.getKey(part.getType()).toString())
+                        .toList();
+                if (!missing.isEmpty()) lost.add(entity.name() + " (not in the world: " + missing + ")");
+            }
+            if (!lost.isEmpty()) {
+                Sculptory.LOG.warn("Sculptory self-test: the entities set aside could not all be put back: {}", lost);
+                // Thrown after everything else is put back; finish() rethrows it and the report shows it as an error.
+                throw new IllegalStateException("cleanup: set-aside entities put back: not put back " + lost);
+            }
         }
     }
 
@@ -414,6 +490,83 @@ final class SelfTestRun {
                 done.complete(null);
             }
         }, n);
+        return done;
+    }
+
+    /**
+     * Completes once the claimed {@code areas} are ready for checks that need the game's own ticks or entities: every
+     * chunk of their boxes runs its scheduled ticks, and every chunk whose entities could belong to them (the box and a
+     * margin around it, {@code EntityColumns}, which takes in chunks the claim holds no ticket on) is loaded with its
+     * entities. Paper loads chunks and their entities in the background and ticks a chunk only once its neighbours are
+     * loaded too, a number of ticks after the claim that depends on the machine and its load (on a runner with two cores
+     * the loading threads and the server thread share them). The entities then in the boxes (an animal the world
+     * spawned there) are set aside until the end, so call this before the checks add any. Fails after
+     * {@value #READY_TIMEOUT_TICKS} ticks naming the chunk still missing.
+     */
+    CompletableFuture<Void> ready(Area... areas) {
+        return waitFor("the claimed areas", READY_TIMEOUT_TICKS, () -> {
+            for (Area area : areas) {
+                String missing = notReady(area.box);
+                if (missing != null) return missing;
+            }
+            return null;
+        }).thenAccept(ticks -> {
+            for (Area area : areas) {
+                List<String> left = new ArrayList<>();
+                List<String> taken = area.setAsideEntities(left);
+                if (!taken.isEmpty()) Sculptory.LOG.info("Sculptory self-test: set aside until the end {}", taken);
+                if (!left.isEmpty()) Sculptory.LOG.info("Sculptory self-test: left in place {}", left);
+            }
+        });
+    }
+
+    private String notReady(Box box) {
+        for (int cx = box.min().x() >> 4; cx <= box.max().x() >> 4; cx++) {
+            for (int cz = box.min().z() >> 4; cz <= box.max().z() >> 4; cz++) {
+                // On Paper this is the test the world's tick lists make (the chunk holder is ticking-ready).
+                if (!level.shouldTickBlocksAt(ChunkPos.asLong(cx, cz))) {
+                    return "chunk " + cx + "," + cz + " runs no ticks";
+                }
+            }
+        }
+        String unloaded = McEntities.firstUnloaded(level, box);
+        return unloaded == null ? null : "the entities of chunk " + unloaded + " are not loaded";
+    }
+
+    /**
+     * Completes with the ticks waited once {@code missing} answers null, asked now and then every tick; fails once it
+     * has named something missing for {@code ceiling} ticks, or when the run has ended. For what the server does in
+     * the background or in its own ticks, which a fixed number of ticks may not cover on a slow machine.
+     */
+    CompletableFuture<Integer> waitFor(String what, int ceiling, Supplier<String> missing) {
+        CompletableFuture<Integer> done = new CompletableFuture<>();
+        if (finished) {
+            done.completeExceptionally(ended(what));
+            return done;
+        }
+        if (missing.get() == null) {
+            done.complete(0);
+            return done;
+        }
+        int[] waited = {0};
+        Bukkit.getScheduler().runTaskTimer(SculptoryPlugin.instance(), (BukkitTask task) -> {
+            waited[0]++;
+            if (finished) {
+                task.cancel();
+                done.completeExceptionally(ended(what));
+                return;
+            }
+            String why = missing.get();
+            if (why == null) {
+                task.cancel();
+                Sculptory.LOG.info("Sculptory self-test: {} ready after {} ticks", what, waited[0]);
+                done.complete(waited[0]);
+            } else if (waited[0] >= ceiling) {
+                task.cancel();
+                done.completeExceptionally(new IllegalStateException(what + " not ready after " + ceiling + " ticks: "
+                        + why));
+            }
+        }, 1, 1);
         return done;
     }
 

@@ -144,7 +144,7 @@ final class BuilderChecks {
     static CompletableFuture<Void> run(SelfTestRun r) {
         int x0 = r.baseX + 368, z0 = r.baseZ; // chunk-aligned: x0 + 16 starts the next chunk
         Box area = box(x0, FLOOR - 1, z0, x0 + 31, FLOOR + 15, z0 + 31);
-        r.claim(area);
+        SelfTestRun.Area claimed = r.claim(area);
         for (int x = x0; x <= x0 + 31; x++) {
             for (int z = z0; z <= z0 + 31; z++) {
                 set(r, new BlockPos(x, FLOOR, z), Blocks.STONE.defaultBlockState());
@@ -160,7 +160,9 @@ final class BuilderChecks {
                 .getRegisteredListeners()).map(l -> l.getPlugin().getName() + ":" + l.getListener().getClass().getName())
                 .toList() + ", physics event " + r.level.hasPhysicsEvent);
         Box work = box(x0, FLOOR, z0, x0 + 31, FLOOR + 15, z0 + 31);
-        return placeAndBreak(r, events, x0, z0, work)
+        // The checks below wait for the game's own ticks (a lamp turning off), or that nothing happens in them (Keep
+        // shape): the area's chunks must run them.
+        return r.ready(claimed).thenCompose(v -> placeAndBreak(r, events, x0, z0, work))
                 .thenCompose(v -> neighbours(r, events, x0, z0, work))
                 .thenCompose(v -> keepShape(r, x0, z0, work))
                 .thenCompose(v -> cancelled(r, events, x0, z0, work))

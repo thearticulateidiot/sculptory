@@ -543,9 +543,15 @@ public final class SchematicLibraryGameTest {
         Captured<ClipboardService.Outbound> opExport = new Captured<>();
         Captured<ClipboardService.Saved> builderSave = new Captured<>();
         context.startSequence()
+                // Both copies first: the two can finish in different ticks (on a slow machine they do), and an export
+                // asked inside the retried wait would be asked again on every retry.
                 .thenWaitUntil(() -> {
-                    run(() -> clips.export(builder, builderCopy.get("builder copy").clipboardId(), builderExport));
-                    run(() -> clips.export(h.player, opCopy.get("op copy").clipboardId(), opExport));
+                    builderCopy.get("builder copy");
+                    opCopy.get("op copy");
+                })
+                .thenExecute(() -> {
+                    run(() -> clips.export(builder, builderCopy.value.clipboardId(), builderExport));
+                    run(() -> clips.export(h.player, opCopy.value.clipboardId(), opExport));
                 })
                 .thenWaitUntil(() -> {
                     ClipboardService.Outbound b = builderExport.get("builder export");

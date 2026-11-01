@@ -49,10 +49,10 @@ final class EditChecks {
         BlockPos chestPos = new BlockPos(x + 8, 100, z);
         Box chest = box(chestPos.getX(), chestPos.getY(), chestPos.getZ(), chestPos.getX(), chestPos.getY(),
                 chestPos.getZ());
-        r.claim(sand);
+        SelfTestRun.Area sandArea = r.claim(sand);
         // The chest's neighbours too: items would drop around it.
-        r.claim(box(chestPos.getX() - 3, chestPos.getY() - 3, chestPos.getZ() - 3, chestPos.getX() + 3,
-                chestPos.getY() + 3, chestPos.getZ() + 3));
+        SelfTestRun.Area chestArea = r.claim(box(chestPos.getX() - 3, chestPos.getY() - 3, chestPos.getZ() - 3,
+                chestPos.getX() + 3, chestPos.getY() + 3, chestPos.getZ() + 3));
         int[] sandBefore = r.snapshot(sand);
         // A chest with items, put there without callbacks (whatever was there drops nothing) and not through the engine,
         // so the undo below is the engine's; the claimed area is put back at the end.
@@ -61,7 +61,8 @@ final class EditChecks {
         if (level.getBlockEntity(chestPos) instanceof ChestBlockEntity box) box.setItem(0, new ItemStack(Items.DIAMOND, 7));
         int sandId = Block.getId(Blocks.SAND.defaultBlockState());
         int stone = Block.getId(Blocks.STONE.defaultBlockState());
-        return r.fill(sand, sandId)
+        // The sand must stay put in ticks the chunk runs: it would fall in them with physics on.
+        return r.ready(sandArea, chestArea).thenCompose(v -> r.fill(sand, sandId))
                 .thenCompose(result -> r.ticks(10).thenApply(v -> result))
                 .thenCompose(result -> {
                     int notSand = r.countNot(sand, sandId);
