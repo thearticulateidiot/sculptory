@@ -16,7 +16,7 @@ Undoing water or lava you placed also takes back what it did afterwards: water t
 
 ## Frames and paintings
 
-An item frame or painting needs the block it hangs on. When an edit takes that block away (a fill, a brush, a paste, a builder-mode break), the frame goes into the edit's step with its item instead of dropping off, and undoing the edit hangs it back once the wall is back. The same goes for undo and redo themselves: undoing the step that built a wall takes along the frames hung on it since, and redo hangs them again. A frame whose wall is swapped for another solid block stays where it is. Where you may not edit, the frame is left alone and drops off as in vanilla.
+An item frame or painting needs the block it hangs on. When an edit takes that block away (a fill, a brush, a paste, a builder-mode break), the frame goes into the edit's step with its item instead of dropping off, and undoing the edit hangs it back once the wall is back. The same goes for undo and redo themselves: undoing the step that built a wall takes along the frames hung on it since, and redo hangs them again. A frame whose wall is swapped for another solid block stays where it is. Where you may not edit, the frame is left alone and drops off as in vanilla. Hanging a frame or painting by hand, putting an item in, turning it or punching it down is a step of its own in [builder mode](builder-mode.md), as is placing, dressing or breaking an armor stand.
 
 ## Undo anyway
 

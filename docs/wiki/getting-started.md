@@ -29,7 +29,7 @@ Download the Fabric jar from the project's [GitHub Releases](https://github.com/
 1. Press `B`. The editor opens over the world: menus at the top, a tool palette at the bottom, the **Tool Settings** window at the right. The status dot in the top bar should read **Connected**.
 2. Hold the right mouse button and drag to look around. Fly with your usual movement keys; jump and sneak go up and down.
 3. Press `2` for the **Raise** brush. A ring appears where you aim. Left-drag over the ground and a mound grows.
-4. Press `Ctrl+Z` to undo it and `Ctrl+Y` to put it back. Every edit is one undo step.
+4. Press `Ctrl+Z` to undo it and `Ctrl+Y` to put it back. Every edit is one undo step, and so is every block you place or break by hand outside the editor (see [Builder mode](builder-mode.md)).
 5. Press `B` again to leave. The world is exactly as you left it.
 
 ## Where to go next

@@ -48,7 +48,7 @@ A world editor for Minecraft 1.21.1: a mod for Fabric or NeoForge, and a plugin 
 - [Generate](generate.md): roads, roofs, lines, sweeps of a profile, stamps along a path, heightmaps from a picture, Smart Surface
 - [Jump and Through](navigation.md): J onto a block, Shift+J through a wall
 - [Symmetry](symmetry.md): mirrored and turned copies of what you do
-- [Builder mode](builder-mode.md): powers for normal creative play (hold `G`)
+- [Builder mode](builder-mode.md): building by hand goes into the same history from the start; powers for more (hold `G`)
 - [Presets](presets.md): saved tool settings
 
 ## Settings and keys
