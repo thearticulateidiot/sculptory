@@ -83,6 +83,7 @@ public final class SelfTest {
                 new Group("entities (spawning and undo)", EntityChecks::spawning),
                 new Group("builder mode", BuilderChecks::run),
                 new Group("builder mode (entities)", HangingChecks::builderMode),
+                new Group("builder mode (Record)", HangingChecks::record),
                 new Group("entities (hanging supports)", HangingChecks::supports),
                 new Group("tinker", TinkerNavigateChecks::tinker),
                 new Group("navigate", TinkerNavigateChecks::navigate),
