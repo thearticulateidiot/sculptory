@@ -358,10 +358,18 @@ final class SelfTestRun {
             List<String> lost = new ArrayList<>();
             for (SetAside entity : setAside) {
                 Entity back = EntityType.loadEntityRecursive(entity.data().copy(), level, e -> e);
-                // Another plugin may cancel the spawn event: then the entity is not back either.
-                boolean added = back != null
-                        && level.tryAddFreshEntityWithPassengers(back, CreatureSpawnEvent.SpawnReason.CUSTOM);
-                if (!added) lost.add(entity.name());
+                if (back == null) {
+                    lost.add(entity.name());
+                    continue;
+                }
+                // The add answers false only when the UUID is taken: a plugin cancelling the spawn event leaves it true
+                // with the entity not added, so every part of the stack is looked for in the world.
+                level.tryAddFreshEntityWithPassengers(back, CreatureSpawnEvent.SpawnReason.CUSTOM);
+                List<String> missing = back.getSelfAndPassengers()
+                        .filter(part -> part.isRemoved() || level.getEntity(part.getUUID()) != part)
+                        .map(part -> EntityType.getKey(part.getType()).toString())
+                        .toList();
+                if (!missing.isEmpty()) lost.add(entity.name() + " (not in the world: " + missing + ")");
             }
             if (!lost.isEmpty()) {
                 Sculptory.LOG.warn("Sculptory self-test: the entities set aside could not all be put back: {}", lost);
