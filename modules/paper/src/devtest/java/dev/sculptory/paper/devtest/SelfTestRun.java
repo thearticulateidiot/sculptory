@@ -33,6 +33,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.ChunkPos;
@@ -43,6 +44,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.AABB;
 import org.bukkit.Bukkit;
+import org.bukkit.event.entity.CreatureSpawnEvent;
 import org.bukkit.permissions.PermissionAttachment;
 import org.bukkit.scheduler.BukkitTask;
 
@@ -232,6 +234,8 @@ final class SelfTestRun {
         private final CompoundTag[] tiles;
         private final int[] biomes;
         private final Set<UUID> entities = new HashSet<>();
+        /** The entities {@link #ready} took out of the box (their saved data, passengers included), put back last. */
+        private final List<CompoundTag> setAside = new ArrayList<>();
 
         private Area(Box box) {
             this.box = box;
@@ -257,19 +261,33 @@ final class SelfTestRun {
             }
         }
 
-        /**
-         * Whether the box held entities (not players) when it was claimed, or when {@link #ready} found its entities
-         * loaded.
-         */
+        /** Whether the box holds entities (not players) from before the claim that {@link #ready} did not set aside. */
         boolean hadEntities() {
             return !entities.isEmpty();
         }
 
-        /** Notes the entities (not players) in the box now as there before the checks: {@link #restore} keeps them. */
-        private void noteEntities() {
+        /**
+         * Takes the entities in the box (not players, nor what a player rides) out of the world, with their passengers,
+         * so the checks start on an area without any: an animal the world spawned there would be counted by them, or
+         * fall onto their floor. {@link #restore} puts them back last. Returns what it took, for the log.
+         */
+        private List<String> setAsideEntities() {
+            Set<Entity> roots = new java.util.LinkedHashSet<>();
             for (Entity entity : level.getEntities((Entity) null, aabb(box), e -> !(e instanceof Player))) {
-                entities.add(entity.getUUID());
+                Entity root = entity.getRootVehicle();
+                if (!(root instanceof Player) && !root.isRemoved()) roots.add(root);
             }
+            List<String> taken = new ArrayList<>();
+            for (Entity root : roots) {
+                CompoundTag data = new CompoundTag();
+                if (root.saveAsPassenger(data)) setAside.add(data);
+                taken.add(EntityType.getKey(root.getType()) + " at " + root.blockPosition().toShortString());
+                for (Entity part : root.getSelfAndPassengers().toList()) {
+                    entities.remove(part.getUUID());
+                    part.discard();
+                }
+            }
+            return taken;
         }
 
         private List<int[]> quarts() {
@@ -282,7 +300,10 @@ final class SelfTestRun {
             return out;
         }
 
-        /** Puts the box back as it was claimed, physics-free; entities that came since are removed. */
+        /**
+         * Puts the box back as it was claimed, physics-free; entities that came since are removed, and the ones
+         * {@link #ready} set aside are put back.
+         */
         void restore() {
             for (Entity entity : level.getEntities((Entity) null, aabb(box),
                     e -> !(e instanceof Player) && !entities.contains(e.getUUID()))) {
@@ -316,6 +337,10 @@ final class SelfTestRun {
                 if (biomes[i] >= 0 && world.get(q[0], q[1], q[2]) != biomes[i]) world.set(q[0], q[1], q[2], biomes[i]);
             }
             world.flush();
+            for (CompoundTag data : setAside) {
+                Entity back = EntityType.loadEntityRecursive(data.copy(), level, e -> e);
+                if (back != null) level.addFreshEntityWithPassengers(back, CreatureSpawnEvent.SpawnReason.CUSTOM);
+            }
         }
     }
 
@@ -439,8 +464,8 @@ final class SelfTestRun {
      * margin around it, {@code EntityColumns}, which takes in chunks the claim holds no ticket on) is loaded with its
      * entities. Paper loads chunks and their entities in the background and ticks a chunk only once its neighbours are
      * loaded too, a number of ticks after the claim that depends on the machine and its load (on a runner with two cores
-     * the loading threads and the server thread share them). The entities in the boxes then count as the areas' own:
-     * they stay at the end and {@link Area#hadEntities} sees them, so call this before the checks add any. Fails after
+     * the loading threads and the server thread share them). The entities then in the boxes (an animal the world
+     * spawned there) are set aside until the end, so call this before the checks add any. Fails after
      * {@value #READY_TIMEOUT_TICKS} ticks naming the chunk still missing.
      */
     CompletableFuture<Void> ready(Area... areas) {
@@ -451,7 +476,10 @@ final class SelfTestRun {
             }
             return null;
         }).thenAccept(ticks -> {
-            for (Area area : areas) area.noteEntities();
+            for (Area area : areas) {
+                List<String> taken = area.setAsideEntities();
+                if (!taken.isEmpty()) Sculptory.LOG.info("Sculptory self-test: set aside until the end {}", taken);
+            }
         });
     }
 
