@@ -17,6 +17,9 @@ import dev.sculptory.core.brush.Symmetry;
 import dev.sculptory.core.edit.Pattern;
 import dev.sculptory.core.history.ConflictPolicy;
 import dev.sculptory.core.history.HistoryEntry;
+import dev.sculptory.core.mask.EditMask;
+import dev.sculptory.core.mask.MaskEntry;
+import dev.sculptory.core.mask.MaskRule;
 import dev.sculptory.core.region.Facing;
 import dev.sculptory.mc.builder.BuilderCapture;
 import dev.sculptory.mc.builder.BuilderChange;
@@ -37,6 +40,7 @@ import dev.sculptory.server.engine.BuilderOutcome.Refusal;
 import dev.sculptory.server.engine.BuilderOutcome;
 import dev.sculptory.server.engine.EditRejected;
 import dev.sculptory.server.engine.impl.EditExecutor;
+import dev.sculptory.server.engine.impl.EditMasks;
 import dev.sculptory.server.engine.impl.EngineEditService;
 import io.netty.channel.embedded.EmbeddedChannel;
 import java.util.ArrayList;
@@ -83,7 +87,7 @@ import net.minecraft.world.phys.Vec3;
 /**
  * Builder mode through {@code EngineEditService}: each power writes exactly the
  * expected cells, one click or drag is one history step undone and redone exactly, and every refusal writes nothing.
- * Region slots 1060-1079 and 1081-1083 (Record, through the server's own edit service).
+ * Region slots 1060-1079 and 1081-1086 (Record, through the server's own edit service).
  */
 public final class BuilderModeGameTest {
     private static final int LIMIT = EngineTestSupport.CHUNK_GENERATION_TICK_LIMIT;
@@ -1143,9 +1147,150 @@ public final class BuilderModeGameTest {
                 s.expectLabels();
             } finally {
                 EditTestSupport.deny(s.player);
+                s.frames().forEach(frame -> frame.discard());
+                s.finish();
             }
-            s.frames().forEach(frame -> frame.discard());
-            s.finish();
+        }).thenSucceed();
+    }
+
+    /** A spectator with Record on: the game's item use does nothing, builder actions are refused, nothing recorded. */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_record_spectator", timeoutTicks = LIMIT)
+    public void recordForASpectatorPlacesAndRecordsNothing(GameTestHelper context) {
+        Installed s = new Installed(context, 1084, false);
+        s.host.builderPowers(s.player, BuilderPower.RECORD.bit());
+        Region r = s.r;
+        BlockPos wall = pos(r.x + 6, FLOOR + 1, r.z + 3);
+        s.world.setBlock(wall, Blocks.STONE.defaultBlockState(), 2);
+        stand(s.player, r.x + 6, r.z + 7, 180f);
+        WorldSnapshot before = capture(s.world, r.area);
+        s.sequence().thenExecute(() -> {
+            try {
+                s.player.spectator = true;
+                s.player.setGameMode(GameType.SPECTATOR);
+                hold(s.player, Items.STONE);
+                s.useOn(pos(r.x + 4, FLOOR, r.z + 5), Direction.UP);
+                hold(s.player, Items.ITEM_FRAME);
+                s.useOn(wall, Direction.SOUTH);
+                hold(s.player, Items.STONE);
+                BuilderOutcome placed = s.host.builderPlace(s.player, new C2S.BuilderPlace(nextSeq++, false,
+                        new dev.sculptory.core.BlockPos(r.x + 6, FLOOR, r.z + 5), Facing.UP, 0.5f, 1f, 0.5f, 0,
+                        Symmetry.NONE));
+                expect(placed, Refusal.NOT_CREATIVE, "a spectator's place");
+                BuilderOutcome broken = s.host.builderBreak(s.player, new C2S.BuilderBreak(nextSeq++, 42,
+                        List.of(new dev.sculptory.core.BlockPos(r.x + 8, FLOOR, r.z + 5)), 0, Symmetry.NONE, false,
+                        true));
+                expect(broken, Refusal.NOT_CREATIVE, "a spectator's break");
+                check(s.frames().isEmpty(), "no frame hung by a spectator");
+                checkSame(before, capture(s.world, r.area), "a spectator changed blocks");
+                s.expectLabels();
+            } finally {
+                s.player.spectator = false;
+                s.frames().forEach(frame -> frame.discard());
+                s.finish();
+            }
+        }).thenSucceed();
+    }
+
+    /**
+     * Record on, clicks refused where builder mode refuses a block: on a protected cell and on a cell the global mask
+     * rejects, a place, a break and a frame are refused, nothing is placed or broken and nothing recorded.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_record_refused", timeoutTicks = LIMIT)
+    public void recordRefusalsOnProtectedAndMaskedCellsWriteNothing(GameTestHelper context) {
+        Installed s = new Installed(context, 1085, true);
+        s.host.builderPowers(s.player, BuilderPower.RECORD.bit());
+        Region r = s.r;
+        BlockPos wall = pos(r.x + 6, FLOOR + 1, r.z + 3);
+        s.world.setBlock(wall, Blocks.STONE.defaultBlockState(), 2);
+        BlockPos maskedWall = pos(r.x + 20, FLOOR + 3, r.z + 3);
+        s.world.setBlock(maskedWall, Blocks.STONE.defaultBlockState(), 2);
+        stand(s.player, r.x + 6, r.z + 7, 180f);
+        WorldSnapshot before = capture(s.world, r.area);
+        s.sequence().thenExecute(() -> {
+            try {
+                ProtectionHook.protect(s.player, s.world, r.x, r.z, r.x + 12, r.z + 12);
+                hold(s.player, Items.STONE);
+                expect(s.host.builderPlace(s.player, new C2S.BuilderPlace(nextSeq++, false,
+                        new dev.sculptory.core.BlockPos(r.x + 6, FLOOR, r.z + 5), Facing.UP, 0.5f, 1f, 0.5f, 0,
+                        Symmetry.NONE)), Refusal.PROTECTED, "a place on a protected cell");
+                expect(s.host.builderBreak(s.player, new C2S.BuilderBreak(nextSeq++, 43,
+                        List.of(new dev.sculptory.core.BlockPos(r.x + 8, FLOOR, r.z + 5)), 0, Symmetry.NONE, false,
+                        true)), Refusal.PROTECTED, "a break of a protected cell");
+                hold(s.player, Items.ITEM_FRAME);
+                s.useOn(wall, Direction.SOUTH);
+                check(s.frames().isEmpty(), "no frame on a protected cell");
+                ProtectionHook.clear(s.player);
+
+                // The global mask lets through only cells up to the floor + 1.
+                EditMasks.set(s.player.getUUID(), new EditMask(List.of(MaskEntry.of(
+                        new MaskRule.Height(FLOOR - 10, FLOOR + 1))), false), region -> region, s.states());
+                stand(s.player, r.x + 20, r.z + 7, 180f);
+                hold(s.player, Items.STONE);
+                // On top of the raised stone: the new block would be at the floor + 4, above the mask.
+                expect(s.host.builderPlace(s.player, new C2S.BuilderPlace(nextSeq++, false,
+                        new dev.sculptory.core.BlockPos(maskedWall.getX(), maskedWall.getY(), maskedWall.getZ()),
+                        Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE)), Refusal.MASKED, "a place above the mask");
+                hold(s.player, Items.ITEM_FRAME);
+                s.useOn(maskedWall, Direction.SOUTH);
+                check(s.frames().isEmpty(), "no frame where the mask refuses");
+                checkSame(before, capture(s.world, r.area), "a refused click changed blocks");
+                s.expectLabels();
+                s.noItems("after the refusals");
+            } catch (EditRejected e) {
+                throw new GameTestAssertException("mask refused: " + e.getMessage());
+            } finally {
+                ProtectionHook.clear(s.player);
+                EditMasks.reset(s.player.getUUID());
+                s.frames().forEach(frame -> frame.discard());
+                s.finish();
+            }
+        }).thenSucceed();
+    }
+
+    /**
+     * Editing switched off (the config, or the failsafe for a malformed one): builder mode does not act, so the game's
+     * own placement and frame use go ahead and nothing is recorded (the client is told it has no use or builder node,
+     * see ServerDispatcher); switched on again, the same click is held back and builder actions are recorded again.
+     */
+    @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_record_disabled", timeoutTicks = LIMIT)
+    public void editingSwitchedOffLeavesTheGamesPlacementAndRecordsNothing(GameTestHelper context) {
+        Installed s = new Installed(context, 1086, true);
+        s.host.builderPowers(s.player, BuilderPower.RECORD.bit());
+        Region r = s.r;
+        BlockPos wall = pos(r.x + 6, FLOOR + 1, r.z + 3);
+        s.world.setBlock(wall, Blocks.STONE.defaultBlockState(), 2);
+        stand(s.player, r.x + 6, r.z + 7, 180f);
+        var config = dev.sculptory.mc.engine.impl.EngineRuntime.find(s.world.getServer())
+                .orElseThrow(() -> new GameTestAssertException("no engine runtime")).config();
+        s.sequence().thenExecute(() -> {
+            try {
+                config.editingEnabled = false;
+                check(!s.host.editingEnabled(s.player), "the service says editing is off");
+                hold(s.player, Items.STONE);
+                s.useOn(pos(r.x + 4, FLOOR, r.z + 5), Direction.UP);
+                check(s.world.getBlockState(pos(r.x + 4, FLOOR + 1, r.z + 5)).is(Blocks.STONE),
+                        "editing off: the game places the block");
+                hold(s.player, Items.ITEM_FRAME);
+                s.useOn(wall, Direction.SOUTH);
+                check(s.frames().size() == 1, "editing off: the game hangs the frame");
+                s.expectLabels();
+
+                config.editingEnabled = true;
+                check(s.host.editingEnabled(s.player), "on again");
+                hold(s.player, Items.STONE);
+                s.useOn(pos(r.x + 8, FLOOR, r.z + 5), Direction.UP);
+                check(s.world.getBlockState(pos(r.x + 8, FLOOR + 1, r.z + 5)).isAir(),
+                        "editing on: the click is builder mode's, the game's placement is held back");
+                BuilderOutcome placed = s.host.builderPlace(s.player, new C2S.BuilderPlace(nextSeq++, false,
+                        new dev.sculptory.core.BlockPos(r.x + 8, FLOOR, r.z + 5), Facing.UP, 0.5f, 1f, 0.5f, 0,
+                        Symmetry.NONE));
+                check(placed.accepted() && placed.changed() == 1, "editing on: the place " + placed);
+                s.expectLabels("Place · 1 block");
+            } finally {
+                config.editingEnabled = true;
+                s.frames().forEach(frame -> frame.discard());
+                s.finish();
+            }
         }).thenSucceed();
     }
 
@@ -1170,6 +1315,12 @@ public final class BuilderModeGameTest {
             this.player = modePlayer(context, extra, true);
             host.playerJoined(player.getUUID());
             creative(creative);
+        }
+
+        /** The server's block states, for a mask. */
+        dev.sculptory.core.state.StateSpace states() {
+            return dev.sculptory.mc.engine.impl.EngineRuntime.find(world.getServer())
+                    .orElseThrow(() -> new GameTestAssertException("no engine runtime")).states();
         }
 
         /** Creative for builder mode's gate and for the game's own item use (no item spent, nothing dropped). */
@@ -1387,6 +1538,7 @@ public final class BuilderModeGameTest {
     /** A mock player whose game mode the test sets ({@code createMockCreativeServerPlayerInWorld} is always creative). */
     private static final class ModePlayer extends ServerPlayer {
         boolean creative = true;
+        boolean spectator;
 
         ModePlayer(ServerLevel world, GameProfile profile, CommonListenerCookie data) {
             super(world.getServer(), world, profile, data.clientInformation());
@@ -1399,7 +1551,7 @@ public final class BuilderModeGameTest {
 
         @Override
         public boolean isSpectator() {
-            return false;
+            return spectator;
         }
     }
 
