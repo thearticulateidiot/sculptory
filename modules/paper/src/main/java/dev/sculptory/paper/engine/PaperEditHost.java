@@ -311,6 +311,11 @@ public final class PaperEditHost {
         }
 
         @Override
+        public boolean editingEnabled(ServerPlayer p) {
+            return service.editingEnabled(p);
+        }
+
+        @Override
         public void builderPowers(ServerPlayer p, int powers) {
             service.builderPowers(p, powers);
         }

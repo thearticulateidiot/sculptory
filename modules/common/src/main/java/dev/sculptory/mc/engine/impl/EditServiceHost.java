@@ -549,6 +549,12 @@ public final class EditServiceHost {
         }
 
         @Override
+        public boolean editingEnabled(ServerPlayer p) {
+            // Without a running engine every edit is refused: the client is told it may not edit at all.
+            return find(p.getServer()).map(service -> service.editingEnabled(p)).orElse(false);
+        }
+
+        @Override
         public void builderPowers(ServerPlayer p, int powers) {
             find(p.getServer()).ifPresent(service -> service.builderPowers(p, powers));
         }
