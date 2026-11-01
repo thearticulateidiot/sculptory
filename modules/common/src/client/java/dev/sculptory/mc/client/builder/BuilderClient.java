@@ -514,10 +514,13 @@ public final class BuilderClient {
         // Held down (vanilla asks every tick in Creative): a break every HELD_BREAK_TICKS, as vanilla breaks.
         if (attackHeld && breakCooldown > 0) return InteractionResult.FAIL;
         BlockState state = clientWorld.getBlockState(pos);
-        if (!BuilderPlacement.breakable(clientWorld, player, pos)
-                || !player.getMainHandItem().getItem().canAttackBlock(state, clientWorld, pos, player)) {
-            return InteractionResult.FAIL;
+        // An item that does not break blocks (a debug stick, a sword in Creative) gets vanilla's left-click: the debug
+        // stick's property change reaches the server only through vanilla's packet. Unrecorded, as other non-block
+        // item uses are.
+        if (!player.getMainHandItem().getItem().canAttackBlock(state, clientWorld, pos, player)) {
+            return InteractionResult.PASS;
         }
+        if (!BuilderPlacement.breakable(clientWorld, player, pos)) return InteractionResult.FAIL;
         boolean dozer = powers.on(BuilderPower.BULLDOZER);
         drags.begin(dozer && player.isShiftKeyDown());
         drags.add(wire(pos));
