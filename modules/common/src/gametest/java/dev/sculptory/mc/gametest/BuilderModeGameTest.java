@@ -1193,7 +1193,8 @@ public final class BuilderModeGameTest {
 
     /**
      * Record on, clicks refused where builder mode refuses a block: on a protected cell and on a cell the global mask
-     * rejects, a place, a break and a frame are refused, nothing is placed or broken and nothing recorded.
+     * rejects, a place, a break and a frame are refused (the masked break is skipped: NOTHING), nothing is placed or
+     * broken and nothing recorded.
      */
     @GameTest(template = EMPTY_STRUCTURE, batch = "sculptory_builder_record_refused", timeoutTicks = LIMIT)
     public void recordRefusalsOnProtectedAndMaskedCellsWriteNothing(GameTestHelper context) {
@@ -1230,6 +1231,12 @@ public final class BuilderModeGameTest {
                 expect(s.host.builderPlace(s.player, new C2S.BuilderPlace(nextSeq++, false,
                         new dev.sculptory.core.BlockPos(maskedWall.getX(), maskedWall.getY(), maskedWall.getZ()),
                         Facing.UP, 0.5f, 1f, 0.5f, 0, Symmetry.NONE)), Refusal.MASKED, "a place above the mask");
+                // A break's cells the mask rejects are skipped, as Bulldozer skips them: with none left the break
+                // says NOTHING and changes nothing.
+                expect(s.host.builderBreak(s.player, new C2S.BuilderBreak(nextSeq++, 44,
+                        List.of(new dev.sculptory.core.BlockPos(maskedWall.getX(), maskedWall.getY(), maskedWall.getZ())),
+                        0, Symmetry.NONE, false, true)), Refusal.NOTHING, "a break above the mask");
+                check(s.world.getBlockState(maskedWall).is(Blocks.STONE), "the masked block is still there");
                 hold(s.player, Items.ITEM_FRAME);
                 s.useOn(maskedWall, Direction.SOUTH);
                 check(s.frames().isEmpty(), "no frame where the mask refuses");
