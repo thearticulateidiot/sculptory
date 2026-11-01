@@ -24,7 +24,9 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  * right-click ({@code useWithoutItem} accepted on the client). When the server's block use then passes (redstone ore
  * lights on the client and passes here; a sign waxed meanwhile; a stale view), vanilla would fall through to
  * {@code useOn} and place the held block outside the history, unmirrored and with physics. This turns that
- * fall-through into {@code PASS} for block items while builder mode is on.
+ * fall-through into {@code PASS} for block items while builder mode acts for the player ({@code BuilderService.acts}:
+ * a power on, and Creative with the builder permission). A player whose client keeps a power on where builder mode
+ * cannot act (Survival, no permission) clicks the vanilla way, so the game places the block then.
  *
  * <p><b>Item frames, paintings, armor stands.</b> Their use goes to builder mode ({@code BuilderService.useEntityItem}):
  * refused like a block where builder mode would refuse a block (reach, protection, the mask), else vanilla's own use,
@@ -39,7 +41,7 @@ public abstract class ServerPlayerInteractionManagerMixin {
     @Redirect(method = "useItemOn", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/world/item/ItemStack;useOn(Lnet/minecraft/world/item/context/UseOnContext;)Lnet/minecraft/world/InteractionResult;"))
     private InteractionResult sculptory$noVanillaPlacementInBuilderMode(ItemStack stack, UseOnContext context) {
-        if (EditServiceHost.builderPowers(player.getUUID()) != 0) {
+        if (EditServiceHost.builderActs(player)) {
             if (stack.getItem() instanceof BlockItem) return InteractionResult.PASS;
             if (stack.getItem() instanceof HangingEntityItem || stack.getItem() instanceof ArmorStandItem) {
                 return EditServiceHost.builderEntityItem(player, stack, context);

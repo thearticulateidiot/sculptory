@@ -393,14 +393,14 @@ public final class EditServiceHost {
         }
     }
 
-    /** The scatter service of a running server. */
     /**
-     * Builder mode: the powers {@code player} has on (0 when none, or before the engine started), read by
-     * {@code ServerPlayerInteractionManagerMixin} to keep vanilla from placing blocks while builder mode is on.
+     * Builder mode: whether it acts for {@code player} now ({@link BuilderService#acts}: a power on and builder mode
+     * allowed; false before the engine started), read by {@code ServerPlayerInteractionManagerMixin} to keep vanilla
+     * from placing blocks while the player's clicks come as builder actions.
      */
-    public static int builderPowers(UUID player) {
-        var service = current;
-        return service == null ? 0 : service.builderPowersOf(player);
+    public static boolean builderActs(ServerPlayer player) {
+        BuilderService builder = builder(player);
+        return builder != null && builder.acts(player);
     }
 
     /** The running server's builder mode, or {@code null} before the engine started. */

@@ -549,11 +549,21 @@ public final class BuilderService implements BuilderMode<ServerPlayer> {
     // ================================================================== entities
 
     /**
-     * Whether builder mode records what the player does to entities now: a power on, and builder mode allowed (the
-     * nodes, editing enabled, Creative), as for its block actions.
+     * Whether builder mode acts for the player now: a power on (Record alone counts), and builder mode allowed (the
+     * nodes, editing enabled, Creative). The client sends its clicks as builder actions only then, so only then do the
+     * platform hooks hold back the game's own block placement. A client keeps its powers on in Survival (Record is on
+     * by default), and there the game's placement must stay.
+     */
+    public boolean acts(ServerPlayer p) {
+        return powersOf(p.getUUID()) != 0 && gate(p) == null;
+    }
+
+    /**
+     * Whether builder mode records what the player does to entities now: whenever it {@link #acts} for them, as for its
+     * block actions.
      */
     public boolean recordsEntities(ServerPlayer p) {
-        return powersOf(p.getUUID()) != 0 && gate(p) == null;
+        return acts(p);
     }
 
     /** Whether builder mode records actions on {@code entity}: an item frame, a painting or an armor stand. */
