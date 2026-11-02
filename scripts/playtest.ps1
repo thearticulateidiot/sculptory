@@ -210,6 +210,15 @@ if ($RunDir) {
     }
     $clientDir = Join-Path $root ".local\run\$RunDir"
     $gradleArgs += "-PbsRunDir=../../.local/run/$RunDir"
+    # A new game directory gets the main checkout's game options, as the tour, check and demo do: without them the
+    # game opens on the accessibility onboarding screen and waits for a click on "Continue" (onboardAccessibility).
+    $commonDir = (& git -C $root rev-parse --path-format=absolute --git-common-dir).Trim()
+    $mainOptions = Join-Path (Split-Path -Parent $commonDir) '.local\run\client\options.txt'
+    $options = Join-Path $clientDir 'options.txt'
+    if (-not (Test-Path -LiteralPath $options) -and (Test-Path -LiteralPath $mainOptions)) {
+        New-Item -ItemType Directory -Force -Path $clientDir | Out-Null
+        Copy-Item -LiteralPath $mainOptions -Destination $options
+    }
 }
 if ($Iris) {
     $gradleArgs += '-PbsIris'
