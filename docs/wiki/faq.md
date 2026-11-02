@@ -73,7 +73,7 @@ Spawn protection and the world border, everywhere: protected blocks are skipped,
 
 ### Is there a Paper, Forge or NeoForge version?
 
-NeoForge and Paper, yes, for Minecraft 1.21.1: the NeoForge mod works like the Fabric one, and the Paper plugin is the server side, with players editing through the mod for their loader. Both are coming soon as betas and can be built from source today. Fabric and NeoForge players can edit on each other's servers. Forge isn't there yet. See [Server setup](server-setup.md).
+NeoForge and Paper, yes, for Minecraft 1.21.1, both betas: the NeoForge mod works like the Fabric one, and the Paper plugin is the server side, with players editing through the mod for their loader. Fabric and NeoForge players can edit on each other's servers. Forge isn't there yet. The README's Install section says where to get each; see [Server setup](server-setup.md) for servers.
 
 ### Does the Paper plugin run on Spigot, Purpur or Folia?
 
@@ -83,7 +83,7 @@ It is made for Paper 1.21.1 and tested on build 133. On Spigot it doesn't load, 
 
 Sculptory is a beta. The limits you are most likely to meet:
 
-- Minecraft 1.21.1 only, on Fabric, NeoForge and Paper (NeoForge and Paper built from source until their first releases): no Forge or other Minecraft versions yet.
+- Minecraft 1.21.1 only, on Fabric, NeoForge and Paper: no Forge or other Minecraft versions yet.
 - On Paper, undo after a crash, undo of water and lava, builder mode's chain reactions and the commands differ a little from Fabric and NeoForge: see [Known limits on Paper](server-setup.md#known-limits-on-paper). Claim plugins other than WorldGuard don't limit bulk edits there.
 - On NeoForge, LuckPerms needs its 5.4.150 build (the build labelled for 1.21.1 kicks players at login); other permissions mods are untested there.
 - The server and every editing client need the same network protocol, and the same build to avoid a warning; see [Server setup](server-setup.md#updating).

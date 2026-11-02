@@ -87,8 +87,8 @@ Sculptory comes as one product per platform, each with its own jar and version, 
 | Product | What it is | Status |
 |---|---|---|
 | **Sculptory for Fabric** | The mod, for clients and servers | Released: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) and [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (a Modrinth page follows) |
-| **Sculptory for NeoForge** | The mod, for clients and servers | Coming soon as a beta; built from source today: `./gradlew :neoforge:assemble` makes `modules/neoforge/build/libs/sculptory-neoforge-<build id>.jar` |
-| **Sculptory for Paper** | A server plugin; players edit with the mod | Coming soon as a beta; built from source today: `./gradlew :paper:assemble` makes `modules/paper/build/libs/sculptory-paper-<build id>.jar` (install that one, not the `-dev.jar` beside it, which carries the developers' self-test) |
+| **Sculptory for NeoForge** | The mod, for clients and servers | Beta: [CurseForge](https://www.curseforge.com/minecraft/mc-mods/sculptory) (the NeoForge file) and [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (a Modrinth page follows) |
+| **Sculptory for Paper** | A server plugin; players edit with the mod | Beta: [GitHub Releases](https://github.com/thearticulateidiot/sculptory/releases) (store pages follow) |
 
 A client and a server need the same network protocol, not the same loader: a Fabric client can edit on a NeoForge
 server and a NeoForge client on a Fabric server, and on a Paper server players edit with the Sculptory mod for their
