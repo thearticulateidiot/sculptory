@@ -6,132 +6,112 @@ mod's. Client and server need the same network protocol (each section says which
 
 ## Unreleased
 
-Three releases are being prepared from this code, all betas: Fabric 0.5.0-beta and the first NeoForge and Paper
-releases. The NeoForge mod and the Paper plugin are built on the same code as the Fabric mod, so the fixes and changes
-listed for Fabric are in them too. Until they are released, NeoForge and Paper can be built from source (README,
-"Install").
+Nothing yet. (A release being prepared gets a `### <Product> <build id> (planned)` section here until its release
+promotes it to a `## ` section below.)
 
-To release one, promote its planned section: move it below this Unreleased section, head it
-`## <Product> <build id>` (`## Fabric 0.5.0-beta+1.21.1`, `## NeoForge 0.5.0-beta+1.21.1`,
-`## Paper 0.1.0-beta+1.21.1`) without "(planned)", and lift its `####` headings to `###`. The release workflow takes
-the notes from that heading down to the next `## ` heading or planned section, and refuses a heading that still says
-"(planned)".
+## Fabric 0.5.0-beta+1.21.1
 
-### Fabric 0.5.0-beta+1.21.1 (planned)
+For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, as 0.4.0-beta. Network protocol 6, as
+0.4.0-beta: the two work together, with the differences at the end. Released with the first NeoForge mod and Paper
+plugin (below), built on the same code, so the fixes and changes here are in them too.
 
-For Minecraft 1.21.1 with Fabric Loader 0.16.14+ and Fabric API 0.116.4+1.21.1, like 0.4.0-beta. Network protocol 6,
-like 0.4.0-beta: the two work together, with one difference (below).
+### New
 
-#### New
+- **Building by hand goes into the history by default.** Builder mode's new ninth power, **Record**, is on from the
+  first start: in Creative (with the builder permission on servers), every block you place or break and every item
+  frame, painting or armor stand you hang, place, change or break is one undo step. Buckets, bone meal, tools used on
+  blocks and other item uses stay vanilla's
+  ([rules](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/builder-mode.md#rules)). Switch Record
+  off in the `G` ring to play unrecorded; that is remembered.
+- **Item frames, paintings and armor stands are history steps** with a builder power on: hanging, placing, putting an
+  item in a frame, dressing a stand or breaking any of them is one step, undone and redone like a block. Where builder
+  mode would refuse a block, nothing is placed. Mirror does not copy them.
 
-- **Building by hand goes into the history by default**: builder mode has a ninth power, **Record**, on from the
-  first start. In Creative (with the builder permission on servers), every block you place with a block item or
-  break, and every item frame, painting and armor stand you hang, place, change or break, is one undo step (`Ctrl+Z`)
-  without switching anything on. Buckets, flint and steel, bone meal, the debug stick, an axe, hoe or shovel used on a
-  block, spawn eggs, doors and repeaters switched by hand and lily pads stay vanilla's and can't be undone (see
-  [Builder mode](https://github.com/thearticulateidiot/sculptory/blob/main/docs/wiki/builder-mode.md#rules)).
-  Switch Record off in the `G` ring, with every other power off too, to play the vanilla way with nothing recorded;
-  it stays as you left it across restarts (the other powers are still forgotten). It shows no tag above the hotbar.
-  Before, a block was recorded only while another power was on.
-- **Item frames, paintings and armor stands in builder mode's history**: with a builder power on, hanging a frame or
-  a painting, placing an armor stand, putting an item in a frame (or turning it), dressing a stand and breaking any
-  of them are each one step ("Place · item frame", "Change · armor stand", "Break · painting"), undone and redone
-  like a block. Where builder mode would refuse a block (out of reach, protected, outside the mask) nothing is placed.
-  Mirror does not copy them.
+### Fixed
 
-#### Fixed
+- **Placing blocks in Survival with a builder power on**: a player in Survival, or without the builder permission, with
+  a power still on could not place blocks on a server with Sculptory. Builder mode now steps in only while it acts for
+  the player.
+- **Building by hand with editing switched off on the server** (`editingEnabled` false, or a broken `server.json`):
+  every place and break was refused. Clicks now go the vanilla way, the editor can't be opened (`B` says "Editing is
+  off here"), and a reload that switches editing on gives both back.
+- **Frames and paintings no longer drop off when their wall goes**: an edit that removes the block a frame or painting
+  hangs on takes it into its step, and undo hangs it back with its item. Undoing a wall takes along the frames hung on
+  it since; redo hangs them again, also after a restart.
+- **Surface mode on thin walls**: Raise and Lower work the side you aim at on any wall 3 or more blocks tall, however
+  thin; a wall one block thick was often worked from above. Single blocks and steps up to 2 blocks high still count as
+  ground. Flatten's plane and the cursor ring follow the same rule, so Flatten aimed at a wall flattens along its face.
+- **Surface Smooth keeps thin walls and slabs**: walls 3 or more blocks tall and one-block slabs keep their ends and
+  corners, and Smooth no longer piles blocks against a thin wall or a slab. Bumps, spikes, pillars and ridges under 3
+  blocks still smooth away.
+- **Lines and roads are the same wherever they are built**: Generate's Line and Road work from their first point, so
+  the same shape moved by whole blocks has exactly the same blocks. Straight lines (Line, Sweep, Extrude along a path,
+  the Shape brush's Line, a Hanging line's chord) are exact: a half-block-per-block climb steps at every other block.
+  Curves are as in 0.4.0-beta.
 
-- **Placing blocks in Survival with a builder power on**: a player who switched to Survival (or lost the builder
-  permission) with a power still on could not place blocks on a server with Sculptory, since the server held back the
-  game's own placement as if builder mode were placing for them. It now does that only while builder mode acts for the
-  player (Creative and the permission).
-- **Building by hand on a server with editing switched off** (`editingEnabled` false, also what a broken
-  `server.json` falls back to): a player with a builder power on had every place and break refused. The server now
-  tells clients that editing isn't available while it is off, so their clicks go the vanilla way and the editor
-  can't be opened (`B` says "Editing is off here"); a reload that switches it back on gives both back at once.
-- **Frames and paintings no longer drop off when their wall goes**: an edit that takes away the block an item frame
-  or painting hangs on (a fill, a brush, a paste, a builder-mode break) takes the frame into its step, and its undo
-  hangs it back with its item. Undoing the step that built a wall takes along the frames hung on it since, and redo
-  hangs them again, also after a restart. Before, the game dropped them off with their items and nothing brought
-  them back.
+### Changed
 
-- **Surface mode on thin walls**: Raise and Lower work the side you aim at when it belongs to a wall 3 or more blocks
-  tall, however thin the wall and whatever it stands on (a wall one block thick, or one shorter than the brush, was
-  often worked from above). Single blocks and steps 1 or 2 blocks high still count as ground.
-- **Flatten and the cursor ring follow the same rule**: Flatten's plane and the ring under the cursor face the way
-  Raise and Lower work, so Flatten aimed at a wall 3 or more blocks tall flattens sideways, along the wall's face, and
-  the ring shows the side the brush will work.
-- **Surface Smooth keeps thin walls and slabs**: walls 3 or more blocks tall and slabs one block thick keep their ends
-  and corners, and Smooth does not pile blocks against a thin wall's foot or face, or above and below a one-block
-  slab. A single block sitting on a wall, bumps, spikes, pillars and ridges under 3 blocks still smooth away.
-- **Lines and roads are the same wherever they are built**: Generate's Line and Road work out their blocks from their
-  first point, so the same line or road built somewhere else, moved by whole blocks, has exactly the same blocks.
-  Straight lines and a Hanging line's chord, in Line, Sweep, Extrude along a path and the Shape brush's Line, are
-  worked out exactly: a line climbing half a block per block steps at every other block. Curves are as in 0.4.0-beta.
+- **New jar and version form**: `sculptory-fabric-0.5.0-beta+1.21.1.jar` (was `sculptory-0.4.0-beta.jar`). The build
+  id, version plus Minecraft version, is what the mod list shows and what client and server show each other. Take the
+  old jar out of `mods`.
+- **Generate roads**: curved roads end in their true end direction, a road whose last two points share a column keeps
+  a round end, straight roads round half-block steps the same wherever they are, and Use Stairs and Slabs on a 45°
+  road always steps along x.
 
-#### Changed
+### With a 0.4.0-beta client or server
 
-- **The jar and the version have a new form**: the jar is `sculptory-fabric-0.5.0-beta+1.21.1.jar` (was
-  `sculptory-0.4.0-beta.jar`), and the build id, the version plus the Minecraft version, is what the mod list shows
-  and what client and server show each other when a player joins. Take the old jar out of `mods` when updating.
-- **Generate roads**: the ends of curved roads now follow the road's true end direction; a road whose last two points
-  stand one above the other in the same column keeps a round end. Straight roads round half-block steps the same
-  wherever they are built, and Use Stairs and Slabs on a 45° road always steps along x.
+- A 0.4.0-beta client on this server predicts Surface Raise, Lower and Smooth near walls the old way: its preview can
+  differ, the server's result is what is built. Update clients and server together.
+- On a 0.4.0-beta server, Record is greyed out ("needs a newer server") and plain clicks are recorded only with another
+  power on, as before. A 0.4.0-beta client on this server has no Record and works as it did.
+- Going back to a 0.4.0-beta client forgets a switched-off Record: it is on again when you return.
 
-#### With a 0.4.0-beta client or server
+## NeoForge 0.5.0-beta+1.21.1
 
-- A 0.4.0-beta client on a server with this version still predicts Surface Raise, Lower and Smooth near walls the old
-  way, so its preview there can differ from the result; the server's result is what is built. Update the clients and
-  the server together.
-- On a 0.4.0-beta server, Record is greyed out in the ring ("needs a newer server") and plain clicks are recorded only
-  while another power is on, as before. A 0.4.0-beta client on a server with this version has no Record power and
-  works as it did.
+The first NeoForge release, a beta. Minecraft 1.21.1 with NeoForge 21.1.218 or newer; the jar is
+`sculptory-neoforge-0.5.0-beta+1.21.1.jar`. Network protocol 6.
 
-### NeoForge 0.5.0-beta+1.21.1 (planned)
+- **The whole editor on NeoForge**: every tool, window and key of the Fabric mod, in singleplayer and on servers.
+  Nothing else to install.
+- **Fabric and NeoForge work together**: a Fabric client can edit on a NeoForge server and the other way round, as
+  long as both speak the same protocol.
+- **Permissions** through NeoForge's permission system: the same `sculptory.*` nodes, operators by default, LuckPerms
+  when installed (its 5.4.150 build; the build labelled for 1.21.1 kicks every player at login on current NeoForge
+  21.1).
+- **Next to Cobblemon, Create and JEI**: no conflicts, and their blocks fill, undo and redo like vanilla ones. One
+  limit: while builder mode acts for you, it takes a right-click with a block item before a mod's placement helper
+  (Create's belts and shafts) would; switch every power off, Record included, to place those the mod's way.
+- **Record**, as on Fabric (see Fabric 0.5.0-beta, "New"), on NeoForge clients and servers alike.
 
-The first NeoForge release, a beta. For Minecraft 1.21.1 with NeoForge 21.1.218 or newer. Network protocol 6.
+## Paper 0.1.0-beta+1.21.1
 
-- **The whole editor on NeoForge**: every tool, window and key of the Fabric mod, in singleplayer and on NeoForge
-  servers. Nothing else to install besides NeoForge.
-- **Fabric and NeoForge work together**: a Fabric client can use the editor on a NeoForge server, and a NeoForge
-  client on a Fabric server, as long as both speak the same network protocol.
-- **Permissions** through NeoForge's permission system: the same `sculptory.*` nodes as on Fabric, operators by
-  default, LuckPerms when installed (its 5.4.150 build; the build labelled for 1.21.1 kicks every player at login on
-  current NeoForge 21.1 releases).
-- Tried on a server next to Cobblemon, Create and JEI: no conflicts, and their blocks fill, undo and redo like vanilla
-  ones.
-- **Building by hand goes into the history by default** through builder mode's Record power, as on Fabric (see
-  Fabric 0.5.0-beta, "New"), on NeoForge clients and servers alike.
-
-### Paper 0.1.0-beta+1.21.1 (planned)
-
-The first Paper release, a beta. For Paper 1.21.1 (build 133). The plugin is the server side only: players who edit
-need the Sculptory mod for their loader (Fabric or NeoForge) on their client; everyone else joins with nothing
+The first Paper release, a beta. Paper 1.21.1 (build 133, the last 1.21.1 build). The plugin is the server side only:
+players who edit need the Sculptory mod for their loader (Fabric or NeoForge); everyone else joins with nothing
 installed. Network protocol 6.
 
-- **Sculptory as a Paper plugin**: put the jar in `plugins/`. The settings are in `plugins/Sculptory/server.json`, the
-  library in `plugins/Sculptory/library/`; the undo history is saved with each world, as on Fabric.
-- **WorldGuard regions are respected**: an edit changes only blocks where the player may both place and break, the
-  rule WorldGuard applies to building by hand. WorldGuard (which needs WorldEdit) is optional.
-- **Builder mode fires the server's block events**, so protection and logging plugins see every place and break it
-  makes and can cancel one (the step is then put back and refused).
-- **Building by hand goes into the history by default**: the plugin knows builder mode's Record power, so for a
-  player with the Sculptory 0.5.0-beta mod and the builder permission, every block they place with a block item or
-  break in Creative, and every item frame, painting and armor stand they hang, place, change or break, is recorded
-  without switching a power on; other item uses stay vanilla's (see Fabric 0.5.0-beta, "New").
+- **Install**: `sculptory-paper-0.1.0-beta+1.21.1.jar` in `plugins/`. Settings in `plugins/Sculptory/server.json`, the
+  library in `plugins/Sculptory/library/`, the undo history with each world.
+- **WorldGuard regions are respected**: an edit changes only blocks where the player may both place and break,
+  WorldGuard's rule for building by hand. A world whose region data failed to load refuses edits. WorldGuard (which
+  needs WorldEdit) is optional.
+- **Builder mode fires the server's block events**, so protection and logging plugins see every place and break and
+  can cancel one (the step is put back and refused).
+- **Record**, as on Fabric (see Fabric 0.5.0-beta, "New"): a player with the Sculptory 0.5.0-beta mod and the builder
+  permission has building by hand in the history without switching a power on.
 - **Other claim plugins are not respected by bulk edits**: fills, brushes and pastes fire no block events, like
-  WorldEdit's, so GriefPrevention, Lands, Towny, PlotSquared and other claim plugins neither see nor stop them. Only
-  WorldGuard regions, spawn protection and the world border limit bulk edits. Builder mode is covered (above).
-- **Permissions** are Bukkit permission nodes, `sculptory.*`: LuckPerms or another permissions plugin decides, and
-  without a grant operators may edit. Changes in LuckPerms apply at once.
+  WorldEdit's, so GriefPrevention, Lands, Towny, PlotSquared and the like neither see nor stop them. Only WorldGuard
+  regions, spawn protection and the world border limit them. Builder mode is covered (above).
+- **Permissions** are Bukkit nodes, `sculptory.*`: LuckPerms or another permissions plugin decides; without a grant,
+  operators may edit. LuckPerms changes apply at once.
 - **Jump and Through** teleport the Paper way, so a plugin that blocks a teleport blocks them too.
+- **A world unloaded by a plugin** (Multiverse, a minigame) first ends the edits running there and saves their history.
 - **Paper 1.21.1 only**: on another Minecraft version the plugin refuses to enable and says why. Spigot and Folia are
   not supported.
-- Known limits: after a crash, up to about a second of edits (five for brush strokes) saved by Paper's background save
-  can't be undone; undo of water and lava takes back flows next to the edit but not chain reactions further away;
-  builder mode records the blocks within two of each change, so far-reaching redstone reactions are not undone; the
-  `/sculptory` command has `version` and, for admins, `fill`, `undo` and `redo` only (restart the server after
-  editing `server.json`).
+- **Known limits**: after a crash, up to about a second of edits (five for brush strokes) can't be undone. Undo of
+  water and lava takes back flows next to the edit, not chain reactions further away. Builder mode records the blocks
+  within two of each change, so far-reaching redstone reactions are not undone. `/sculptory` has `version` and, for
+  admins, `fill`, `undo` and `redo`; restart the server after editing `server.json`. After Paper's `/reload confirm`,
+  builders must rejoin before editing again.
 
 ## 0.4.0-beta — first beta
 
