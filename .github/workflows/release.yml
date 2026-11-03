@@ -291,6 +291,9 @@ jobs:
           game-versions: ${{ needs.build.outputs.game_versions }}
           java: 21
           dependencies: ${{ needs.build.outputs.dependencies }}
+          # Never edit older versions: unfeaturing them needs the token's "edit versions" scope and is not wanted
+          # anyway (Modrinth features the newest version per loader by itself when none is pinned).
+          modrinth-unfeature-mode: none
           fail-mode: fail
 
   # Optional: runs only when the CURSEFORGE_TOKEN secret and the product's project id variable exist:
